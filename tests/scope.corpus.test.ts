@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { lower, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
-import { resolveScopes } from "../src/scope/scope.js";
+import { resolveScopes, type Scope } from "../src/scope/scope.js";
 
 interface Stats {
   queries: number;
@@ -13,6 +13,25 @@ interface Stats {
   sources: number;
   tables: number;
   subqueries: number;
+}
+
+interface ScopeStats {
+  scopes: number;
+  outputsKnown: number;
+  srcTable: number;
+  srcCte: number;
+  srcSubquery: number;
+}
+
+function walkScopes(scope: Scope, acc: ScopeStats): void {
+  acc.scopes++;
+  if (scope.outputs !== "unknown") acc.outputsKnown++;
+  for (const src of scope.sources.values()) {
+    if (src.kind === "table") acc.srcTable++;
+    else if (src.kind === "cte") acc.srcCte++;
+    else acc.srcSubquery++;
+  }
+  for (const child of scope.children) walkScopes(child, acc);
 }
 
 // Walk the whole IR (main query + CTE bodies + subquery bodies) accumulating fidelity counts.
@@ -72,6 +91,13 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       tables: 0,
       subqueries: 0,
     };
+    const scopeStats: ScopeStats = {
+      scopes: 0,
+      outputsKnown: 0,
+      srcTable: 0,
+      srcCte: 0,
+      srcSubquery: 0,
+    };
     const clusters = new Map<string, number>();
     const sample: Record<string, string> = {};
 
@@ -82,9 +108,10 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       try {
         const ir = lower(parseDatabricks(sql).tree);
         lowered++;
-        resolveScopes(ir);
+        const tree = resolveScopes(ir);
         scoped++;
         walkIr(ir, stats);
+        walkScopes(tree.root, scopeStats);
       } catch (e) {
         const key = clusterKey(e instanceof Error ? e.message : String(e));
         clusters.set(key, (clusters.get(key) ?? 0) + 1);
@@ -105,6 +132,10 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         `  CTEs:        ${stats.ctes}`,
         `  sources:     ${stats.sources}  (tables ${stats.tables}, subqueries ${stats.subqueries})`,
         `  projections: ${stats.projections}  named ${stats.projectionsNamed} (${pct(stats.projectionsNamed, stats.projections)}%)`,
+        ``,
+        `Scope resolution (${scopeStats.scopes} scopes):`,
+        `  outputs known: ${scopeStats.outputsKnown} (${pct(scopeStats.outputsKnown, scopeStats.scopes)}%)`,
+        `  sources: table ${scopeStats.srcTable}, cte ${scopeStats.srcCte}, subquery ${scopeStats.srcSubquery}`,
         ``,
         `Top failure clusters:`,
         ...top.map(([k, n]) => `  ${String(n).padStart(4)}  ${k}   e.g. ${sample[k]}`),
