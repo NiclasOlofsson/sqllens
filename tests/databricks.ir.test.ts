@@ -29,4 +29,27 @@ describe("lower: CST -> IR", () => {
     // The main query still resolves its own FROM independently of the CTE body.
     expect(ir.body.from).toMatchObject([{ kind: "table", name: ["c"] }]);
   });
+
+  it("captures a table alias", () => {
+    const ir = lower(parseDatabricks("SELECT x FROM t AS a").tree);
+    expect(ir.body.from).toMatchObject([{ kind: "table", name: ["t"], alias: "a" }]);
+  });
+
+  it("captures both relations of a JOIN as separate sources", () => {
+    const ir = lower(parseDatabricks("SELECT x FROM a JOIN b ON a.id = b.id").tree);
+    expect(ir.body.from).toMatchObject([
+      { kind: "table", name: ["a"] },
+      { kind: "table", name: ["b"] },
+    ]);
+  });
+
+  it("treats a derived table as a subquery source without leaking its inner tables", () => {
+    const ir = lower(parseDatabricks("SELECT x FROM (SELECT a FROM t) sub").tree);
+    expect(ir.body.from).toHaveLength(1);
+    const src = ir.body.from[0];
+    expect(src.kind).toBe("subquery");
+    if (src.kind !== "subquery") throw new Error("expected a subquery source");
+    expect(src.alias).toBe("sub");
+    expect(src.query.body.from).toMatchObject([{ kind: "table", name: ["t"] }]);
+  });
 });

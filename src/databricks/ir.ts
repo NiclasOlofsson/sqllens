@@ -32,12 +32,19 @@ export interface Projection {
   cst: ParserRuleContext;
 }
 
-export type Source = TableSource;
+export type Source = TableSource | SubquerySource;
 
 export interface TableSource {
   kind: "table";
   /** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
   name: string[];
+  alias?: string;
+  cst: ParserRuleContext;
+}
+
+export interface SubquerySource {
+  kind: "subquery";
+  query: QueryExpr;
   alias?: string;
   cst: ParserRuleContext;
 }
@@ -125,9 +132,7 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
     : [];
 
   const fromClause = firstOfRule(querySpec, P.RULE_fromClause);
-  const from = fromClause
-    ? nodesOfRule(fromClause, P.RULE_relationPrimary).map(buildTableSource)
-    : [];
+  const from = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
 
   return { kind: "select", projections, from, cst: querySpec };
 }
@@ -146,7 +151,40 @@ function buildProjection(named: ParserRuleContext): Projection {
   return { name, isStar: named.getText() === "*", cst: named };
 }
 
-function buildTableSource(relationPrimary: ParserRuleContext): TableSource {
+/**
+ * The relationPrimary nodes belonging to THIS query level. Stops at each
+ * relationPrimary instead of descending into it, so a derived table's inner
+ * tables are not mistaken for sources of the outer query.
+ */
+function topRelationPrimaries(node: ParseTree): ParserRuleContext[] {
+  const out: ParserRuleContext[] = [];
+  const walk = (n: ParseTree) => {
+    for (let i = 0; i < n.getChildCount(); i++) {
+      const child = n.getChild(i);
+      if (!(child instanceof ParserRuleContext)) continue;
+      if (child.ruleIndex === P.RULE_relationPrimary) out.push(child);
+      else walk(child);
+    }
+  };
+  walk(node);
+  return out;
+}
+
+function aliasOf(relationPrimary: ParserRuleContext): string | undefined {
+  const tableAlias = directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0];
+  if (!tableAlias) return undefined;
+  return firstOfRule(tableAlias, P.RULE_strictIdentifier)?.getText();
+}
+
+function buildSource(relationPrimary: ParserRuleContext): Source {
+  const alias = aliasOf(relationPrimary);
+
+  // A derived table: `( query ) alias`.
+  const innerQuery = firstOfRule(relationPrimary, P.RULE_query);
+  if (innerQuery) {
+    return { kind: "subquery", query: lowerQuery(innerQuery), alias, cst: relationPrimary };
+  }
+
   const multipart = firstOfRule(relationPrimary, P.RULE_multipartIdentifier);
   const parts = multipart
     ? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier).map((p) => p.getText())
@@ -154,6 +192,7 @@ function buildTableSource(relationPrimary: ParserRuleContext): TableSource {
   return {
     kind: "table",
     name: parts.length ? parts : multipart ? [multipart.getText()] : [],
+    alias,
     cst: relationPrimary,
   };
 }
