@@ -95,11 +95,33 @@ describe("qualify", () => {
     expect(result.diagnostics.filter((d) => d.kind === "unknown-field")).toEqual([]);
   });
 
-  it("does not flag field access through a CTE column (type not propagated)", () => {
-    // The CTE output `addr` carries a name but no type, so the struct can't be checked —
-    // conservative: no unknown-field even for a bogus field.
+  it("flags a bad struct field through a pass-through CTE column (type propagated)", () => {
+    // `addr` is threaded through the CTE unchanged, so its struct type propagates and
+    // `addr.nope` is checkable — a derived column is not an excuse to skip validation.
     const schema = new Schema({ t: { addr: "struct<city:string>" } });
     const { result } = run("WITH c AS (SELECT addr FROM t) SELECT addr.nope FROM c", schema);
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+  });
+
+  it("validates a good struct field through a pass-through CTE column", () => {
+    const schema = new Schema({ t: { addr: "struct<city:string>" } });
+    const { result } = run("WITH c AS (SELECT addr FROM t) SELECT addr.city FROM c", schema);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("propagates struct types through a subquery and an aliased CTE", () => {
+    const schema = new Schema({ t: { addr: "struct<city:string>" } });
+    const sub = run("SELECT s.addr.nope FROM (SELECT addr FROM t) s", schema);
+    expect(sub.result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+    const aliased = run("WITH c (a) AS (SELECT addr FROM t) SELECT c.a.nope FROM c", schema);
+    expect(aliased.result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+  });
+
+  it("does not flag a field on a computed CTE column (type genuinely needs inference)", () => {
+    // `addr` here is computed (a function call), so its type is unknowable without the
+    // type-inference engine — the one honest boundary. Conservative: no false unknown-field.
+    const schema = new Schema({ t: { x: "string" } });
+    const { result } = run("WITH c AS (SELECT upper(x) AS addr FROM t) SELECT addr.nope FROM c", schema);
     expect(result.diagnostics.filter((d) => d.kind === "unknown-field")).toEqual([]);
   });
 
