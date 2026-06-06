@@ -20,10 +20,8 @@ function colOf(sql: string, partsJoined: string) {
 function findCol(sql: string, partsJoined: string) {
   const tree = resolveScopes(lower(parseDatabricks(sql).tree));
   const walk = (s: import("../src/scope/scope.js").Scope): { scope: typeof s; ref: ColumnRefT } | undefined => {
-    if (s.body.kind === "select") {
-      const ref = s.body.columns.find((c) => c.parts.join(".") === partsJoined);
-      if (ref) return { scope: s, ref };
-    }
+    const ref = s.body.columns.find((c) => c.parts.join(".") === partsJoined);
+    if (ref) return { scope: s, ref };
     for (const child of s.children) {
       const found = walk(child);
       if (found) return found;
@@ -134,6 +132,11 @@ describe("resolveColumn", () => {
     const { scope, ref } = findCol("SELECT p AS z FROM t WHERE z > 0", "z");
     // WHERE cannot see SELECT aliases — z must resolve as a (schema-dependent) column, not an alias.
     expect(resolveColumn(scope, ref).kind).not.toBe("alias");
+  });
+
+  it("resolves an ORDER BY alias after a UNION against the left branch", () => {
+    const { scope, ref } = findCol("SELECT a AS x FROM t UNION ALL SELECT b FROM u ORDER BY x", "x");
+    expect(resolveColumn(scope, ref).kind).toBe("alias");
   });
 });
 

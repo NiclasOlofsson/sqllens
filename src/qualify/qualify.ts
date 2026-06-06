@@ -1,6 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { ColumnRef } from "../databricks/ir.js";
-import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
+import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import type { Schema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -31,9 +31,7 @@ export function qualify(tree: ScopeTree, schema: Schema): Qualification {
   const visit = (scope: Scope): void => {
     for (const child of scope.children) visit(child);
     resolved.set(scope, resolveColumns(scope, schema, resolved, diagnostics));
-    if (scope.body.kind === "select") {
-      for (const ref of scope.body.columns) checkColumn(scope, ref, schema, resolved, diagnostics);
-    }
+    for (const ref of scope.body.columns) checkColumn(scope, ref, schema, resolved, diagnostics);
   };
   visit(tree.root);
 
@@ -124,18 +122,9 @@ function checkColumn(
   resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
 ): void {
-  // A bare name in GROUP BY/HAVING/ORDER BY may reference a SELECT-list alias rather than a
-  // column — don't flag it as unknown. (Source columns, if known, are checked normally above.)
-  if (
-    ref.parts.length === 1 &&
-    (ref.clause === "groupBy" || ref.clause === "having" || ref.clause === "orderBy") &&
-    scope.body.kind === "select" &&
-    scope.body.projections.some(
-      (p) => p.name !== undefined && normalizeName(p.name) === normalizeName(ref.parts[0]),
-    )
-  ) {
-    return;
-  }
+  // A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias
+  // rather than a column — don't flag it. resolveColumn applies the alias + precedence rules.
+  if (resolveColumn(scope, ref).kind === "alias") return;
 
   const name = normalizeName(ref.parts[ref.parts.length - 1] ?? "");
 

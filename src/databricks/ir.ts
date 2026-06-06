@@ -147,6 +147,9 @@ export interface SetOpExpr {
   all: boolean;
   left: QueryBody;
   right: QueryBody;
+  /** Union-level column references (e.g. a trailing ORDER BY) that resolve against the
+   *  set-op output (the left branch's columns). */
+  columns: ColumnRef[];
   cst: ParserRuleContext;
 }
 
@@ -287,8 +290,9 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
   if (!queryTerm) throw new Error("lower: query has no queryTerm body");
   const body = lowerQueryTerm(queryTerm);
   const orderBy = extractOrderBy(query);
-  // ORDER BY references the select's scope, so its columns belong to the body's `columns`.
-  if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+  // ORDER BY references the body's output (a select's scope, or a set-op's left branch),
+  // so its columns belong to the body's `columns` — for both selects and set ops.
+  if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
   return { kind: "query", ctes, body, orderBy, cst: query };
 }
 
@@ -327,6 +331,7 @@ function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
       all: hasAllQuantifier(queryTerm),
       left: lowerQueryTerm(branches[0]),
       right: lowerQueryTerm(branches[1]),
+      columns: [],
       cst: queryTerm,
     };
   }

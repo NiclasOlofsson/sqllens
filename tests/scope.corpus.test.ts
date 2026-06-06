@@ -91,17 +91,15 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
     else if (src.kind === "cte") acc.srcCte++;
     else acc.srcSubquery++;
   }
-  if (scope.body.kind === "select") {
-    if (scope.body.unsupported) acc.unsupported++;
-    for (const ref of scope.body.columns) {
-      acc.colTotal++;
-      const r = resolveColumn(scope, ref);
-      if (r.kind === "bound") acc.colBound++;
-      else if (r.kind === "alias") acc.colAlias++;
-      else if (r.kind === "ambiguous") acc.colAmbiguous++;
-      else if (r.kind === "needs-schema") acc.colNeedsSchema++;
-      else acc.colUnresolved++;
-    }
+  if (scope.body.kind === "select" && scope.body.unsupported) acc.unsupported++;
+  for (const ref of scope.body.columns) {
+    acc.colTotal++;
+    const r = resolveColumn(scope, ref);
+    if (r.kind === "bound") acc.colBound++;
+    else if (r.kind === "alias") acc.colAlias++;
+    else if (r.kind === "ambiguous") acc.colAmbiguous++;
+    else if (r.kind === "needs-schema") acc.colNeedsSchema++;
+    else acc.colUnresolved++;
   }
   for (const child of scope.children) walkScopes(child, acc);
 }

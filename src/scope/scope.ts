@@ -93,9 +93,17 @@ function aliasVisibleClause(clause: ColumnRef["clause"]): boolean {
 }
 
 function matchesProjectionAlias(scope: Scope, name: string): boolean {
-  if (scope.body.kind !== "select") return false;
   const n = normalizeName(name);
-  return scope.body.projections.some((p) => p.name !== undefined && normalizeName(p.name) === n);
+  return aliasNames(scope).some((a) => normalizeName(a) === n);
+}
+
+/** The output alias names of a scope — a select's projection names, or (for a set op) the
+ *  left branch's, since a union's output columns come from its first branch. */
+function aliasNames(scope: Scope): string[] {
+  if (scope.body.kind === "select") {
+    return scope.body.projections.flatMap((p) => (p.name !== undefined ? [p.name] : []));
+  }
+  return scope.branches ? aliasNames(scope.branches.left) : [];
 }
 
 function resolveColumnInScope(scope: Scope, ref: ColumnRef): ColumnResolution {
