@@ -33,11 +33,32 @@ export interface SelectExpr {
   /** Every column reference at this query level (projections, WHERE, JOIN ON, …),
    *  excluding those inside nested subqueries (which belong to their own scope). */
   columns: ColumnRef[];
-  /** Constructs present here that the IR does not model (e.g. "pivot", "unpivot",
-   *  "lateralView") — a flag so consumers know this block's sources/columns are
-   *  incomplete rather than trusting them silently. Absent when fully modelled. */
+  /** A PIVOT applied to the FROM relation, if present (transforms the output columns). */
+  pivot?: PivotInfo;
+  /** An UNPIVOT applied to the FROM relation, if present. */
+  unpivot?: UnpivotInfo;
+  /** Constructs present here that the IR still does not model — a flag so consumers
+   *  know this block is incomplete rather than trusting it silently. Absent when none. */
   unsupported?: string[];
   cst: ParserRuleContext;
+}
+
+export interface PivotInfo {
+  /** Output column names produced by the pivot (the IN-list aliases/values). */
+  values: string[];
+  /** The FOR column(s), consumed by the pivot. */
+  forColumns: string[];
+  /** Columns referenced by the aggregate(s), consumed by the pivot. */
+  aggColumns: string[];
+}
+
+export interface UnpivotInfo {
+  /** The value column the unpivot produces. */
+  valueColumn: string;
+  /** The name column the unpivot produces. */
+  nameColumn: string;
+  /** The input columns consumed (turned into rows). */
+  removed: string[];
 }
 
 export interface ColumnRef {
@@ -63,7 +84,16 @@ export interface Projection {
   cst: ParserRuleContext;
 }
 
-export type Source = TableSource | SubquerySource;
+export type Source = TableSource | SubquerySource | LateralViewSource;
+
+export interface LateralViewSource {
+  kind: "lateral";
+  /** The lateral view's table alias (`LATERAL VIEW explode(x) v AS c` → "v"). */
+  alias?: string;
+  /** The columns it exposes (the AS list — `… AS c1, c2`). */
+  columns: string[];
+  cst: ParserRuleContext;
+}
 
 export interface TableSource {
   kind: "table";
@@ -234,21 +264,87 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
     : [];
 
   const fromClause = shallowFirstOfRule(querySpec, P.RULE_fromClause);
-  const from = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
-
-  const unsupported: string[] = [];
-  if (shallowFirstOfRule(querySpec, P.RULE_pivotClause)) unsupported.push("pivot");
-  if (shallowFirstOfRule(querySpec, P.RULE_unpivotClause)) unsupported.push("unpivot");
-  if (shallowFirstOfRule(querySpec, P.RULE_lateralView)) unsupported.push("lateralView");
+  const from: Source[] = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
+  if (fromClause) from.push(...extractLateralViews(fromClause));
 
   return {
     kind: "select",
     projections,
     from,
     columns: extractColumnRefs(querySpec),
-    unsupported: unsupported.length ? unsupported : undefined,
+    pivot: fromClause ? extractPivot(fromClause) : undefined,
+    unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
     cst: querySpec,
   };
+}
+
+/** Collect rule nodes within `node` but not inside nested subqueries (and don't descend into matches). */
+function shallowNodesOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext[] {
+  const out: ParserRuleContext[] = [];
+  const walk = (n: ParseTree) => {
+    for (let i = 0; i < n.getChildCount(); i++) {
+      const child = n.getChild(i);
+      if (!(child instanceof ParserRuleContext)) continue;
+      if (child.ruleIndex === ruleIndex) out.push(child);
+      else if (child.ruleIndex === P.RULE_query) continue; // subquery — its own scope
+      else walk(child);
+    }
+  };
+  walk(node);
+  return out;
+}
+
+function extractLateralViews(fromClause: ParserRuleContext): LateralViewSource[] {
+  // pivot/unpivot/lateral attach under relation -> relationExtension, not directly to fromClause.
+  return shallowNodesOfRule(fromClause, P.RULE_lateralView).map((lv) => {
+    // children: qualifiedName (the function) then tblName=identifier then AS colName=identifier*
+    const ids = directChildrenOfRule(lv, P.RULE_identifier);
+    return {
+      kind: "lateral",
+      alias: ids[0]?.getText(),
+      columns: ids.slice(1).map((i) => i.getText()),
+      cst: lv,
+    };
+  });
+}
+
+function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
+  const pivotClause = shallowNodesOfRule(fromClause, P.RULE_pivotClause)[0];
+  if (!pivotClause) return undefined;
+  const values = collectOfRule(pivotClause, P.RULE_pivotValue).map((pv) => {
+    const alias = directChildrenOfRule(pv, P.RULE_errorCapturingIdentifier)[0];
+    return alias ? alias.getText() : pv.getText();
+  });
+  const pivotColumn = directChildrenOfRule(pivotClause, P.RULE_pivotColumn)[0];
+  const forColumns = pivotColumn
+    ? directChildrenOfRule(pivotColumn, P.RULE_errorCapturingIdentifier).map((i) => i.getText())
+    : [];
+  const aggregates = directChildrenOfRule(pivotClause, P.RULE_namedExpressionSeq)[0];
+  const aggColumns = aggregates
+    ? extractColumnRefs(aggregates).map((r) => r.parts[r.parts.length - 1])
+    : [];
+  return { values, forColumns, aggColumns };
+}
+
+function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined {
+  const unpivotClause = shallowNodesOfRule(fromClause, P.RULE_unpivotClause)[0];
+  if (!unpivotClause) return undefined;
+  return {
+    valueColumn: firstOfRule(unpivotClause, P.RULE_unpivotValueColumn)?.getText() ?? "",
+    nameColumn: firstOfRule(unpivotClause, P.RULE_unpivotNameColumn)?.getText() ?? "",
+    removed: collectOfRule(unpivotClause, P.RULE_unpivotColumn).map((c) => lastNamePart(c.getText())),
+  };
+}
+
+function lastNamePart(text: string): string {
+  const dot = text.lastIndexOf(".");
+  return dot >= 0 ? text.slice(dot + 1) : text;
+}
+
+function collectOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext[] {
+  const out: ParserRuleContext[] = [];
+  for (const d of descendants(node)) if (d.ruleIndex === ruleIndex) out.push(d);
+  return out;
 }
 
 function buildProjection(named: ParserRuleContext): Projection {

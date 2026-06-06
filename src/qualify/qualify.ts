@@ -101,6 +101,7 @@ function columnsOfSource(
     const r = resolved.get(src.ref.scope);
     return r === undefined || r === "unknown" ? undefined : r;
   }
+  if (src.kind === "lateral") return src.source.columns; // exposes its AS columns
   // subquery — inline column aliases, else the already-resolved child scope columns.
   if (src.source.columnAliases) return src.source.columnAliases;
   const r = resolved.get(src.scope);

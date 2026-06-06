@@ -133,16 +133,30 @@ describe("lower: CST -> IR", () => {
     expect(sel.columns.map((c) => c.parts.join("."))).not.toContain("inner_col");
   });
 
-  it("flags an unsupported PIVOT rather than silently mis-modelling it", () => {
+  it("models LATERAL VIEW as a source exposing its AS columns", () => {
     const sel = asSelect(
-      lower(parseDatabricks("SELECT * FROM t PIVOT (sum(x) FOR y IN ('a', 'b'))").tree).body,
+      lower(parseDatabricks("SELECT a FROM t LATERAL VIEW explode(arr) v AS col").tree).body,
     );
-    expect(sel.unsupported).toContain("pivot");
+    expect(sel.from.find((s) => s.kind === "lateral")).toMatchObject({
+      kind: "lateral",
+      alias: "v",
+      columns: ["col"],
+    });
   });
 
-  it("has no unsupported flag for a plain select", () => {
-    const sel = asSelect(lower(parseDatabricks("SELECT a FROM t").tree).body);
-    expect(sel.unsupported).toBeUndefined();
+  it("captures a PIVOT's value columns, FOR column, and aggregate columns", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT * FROM t PIVOT (max(val) FOR seg IN ('a' AS a, 'b' AS b))").tree)
+        .body,
+    );
+    expect(sel.pivot).toMatchObject({ values: ["a", "b"], forColumns: ["seg"], aggColumns: ["val"] });
+  });
+
+  it("captures an UNPIVOT's value, name, and removed columns", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT * FROM t UNPIVOT (amt FOR mon IN (jan, feb))").tree).body,
+    );
+    expect(sel.unpivot).toMatchObject({ valueColumn: "amt", nameColumn: "mon", removed: ["jan", "feb"] });
   });
 
   it("lowers a set operation into a SetOpExpr with both branches", () => {

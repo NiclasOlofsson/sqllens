@@ -1,11 +1,15 @@
 import type {
   ColumnRef,
   CteDef,
+  LateralViewSource,
+  PivotInfo,
   QueryBody,
   QueryExpr,
   SelectExpr,
+  Source,
   SubquerySource,
   TableSource,
+  UnpivotInfo,
 } from "../databricks/ir.js";
 
 // ---------------------------------------------------------------------------
@@ -42,7 +46,8 @@ export interface CteRef {
 export type ResolvedSource =
   | { kind: "table"; name: string[]; source: TableSource }
   | { kind: "cte"; ref: CteRef; source: TableSource }
-  | { kind: "subquery"; scope: Scope; source: SubquerySource };
+  | { kind: "subquery"; scope: Scope; source: SubquerySource }
+  | { kind: "lateral"; source: LateralViewSource };
 
 export function resolveScopes(query: QueryExpr): ScopeTree {
   return { root: buildQueryScope(query) };
@@ -126,6 +131,8 @@ function fillScope(scope: Scope): void {
       const child = buildQueryScope(source.query, scope);
       scope.children.push(child);
       scope.sources.set(key, { kind: "subquery", scope: child, source });
+    } else if (source.kind === "lateral") {
+      scope.sources.set(key, { kind: "lateral", source });
     } else {
       // A single-part name that matches a visible CTE is a CTE reference, not a table.
       const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
@@ -138,7 +145,38 @@ function fillScope(scope: Scope): void {
     }
   }
 
-  scope.outputs = outputsOf(body);
+  scope.outputs = computeOutputs(scope, body);
+}
+
+/** A select's output columns, accounting for a PIVOT/UNPIVOT transforming the FROM relation. */
+function computeOutputs(scope: Scope, body: SelectExpr): string[] | "unknown" {
+  if (body.unpivot) return unpivotOutputs(scope, body.unpivot);
+  if (body.pivot) return pivotOutputs(scope, body.pivot);
+  return outputsOf(body);
+}
+
+/** The columns of the relation being pivoted/unpivoted — the first non-lateral source. */
+function baseRelationColumns(scope: Scope): string[] | "unknown" {
+  for (const src of scope.sources.values()) {
+    if (src.kind !== "lateral") return sourceOutputs(src);
+  }
+  return "unknown";
+}
+
+function unpivotOutputs(scope: Scope, u: UnpivotInfo): string[] | "unknown" {
+  const base = baseRelationColumns(scope);
+  if (base === "unknown") return "unknown"; // pass-through needs the input's columns
+  const removed = new Set(u.removed.map(normalizeName));
+  const passthrough = base.filter((c) => !removed.has(normalizeName(c)));
+  return [...passthrough, u.nameColumn, u.valueColumn];
+}
+
+function pivotOutputs(scope: Scope, p: PivotInfo): string[] | "unknown" {
+  const base = baseRelationColumns(scope);
+  if (base === "unknown") return "unknown";
+  const consumed = new Set([...p.forColumns, ...p.aggColumns].map(normalizeName));
+  const passthrough = base.filter((c) => !consumed.has(normalizeName(c)));
+  return [...passthrough, ...p.values];
 }
 
 function outputsOf(body: SelectExpr): string[] | "unknown" {
@@ -162,7 +200,8 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
 
 /** A source is referenced by its alias, or (for a table) its last name part — normalized,
  *  since Databricks identifiers are case-insensitive (so `U.col` binds to a source aliased `u`). */
-function sourceKey(source: TableSource | SubquerySource): string {
+function sourceKey(source: Source): string {
+  if (source.kind === "lateral") return normalizeName(source.alias ?? "");
   const raw = source.alias ?? (source.kind === "table" ? source.name[source.name.length - 1] : "");
   return normalizeName(raw ?? "");
 }
@@ -171,7 +210,8 @@ function sourceKey(source: TableSource | SubquerySource): string {
 function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
   if (src.kind === "table") return src.source.columnAliases ?? "unknown";
   if (src.kind === "cte") return src.ref.scope.outputs;
-  return src.scope.outputs;
+  if (src.kind === "lateral") return src.source.columns;
+  return src.scope.outputs; // subquery
 }
 
 /** Databricks identifiers are case-insensitive; strip surrounding backticks too. */

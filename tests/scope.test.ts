@@ -85,4 +85,25 @@ describe("resolveColumn", () => {
     );
     expect(resolveColumn(root, ref).kind).toBe("ambiguous");
   });
+
+  it("binds a column to a LATERAL VIEW source", () => {
+    const { ref, root } = colOf("SELECT v.col FROM t LATERAL VIEW explode(arr) v AS col", "v.col");
+    expect(resolveColumn(root, ref).kind).toBe("bound");
+  });
+});
+
+describe("pivot / unpivot outputs", () => {
+  it("computes UNPIVOT outputs: pass-through minus IN columns, plus name + value", () => {
+    const { root } = scopeOf(
+      "WITH t AS (SELECT k, jan, feb FROM x) SELECT * FROM t UNPIVOT (amt FOR mon IN (jan, feb))",
+    );
+    expect(root.outputs).toEqual(["k", "mon", "amt"]);
+  });
+
+  it("computes PIVOT outputs: pass-through (minus FOR/agg cols) plus pivot values", () => {
+    const { root } = scopeOf(
+      "WITH t AS (SELECT id, seg, val FROM x) SELECT * FROM t PIVOT (max(val) FOR seg IN ('a' AS a, 'b' AS b))",
+    );
+    expect(root.outputs).toEqual(["id", "a", "b"]);
+  });
 });

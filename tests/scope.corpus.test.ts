@@ -86,7 +86,7 @@ function walkBody(body: QueryBody, acc: Stats): void {
   for (const s of body.from) {
     acc.sources++;
     if (s.kind === "table") acc.tables++;
-    else {
+    else if (s.kind === "subquery") {
       acc.subqueries++;
       walkIr(s.query, acc);
     }
