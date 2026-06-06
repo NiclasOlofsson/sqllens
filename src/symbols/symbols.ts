@@ -2,6 +2,7 @@ import type { ParserRuleContext } from "antlr4ng";
 import type { Expr, Projection } from "../databricks/ir.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
+import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
 import {
   resolveColumn,
@@ -69,6 +70,9 @@ export interface Sym {
   /** For a column or function symbol, its inferred type — when determinable (needs the schema
    *  for base-table columns). `unknown`/absent when there is no schema or no rule. */
   type?: Type;
+  /** For a column symbol, the base-table columns it derives from (lineage). Absent when it
+   *  traces to nothing resolvable (a pure literal, or an unresolved column). */
+  origins?: Origin[];
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
@@ -204,6 +208,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
           span: spanOf(p.cst),
           frame,
           type: typeOrUndefined(inferType(p.expr, scope, schema)),
+          origins: originsOrUndefined(originsOf(p.expr, scope, schema)),
         });
       }
     }
@@ -213,6 +218,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
     const modifiers: SymbolModifier[] = ["reference"];
     // A reference that binds to a source outside this scope is correlated.
     if (res.kind === "bound" && !isLocalSource(scope, res.source)) modifiers.push("correlated");
+    const colExpr = { kind: "column" as const, parts: ref.parts, cst: ref.cst };
     out.push({
       kind: "column",
       modifiers,
@@ -220,13 +226,18 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
       span: spanOf(ref.cst),
       frame,
       definition: columnDefinition(res),
-      type: typeOrUndefined(inferType({ kind: "column", parts: ref.parts, cst: ref.cst }, scope, schema)),
+      type: typeOrUndefined(inferType(colExpr, scope, schema)),
+      origins: originsOrUndefined(originsOf(colExpr, scope, schema)),
     });
   }
 }
 
 function typeOrUndefined(t: Type): Type | undefined {
   return t.kind === "unknown" ? undefined : t;
+}
+
+function originsOrUndefined(origins: Origin[]): Origin[] | undefined {
+  return origins.length === 0 ? undefined : origins;
 }
 
 function isLocalSource(scope: Scope, source: ResolvedSource): boolean {

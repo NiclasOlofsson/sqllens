@@ -36,3 +36,8 @@ export {
   type SymbolKind,
   type SymbolModifier,
 } from "./symbols/symbols.js";
+
+export { inferType } from "./infer/infer.js";
+export { parseType, type Type } from "./infer/types.js";
+
+export { lineage, originsOf, type ColumnLineage, type Origin } from "./lineage/lineage.js";

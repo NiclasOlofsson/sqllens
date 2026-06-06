@@ -136,6 +136,12 @@ describe("deriveSymbols — column types (inference wired in)", () => {
     const x = deriveSymbols(tree, new Schema({ t: { a: "string" } })).find((s) => s.name === "x");
     expect(x?.type).toEqual({ kind: "scalar", name: "string" });
   });
+
+  it("carries lineage origins on an output column symbol (through a CTE)", () => {
+    const tree = resolveScopes(lower(parseDatabricks("WITH c AS (SELECT a FROM t) SELECT a + 1 AS x FROM c").tree));
+    const x = deriveSymbols(tree).find((s) => s.name === "x");
+    expect(x?.origins?.map((o) => `${o.table.join(".")}.${o.column}`)).toEqual(["t.a"]);
+  });
 });
 
 describe.skipIf(!existsSync(CORPUS))("deriveSymbols over the Oatly corpus", () => {

@@ -1,11 +1,7 @@
 import type { Expr, Projection, QueryExpr } from "../databricks/ir.js";
 import type { Schema } from "../qualify/schema.js";
-import {
-  resolveScopes,
-  splitColumnRefInScope,
-  type ResolvedSource,
-  type Scope,
-} from "../scope/scope.js";
+import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { normalizeName, resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
 import { FUNCTION_RETURNS } from "./functions.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
@@ -76,51 +72,13 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 
 function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
   if (col.parts.length === 1) {
-    const param = ctx.env.get(norm(col.parts[0])); // a lambda parameter shadows columns
+    const param = ctx.env.get(normalizeName(col.parts[0])); // a lambda parameter shadows columns
     if (param) return param;
   }
   const found = resolveColumnSource(scope, col.parts, schema);
   if (!found) return UNKNOWN;
   const base = sourceColumnType(found.source, found.column, schema, ctx);
   return found.fields.length ? fieldType(base, found.fields) : base;
-}
-
-/** Bind a column ref to its source, schema-aware (so a bare column over a physical table binds,
- *  which scope's schema-free resolveColumn cannot). */
-function resolveColumnSource(
-  scope: Scope,
-  parts: string[],
-  schema: Schema,
-): { source: ResolvedSource; column: string; fields: string[] } | undefined {
-  const split = splitColumnRefInScope(scope, parts);
-  if (split.qualifier !== undefined) {
-    for (let s: Scope | undefined = scope; s; s = s.parent) {
-      const src = s.sources.get(split.qualifier);
-      if (src) return { source: src, column: split.column, fields: split.fields };
-    }
-    return undefined;
-  }
-  const name = norm(split.column);
-  for (let s: Scope | undefined = scope; s; s = s.parent) {
-    for (const src of s.sources.values()) {
-      const cols = columnNamesOf(src, schema);
-      if (cols?.some((c) => norm(c) === name)) {
-        return { source: src, column: split.column, fields: split.fields };
-      }
-    }
-  }
-  return undefined;
-}
-
-function columnNamesOf(src: ResolvedSource, schema: Schema): string[] | undefined {
-  if (src.kind === "table") return src.source.columnAliases ?? schema.columnsFor(src.name)?.map((c) => c.name);
-  if (src.kind === "cte") return src.ref.def.columnAliases ?? outputsOf(src.ref.scope);
-  if (src.kind === "subquery") return src.source.columnAliases ?? outputsOf(src.scope);
-  return src.source.columns; // lateral
-}
-
-function outputsOf(scope: Scope): string[] | undefined {
-  return scope.outputs === "unknown" ? undefined : scope.outputs;
 }
 
 function sourceColumnType(src: ResolvedSource, column: string, schema: Schema, ctx: Ctx): Type {
@@ -229,7 +187,7 @@ function lambdaResult(
 ): Type | undefined {
   if (lambda?.kind !== "lambda") return undefined;
   const env = new Map(ctx.env);
-  lambda.params.forEach((p, i) => env.set(norm(p), paramTypes[i] ?? UNKNOWN));
+  lambda.params.forEach((p, i) => env.set(normalizeName(p), paramTypes[i] ?? UNKNOWN));
   return inferType(lambda.body, scope, schema, { seen: ctx.seen, env });
 }
 
@@ -250,7 +208,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
     for (let i = 0; i + 1 < args.length; i += 2) {
       const key = args[i];
       const fname = key.kind === "literal" ? stringValue(key.text) : `col${i / 2 + 1}`;
-      fields.push({ name: norm(fname), type: inferType(args[i + 1], scope, schema, ctx) });
+      fields.push({ name: normalizeName(fname), type: inferType(args[i + 1], scope, schema, ctx) });
     }
     return { kind: "struct", fields };
   }
@@ -258,7 +216,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
     return {
       kind: "struct",
       fields: args.map((a, i) => ({
-        name: a.kind === "column" ? norm(a.parts[a.parts.length - 1]) : `col${i + 1}`,
+        name: a.kind === "column" ? normalizeName(a.parts[a.parts.length - 1]) : `col${i + 1}`,
         type: inferType(a, scope, schema, ctx),
       })),
     };
@@ -328,9 +286,5 @@ function stringValue(text: string): string {
 }
 
 function eq(a: string, b: string): boolean {
-  return norm(a) === norm(b);
-}
-
-function norm(s: string): string {
-  return (s.startsWith("`") && s.endsWith("`") ? s.slice(1, -1) : s).toLowerCase();
+  return normalizeName(a) === normalizeName(b);
 }
