@@ -16,14 +16,17 @@
 
 **In:** lexer + parser grammars that recognize each dialect's surface (queries, DML, the common DDL); generated TS parsers; a public `parse(sql, dialect)` returning a parse tree (or a syntax error); a conformance harness.
 
-**Out (explicitly, do not build):** semantic analysis (types/scope/lineage), SQL transpilation, IDE-grade error recovery/diagnostics (default ANTLR recovery is sufficient for a spec — see transcript), a query engine.
+**Out (explicitly, do not build):** SQL transpilation, type inference, column lineage, a query engine. **Amended 2026-06-06:** name resolution (**scope**) and column/`*` resolution against a supplied schema (**qualify**) are now **in scope for Databricks** as a semantic layer built on the parse tree (Phase 1.5) — the two consumers that motivate this project (editor support, the SQL debugger) need them. Lineage rides on qualify and stays out for now. The warehouse dialects get the grammar only until a second consumer forces the abstraction.
 
 ## Repo layout (target)
 
 ```
 grammars/<dialect>/ <Dialect>Lexer.g4, <Dialect>Parser.g4   (standalone fork of a grammars-v4 grammar, or hand-authored)
 src/generated/      ANTLR output (gitignored, via `npm run gen`)
-src/index.ts        public parse() API over the generated parsers
+src/databricks/     parse.ts (parseDatabricks wrapper), ir.ts (IR types + lower CST->IR)  [Phase 1.5]
+src/scope/          scope.ts (resolveScopes: schema-free name resolution over the IR)     [Phase 1.5]
+src/qualify/        schema.ts (sqlglot-style schema input), qualify.ts (schema-fed)        [Phase 1.5]
+src/index.ts        public API: parseDatabricks, lower, resolveScopes, qualify, Schema
 harness/            corpus loader + zero-errors runner (sqlglot cross-check optional)
 tools/gen.mjs       generation driver (antlr-ng or jar)
 tests/              vitest specs
@@ -200,6 +203,56 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 ---
 
+## Phase 1.5 — Databricks semantic layer: scope → qualify (CURRENT FOCUS)
+
+> Added 2026-06-06. The Databricks grammar is in and parses 100% of the real Oatly corpus, so we go **deep on Databricks** before the other dialects: a small semantic layer on top of the parse tree that the editor and the SQL debugger consume. Databricks-only; cross-dialect abstraction is extracted when a second dialect forces it. Build **scope first** (schema-free, unlocks most value), **qualify second** (schema-fed).
+
+**Pipeline:** `sql → parse → CST → lower → IR → resolveScopes → ScopeTree → qualify(schema) → Qualification + Diagnostics`. Each arrow is a pure function. Positions flow through via CST back-references (`ctx.start`/`ctx.stop`), so every IR/scope node maps to an exact source span — the thing editor + debugger need and sqlglot's AST drops (see *Risks & open questions → CST vs AST*, now resolved).
+
+**Why an IR and not the raw CST:** Spark's CST is ~12 levels deep and grammar-shaped; doing name resolution on it directly is painful and couples everything to the grammar. The IR is a compact model (the "thin AST" deferred in Phase 1), and the CST→IR `lower` step is the only Databricks-specific piece — scope and qualify operate on the IR and stay dialect-neutral.
+
+### Task 1.5.1: Parse wrapper + IR types + `lower(tree)`
+
+**Files:** Create `src/databricks/parse.ts`, `src/databricks/ir.ts`; Test `tests/databricks.ir.test.ts`
+
+- [ ] **Step 1:** `parseDatabricks(sql) → { tree, errors }` — one wrapper that dedupes the lexer/parser/error-listener boilerplate currently copied across the test files.
+- [ ] **Step 2:** Define the IR node types in `ir.ts`: `QueryExpr` (CTEs + body), `SelectExpr` (projections, sources, clauses we use), `Source` (`table | subquery | cte-ref | join`), `Projection` (expr CST-ref, output name, `isStar`), `ColumnRef` (qualifier?, name), `CteDef` (name, column aliases?, body). Every node carries a back-ref to its CST context + a `span` helper.
+- [ ] **Step 3 (TDD):** Write failing tests asserting the IR shape for the representative queries from `databricks.structure.test.ts` (e.g. `SELECT a, b FROM t` → `SelectExpr` with 2 projections + 1 table source named `t`; a CTE query → 1 `CteDef`). Expressions stay as CST refs in v1 — only `ColumnRef`s are extracted from them.
+- [ ] **Step 4:** Implement `lower(tree)` (CST→IR visitor) until green. Commit.
+
+### Task 1.5.2: Scope resolver (schema-free)
+
+**Files:** Create `src/scope/scope.ts`; Test `tests/scope.test.ts`
+
+- [ ] **Step 1:** `resolveScopes(ir) → ScopeTree`. `Scope = { node, sources: Map<name, ResolvedSource>, ctes: Map<name, CteDef>, outputs, parent?, children }`. `ResolvedSource = table | cte-ref→scope | subquery→scope`.
+- [ ] **Step 2:** Resolution without schema: alias/name → source; chained CTE references (later CTEs see earlier); subquery outputs (from their projections, `unknown` if they star over a physical table); `resolveColumn(ref) → resolved | ambiguous | needs-schema` (`t.c` → source `t`; bare `c` → the single source whose outputs are known to contain it).
+- [ ] **Step 3:** Coverage v1: SELECT, WITH (chained CTEs), subqueries (derived tables + scalar/IN), JOINs (all kinds), set ops (UNION/EXCEPT/INTERSECT). **Flag-and-defer, never crash:** recursive CTEs, LATERAL/correlated cross-scope columns, PIVOT/UNPIVOT, table-valued functions → mark `unsupported`.
+- [ ] **Step 4 (TDD):** Tests assert sources per scope, CTE resolution, column→source, ambiguity, and `needs-schema` cases — with spans. Commit.
+
+### Task 1.5.3: Corpus stability + sanity run
+
+**Files:** Test `tests/scope.corpus.test.ts` (skipIf no local corpus)
+
+- [ ] **Step 1:** Run `lower` + `resolveScopes` over a sample of the 1558 Oatly files. Assert **no crashes** and report resolution stats (resolved / ambiguous / needs-schema / unsupported counts). This is a stability + sanity gate, **not** a 100%-resolve gate — schema-free resolution legitimately can't resolve everything.
+
+### Task 1.5.4: Schema input + qualify (schema-fed)
+
+**Files:** Create `src/qualify/schema.ts`, `src/qualify/qualify.ts`; Test `tests/qualify.test.ts`
+
+- [ ] **Step 1:** `Schema` — accept the sqlglot-style nested mappings (`{table:{col:type}}`, `{db:{table:{col}}}`, `{catalog:{schema:{table:{col}}}}`), normalize internally, expose `columnsFor(parts) → {name,type?}[] | undefined` with Databricks case-insensitive matching. Types are opaque strings (reserved for lineage later).
+- [ ] **Step 2:** `qualify(scopes, schema) → { resolvedColumns, expandedStars, diagnostics }`. Expand `*`/`t.*` from schema (tables) or subquery/CTE outputs; resolve bare columns via schema column lists; emit span-carrying diagnostics (unknown column, ambiguous column, unknown source). **No SQL rewrite.**
+- [ ] **Step 3 (TDD):** Hand-written `Schema`; assert `*` expansion, bare-column resolution, and each diagnostic kind. Commit.
+
+### Task 1.5.5: Public exports
+
+**Files:** Create/extend `src/index.ts`
+
+- [ ] **Step 1:** Export `parseDatabricks`, `lower`, `resolveScopes`, `qualify`, `Schema`, and the IR/Scope/Qualification types. Commit.
+
+**Phase 1.5 done when:** scope resolves the representative + corpus-sample queries with structural assertions (no crashes on the Oatly sample), qualify expands stars + emits diagnostics against a test schema, and the whole pipeline typechecks (tsgo) and is vitest-green. Deferred consumers (debug-symbol emitter matched to dbt-studio's `SymbolEntry`/`@dbg` format; editor diagnostics/semantic tokens) are noted but not built here.
+
+---
+
 ## Phase 2 — Conformance harness (the gate for everything after)
 
 Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid SQL and requires **zero syntax errors**. No Python in the loop — the corpus *is* the spec of "must parse." Built once, reused for every dialect. Harness shape ported in spirit from `dbt-studio-vscode/experiments/native-sql-parser-v7/harness`, minus the oracle.
@@ -303,7 +356,7 @@ Default to a single lexer mode. Introduce a mode only when a construct can't be 
 
 - **antlr-ng maturity:** if the pure-TS generator can't handle a large grammar, fall back to the ANTLR jar (Java). Phase 0 settles this.
 - **No automatic over-permissiveness check:** with sqlglot out of the loop, nothing flags SQL we *accept* that is actually invalid. Accepted as a tradeoff given scope (a parse tree for tooling, fed already-valid SQL); if it ever matters, run the optional sqlglot cross-check (Task 2.3). The manual is always truth.
-- **Parse tree (CST) vs AST:** ANTLR yields a CST. Decide in Phase 1 whether consumers walk the CST directly or we add a thin visitor to a normalized AST. Defer the visitor until a consumer needs it (YAGNI).
+- **Parse tree (CST) vs AST:** ~~Decide in Phase 1...~~ **Resolved 2026-06-06:** consumers walk the CST directly for purely positional work (diagnostics, semantic tokens), but the **scope/qualify** semantic layer needs a normalized model, so Phase 1.5 adds a thin **IR** (`lower(tree)`) — built because semantics need it, not speculatively. The IR keeps CST back-refs so positions are never lost.
 - **Corpus coverage ≠ correctness:** a green corpus means "parses these inputs," not "complete." Log corpus size and expand it as gaps surface; never claim a dialect is "done," only "passes corpus N."
 
 ## Success criteria
