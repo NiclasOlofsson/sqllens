@@ -27,3 +27,12 @@ export {
 export { qualify, type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
+
+export {
+  deriveSymbols,
+  MAIN_FRAME,
+  type Span,
+  type Sym,
+  type SymbolKind,
+  type SymbolModifier,
+} from "./symbols/symbols.js";
