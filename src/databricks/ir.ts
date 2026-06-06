@@ -27,11 +27,11 @@ import {
 // keeps a back-reference to its CST context (`cst`) so exact source spans remain
 // available (cst.start / cst.stop). Scope and qualify operate on this, not the CST.
 //
-// OPEN GAP (not a scope decision): expressions are NOT modelled yet. `a+b`, CASE,
-// function calls, aggregates, window/OVER, GROUP BY/HAVING semantics are opaque —
-// today we only extract ColumnRefs + a projection name. This is roughly half of
-// SQL's meaning and is unfinished work, tracked in docs/PLAN.md "Open Gaps". Do not
-// treat it as descoped.
+// Expressions ARE modelled: `lowerExpression` builds a typed `Expr` tree (column, literal,
+// star, binary, unary, function with aggregate + window/OVER, CASE, cast, subquery, EXISTS).
+// Anything not yet modelled becomes an explicit `other` node, never dropped — the gap stays
+// visible and measurable. Residual expression gaps (predicates, grouping analytics, the
+// name-based aggregate heuristic) are tracked in docs/PLAN.md "Open Gaps", not descoped.
 // ---------------------------------------------------------------------------
 
 export interface QueryExpr {
