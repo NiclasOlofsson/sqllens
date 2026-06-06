@@ -1,4 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
+import type { Expr } from "../databricks/ir.js";
 import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 
 // ---------------------------------------------------------------------------
@@ -94,6 +95,64 @@ function walk(scope: Scope, frame: string, out: Sym[]): void {
   }
 
   emitColumns(scope, frame, out);
+  emitFunctions(scope, frame, out);
+}
+
+/** Function symbols (with aggregate/window modifiers) from this frame's expression trees. */
+function emitFunctions(scope: Scope, frame: string, out: Sym[]): void {
+  const body = scope.body;
+  if (body.kind !== "select") return;
+  const visit = (e: Expr): void => {
+    switch (e.kind) {
+      case "function":
+        out.push({ kind: "function", modifiers: fnModifiers(e), name: e.name, span: spanOf(e.cst), frame });
+        e.args.forEach(visit);
+        e.window?.partitionBy.forEach(visit);
+        e.window?.orderBy.forEach(visit);
+        break;
+      case "binary":
+        visit(e.left);
+        visit(e.right);
+        break;
+      case "unary":
+        visit(e.operand);
+        break;
+      case "cast":
+        visit(e.expr);
+        break;
+      case "case":
+        e.whens.forEach((w) => {
+          visit(w.when);
+          visit(w.then);
+        });
+        if (e.elseExpr) visit(e.elseExpr);
+        break;
+      case "predicate":
+        visit(e.operand);
+        e.args.forEach(visit);
+        break;
+      case "lambda":
+        visit(e.body);
+        break;
+      case "subscript":
+        visit(e.base);
+        visit(e.index);
+        break;
+      // column/literal/star → not functions; subquery/exists → their own frames
+    }
+  };
+  for (const p of body.projections) visit(p.expr);
+  if (body.where) visit(body.where);
+  for (const j of body.joinConditions ?? []) visit(j);
+  for (const g of body.groupBy ?? []) visit(g);
+  if (body.having) visit(body.having);
+}
+
+function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {
+  const m: SymbolModifier[] = [];
+  if (e.aggregate) m.push("aggregate");
+  if (e.window) m.push("window");
+  return m;
 }
 
 /** Column references in this frame, plus output declarations for aliased/computed projections. */

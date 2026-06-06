@@ -69,6 +69,32 @@ describe("deriveSymbols — columns", () => {
   });
 });
 
+describe("deriveSymbols — functions", () => {
+  it("emits a function symbol with its name", () => {
+    const f = symbolsOf("SELECT coalesce(a, b) FROM t").find((s) => s.kind === "function");
+    expect(f).toMatchObject({ kind: "function", name: "coalesce", frame: "_main_" });
+  });
+
+  it("tags an aggregate function", () => {
+    const f = symbolsOf("SELECT sum(x) FROM t").find((s) => s.kind === "function" && s.name === "sum");
+    expect(f?.modifiers).toContain("aggregate");
+  });
+
+  it("tags a window function (and its aggregate, when both)", () => {
+    const f = symbolsOf("SELECT sum(x) OVER (PARTITION BY y) FROM t").find(
+      (s) => s.kind === "function" && s.name === "sum",
+    );
+    expect(f?.modifiers).toEqual(expect.arrayContaining(["aggregate", "window"]));
+  });
+
+  it("emits functions nested in predicates and other expressions", () => {
+    const names = symbolsOf("SELECT 1 FROM t WHERE lower(a) IN (upper(b))")
+      .filter((s) => s.kind === "function")
+      .map((s) => s.name);
+    expect(names).toEqual(expect.arrayContaining(["lower", "upper"]));
+  });
+});
+
 describe.skipIf(!existsSync(CORPUS))("deriveSymbols over the Oatly corpus", () => {
   it("derives symbols for every model without throwing; each has a frame and a span", () => {
     const files = readdirSync(CORPUS, { recursive: true }).filter(
