@@ -54,6 +54,8 @@ export interface SelectExpr {
   columns: ColumnRef[];
   /** The WHERE predicate, modelled. */
   where?: Expr;
+  /** JOIN ON predicates at this query level, modelled. */
+  joinConditions?: Expr[];
   /** GROUP BY expressions, if present. */
   groupBy?: Expr[];
   /** The HAVING predicate, modelled. */
@@ -279,7 +281,11 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
   // the CTE bodies (which sit under `ctes`, earlier in the tree).
   const queryTerm = directChildrenOfRule(query, P.RULE_queryTerm)[0];
   if (!queryTerm) throw new Error("lower: query has no queryTerm body");
-  return { kind: "query", ctes, body: lowerQueryTerm(queryTerm), orderBy: extractOrderBy(query), cst: query };
+  const body = lowerQueryTerm(queryTerm);
+  const orderBy = extractOrderBy(query);
+  // ORDER BY references the select's scope, so its columns belong to the body's `columns`.
+  if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns);
+  return { kind: "query", ctes, body, orderBy, cst: query };
 }
 
 /** The ORDER BY sort expressions from the query's queryOrganization (not SORT/CLUSTER/DISTRIBUTE BY). */
@@ -395,17 +401,29 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
   const havingCtx = shallowFirstOfRule(querySpec, P.RULE_havingClause);
   const having = havingCtx ? lowerClausePredicate(havingCtx) : undefined;
 
+  const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
+
   const aggregated =
     (groupBy !== undefined && groupBy.length > 0) ||
     projections.some((p) => hasAggregate(p.expr)) ||
     (having !== undefined && hasAggregate(having));
 
+  // `columns` is derived from the modelled Expr trees — the single source of truth.
+  // (ORDER BY columns are appended in lowerQuery, since ORDER BY lives on the QueryExpr.)
+  const columns: ColumnRef[] = [];
+  for (const p of projections) columnsOf(p.expr, columns);
+  if (where) columnsOf(where, columns);
+  for (const j of joinConditions) columnsOf(j, columns);
+  for (const g of groupBy ?? []) columnsOf(g, columns);
+  if (having) columnsOf(having, columns);
+
   return {
     kind: "select",
     projections,
     from,
-    columns: extractColumnRefs(querySpec),
+    columns,
     where,
+    joinConditions: joinConditions.length ? joinConditions : undefined,
     groupBy,
     having,
     aggregated,
@@ -414,6 +432,14 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
     unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
     cst: querySpec,
   };
+}
+
+/** ON predicates (joinCriteria -> ON booleanExpression) at this query level, lowered. */
+function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
+  return shallowNodesOfRule(fromClause, P.RULE_joinCriteria)
+    .map((jc) => firstOfRule(jc, P.RULE_booleanExpression))
+    .filter((b): b is ParserRuleContext => b !== undefined)
+    .map(lowerExpression);
 }
 
 /** GROUP BY items: each grouping item (groupByClause / namedExpression) yields its expression.
@@ -518,9 +544,9 @@ function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
     ? directChildrenOfRule(pivotColumn, P.RULE_errorCapturingIdentifier).map((i) => i.getText())
     : [];
   const aggregates = directChildrenOfRule(pivotClause, P.RULE_namedExpressionSeq)[0];
-  const aggColumns = aggregates
-    ? extractColumnRefs(aggregates).map((r) => r.parts[r.parts.length - 1])
-    : [];
+  const aggRefs: ColumnRef[] = [];
+  if (aggregates) cstColumnRefs(aggregates, aggRefs);
+  const aggColumns = aggRefs.map((r) => r.parts[r.parts.length - 1]);
   return { values, forColumns, aggColumns };
 }
 
@@ -755,32 +781,59 @@ function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
   return parts ? { kind: "column", parts } : { kind: "expr" };
 }
 
-/**
- * Collect every column reference at this query level — projections, WHERE, JOIN ON,
- * GROUP BY, etc. Stops at nested `query` nodes (those columns belong to that
- * subquery's own scope) and at each column path (so `a.b.c` is one ref, not three).
- */
-function extractColumnRefs(querySpec: ParserRuleContext): ColumnRef[] {
-  const refs: ColumnRef[] = [];
-  const walk = (node: ParseTree): void => {
-    for (let i = 0; i < node.getChildCount(); i++) {
-      const child = node.getChild(i);
-      if (!(child instanceof ParserRuleContext)) continue;
-      if (child.ruleIndex === P.RULE_query) continue; // nested subquery — its own scope
+/** Collect column references out of a modelled Expr tree. The single source of truth for
+ *  `SelectExpr.columns`. Stops at nested subqueries (their columns belong to that scope);
+ *  for an unmodelled `other` node, falls back to a CST walk so its columns are not lost. */
+function columnsOf(expr: Expr, acc: ColumnRef[]): void {
+  switch (expr.kind) {
+    case "column":
+      acc.push({ parts: expr.parts, cst: expr.cst });
+      break;
+    case "binary":
+      columnsOf(expr.left, acc);
+      columnsOf(expr.right, acc);
+      break;
+    case "unary":
+      columnsOf(expr.operand, acc);
+      break;
+    case "cast":
+      columnsOf(expr.expr, acc);
+      break;
+    case "function":
+      expr.args.forEach((a) => columnsOf(a, acc));
+      expr.window?.partitionBy.forEach((a) => columnsOf(a, acc));
+      expr.window?.orderBy.forEach((a) => columnsOf(a, acc));
+      break;
+    case "case":
+      expr.whens.forEach((w) => {
+        columnsOf(w.when, acc);
+        columnsOf(w.then, acc);
+      });
+      if (expr.elseExpr) columnsOf(expr.elseExpr, acc);
+      break;
+    case "other":
+      cstColumnRefs(expr.cst, acc);
+      break;
+    // literal, star, subquery, exists → no column refs at this level
+  }
+}
 
-      if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
-        const parts = columnParts(child);
-        if (parts) {
-          refs.push({ parts, cst: child });
-          continue; // a column path is one ref; don't re-collect its base
-        }
-        // e.g. f(x).field — not a pure column path; fall through to find refs inside it
+/** Fallback: collect maximal column paths from a CST subtree (stops at nested subqueries).
+ *  Used only to recover columns inside an unmodelled `other` Expr node. */
+function cstColumnRefs(node: ParseTree, acc: ColumnRef[]): void {
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (!(child instanceof ParserRuleContext)) continue;
+    if (child.ruleIndex === P.RULE_query) continue;
+    if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
+      const parts = columnParts(child);
+      if (parts) {
+        acc.push({ parts, cst: child });
+        continue;
       }
-      walk(child);
     }
-  };
-  walk(querySpec);
-  return refs;
+    cstColumnRefs(child, acc);
+  }
 }
 
 /** The identifier parts of a column-reference primaryExpression, or undefined if it isn't one. */
