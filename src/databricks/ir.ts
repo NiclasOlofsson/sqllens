@@ -1,10 +1,25 @@
 import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
 import {
+  ArithmeticBinaryContext,
+  ArithmeticUnaryContext,
+  CastByColonContext,
+  CastContext,
   ColumnReferenceContext,
+  ComparisonContext,
+  ConstantDefaultContext,
   DatabricksParser as P,
   DereferenceContext,
+  ExistsContext,
+  FunctionCallContext,
+  LogicalBinaryContext,
+  LogicalNotContext,
+  ParenthesizedExpressionContext,
   PrimaryExpressionContext,
+  SearchedCaseContext,
+  ShiftExpressionContext,
+  SimpleCaseContext,
   StarContext,
+  SubqueryExpressionContext,
 } from "../generated/databricks/DatabricksParser.js";
 
 // ---------------------------------------------------------------------------
@@ -35,6 +50,14 @@ export interface SelectExpr {
   /** Every column reference at this query level (projections, WHERE, JOIN ON, …),
    *  excluding those inside nested subqueries (which belong to their own scope). */
   columns: ColumnRef[];
+  /** The WHERE predicate, modelled. */
+  where?: Expr;
+  /** GROUP BY expressions, if present. */
+  groupBy?: Expr[];
+  /** The HAVING predicate, modelled. */
+  having?: Expr;
+  /** True when the query aggregates: a GROUP BY, or an aggregate function in the projections/HAVING. */
+  aggregated: boolean;
   /** Scalar / IN / EXISTS subqueries appearing in this select's expressions (SELECT list,
    *  WHERE, …) — not the FROM sources. Scoped as children so their (possibly correlated)
    *  columns resolve. */
@@ -73,6 +96,42 @@ export interface ColumnRef {
   cst: ParserRuleContext;
 }
 
+// ---------------------------------------------------------------------------
+// Expression IR. Every select expression lowers to a typed Expr node — common
+// forms are modelled; anything not yet modelled is an explicit `other` node
+// (never silently dropped), so the gap is visible and measurable.
+// ---------------------------------------------------------------------------
+
+export type Expr =
+  | { kind: "column"; parts: string[]; cst: ParserRuleContext }
+  | { kind: "literal"; text: string; cst: ParserRuleContext }
+  | { kind: "star"; cst: ParserRuleContext }
+  | { kind: "binary"; op: string; left: Expr; right: Expr; cst: ParserRuleContext }
+  | { kind: "unary"; op: string; operand: Expr; cst: ParserRuleContext }
+  | {
+      kind: "function";
+      name: string;
+      args: Expr[];
+      /** Heuristic: name is in a known-aggregate set (sum/count/avg/…). */
+      aggregate: boolean;
+      distinct: boolean;
+      /** Present when the call has an OVER clause (a window function). */
+      window?: WindowSpec;
+      cst: ParserRuleContext;
+    }
+  | { kind: "case"; whens: { when: Expr; then: Expr }[]; elseExpr?: Expr; cst: ParserRuleContext }
+  | { kind: "cast"; expr: Expr; typeText: string; cst: ParserRuleContext }
+  | { kind: "subquery"; query: QueryExpr; cst: ParserRuleContext }
+  | { kind: "exists"; query: QueryExpr; cst: ParserRuleContext }
+  /** An expression the IR does not model yet — kept, not dropped. */
+  | { kind: "other"; text: string; cst: ParserRuleContext };
+
+export interface WindowSpec {
+  partitionBy: Expr[];
+  orderBy: Expr[];
+  cst: ParserRuleContext;
+}
+
 export interface SetOpExpr {
   kind: "setop";
   op: "union" | "except" | "intersect";
@@ -87,6 +146,8 @@ export interface Projection {
   /** Output column name: explicit alias, or the column name for a bare column ref. */
   name?: string;
   isStar: boolean;
+  /** The projected expression, modelled. */
+  expr: Expr;
   cst: ParserRuleContext;
 }
 
@@ -197,6 +258,7 @@ export function lower(tree: ParserRuleContext): QueryExpr {
       projections: [],
       from: [],
       columns: [],
+      aggregated: false,
       unsupported: ["non-query"],
       cst: tree,
     };
@@ -293,16 +355,71 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
   }
   const subqueries = extractExpressionSubqueries(querySpec, fromSubqueryNodes);
 
+  const whereCtx = shallowFirstOfRule(querySpec, P.RULE_whereClause);
+  const where = whereCtx ? lowerClausePredicate(whereCtx) : undefined;
+  const groupByCtx = shallowFirstOfRule(querySpec, P.RULE_aggregationClause);
+  const groupBy = groupByCtx ? extractGroupBy(groupByCtx) : undefined;
+  const havingCtx = shallowFirstOfRule(querySpec, P.RULE_havingClause);
+  const having = havingCtx ? lowerClausePredicate(havingCtx) : undefined;
+
+  const aggregated =
+    (groupBy !== undefined && groupBy.length > 0) ||
+    projections.some((p) => hasAggregate(p.expr)) ||
+    (having !== undefined && hasAggregate(having));
+
   return {
     kind: "select",
     projections,
     from,
     columns: extractColumnRefs(querySpec),
+    where,
+    groupBy,
+    having,
+    aggregated,
     subqueries: subqueries.length ? subqueries : undefined,
     pivot: fromClause ? extractPivot(fromClause) : undefined,
     unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
     cst: querySpec,
   };
+}
+
+/** GROUP BY items: each grouping item (groupByClause / namedExpression) yields its expression.
+ *  Grouping analytics (ROLLUP/CUBE/GROUPING SETS) only contribute their first expression for now. */
+function extractGroupBy(aggregationClause: ParserRuleContext): Expr[] {
+  const out: Expr[] = [];
+  for (let i = 0; i < aggregationClause.getChildCount(); i++) {
+    const child = aggregationClause.getChild(i);
+    if (!(child instanceof ParserRuleContext)) continue;
+    const e = firstOfRule(child, P.RULE_expression);
+    if (e) out.push(lowerExpression(e));
+  }
+  return out;
+}
+
+/** Lower the boolean expression inside a WHERE/HAVING clause. */
+function lowerClausePredicate(clause: ParserRuleContext): Expr | undefined {
+  const inner = firstOfRule(clause, P.RULE_booleanExpression);
+  return inner ? lowerExpression(inner) : undefined;
+}
+
+/** True if an expression contains an aggregate function anywhere. */
+function hasAggregate(expr: Expr): boolean {
+  switch (expr.kind) {
+    case "function":
+      // An aggregate used as a window function (sum(x) OVER …) does not aggregate the query.
+      return (expr.aggregate && !expr.window) || expr.args.some(hasAggregate);
+    case "binary":
+      return hasAggregate(expr.left) || hasAggregate(expr.right);
+    case "unary":
+      return hasAggregate(expr.operand);
+    case "cast":
+      return hasAggregate(expr.expr);
+    case "case":
+      return expr.whens.some((w) => hasAggregate(w.when) || hasAggregate(w.then)) ||
+        (expr.elseExpr !== undefined && hasAggregate(expr.elseExpr));
+    default:
+      return false;
+  }
 }
 
 /** Top-level nested queries that are NOT FROM sources — scalar/IN/EXISTS subqueries in expressions. */
@@ -406,7 +523,179 @@ function buildProjection(named: ParserRuleContext): Projection {
   } else if (expr.kind === "column") {
     name = expr.parts[expr.parts.length - 1]; // output name is the column's last part
   }
-  return { name, isStar: expr.kind === "star", cst: named };
+  return {
+    name,
+    isStar: expr.kind === "star",
+    expr: exprCtx ? lowerExpression(exprCtx) : otherExpr(named),
+    cst: named,
+  };
+}
+
+function otherExpr(node: ParserRuleContext): Expr {
+  return { kind: "other", text: node.getText(), cst: node };
+}
+
+const AGGREGATES = new Set([
+  "sum", "count", "avg", "mean", "min", "max", "first", "last", "first_value", "last_value",
+  "stddev", "stddev_pop", "stddev_samp", "variance", "var_pop", "var_samp", "collect_list",
+  "collect_set", "approx_count_distinct", "count_if", "any", "some", "bool_and", "bool_or",
+  "corr", "covar_pop", "covar_samp", "skewness", "kurtosis", "percentile", "percentile_approx",
+  "median", "mode", "array_agg", "max_by", "min_by", "bit_and", "bit_or", "bit_xor",
+]);
+
+const EXPR_RULES = new Set([
+  P.RULE_expression, P.RULE_booleanExpression, P.RULE_valueExpression, P.RULE_primaryExpression,
+]);
+
+/** Lower any expression CST node into a typed Expr. Unmodelled shapes become `other`, never dropped. */
+function lowerExpression(node: ParserRuleContext): Expr {
+  if (node instanceof ParenthesizedExpressionContext) {
+    const inner = firstOfRule(node, P.RULE_expression);
+    return inner ? lowerExpression(inner) : otherExpr(node);
+  }
+  if (node instanceof ColumnReferenceContext || node instanceof DereferenceContext) {
+    const parts = columnParts(node);
+    return parts ? { kind: "column", parts, cst: node } : otherExpr(node);
+  }
+  if (node instanceof StarContext) return { kind: "star", cst: node };
+  if (node instanceof ConstantDefaultContext) return { kind: "literal", text: node.getText(), cst: node };
+  if (node instanceof FunctionCallContext) return lowerFunction(node);
+  if (node instanceof SearchedCaseContext || node instanceof SimpleCaseContext) return lowerCase(node);
+  if (node instanceof CastContext || node instanceof CastByColonContext) {
+    const inner = firstOfRule(node, P.RULE_expression) ?? firstOfRule(node, P.RULE_valueExpression);
+    const dt = firstOfRule(node, P.RULE_dataType);
+    return {
+      kind: "cast",
+      expr: inner ? lowerExpression(inner) : otherExpr(node),
+      typeText: dt?.getText() ?? "",
+      cst: node,
+    };
+  }
+  if (node instanceof SubqueryExpressionContext) {
+    const q = firstOfRule(node, P.RULE_query);
+    return q ? { kind: "subquery", query: lowerQuery(q), cst: node } : otherExpr(node);
+  }
+  if (node instanceof ExistsContext) {
+    const q = firstOfRule(node, P.RULE_query);
+    return q ? { kind: "exists", query: lowerQuery(q), cst: node } : otherExpr(node);
+  }
+  if (
+    node instanceof ArithmeticBinaryContext ||
+    node instanceof ComparisonContext ||
+    node instanceof ShiftExpressionContext ||
+    node instanceof LogicalBinaryContext
+  ) {
+    return lowerBinary(node);
+  }
+  if (node instanceof ArithmeticUnaryContext || node instanceof LogicalNotContext) {
+    return lowerUnary(node);
+  }
+  // Wrapper rule (expression, ValueExpressionDefault, Predicated with no predicate, …):
+  // recurse into the single expression child if that's all there is.
+  const sole = soleExprChild(node);
+  return sole ? lowerExpression(sole) : otherExpr(node);
+}
+
+/** The single expression-rule child of `node`, if `node` is just a wrapper (no operator/predicate). */
+function soleExprChild(node: ParserRuleContext): ParserRuleContext | undefined {
+  let found: ParserRuleContext | undefined;
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (child instanceof ParserRuleContext) {
+      if (!EXPR_RULES.has(child.ruleIndex)) return undefined; // a predicate/other rule — not a wrapper
+      if (found) return undefined;
+      found = child;
+    } else {
+      return undefined; // a terminal (operator) — not a plain wrapper
+    }
+  }
+  return found;
+}
+
+function lowerBinary(node: ParserRuleContext): Expr {
+  const operands: ParserRuleContext[] = [];
+  const op: string[] = [];
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (child instanceof ParserRuleContext && EXPR_RULES.has(child.ruleIndex)) operands.push(child);
+    else if (child) op.push(child.getText());
+  }
+  if (operands.length !== 2) return otherExpr(node);
+  return {
+    kind: "binary",
+    op: op.join(" ").trim(),
+    left: lowerExpression(operands[0]),
+    right: lowerExpression(operands[1]),
+    cst: node,
+  };
+}
+
+function lowerUnary(node: ParserRuleContext): Expr {
+  let operand: ParserRuleContext | undefined;
+  const op: string[] = [];
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (child instanceof ParserRuleContext && EXPR_RULES.has(child.ruleIndex)) operand = child;
+    else if (child) op.push(child.getText());
+  }
+  return operand
+    ? { kind: "unary", op: op.join(" ").trim(), operand: lowerExpression(operand), cst: node }
+    : otherExpr(node);
+}
+
+function lowerFunction(node: FunctionCallContext): Expr {
+  const name = firstOfRule(node, P.RULE_functionName)?.getText() ?? "";
+  const args = directChildrenOfRule(node, P.RULE_functionArgument).map((a) => {
+    const e = firstOfRule(a, P.RULE_expression);
+    return e ? lowerExpression(e) : otherExpr(a);
+  });
+  const windowCtx = firstOfRule(node, P.RULE_windowSpec);
+  return {
+    kind: "function",
+    name,
+    args,
+    aggregate: AGGREGATES.has(name.toLowerCase()),
+    distinct: directTokenType(node, [P.DISTINCT]) !== undefined,
+    window: windowCtx ? lowerWindow(windowCtx) : undefined,
+    cst: node,
+  };
+}
+
+function lowerWindow(windowSpec: ParserRuleContext): WindowSpec {
+  const sortItems = collectOfRule(windowSpec, P.RULE_sortItem);
+  const orderBy = sortItems.map((si) => {
+    const e = firstOfRule(si, P.RULE_expression);
+    return e ? lowerExpression(e) : otherExpr(si);
+  });
+  // PARTITION BY expressions are the top-level expressions not inside a sortItem (ORDER BY).
+  const partitionBy: Expr[] = [];
+  const walk = (n: ParseTree) => {
+    for (let i = 0; i < n.getChildCount(); i++) {
+      const child = n.getChild(i);
+      if (!(child instanceof ParserRuleContext)) continue;
+      if (child.ruleIndex === P.RULE_sortItem) continue;
+      if (child.ruleIndex === P.RULE_expression) {
+        partitionBy.push(lowerExpression(child));
+        continue;
+      }
+      walk(child);
+    }
+  };
+  walk(windowSpec);
+  return { partitionBy, orderBy, cst: windowSpec };
+}
+
+function lowerCase(node: ParserRuleContext): Expr {
+  const whens = collectOfRule(node, P.RULE_whenClause).map((wc) => {
+    const exprs = directChildrenOfRule(wc, P.RULE_expression);
+    return {
+      when: exprs[0] ? lowerExpression(exprs[0]) : otherExpr(wc),
+      then: exprs[1] ? lowerExpression(exprs[1]) : otherExpr(wc),
+    };
+  });
+  // The ELSE expression is a direct `expression` child of the case node (not inside a whenClause).
+  const elseCtx = directChildrenOfRule(node, P.RULE_expression).at(-1);
+  return { kind: "case", whens, elseExpr: elseCtx ? lowerExpression(elseCtx) : undefined, cst: node };
 }
 
 type ClassifiedExpr =

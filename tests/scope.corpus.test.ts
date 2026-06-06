@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { lower, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
+import { lower, type Expr, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { resolveColumn, resolveScopes, type Scope } from "../src/scope/scope.js";
 
@@ -13,6 +13,43 @@ interface Stats {
   sources: number;
   tables: number;
   subqueries: number;
+  exprNodes: number;
+  exprOther: number; // explicitly unmodelled expression nodes
+  windowFns: number;
+  aggregateFns: number;
+}
+
+function walkExpr(e: Expr, acc: Stats): void {
+  acc.exprNodes++;
+  switch (e.kind) {
+    case "other":
+      acc.exprOther++;
+      break;
+    case "function":
+      if (e.window) acc.windowFns++;
+      if (e.aggregate) acc.aggregateFns++;
+      e.args.forEach((a) => walkExpr(a, acc));
+      e.window?.partitionBy.forEach((a) => walkExpr(a, acc));
+      e.window?.orderBy.forEach((a) => walkExpr(a, acc));
+      break;
+    case "binary":
+      walkExpr(e.left, acc);
+      walkExpr(e.right, acc);
+      break;
+    case "unary":
+      walkExpr(e.operand, acc);
+      break;
+    case "cast":
+      walkExpr(e.expr, acc);
+      break;
+    case "case":
+      e.whens.forEach((w) => {
+        walkExpr(w.when, acc);
+        walkExpr(w.then, acc);
+      });
+      if (e.elseExpr) walkExpr(e.elseExpr, acc);
+      break;
+  }
 }
 
 interface ScopeStats {
@@ -83,6 +120,10 @@ function walkBody(body: QueryBody, acc: Stats): void {
   }
   acc.projections += body.projections.length;
   acc.projectionsNamed += body.projections.filter((p) => p.name !== undefined).length;
+  for (const p of body.projections) walkExpr(p.expr, acc);
+  if (body.where) walkExpr(body.where, acc);
+  for (const g of body.groupBy ?? []) walkExpr(g, acc);
+  if (body.having) walkExpr(body.having, acc);
   for (const s of body.from) {
     acc.sources++;
     if (s.kind === "table") acc.tables++;
@@ -123,6 +164,10 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       sources: 0,
       tables: 0,
       subqueries: 0,
+      exprNodes: 0,
+      exprOther: 0,
+      windowFns: 0,
+      aggregateFns: 0,
     };
     const scopeStats: ScopeStats = {
       scopes: 0,
@@ -174,6 +219,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         `  CTEs:        ${stats.ctes}`,
         `  sources:     ${stats.sources}  (tables ${stats.tables}, subqueries ${stats.subqueries})`,
         `  projections: ${stats.projections}  named ${stats.projectionsNamed} (${pct(stats.projectionsNamed, stats.projections)}%)`,
+        `  expr nodes:  ${stats.exprNodes}  modelled ${pct(stats.exprNodes - stats.exprOther, stats.exprNodes)}% (other ${stats.exprOther}); window fns ${stats.windowFns}, aggregate fns ${stats.aggregateFns}`,
         ``,
         `Scope resolution (${scopeStats.scopes} scopes):`,
         `  outputs known: ${scopeStats.outputsKnown} (${pct(scopeStats.outputsKnown, scopeStats.scopes)}%)`,
