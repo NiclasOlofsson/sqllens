@@ -117,11 +117,22 @@ describe("qualify", () => {
     expect(aliased.result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
   });
 
-  it("does not flag a field on a computed CTE column (type genuinely needs inference)", () => {
-    // `addr` here is computed (a function call), so its type is unknowable without the
-    // type-inference engine — the one honest boundary. Conservative: no false unknown-field.
+  it("flags a bad field on a COMPUTED struct column (via inference)", () => {
+    // `addr` is computed by named_struct — only inference can type it. The bad field must flag.
     const schema = new Schema({ t: { x: "string" } });
-    const { result } = run("WITH c AS (SELECT upper(x) AS addr FROM t) SELECT addr.nope FROM c", schema);
+    const { result } = run(
+      "WITH c AS (SELECT named_struct('city', x) AS addr FROM t) SELECT addr.nope FROM c",
+      schema,
+    );
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+  });
+
+  it("validates a good field on a computed struct column", () => {
+    const schema = new Schema({ t: { x: "string" } });
+    const { result } = run(
+      "WITH c AS (SELECT named_struct('city', x) AS addr FROM t) SELECT addr.city FROM c",
+      schema,
+    );
     expect(result.diagnostics.filter((d) => d.kind === "unknown-field")).toEqual([]);
   });
 

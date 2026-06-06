@@ -3,6 +3,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
+import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 
@@ -118,6 +119,22 @@ describe("deriveSymbols — functions", () => {
       .filter((s) => s.kind === "function")
       .map((s) => s.name);
     expect(names).toEqual(expect.arrayContaining(["lower", "upper"]));
+  });
+});
+
+describe("deriveSymbols — column types (inference wired in)", () => {
+  it("carries the inferred type on a column symbol when a schema is given", () => {
+    const tree = resolveScopes(lower(parseDatabricks("SELECT a FROM t").tree));
+    const a = deriveSymbols(tree, new Schema({ t: { a: "bigint" } })).find(
+      (s) => s.kind === "column" && s.name === "a",
+    );
+    expect(a?.type).toEqual({ kind: "scalar", name: "bigint" });
+  });
+
+  it("types a computed output column symbol via inference", () => {
+    const tree = resolveScopes(lower(parseDatabricks("SELECT lower(a) AS x FROM t").tree));
+    const x = deriveSymbols(tree, new Schema({ t: { a: "string" } })).find((s) => s.name === "x");
+    expect(x?.type).toEqual({ kind: "scalar", name: "string" });
   });
 });
 

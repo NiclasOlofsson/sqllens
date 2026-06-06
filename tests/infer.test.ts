@@ -63,8 +63,60 @@ describe("inferType", () => {
     expect(t.kind).toBeDefined();
   });
 
-  it("returns unknown for a not-yet-typed expression (a scalar subquery)", () => {
-    expect(typeOf("SELECT (SELECT 1) AS x FROM t", new Schema({}))).toEqual({ kind: "unknown" });
+  it("types a scalar subquery by its single output column", () => {
+    expect(typeOf("SELECT (SELECT max(x) FROM u) AS m FROM t", new Schema({ u: { x: "date" } }))).toEqual(
+      scalar("date"),
+    );
+  });
+});
+
+describe("inferType — subqueries, constructors, higher-order functions", () => {
+  it("types a struct constructor and its field access", () => {
+    expect(
+      typeOf("SELECT named_struct('city', a, 'zip', b) FROM t", new Schema({ t: { a: "string", b: "int" } })),
+    ).toEqual({
+      kind: "struct",
+      fields: [
+        { name: "city", type: scalar("string") },
+        { name: "zip", type: scalar("int") },
+      ],
+    });
+  });
+
+  it("types map() from its key/value arguments", () => {
+    expect(typeOf("SELECT map('k', a) FROM t", new Schema({ t: { a: "int" } }))).toEqual({
+      kind: "map",
+      key: scalar("string"),
+      value: scalar("int"),
+    });
+  });
+
+  it("types from_json() from its schema argument", () => {
+    expect(typeOf("SELECT from_json(j, 'struct<n:int>') FROM t", new Schema({ t: { j: "string" } }))).toEqual({
+      kind: "struct",
+      fields: [{ name: "n", type: scalar("int") }],
+    });
+  });
+
+  it("types transform() as an array of the lambda body's type", () => {
+    // arr: array<int>, x -> x + 1 (int) ⇒ array<int>
+    expect(typeOf("SELECT transform(arr, x -> x + 1) FROM t", new Schema({ t: { arr: "array<int>" } }))).toEqual({
+      kind: "array",
+      element: scalar("int"),
+    });
+  });
+
+  it("types transform() whose lambda changes the element type", () => {
+    // arr: array<int>, x -> cast(x AS string) ⇒ array<string>
+    expect(
+      typeOf("SELECT transform(arr, x -> cast(x AS string)) FROM t", new Schema({ t: { arr: "array<int>" } })),
+    ).toEqual({ kind: "array", element: scalar("string") });
+  });
+
+  it("types aggregate()/reduce() by the accumulator", () => {
+    expect(
+      typeOf("SELECT aggregate(arr, 0, (acc, x) -> acc + x) FROM t", new Schema({ t: { arr: "array<int>" } })),
+    ).toEqual(scalar("int"));
   });
 });
 

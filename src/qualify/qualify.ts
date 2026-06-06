@@ -8,6 +8,7 @@ import {
   type ScopeTree,
   type SplitRef,
 } from "../scope/scope.js";
+import { inferType } from "../infer/infer.js";
 import { parseStructFields, type Column, type Schema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -263,7 +264,7 @@ function checkColumn(
         diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
         return; // base column missing — don't also walk its (nonexistent) fields
       }
-      checkFieldPath(src, name, split.fields, schema, resolved, ref, diagnostics);
+      checkFieldPath(split.fields, scope, schema, ref, diagnostics);
       return; // qualifier resolved (or columns unknown) — done
     }
     return; // qualifier visible but not found in this chain — defensive; don't flag
@@ -275,21 +276,17 @@ function checkColumn(
     if (sources.length === 0) continue;
     let matches = 0;
     let unknown = 0;
-    let matched: ResolvedSource | undefined;
     for (const src of sources) {
       const cols = sourceColumns(src, schema, resolved);
       if (!cols) unknown++;
-      else if (cols.some((c) => normalizeName(c) === name)) {
-        matches++;
-        matched = src;
-      }
+      else if (cols.some((c) => normalizeName(c) === name)) matches++;
     }
     if (matches > 1) {
       diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${name}`));
       return;
     }
     if (matches === 1) {
-      if (matched) checkFieldPath(matched, name, split.fields, schema, resolved, ref, diagnostics);
+      checkFieldPath(split.fields, scope, schema, ref, diagnostics);
       return;
     }
     if (unknown > 0) return; // might live in a source whose columns we don't know
@@ -299,29 +296,25 @@ function checkColumn(
 }
 
 /**
- * Walk a struct/field path (`addr.city`, `a.b.c`) against the base column's struct type. The
- * type is resolved from a table schema or threaded through a derived (CTE/subquery) column —
- * so field access on a derived column is validated too, not just on base tables. Conservative:
- * a field is flagged only when its parent is a *known struct* that lacks it; arrays, maps,
- * primitives, and unknown types (e.g. a computed column, which needs type inference) stop the
- * walk without flagging.
+ * Validate a struct/field path (`addr.city`, `a.b.c`) against the base column's *inferred* type.
+ * inferType resolves the base column — the schema for a base table, the producing projection for
+ * a derived column, the function for a computed one — so field access on a computed column is
+ * checked too. Conservative: a field is flagged only when its parent is a known struct that lacks
+ * it; an unknown or non-struct (array/map/primitive) type stops the walk without flagging.
  */
 function checkFieldPath(
-  src: ResolvedSource,
-  columnName: string,
   fields: string[],
+  scope: Scope,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
   ref: ColumnRef,
   diagnostics: Diagnostic[],
 ): void {
   if (fields.length === 0) return;
-  let type = sourceColumnType(src, columnName, schema, resolved);
+  const baseParts = ref.parts.slice(0, ref.parts.length - fields.length);
+  let type = inferType({ kind: "column", parts: baseParts, cst: ref.cst }, scope, schema);
   for (const field of fields) {
-    if (!type) return; // unknown type — stop
-    const structFields = parseStructFields(type);
-    if (!structFields) return; // not a struct (array/map/primitive) — don't flag
-    const hit = structFields.find((f) => normalizeName(f.name) === normalizeName(field));
+    if (type.kind !== "struct") return; // unknown / non-struct — don't flag
+    const hit = type.fields.find((f) => normalizeName(f.name) === normalizeName(field));
     if (!hit) {
       diagnostics.push(columnDiag("unknown-field", ref, `Unknown field: ${ref.parts.join(".")}`));
       return;

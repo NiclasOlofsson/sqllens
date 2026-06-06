@@ -1,5 +1,8 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { Expr, Projection } from "../databricks/ir.js";
+import { inferType } from "../infer/infer.js";
+import type { Type } from "../infer/types.js";
+import { Schema } from "../qualify/schema.js";
 import {
   resolveColumn,
   type ColumnResolution,
@@ -63,30 +66,35 @@ export interface Sym {
    *  projection in a CTE/subquery that produces a column). Absent for a catalog table/column
    *  whose declaration is not in the query — go-to-definition there needs the catalog. */
   definition?: Span;
+  /** For a column or function symbol, its inferred type — when determinable (needs the schema
+   *  for base-table columns). `unknown`/absent when there is no schema or no rule. */
+  type?: Type;
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
 export const MAIN_FRAME = "_main_";
 
-export function deriveSymbols(tree: ScopeTree): Sym[] {
+/** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
+ *  without one (the default), names + spans + frames + definitions are still produced. */
+export function deriveSymbols(tree: ScopeTree, schema: Schema = new Schema({})): Sym[] {
   const out: Sym[] = [];
-  walk(tree.root, MAIN_FRAME, out);
+  walk(tree.root, MAIN_FRAME, out, schema);
   return out;
 }
 
-function walk(scope: Scope, frame: string, out: Sym[]): void {
+function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
   const walked = new Set<Scope>();
 
   // CTE declarations, and each CTE body as its own frame.
   for (const [name, cteRef] of scope.ctes) {
     out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.cst), frame });
-    walk(cteRef.scope, name, out);
+    walk(cteRef.scope, name, out, schema);
     walked.add(cteRef.scope);
   }
   // Set-op branches share this scope's frame.
   if (scope.branches) {
-    walk(scope.branches.left, frame, out);
-    walk(scope.branches.right, frame, out);
+    walk(scope.branches.left, frame, out, schema);
+    walk(scope.branches.right, frame, out, schema);
     walked.add(scope.branches.left);
     walked.add(scope.branches.right);
   }
@@ -96,27 +104,34 @@ function walk(scope: Scope, frame: string, out: Sym[]): void {
     const alias = aliasSymbol(src, frame);
     if (alias) out.push(alias);
     if (src.kind === "subquery") {
-      walk(src.scope, src.source.alias ?? "_subquery_", out);
+      walk(src.scope, src.source.alias ?? "_subquery_", out, schema);
       walked.add(src.scope);
     }
   }
   // Expression subqueries (scalar / IN / EXISTS) — the remaining children, each its own frame.
   for (const child of scope.children) {
-    if (!walked.has(child)) walk(child, "_sub_", out);
+    if (!walked.has(child)) walk(child, "_sub_", out, schema);
   }
 
-  emitColumns(scope, frame, out);
-  emitFunctions(scope, frame, out);
+  emitColumns(scope, frame, out, schema);
+  emitFunctions(scope, frame, out, schema);
 }
 
 /** Function symbols (with aggregate/window modifiers) from this frame's expression trees. */
-function emitFunctions(scope: Scope, frame: string, out: Sym[]): void {
+function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
   const body = scope.body;
   if (body.kind !== "select") return;
   const visit = (e: Expr): void => {
     switch (e.kind) {
       case "function":
-        out.push({ kind: "function", modifiers: fnModifiers(e), name: e.name, span: spanOf(e.cst), frame });
+        out.push({
+          kind: "function",
+          modifiers: fnModifiers(e),
+          name: e.name,
+          span: spanOf(e.cst),
+          frame,
+          type: typeOrUndefined(inferType(e, scope, schema)),
+        });
         e.args.forEach(visit);
         e.window?.partitionBy.forEach(visit);
         e.window?.orderBy.forEach(visit);
@@ -167,7 +182,7 @@ function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {
 }
 
 /** Column references in this frame, plus output declarations for aliased/computed projections. */
-function emitColumns(scope: Scope, frame: string, out: Sym[]): void {
+function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
   const body = scope.body;
   if (body.kind === "select") {
     for (const p of body.projections) {
@@ -182,7 +197,14 @@ function emitColumns(scope: Scope, frame: string, out: Sym[]): void {
       const last = p.expr.kind === "column" ? p.expr.parts[p.expr.parts.length - 1] : undefined;
       const echo = last !== undefined && last.toLowerCase() === p.name.toLowerCase();
       if (!echo) {
-        out.push({ kind: "column", modifiers: ["declaration", "output"], name: p.name, span: spanOf(p.cst), frame });
+        out.push({
+          kind: "column",
+          modifiers: ["declaration", "output"],
+          name: p.name,
+          span: spanOf(p.cst),
+          frame,
+          type: typeOrUndefined(inferType(p.expr, scope, schema)),
+        });
       }
     }
   }
@@ -198,8 +220,13 @@ function emitColumns(scope: Scope, frame: string, out: Sym[]): void {
       span: spanOf(ref.cst),
       frame,
       definition: columnDefinition(res),
+      type: typeOrUndefined(inferType({ kind: "column", parts: ref.parts, cst: ref.cst }, scope, schema)),
     });
   }
+}
+
+function typeOrUndefined(t: Type): Type | undefined {
+  return t.kind === "unknown" ? undefined : t;
 }
 
 function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
