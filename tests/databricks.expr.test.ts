@@ -188,4 +188,19 @@ describe("aggregation clauses", () => {
     const sel = selectOf("SELECT a FROM t WHERE a > 1");
     expect(sel.where).toMatchObject({ kind: "binary", op: ">" });
   });
+
+  it("captures all GROUP BY keys under ROLLUP, not just the first", () => {
+    const sel = selectOf("SELECT a, b, sum(x) FROM t GROUP BY ROLLUP(a, b)");
+    expect(sel.groupBy?.map((g) => (g.kind === "column" ? g.parts.join(".") : g.kind))).toEqual(["a", "b"]);
+  });
+
+  it("captures every key across GROUPING SETS", () => {
+    const sel = selectOf("SELECT a, b FROM t GROUP BY GROUPING SETS ((a, b), (a))");
+    const keys = sel.groupBy?.filter((g) => g.kind === "column").length ?? 0;
+    expect(keys).toBe(3); // a, b, a
+  });
+
+  it("recognizes additional Spark aggregates (every) by name", () => {
+    expect(selectOf("SELECT every(x > 0) FROM t").aggregated).toBe(true);
+  });
 });

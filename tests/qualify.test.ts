@@ -133,6 +133,12 @@ describe("qualify", () => {
     expect(result.diagnostics.map((d) => d.kind)).toContain("ambiguous-column");
   });
 
+  it("expands a qualified star (t.*) to only that source's columns", () => {
+    const schema = new Schema({ t: { a: "int", b: "int" }, u: { c: "int", d: "int" } });
+    const { tree, result } = run("SELECT t.* FROM t JOIN u ON t.a = u.c", schema);
+    expect(result.columnsOf(tree.root)).toEqual(["a", "b"]);
+  });
+
   it("emits no column diagnostics without a schema (columns unknown)", () => {
     const { result } = run("SELECT whatever FROM t", new Schema({}));
     expect(result.diagnostics.filter((d) => d.kind !== "unknown-table")).toEqual([]);

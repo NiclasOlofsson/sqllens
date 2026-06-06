@@ -119,7 +119,8 @@ export interface ColumnRef {
 export type Expr =
   | { kind: "column"; parts: string[]; cst: ParserRuleContext }
   | { kind: "literal"; text: string; cst: ParserRuleContext }
-  | { kind: "star"; cst: ParserRuleContext }
+  /** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. */
+  | { kind: "star"; qualifier?: string[]; cst: ParserRuleContext }
   | { kind: "binary"; op: string; left: Expr; right: Expr; cst: ParserRuleContext }
   | { kind: "unary"; op: string; operand: Expr; cst: ParserRuleContext }
   | {
@@ -475,17 +476,11 @@ function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
     .map(lowerExpression);
 }
 
-/** GROUP BY items: each grouping item (groupByClause / namedExpression) yields its expression.
- *  Grouping analytics (ROLLUP/CUBE/GROUPING SETS) only contribute their first expression for now. */
+/** GROUP BY keys — every grouping expression, including each one inside ROLLUP / CUBE /
+ *  GROUPING SETS (all of which bottom out at `expression` nodes). Collects the outermost
+ *  expressions without descending into a nested subquery. */
 function extractGroupBy(aggregationClause: ParserRuleContext): Expr[] {
-  const out: Expr[] = [];
-  for (let i = 0; i < aggregationClause.getChildCount(); i++) {
-    const child = aggregationClause.getChild(i);
-    if (!(child instanceof ParserRuleContext)) continue;
-    const e = firstOfRule(child, P.RULE_expression);
-    if (e) out.push(lowerExpression(e));
-  }
-  return out;
+  return shallowNodesOfRule(aggregationClause, P.RULE_expression).map(lowerExpression);
 }
 
 /** Lower the boolean expression inside a WHERE/HAVING clause. */
@@ -635,10 +630,14 @@ function otherExpr(node: ParserRuleContext): Expr {
 
 const AGGREGATES = new Set([
   "sum", "count", "avg", "mean", "min", "max", "first", "last", "first_value", "last_value",
-  "stddev", "stddev_pop", "stddev_samp", "variance", "var_pop", "var_samp", "collect_list",
-  "collect_set", "approx_count_distinct", "count_if", "any", "some", "bool_and", "bool_or",
-  "corr", "covar_pop", "covar_samp", "skewness", "kurtosis", "percentile", "percentile_approx",
-  "median", "mode", "array_agg", "max_by", "min_by", "bit_and", "bit_or", "bit_xor",
+  "stddev", "std", "stddev_pop", "stddev_samp", "variance", "var_pop", "var_samp", "collect_list",
+  "collect_set", "approx_count_distinct", "count_if", "any", "some", "every", "any_value",
+  "bool_and", "bool_or", "corr", "covar_pop", "covar_samp", "skewness", "kurtosis", "percentile",
+  "percentile_approx", "approx_percentile", "median", "mode", "array_agg", "max_by", "min_by",
+  "bit_and", "bit_or", "bit_xor", "grouping", "grouping_id", "histogram_numeric",
+  "count_min_sketch", "try_sum", "try_avg", "regr_avgx", "regr_avgy", "regr_count",
+  "regr_intercept", "regr_r2", "regr_slope", "regr_sxx", "regr_sxy", "regr_syy",
+  "hll_sketch_agg", "hll_union_agg", "bitmap_construct_agg", "bitmap_or_agg",
 ]);
 
 const EXPR_RULES = new Set([
@@ -655,7 +654,7 @@ function lowerExpression(node: ParserRuleContext): Expr {
     const parts = columnParts(node);
     return parts ? { kind: "column", parts, cst: node } : otherExpr(node);
   }
-  if (node instanceof StarContext) return { kind: "star", cst: node };
+  if (node instanceof StarContext) return { kind: "star", qualifier: starQualifier(node), cst: node };
   if (node instanceof ConstantDefaultContext) return { kind: "literal", text: node.getText(), cst: node };
   if (node instanceof FunctionCallContext) return lowerFunction(node);
   if (node instanceof SearchedCaseContext || node instanceof SimpleCaseContext) return lowerCase(node);
@@ -778,6 +777,12 @@ function lowerTimestampFn(node: ParserRuleContext): Expr {
 function leadingTokenText(node: ParserRuleContext): string {
   const c = node.getChild(0);
   return c instanceof TerminalNode ? c.getText() : "";
+}
+
+/** The table parts of a qualified star `t.*` / `db.t.*`, or undefined for a bare `*`. */
+function starQualifier(node: StarContext): string[] | undefined {
+  const qn = directChildrenOfRule(node, P.RULE_qualifiedName)[0];
+  return qn ? directChildrenOfRule(qn, P.RULE_identifier).map((i) => i.getText()) : undefined;
 }
 
 /** The single expression-rule child of `node`, if `node` is just a wrapper (no operator/predicate). */

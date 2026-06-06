@@ -65,7 +65,8 @@ function resolveColumns(
   const out: Column[] = [];
   for (const p of body.projections) {
     if (p.isStar) {
-      const cols = expandStar(scope, schema, resolved, diagnostics);
+      const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
+      const cols = expandStar(scope, schema, resolved, diagnostics, qualifier);
       if (cols === undefined) return "unknown";
       out.push(...cols);
     } else if (p.name !== undefined) {
@@ -126,13 +127,21 @@ function expandStar(
   schema: Schema,
   resolved: Map<Scope, Column[] | "unknown">,
   diagnostics: Diagnostic[],
+  qualifier?: string[],
 ): Column[] | undefined {
+  // A qualified star `t.*` expands only the source keyed by `t` (its last name part); a bare
+  // `*` expands every source in order.
+  const want = qualifier ? normalizeName(qualifier[qualifier.length - 1] ?? "") : undefined;
   const cols: Column[] = [];
-  for (const src of scope.sources.values()) {
+  let matched = false;
+  for (const [key, src] of scope.sources) {
+    if (want !== undefined && key !== want) continue;
+    matched = true;
     const srcCols = columnsOfSource(src, schema, resolved, diagnostics);
     if (srcCols === undefined) return undefined;
     cols.push(...srcCols);
   }
+  if (want !== undefined && !matched) return undefined; // qualified star naming no visible source
   return cols;
 }
 
