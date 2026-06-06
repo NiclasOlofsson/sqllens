@@ -1,4 +1,5 @@
 import type {
+  ColumnRef,
   CteDef,
   QueryBody,
   QueryExpr,
@@ -45,6 +46,39 @@ export type ResolvedSource =
 
 export function resolveScopes(query: QueryExpr): ScopeTree {
   return { root: buildQueryScope(query) };
+}
+
+export type ColumnResolution =
+  | { kind: "bound"; source: ResolvedSource }
+  | { kind: "ambiguous"; candidates: ResolvedSource[] }
+  | { kind: "unresolved" } // qualifier names no visible source
+  | { kind: "needs-schema" }; // can't tell without a source's column list
+
+/**
+ * Bind a column reference to the source it comes from, schema-free.
+ * - Qualified (`t.c`): the source whose key matches the qualifier, else unresolved.
+ * - Unqualified (`c`): the single source whose known columns include it; ambiguous if
+ *   several do; needs-schema if a source's columns aren't known without a catalog.
+ */
+export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
+  if (ref.parts.length >= 2) {
+    const qualifier = normalizeName(ref.parts[ref.parts.length - 2]);
+    const source = scope.sources.get(qualifier);
+    return source ? { kind: "bound", source } : { kind: "unresolved" };
+  }
+
+  const name = normalizeName(ref.parts[0] ?? "");
+  const sources = [...scope.sources.values()];
+  const matches = sources.filter((s) => {
+    const cols = sourceOutputs(s);
+    return cols !== "unknown" && cols.some((c) => normalizeName(c) === name);
+  });
+  if (matches.length === 1) return { kind: "bound", source: matches[0] };
+  if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
+  // No known source has it — but a source with unknown columns might.
+  return sources.some((s) => sourceOutputs(s) === "unknown")
+    ? { kind: "needs-schema" }
+    : { kind: "unresolved" };
 }
 
 function newScope(body: QueryBody, parent?: Scope): Scope {
@@ -126,11 +160,18 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
   return undefined;
 }
 
-/** A source is referenced by its alias, or (for a table) its last name part. */
+/** A source is referenced by its alias, or (for a table) its last name part — normalized,
+ *  since Databricks identifiers are case-insensitive (so `U.col` binds to a source aliased `u`). */
 function sourceKey(source: TableSource | SubquerySource): string {
-  if (source.alias) return source.alias;
-  if (source.kind === "table") return source.name[source.name.length - 1] ?? "";
-  return "";
+  const raw = source.alias ?? (source.kind === "table" ? source.name[source.name.length - 1] : "");
+  return normalizeName(raw ?? "");
+}
+
+/** The columns a resolved source exposes, or "unknown" when it needs a schema (a bare table). */
+function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
+  if (src.kind === "table") return src.source.columnAliases ?? "unknown";
+  if (src.kind === "cte") return src.ref.scope.outputs;
+  return src.scope.outputs;
 }
 
 /** Databricks identifiers are case-insensitive; strip surrounding backticks too. */

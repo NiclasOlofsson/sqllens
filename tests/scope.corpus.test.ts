@@ -3,7 +3,7 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { lower, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
-import { resolveScopes, type Scope } from "../src/scope/scope.js";
+import { resolveColumn, resolveScopes, type Scope } from "../src/scope/scope.js";
 
 interface Stats {
   queries: number;
@@ -25,6 +25,12 @@ interface ScopeStats {
   unkTableStar: number; // star over physical table(s)/model(s) only — needs the catalog
   unkDerivedStar: number; // star where a source is a CTE/subquery — resolvable schema-free
   unkExprOnly: number; // no star; an unaliased expression has no name
+  // Column binding (resolveColumn) over every column reference:
+  colTotal: number;
+  colBound: number;
+  colAmbiguous: number;
+  colNeedsSchema: number;
+  colUnresolved: number;
 }
 
 function walkScopes(scope: Scope, acc: ScopeStats): void {
@@ -45,6 +51,16 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
     if (src.kind === "table") acc.srcTable++;
     else if (src.kind === "cte") acc.srcCte++;
     else acc.srcSubquery++;
+  }
+  if (scope.body.kind === "select") {
+    for (const ref of scope.body.columns) {
+      acc.colTotal++;
+      const r = resolveColumn(scope, ref);
+      if (r.kind === "bound") acc.colBound++;
+      else if (r.kind === "ambiguous") acc.colAmbiguous++;
+      else if (r.kind === "needs-schema") acc.colNeedsSchema++;
+      else acc.colUnresolved++;
+    }
   }
   for (const child of scope.children) walkScopes(child, acc);
 }
@@ -115,6 +131,11 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       unkTableStar: 0,
       unkDerivedStar: 0,
       unkExprOnly: 0,
+      colTotal: 0,
+      colBound: 0,
+      colAmbiguous: 0,
+      colNeedsSchema: 0,
+      colUnresolved: 0,
     };
     const clusters = new Map<string, number>();
     const sample: Record<string, string> = {};
@@ -156,6 +177,11 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         `  outputs unknown by cause: table-star ${scopeStats.unkTableStar} (needs catalog), ` +
           `derived-star ${scopeStats.unkDerivedStar} (schema-free), expr-only ${scopeStats.unkExprOnly}`,
         `  sources: table ${scopeStats.srcTable}, cte ${scopeStats.srcCte}, subquery ${scopeStats.srcSubquery}`,
+        ``,
+        `Column binding (${scopeStats.colTotal} refs, schema-free):`,
+        `  bound ${scopeStats.colBound} (${pct(scopeStats.colBound, scopeStats.colTotal)}%), ` +
+          `ambiguous ${scopeStats.colAmbiguous}, needs-schema ${scopeStats.colNeedsSchema}, ` +
+          `unresolved ${scopeStats.colUnresolved}`,
         ``,
         `Top failure clusters:`,
         ...top.map(([k, n]) => `  ${String(n).padStart(4)}  ${k}   e.g. ${sample[k]}`),
