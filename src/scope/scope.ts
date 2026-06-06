@@ -1,4 +1,4 @@
-import type { QueryExpr, Source, SubquerySource, TableSource } from "../databricks/ir.js";
+import type { QueryBody, QueryExpr, Source, SubquerySource, TableSource } from "../databricks/ir.js";
 
 // ---------------------------------------------------------------------------
 // Scope — the symbol table over the IR. One Scope per query block; it records
@@ -12,7 +12,8 @@ export interface ScopeTree {
 }
 
 export interface Scope {
-  query: QueryExpr;
+  /** The query body this scope describes (a SELECT, or a set operation). */
+  body: QueryBody;
   /** Visible relations, keyed by alias (or the table's last name part). */
   sources: Map<string, ResolvedSource>;
   parent?: Scope;
@@ -24,18 +25,24 @@ export type ResolvedSource =
   | { kind: "subquery"; scope: Scope; source: SubquerySource };
 
 export function resolveScopes(query: QueryExpr): ScopeTree {
-  return { root: buildScope(query) };
+  return { root: buildScope(query.body) };
 }
 
-function buildScope(query: QueryExpr, parent?: Scope): Scope {
-  const scope: Scope = { query, sources: new Map(), parent, children: [] };
+function buildScope(body: QueryBody, parent?: Scope): Scope {
+  const scope: Scope = { body, sources: new Map(), parent, children: [] };
 
-  for (const source of query.body.from) {
+  // A set operation has no direct sources; each branch is its own sub-scope.
+  if (body.kind === "setop") {
+    scope.children.push(buildScope(body.left, scope), buildScope(body.right, scope));
+    return scope;
+  }
+
+  for (const source of body.from) {
     const key = sourceKey(source);
     if (source.kind === "table") {
       scope.sources.set(key, { kind: "table", name: source.name, source });
     } else {
-      const child = buildScope(source.query, scope);
+      const child = buildScope(source.query.body, scope);
       scope.children.push(child);
       scope.sources.set(key, { kind: "subquery", scope: child, source });
     }

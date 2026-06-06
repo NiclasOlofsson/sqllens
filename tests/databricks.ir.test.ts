@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { parseDatabricks } from "../src/databricks/parse.js";
-import { lower } from "../src/databricks/ir.js";
+import { lower, type QueryBody, type SelectExpr } from "../src/databricks/ir.js";
+
+function asSelect(body: QueryBody): SelectExpr {
+  if (body.kind !== "select") throw new Error("expected a select body");
+  return body;
+}
 
 describe("lower: CST -> IR", () => {
   it("lowers a simple SELECT to a SelectExpr with projections and a table source", () => {
@@ -27,17 +32,17 @@ describe("lower: CST -> IR", () => {
     expect(ir.ctes[0].body.body.kind).toBe("select");
 
     // The main query still resolves its own FROM independently of the CTE body.
-    expect(ir.body.from).toMatchObject([{ kind: "table", name: ["c"] }]);
+    expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", name: ["c"] }]);
   });
 
   it("captures a table alias", () => {
     const ir = lower(parseDatabricks("SELECT x FROM t AS a").tree);
-    expect(ir.body.from).toMatchObject([{ kind: "table", name: ["t"], alias: "a" }]);
+    expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", name: ["t"], alias: "a" }]);
   });
 
   it("captures both relations of a JOIN as separate sources", () => {
     const ir = lower(parseDatabricks("SELECT x FROM a JOIN b ON a.id = b.id").tree);
-    expect(ir.body.from).toMatchObject([
+    expect(asSelect(ir.body).from).toMatchObject([
       { kind: "table", name: ["a"] },
       { kind: "table", name: ["b"] },
     ]);
@@ -45,11 +50,28 @@ describe("lower: CST -> IR", () => {
 
   it("treats a derived table as a subquery source without leaking its inner tables", () => {
     const ir = lower(parseDatabricks("SELECT x FROM (SELECT a FROM t) sub").tree);
-    expect(ir.body.from).toHaveLength(1);
-    const src = ir.body.from[0];
+    const select = asSelect(ir.body);
+    expect(select.from).toHaveLength(1);
+    const src = select.from[0];
     expect(src.kind).toBe("subquery");
     if (src.kind !== "subquery") throw new Error("expected a subquery source");
     expect(src.alias).toBe("sub");
+    expect(src.query.body.kind).toBe("select");
+    if (src.query.body.kind !== "select") throw new Error("expected select");
     expect(src.query.body.from).toMatchObject([{ kind: "table", name: ["t"] }]);
+  });
+
+  it("lowers a set operation into a SetOpExpr with both branches", () => {
+    const ir = lower(parseDatabricks("SELECT a FROM t UNION ALL SELECT b FROM u").tree);
+    expect(ir.body.kind).toBe("setop");
+    if (ir.body.kind !== "setop") throw new Error("expected a setop body");
+
+    expect(ir.body.op).toBe("union");
+    expect(ir.body.all).toBe(true);
+    expect(ir.body.left.kind).toBe("select");
+    expect(ir.body.right.kind).toBe("select");
+    if (ir.body.left.kind !== "select" || ir.body.right.kind !== "select") throw new Error("selects");
+    expect(ir.body.left.from).toMatchObject([{ kind: "table", name: ["t"] }]);
+    expect(ir.body.right.from).toMatchObject([{ kind: "table", name: ["u"] }]);
   });
 });

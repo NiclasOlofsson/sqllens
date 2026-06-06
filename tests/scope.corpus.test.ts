@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { lower, type QueryExpr } from "../src/databricks/ir.js";
+import { lower, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
@@ -20,9 +20,18 @@ function walkIr(q: QueryExpr, acc: Stats): void {
   acc.queries++;
   acc.ctes += q.ctes.length;
   for (const cte of q.ctes) walkIr(cte.body, acc);
-  acc.projections += q.body.projections.length;
-  acc.projectionsNamed += q.body.projections.filter((p) => p.name !== undefined).length;
-  for (const s of q.body.from) {
+  walkBody(q.body, acc);
+}
+
+function walkBody(body: QueryBody, acc: Stats): void {
+  if (body.kind === "setop") {
+    walkBody(body.left, acc);
+    walkBody(body.right, acc);
+    return;
+  }
+  acc.projections += body.projections.length;
+  acc.projectionsNamed += body.projections.filter((p) => p.name !== undefined).length;
+  for (const s of body.from) {
     acc.sources++;
     if (s.kind === "table") acc.tables++;
     else {
@@ -53,7 +62,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
 
     let lowered = 0;
     let scoped = 0;
-    let setOpFiles = 0; // files with a top-level UNION/EXCEPT/INTERSECT lower currently truncates
+    let setOpFiles = 0; // files carrying a set-op keyword (now represented as SetOpExpr, not truncated)
     const stats: Stats = {
       queries: 0,
       ctes: 0,
@@ -90,7 +99,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         ``,
         `Semantic layer over ${files.length} compiled models:`,
         `  lower ok:  ${lowered}    scope ok: ${scoped}    failures: ${files.length - scoped}`,
-        `  files with a set-op keyword: ${setOpFiles}  (lower truncates top-level set ops today)`,
+        `  files with a set-op keyword: ${setOpFiles}  (now lowered as SetOpExpr, both branches kept)`,
         ``,
         `IR fidelity (across ${stats.queries} query blocks):`,
         `  CTEs:        ${stats.ctes}`,

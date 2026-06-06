@@ -1,4 +1,4 @@
-import { ParserRuleContext, type ParseTree } from "antlr4ng";
+import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
 import { DatabricksParser as P } from "../generated/databricks/DatabricksParser.js";
 
 // ---------------------------------------------------------------------------
@@ -14,14 +14,26 @@ import { DatabricksParser as P } from "../generated/databricks/DatabricksParser.
 export interface QueryExpr {
   kind: "query";
   ctes: CteDef[];
-  body: SelectExpr; // becomes SelectExpr | SetOpExpr once a set-op test forces it
+  body: QueryBody;
   cst: ParserRuleContext;
 }
+
+export type QueryBody = SelectExpr | SetOpExpr;
 
 export interface SelectExpr {
   kind: "select";
   projections: Projection[];
   from: Source[];
+  cst: ParserRuleContext;
+}
+
+export interface SetOpExpr {
+  kind: "setop";
+  op: "union" | "except" | "intersect";
+  /** true for ALL (e.g. UNION ALL); false for the default DISTINCT. */
+  all: boolean;
+  left: QueryBody;
+  right: QueryBody;
   cst: ParserRuleContext;
 }
 
@@ -89,6 +101,15 @@ function directChildrenOfRule(node: ParseTree, ruleIndex: number): ParserRuleCon
   return out;
 }
 
+/** The first direct child token whose type is one of `types`, if any. */
+function directTokenType(node: ParseTree, types: number[]): number | undefined {
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (child instanceof TerminalNode && types.includes(child.symbol.type)) return child.symbol.type;
+  }
+  return undefined;
+}
+
 // ---------------------------------------------------------------------------
 // Lowering
 // ---------------------------------------------------------------------------
@@ -111,11 +132,38 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
   // The main body is this query's own queryTerm — NOT the querySpecifications inside
   // the CTE bodies (which sit under `ctes`, earlier in the tree).
   const queryTerm = directChildrenOfRule(query, P.RULE_queryTerm)[0];
-  const querySpec = queryTerm ? firstOfRule(queryTerm, P.RULE_querySpecification) : undefined;
-  if (!querySpec) {
-    throw new Error("lower: query body is not a querySpecification (set ops not modelled yet)");
+  if (!queryTerm) throw new Error("lower: query has no queryTerm body");
+  return { kind: "query", ctes, body: lowerQueryTerm(queryTerm), cst: query };
+}
+
+/** A queryTerm is either a set operation (two queryTerm branches) or a single select. */
+function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
+  const branches = directChildrenOfRule(queryTerm, P.RULE_queryTerm);
+  if (branches.length === 2) {
+    return {
+      kind: "setop",
+      op: setOpKind(queryTerm),
+      all: hasAllQuantifier(queryTerm),
+      left: lowerQueryTerm(branches[0]),
+      right: lowerQueryTerm(branches[1]),
+      cst: queryTerm,
+    };
   }
-  return { kind: "query", ctes, body: buildSelect(querySpec), cst: query };
+  const querySpec = firstOfRule(queryTerm, P.RULE_querySpecification);
+  if (!querySpec) throw new Error("lower: queryTerm has no querySpecification");
+  return buildSelect(querySpec);
+}
+
+function setOpKind(queryTerm: ParserRuleContext): "union" | "except" | "intersect" {
+  const t = directTokenType(queryTerm, [P.UNION, P.INTERSECT, P.EXCEPT, P.SETMINUS]);
+  if (t === P.UNION) return "union";
+  if (t === P.INTERSECT) return "intersect";
+  return "except"; // EXCEPT, or its MINUS/SETMINUS synonym
+}
+
+function hasAllQuantifier(queryTerm: ParserRuleContext): boolean {
+  const sq = directChildrenOfRule(queryTerm, P.RULE_setQuantifier)[0];
+  return sq !== undefined && directTokenType(sq, [P.ALL]) !== undefined;
 }
 
 function lowerNamedQuery(namedQuery: ParserRuleContext): CteDef {
