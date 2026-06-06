@@ -39,4 +39,32 @@ describe("qualify", () => {
     const { tree, result } = run("SELECT * FROM t AS u (c1, c2)", new Schema({}));
     expect(result.columnsOf(tree.root)).toEqual(["c1", "c2"]);
   });
+
+  it("resolves a bare column against the schema with no diagnostic", () => {
+    const { result } = run("SELECT a FROM t", new Schema({ t: { a: "int", b: "int" } }));
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("flags a column not present in its table's schema", () => {
+    const { result } = run("SELECT nope FROM t", new Schema({ t: { a: "int" } }));
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-column");
+  });
+
+  it("flags a qualified column not present in its source", () => {
+    const { result } = run("SELECT t.nope FROM t", new Schema({ t: { a: "int" } }));
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-column");
+  });
+
+  it("flags an ambiguous bare column present in two joined tables", () => {
+    const { result } = run(
+      "SELECT id FROM t JOIN u ON t.x = u.y",
+      new Schema({ t: { id: "int", x: "int" }, u: { id: "int", y: "int" } }),
+    );
+    expect(result.diagnostics.map((d) => d.kind)).toContain("ambiguous-column");
+  });
+
+  it("emits no column diagnostics without a schema (columns unknown)", () => {
+    const { result } = run("SELECT whatever FROM t", new Schema({}));
+    expect(result.diagnostics.filter((d) => d.kind !== "unknown-table")).toEqual([]);
+  });
 });
