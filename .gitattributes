@@ -1,0 +1,5 @@
+# Line-ending policy for this repo.
+# Store text normalized as LF in git; check out with the platform's native EOL
+# (CRLF on Windows, LF on macOS/Linux). This is independent of each developer's
+# core.autocrlf setting, so checkouts are deterministic.
+* text=auto
