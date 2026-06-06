@@ -1,0 +1,111 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join, resolve } from "node:path";
+import { describe, expect, it } from "vitest";
+import { lower, type QueryExpr } from "../src/databricks/ir.js";
+import { parseDatabricks } from "../src/databricks/parse.js";
+import { resolveScopes } from "../src/scope/scope.js";
+
+interface Stats {
+  queries: number;
+  ctes: number;
+  projections: number;
+  projectionsNamed: number;
+  sources: number;
+  tables: number;
+  subqueries: number;
+}
+
+// Walk the whole IR (main query + CTE bodies + subquery bodies) accumulating fidelity counts.
+function walkIr(q: QueryExpr, acc: Stats): void {
+  acc.queries++;
+  acc.ctes += q.ctes.length;
+  for (const cte of q.ctes) walkIr(cte.body, acc);
+  acc.projections += q.body.projections.length;
+  acc.projectionsNamed += q.body.projections.filter((p) => p.name !== undefined).length;
+  for (const s of q.body.from) {
+    acc.sources++;
+    if (s.kind === "table") acc.tables++;
+    else {
+      acc.subqueries++;
+      walkIr(s.query, acc);
+    }
+  }
+}
+
+// The real Oatly corpus is the continuous gate for the semantic layer, the same way
+// it gates the grammar. lower + resolveScopes must run over every compiled model
+// without throwing. (Correctness of the IR shape is covered by the unit tests; this
+// is the stability + coverage signal at scale.) Skips when the corpus is absent.
+const CORPUS = resolve("harness/local/databricks");
+
+function clusterKey(msg: string): string {
+  return msg
+    .replace(/'[^']*'/g, "'X'")
+    .replace(/\d+/g, "N")
+    .slice(0, 90);
+}
+
+describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () => {
+  it("lower + resolveScopes run over every model without throwing", () => {
+    const files = readdirSync(CORPUS, { recursive: true }).filter(
+      (f): f is string => typeof f === "string" && f.endsWith(".sql"),
+    );
+
+    let lowered = 0;
+    let scoped = 0;
+    let setOpFiles = 0; // files with a top-level UNION/EXCEPT/INTERSECT lower currently truncates
+    const stats: Stats = {
+      queries: 0,
+      ctes: 0,
+      projections: 0,
+      projectionsNamed: 0,
+      sources: 0,
+      tables: 0,
+      subqueries: 0,
+    };
+    const clusters = new Map<string, number>();
+    const sample: Record<string, string> = {};
+
+    for (const rel of files) {
+      const sql = readFileSync(join(CORPUS, rel), "utf8");
+      // Rough flag: a set-op keyword anywhere (overcounts subquery unions, but signals exposure).
+      if (/\b(union|except|intersect|minus)\b/i.test(sql)) setOpFiles++;
+      try {
+        const ir = lower(parseDatabricks(sql).tree);
+        lowered++;
+        resolveScopes(ir);
+        scoped++;
+        walkIr(ir, stats);
+      } catch (e) {
+        const key = clusterKey(e instanceof Error ? e.message : String(e));
+        clusters.set(key, (clusters.get(key) ?? 0) + 1);
+        if (!sample[key]) sample[key] = rel;
+      }
+    }
+
+    const top = [...clusters.entries()].sort((a, b) => b[1] - a[1]);
+    const pct = (n: number, d: number) => (d ? ((n / d) * 100).toFixed(1) : "0.0");
+    console.log(
+      [
+        ``,
+        `Semantic layer over ${files.length} compiled models:`,
+        `  lower ok:  ${lowered}    scope ok: ${scoped}    failures: ${files.length - scoped}`,
+        `  files with a set-op keyword: ${setOpFiles}  (lower truncates top-level set ops today)`,
+        ``,
+        `IR fidelity (across ${stats.queries} query blocks):`,
+        `  CTEs:        ${stats.ctes}`,
+        `  sources:     ${stats.sources}  (tables ${stats.tables}, subqueries ${stats.subqueries})`,
+        `  projections: ${stats.projections}  named ${stats.projectionsNamed} (${pct(stats.projectionsNamed, stats.projections)}%)`,
+        ``,
+        `Top failure clusters:`,
+        ...top.map(([k, n]) => `  ${String(n).padStart(4)}  ${k}   e.g. ${sample[k]}`),
+      ].join("\n"),
+    );
+
+    expect(files.length).toBeGreaterThan(0);
+    // Gate: lower + resolveScopes must never throw on a real model. The printed fidelity
+    // stats (set-op exposure, projection-naming %) are the running scoreboard that drives
+    // the next cycles — a correctness signal the bare "no throw" can't give.
+    expect(scoped).toBe(files.length);
+  }, 180000);
+});
