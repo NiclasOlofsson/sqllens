@@ -12,9 +12,11 @@ import {
 // keeps a back-reference to its CST context (`cst`) so exact source spans remain
 // available (cst.start / cst.stop). Scope and qualify operate on this, not the CST.
 //
-// The IR is grown test-by-test; today it models the minimum the first scope cases
-// need. Expressions are not modelled — they stay as CST refs and we extract only
-// what name resolution requires.
+// OPEN GAP (not a scope decision): expressions are NOT modelled yet. `a+b`, CASE,
+// function calls, aggregates, window/OVER, GROUP BY/HAVING semantics are opaque —
+// today we only extract ColumnRefs + a projection name. This is roughly half of
+// SQL's meaning and is unfinished work, tracked in docs/PLAN.md "Open Gaps". Do not
+// treat it as descoped.
 // ---------------------------------------------------------------------------
 
 export interface QueryExpr {

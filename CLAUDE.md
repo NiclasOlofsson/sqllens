@@ -10,7 +10,7 @@ Guidance for Claude Code working in this repository. (Folder name is provisional
 
 **The primary deliverable is the generated TypeScript parsers** — a `parse(sql, dialect)` library we consume in our own projects, TS-native with no Python or Java at runtime. The `.g4` grammars are the *means*: forking or hand-authoring them is how we build and maintain those parsers, and we optimize for a working parser over grammar elegance. The grammars are a useful by-product — for the warehouse dialects an open spec that doesn't exist today, and where we improve a grammars-v4 grammar we contribute the fix back upstream — but they are not the main delivery.
 
-**Scope is syntax only**: produce a parse tree. This is *not* a semantic analyzer — no type inference, scope resolution, function signatures, or column lineage. That boundary is deliberate and keeps the project finishable.
+**The parser is syntax only** — it produces a parse tree. On top of it, for Databricks, we *are* building a **semantic layer** (name resolution = scope, plus schema-fed qualify) because the consumers (editor support, the SQL debugger) need it — Nicke directed this 2026-06-06. **Out (Nicke-cleared):** SQL transpilation, type inference, column lineage (lineage rides on qualify, revisited later). **Open Gap, not out:** full **expression modelling** (`a+b`, CASE, function calls, aggregates, window/`OVER`, `GROUP BY`/`HAVING` semantics) — not yet built; tracked in [docs/PLAN.md](docs/PLAN.md) "Open Gaps". Do not treat it as descoped.
 
 ## Origin / design rationale — READ THIS FIRST in a fresh session
 
@@ -70,3 +70,4 @@ npm test                         # vitest
 - Every dialect-specific grammar rule gets a comment linking the manual section that justifies it.
 - The conformance corpus is the gate: a grammar change that regresses the corpus is **not done**. TDD for grammars = add corpus case → harness fails → edit grammar → harness green → commit.
 - Match this file's decisions; if a decision turns out wrong, update this file in the same change that departs from it.
+- **No descoping core work without Nicke's explicit clearance.** Cutting a real part of the job (e.g. expression modelling) out of scope is a decision only Nicke makes, stated out loud at the time. If something is too big to finish now, it stays a **visible Open Gap** that keeps answering "what's left" — never a quiet scope boundary, a "v1 doesn't do X", or an IR/code comment that removes it from view. Incomplete is fine; silent is not. Legitimate descoping (already cleared: transpilation, type inference, lineage-for-now) is listed explicitly as Out; everything else not yet built is an Open Gap, not an exclusion.

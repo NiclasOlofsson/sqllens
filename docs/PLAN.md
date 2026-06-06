@@ -16,7 +16,18 @@
 
 **In:** lexer + parser grammars that recognize each dialect's surface (queries, DML, the common DDL); generated TS parsers; a public `parse(sql, dialect)` returning a parse tree (or a syntax error); a conformance harness.
 
-**Out (explicitly, do not build):** SQL transpilation, type inference, column lineage, a query engine. **Amended 2026-06-06:** name resolution (**scope**) and column/`*` resolution against a supplied schema (**qualify**) are now **in scope for Databricks** as a semantic layer built on the parse tree (Phase 1.5) — the two consumers that motivate this project (editor support, the SQL debugger) need them. Lineage rides on qualify and stays out for now. The warehouse dialects get the grammar only until a second consumer forces the abstraction.
+**Out (Nicke-cleared exclusions only):** SQL transpilation, type inference, column lineage (rides on qualify, revisited later), a query engine. **Amended 2026-06-06:** name resolution (**scope**) and column/`*` resolution against a supplied schema (**qualify**) are **in scope for Databricks** as a semantic layer on the parse tree (Phase 1.5) — the consumers (editor support, the SQL debugger) need them. The warehouse dialects get the grammar only until a second consumer forces the abstraction.
+
+## Open Gaps (tracked, NOT descoped)
+
+These are real, unfinished parts of the job. They stay here, answering "what's left," until built or until Nicke explicitly moves one to *Out*. They are **not** scope boundaries — never treat them as "v1 doesn't do X."
+
+- **Expression modelling (big).** `lower` does not model expressions — `a+b`, `CASE`, function calls, **aggregates**, **window/`OVER`**, and `GROUP BY`/`HAVING` semantics are opaque. Today only `ColumnRef`s and a projection name are pulled out. This is roughly half of SQL's meaning and is unbuilt. Needs an expression IR (column/literal/op/call/case/window nodes) and aggregation wired into scope.
+- **`t.*` qualified-star expansion** — `isStar` is flagged but the qualifier isn't captured, so `t.*` wrongly expands over all sources, not just `t`.
+- **Struct/map access** (`col.field`, `col['k']`) — column resolution always treats `parts[-2]` as a table qualifier, which is wrong for field access.
+- **Outer-scope (`resolveColumn`) walk is too permissive** — it walks all enclosing scopes for any unresolved ref, so a typo can "resolve" to an outer source by name coincidence. Needs tightening to genuine correlation rules.
+- **Correctness is self-graded** — no curated conformance set with expected outputs/bindings yet; the corpus only proves "no throw" + stats our own code computes.
+- **Still flagged `unsupported`:** recursive CTEs, table-valued functions.
 
 ## Repo layout (target)
 
@@ -207,7 +218,7 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 > Added 2026-06-06. The Databricks grammar is in and parses 100% of the real Oatly corpus, so we go **deep on Databricks** before the other dialects: a small semantic layer on top of the parse tree that the editor and the SQL debugger consume. Databricks-only; cross-dialect abstraction is extracted when a second dialect forces it. Build **scope first** (schema-free, unlocks most value), **qualify second** (schema-fed).
 
-> **Status (2026-06-06): core built, 27 tests green, typecheck clean.** Tasks 1.5.1–1.5.5 done test-first: `parseDatabricks`, IR + `lower` (SELECT, CTE, aliases, joins, subqueries, set ops), `resolveScopes` (sources/aliases, CTE resolution, output columns), `qualify` + sqlglot-style `Schema` (`*` expansion, unknown-table diagnostics), and `src/index.ts` public API. The corpus fidelity gate (`tests/scope.corpus.test.ts`) runs `lower`+`resolveScopes` over all 1558 Oatly models — **0 throws**; scoreboard: 2540 query blocks, 790 CTEs, 6175 sources, 3480 scopes, 981 CTE refs resolved, outputs known 46.9% (rest are `SELECT *`/expressions awaiting a schema). **Remaining follow-up (own cycle, needs expression modelling):** pull `ColumnRef`s out of expressions → scope `resolveColumn` (bind a column to its source) and qualify column-level resolution (bare-column → table, "unknown/ambiguous column" diagnostics). `t.*` qualified-star expansion. These were "follow" items, not part of the done-when below.
+> **Status (2026-06-06): name-resolution layer built, 59 tests green, typecheck clean.** Done test-first: `parseDatabricks`, IR + `lower` (SELECT, CTE, aliases incl. column-alias lists, joins, subqueries incl. scalar/correlated, set ops, PIVOT/UNPIVOT/LATERAL VIEW, structural projection naming, `ColumnRef` extraction, non-query stub); `resolveScopes` (sources, CTE resolution, output columns, `resolveColumn` with outer-scope walk); `qualify` + `Schema` (`*` expansion, unknown-table + column-level unknown/ambiguous-column diagnostics); `src/index.ts` public API. Corpus gate (`tests/scope.corpus.test.ts`) runs `lower`+`resolveScopes`+`resolveColumn` over all 1558 Oatly models — **0 throws**; scoreboard: outputs known ~82%, column refs ~55% bound schema-free. **What is genuinely left is in [Open Gaps](#open-gaps-tracked-not-descoped) — chiefly expression modelling (unbuilt, ~half of SQL's meaning), plus `t.*`, struct access, tightening the outer-scope walk, and a curated conformance set. None of that is descoped; it is unfinished.**
 
 **Pipeline:** `sql → parse → CST → lower → IR → resolveScopes → ScopeTree → qualify(schema) → Qualification + Diagnostics`. Each arrow is a pure function. Positions flow through via CST back-references (`ctx.start`/`ctx.stop`), so every IR/scope node maps to an exact source span — the thing editor + debugger need and sqlglot's AST drops (see *Risks & open questions → CST vs AST*, now resolved).
 
@@ -219,7 +230,7 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 - [ ] **Step 1:** `parseDatabricks(sql) → { tree, errors }` — one wrapper that dedupes the lexer/parser/error-listener boilerplate currently copied across the test files.
 - [ ] **Step 2:** Define the IR node types in `ir.ts`: `QueryExpr` (CTEs + body), `SelectExpr` (projections, sources, clauses we use), `Source` (`table | subquery | cte-ref | join`), `Projection` (expr CST-ref, output name, `isStar`), `ColumnRef` (qualifier?, name), `CteDef` (name, column aliases?, body). Every node carries a back-ref to its CST context + a `span` helper.
-- [ ] **Step 3 (TDD):** Write failing tests asserting the IR shape for the representative queries from `databricks.structure.test.ts` (e.g. `SELECT a, b FROM t` → `SelectExpr` with 2 projections + 1 table source named `t`; a CTE query → 1 `CteDef`). Expressions stay as CST refs in v1 — only `ColumnRef`s are extracted from them.
+- [ ] **Step 3 (TDD):** Write failing tests asserting the IR shape for the representative queries from `databricks.structure.test.ts` (e.g. `SELECT a, b FROM t` → `SelectExpr` with 2 projections + 1 table source named `t`; a CTE query → 1 `CteDef`). Expressions are not yet modelled (see **Open Gaps** — this is an unfinished gap, not a scope cut); today only `ColumnRef`s are extracted from them.
 - [ ] **Step 4:** Implement `lower(tree)` (CST→IR visitor) until green. Commit.
 
 ### Task 1.5.2: Scope resolver (schema-free)
@@ -228,7 +239,7 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 - [ ] **Step 1:** `resolveScopes(ir) → ScopeTree`. `Scope = { node, sources: Map<name, ResolvedSource>, ctes: Map<name, CteDef>, outputs, parent?, children }`. `ResolvedSource = table | cte-ref→scope | subquery→scope`.
 - [ ] **Step 2:** Resolution without schema: alias/name → source; chained CTE references (later CTEs see earlier); subquery outputs (from their projections, `unknown` if they star over a physical table); `resolveColumn(ref) → resolved | ambiguous | needs-schema` (`t.c` → source `t`; bare `c` → the single source whose outputs are known to contain it).
-- [ ] **Step 3:** Coverage v1: SELECT, WITH (chained CTEs), subqueries (derived tables + scalar/IN), JOINs (all kinds), set ops (UNION/EXCEPT/INTERSECT). **Flag-and-defer, never crash:** recursive CTEs, LATERAL/correlated cross-scope columns, PIVOT/UNPIVOT, table-valued functions → mark `unsupported`.
+- [ ] **Step 3:** Coverage: SELECT, WITH (chained CTEs), subqueries (derived tables + scalar/IN), JOINs (all kinds), set ops, PIVOT/UNPIVOT/LATERAL VIEW, correlated/outer-scope columns — **built** (2026-06-06). **Still flagged `unsupported` (Open Gaps), never crash:** recursive CTEs, table-valued functions.
 - [ ] **Step 4 (TDD):** Tests assert sources per scope, CTE resolution, column→source, ambiguity, and `needs-schema` cases — with spans. Commit.
 
 ### Task 1.5.3: Corpus stability + sanity run
