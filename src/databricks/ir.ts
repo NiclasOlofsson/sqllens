@@ -30,6 +30,15 @@ export interface SelectExpr {
   kind: "select";
   projections: Projection[];
   from: Source[];
+  /** Every column reference at this query level (projections, WHERE, JOIN ON, …),
+   *  excluding those inside nested subqueries (which belong to their own scope). */
+  columns: ColumnRef[];
+  cst: ParserRuleContext;
+}
+
+export interface ColumnRef {
+  /** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
+  parts: string[];
   cst: ParserRuleContext;
 }
 
@@ -208,7 +217,7 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
   const fromClause = firstOfRule(querySpec, P.RULE_fromClause);
   const from = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
 
-  return { kind: "select", projections, from, cst: querySpec };
+  return { kind: "select", projections, from, columns: extractColumnRefs(querySpec), cst: querySpec };
 }
 
 function buildProjection(named: ParserRuleContext): Projection {
@@ -247,6 +256,34 @@ function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
   if (node instanceof StarContext) return { kind: "star" };
   const parts = columnParts(node);
   return parts ? { kind: "column", parts } : { kind: "expr" };
+}
+
+/**
+ * Collect every column reference at this query level — projections, WHERE, JOIN ON,
+ * GROUP BY, etc. Stops at nested `query` nodes (those columns belong to that
+ * subquery's own scope) and at each column path (so `a.b.c` is one ref, not three).
+ */
+function extractColumnRefs(querySpec: ParserRuleContext): ColumnRef[] {
+  const refs: ColumnRef[] = [];
+  const walk = (node: ParseTree): void => {
+    for (let i = 0; i < node.getChildCount(); i++) {
+      const child = node.getChild(i);
+      if (!(child instanceof ParserRuleContext)) continue;
+      if (child.ruleIndex === P.RULE_query) continue; // nested subquery — its own scope
+
+      if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
+        const parts = columnParts(child);
+        if (parts) {
+          refs.push({ parts, cst: child });
+          continue; // a column path is one ref; don't re-collect its base
+        }
+        // e.g. f(x).field — not a pure column path; fall through to find refs inside it
+      }
+      walk(child);
+    }
+  };
+  walk(querySpec);
+  return refs;
 }
 
 /** The identifier parts of a column-reference primaryExpression, or undefined if it isn't one. */

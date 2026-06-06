@@ -97,6 +97,18 @@ describe("lower: CST -> IR", () => {
     expect(sel.projections[0].isStar).toBe(true);
   });
 
+  it("collects column references at the select level (projections + WHERE)", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a, t.b FROM t WHERE c > 1").tree).body);
+    expect(sel.columns.map((c) => c.parts.join("."))).toEqual(
+      expect.arrayContaining(["a", "t.b", "c"]),
+    );
+  });
+
+  it("does not collect column references from inside a subquery", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT x FROM (SELECT inner_col FROM t) s").tree).body);
+    expect(sel.columns.map((c) => c.parts.join("."))).not.toContain("inner_col");
+  });
+
   it("lowers a set operation into a SetOpExpr with both branches", () => {
     const ir = lower(parseDatabricks("SELECT a FROM t UNION ALL SELECT b FROM u").tree);
     expect(ir.body.kind).toBe("setop");
