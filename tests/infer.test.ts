@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { inferType } from "../src/infer/infer.js";
+import { scalar } from "../src/infer/types.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
@@ -62,9 +63,55 @@ describe("inferType", () => {
     expect(t.kind).toBeDefined();
   });
 
-  it("returns unknown for an expression with no rule yet (a + b)", () => {
-    expect(typeOf("SELECT a + b FROM t", new Schema({ t: { a: "int", b: "int" } }))).toEqual({
-      kind: "unknown",
-    });
+  it("returns unknown for a not-yet-typed expression (a scalar subquery)", () => {
+    expect(typeOf("SELECT (SELECT 1) AS x FROM t", new Schema({}))).toEqual({ kind: "unknown" });
+  });
+});
+
+describe("inferType — operators, functions, case", () => {
+  it("widens numeric arithmetic (int + double → double)", () => {
+    expect(typeOf("SELECT a + b FROM t", new Schema({ t: { a: "int", b: "double" } }))).toEqual(
+      scalar("double"),
+    );
+  });
+
+  it("types comparisons as boolean", () => {
+    expect(typeOf("SELECT a > b FROM t", new Schema({ t: { a: "int", b: "int" } }))).toEqual(
+      scalar("boolean"),
+    );
+  });
+
+  it("types a string function", () => {
+    expect(typeOf("SELECT lower(a) FROM t", new Schema({ t: { a: "string" } }))).toEqual(scalar("string"));
+  });
+
+  it("types count() as bigint", () => {
+    expect(typeOf("SELECT count(a) FROM t", new Schema({ t: { a: "int" } }))).toEqual(scalar("bigint"));
+  });
+
+  it("types coalesce by the common type of its args", () => {
+    expect(typeOf("SELECT coalesce(a, b) FROM t", new Schema({ t: { a: "int", b: "bigint" } }))).toEqual(
+      scalar("bigint"),
+    );
+  });
+
+  it("types max() as the argument's type", () => {
+    expect(typeOf("SELECT max(d) FROM t", new Schema({ t: { d: "date" } }))).toEqual(scalar("date"));
+  });
+
+  it("widens sum(int) to bigint", () => {
+    expect(typeOf("SELECT sum(a) FROM t", new Schema({ t: { a: "int" } }))).toEqual(scalar("bigint"));
+  });
+
+  it("types a CASE by its branches", () => {
+    expect(
+      typeOf("SELECT CASE WHEN a THEN 1 ELSE 2 END FROM t", new Schema({ t: { a: "boolean" } })),
+    ).toEqual(scalar("int"));
+  });
+
+  it("types array element access via subscript", () => {
+    expect(typeOf("SELECT arr[0] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual(
+      scalar("string"),
+    );
   });
 });

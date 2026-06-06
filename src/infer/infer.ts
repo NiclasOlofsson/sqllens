@@ -1,6 +1,8 @@
 import type { Expr, Projection } from "../databricks/ir.js";
 import type { Schema } from "../qualify/schema.js";
 import { splitColumnRefInScope, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { coerce, commonType } from "./coerce.js";
+import { FUNCTION_RETURNS } from "./functions.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -22,10 +24,61 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, seen: Set<Sc
       return scalar("boolean");
     case "column":
       return columnType(expr, scope, schema, seen);
+    case "binary":
+      return binaryType(
+        expr.op,
+        inferType(expr.left, scope, schema, seen),
+        inferType(expr.right, scope, schema, seen),
+      );
+    case "unary":
+      return unaryType(expr.op, inferType(expr.operand, scope, schema, seen));
+    case "function": {
+      const rule = FUNCTION_RETURNS[expr.name.toLowerCase()];
+      return rule ? rule(expr.args.map((a) => inferType(a, scope, schema, seen))) : UNKNOWN;
+    }
+    case "case": {
+      const branches = expr.whens.map((w) => inferType(w.then, scope, schema, seen));
+      if (expr.elseExpr) branches.push(inferType(expr.elseExpr, scope, schema, seen));
+      return commonType(branches);
+    }
+    case "subscript": {
+      const base = inferType(expr.base, scope, schema, seen);
+      if (base.kind === "array") return base.element;
+      if (base.kind === "map") return base.value;
+      return UNKNOWN;
+    }
     default:
-      // binary/unary/function/case/subscript/subquery/exists/star/lambda/other — not yet typed.
+      // subquery/exists/star/lambda/other — not yet typed.
       return UNKNOWN;
   }
+}
+
+const COMPARISON = new Set(["=", "==", "!=", "<>", "<", "<=", ">", ">=", "<=>"]);
+const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "div"]);
+
+function binaryType(op: string, l: Type, r: Type): Type {
+  const o = op.toLowerCase().trim();
+  if (COMPARISON.has(o) || o === "and" || o === "or") return scalar("boolean");
+  if (o === "||") return scalar("string");
+  if (ARITHMETIC.has(o)) {
+    if (isDate(l) && isInterval(r)) return l; // date/timestamp ± interval keeps the date type
+    if (isDate(r) && isInterval(l)) return r;
+    return coerce(l, r);
+  }
+  return UNKNOWN;
+}
+
+function unaryType(op: string, operand: Type): Type {
+  const o = op.toLowerCase().trim();
+  return o === "not" || o === "!" ? scalar("boolean") : operand;
+}
+
+function isDate(t: Type): boolean {
+  return t.kind === "scalar" && (t.name === "date" || t.name === "timestamp");
+}
+
+function isInterval(t: Type): boolean {
+  return t.kind === "scalar" && t.name === "interval";
 }
 
 function columnType(

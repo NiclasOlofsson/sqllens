@@ -1,0 +1,121 @@
+import { commonType, widenSum } from "./coerce.js";
+import { scalar, UNKNOWN, type Type } from "./types.js";
+
+// Function return-type registry for Databricks/Spark SQL, from the built-in function
+// reference (the language spec — NOT the corpus; the corpus is only a validation gate). A
+// rule is `(argTypes) => Type`. A function is absent (→ unknown) only when its return type is
+// genuinely arg/lambda/schema-dependent in a way we don't model yet (transform, from_json,
+// named_struct, …). We never guess: a missing rule yields `unknown`, never a wrong type.
+
+export type FnRule = (args: Type[]) => Type;
+
+const S = scalar("string");
+const I = scalar("int");
+const BIG = scalar("bigint");
+const D = scalar("double");
+const B = scalar("boolean");
+const DATE = scalar("date");
+const TS = scalar("timestamp");
+const BIN = scalar("binary");
+const INTERVAL = scalar("interval");
+
+const fixed = (t: Type): FnRule => () => t;
+const firstArg: FnRule = (args) => args[0] ?? UNKNOWN; // "same type as input"
+const common: FnRule = (args) => commonType(args);
+const restCommon: FnRule = (args) => commonType(args.slice(1)); // if(cond,a,b) / nvl2(x,a,b)
+const arrayOfFirst: FnRule = (args) => ({ kind: "array", element: args[0] ?? UNKNOWN });
+const arrayOfCommon: FnRule = (args) => ({ kind: "array", element: commonType(args) });
+const elementOf: FnRule = (args) => {
+  const a = args[0];
+  if (a?.kind === "array") return a.element;
+  if (a?.kind === "map") return a.value;
+  return UNKNOWN;
+};
+const mapKeys: FnRule = (args) => (args[0]?.kind === "map" ? { kind: "array", element: args[0].key } : UNKNOWN);
+const mapValues: FnRule = (args) =>
+  args[0]?.kind === "map" ? { kind: "array", element: args[0].value } : UNKNOWN;
+const concatRule: FnRule = (args) => (args[0]?.kind === "array" ? args[0] : S); // string|array overload
+/** date_add(unit, n, ts) / dateadd / timestampadd → the date/timestamp argument's type. */
+const dateArg: FnRule = (args) => {
+  const last = args[args.length - 1];
+  return last?.kind === "scalar" && (last.name === "date" || last.name === "timestamp") ? last : TS;
+};
+
+function group(rule: FnRule, names: string[]): Record<string, FnRule> {
+  return Object.fromEntries(names.map((n) => [n, rule]));
+}
+
+export const FUNCTION_RETURNS: Record<string, FnRule> = {
+  ...group(fixed(S), [
+    "concat_ws", "upper", "lower", "lcase", "ucase", "trim", "ltrim", "rtrim", "btrim", "lpad",
+    "rpad", "substr", "substring", "substring_index", "replace", "translate", "repeat", "split_part",
+    "chr", "char", "initcap", "overlay", "format_string", "format_number", "printf", "soundex",
+    "space", "hex", "base64", "to_char", "to_varchar", "quote", "regexp_extract", "regexp_replace",
+    "regexp_substr", "url_encode", "url_decode", "bin", "conv", "md5", "sha", "sha1", "sha2",
+    "date_format", "dayname", "monthname", "string_agg", "listagg", "to_json", "get_json_object",
+    "string",
+  ]),
+  ...group(fixed(I), [
+    "ascii", "instr", "locate", "position", "find_in_set", "levenshtein", "length", "char_length",
+    "character_length", "octet_length", "bit_length", "regexp_count", "regexp_instr", "sign",
+    "signum", "bit_get", "getbit", "day", "dayofmonth", "dayofweek", "dayofyear", "month", "year",
+    "hour", "minute", "second", "quarter", "weekday", "weekofyear", "unix_date", "size",
+    "array_size", "cardinality", "array_position", "hash", "json_array_length", "datediff",
+    "date_diff", "date_part", "datepart", "int", "integer", "tinyint", "smallint",
+  ]),
+  ...group(fixed(BIG), [
+    "count", "count_if", "approx_count_distinct", "div", "bit_count", "bit_and", "bit_or", "bit_xor",
+    "shiftrightunsigned", "width_bucket", "unix_timestamp", "unix_millis", "unix_micros",
+    "unix_seconds", "crc32", "xxhash64", "bigint", "long",
+  ]),
+  ...group(fixed(D), [
+    "avg", "sqrt", "cbrt", "exp", "expm1", "log", "ln", "log10", "log2", "log1p", "sin", "cos",
+    "tan", "asin", "acos", "atan", "sinh", "cosh", "tanh", "asinh", "acosh", "atanh", "atan2",
+    "degrees", "radians", "cot", "csc", "sec", "hypot", "pow", "power", "rand", "random", "randn",
+    "pi", "e", "rint", "nanvl", "stddev", "std", "stddev_pop", "stddev_samp", "variance", "var_samp",
+    "var_pop", "corr", "covar_pop", "covar_samp", "kurtosis", "skewness", "percentile",
+    "percentile_cont", "approx_percentile", "median", "months_between", "double",
+  ]),
+  ...group(fixed(B), [
+    "startswith", "endswith", "contains", "isnan", "isnull", "isnotnull", "array_contains",
+    "arrays_overlap", "map_contains_key", "exists", "forall", "any", "bool_or", "bool_and", "every",
+    "like", "rlike", "ilike", "boolean",
+  ]),
+  ...group(fixed(DATE), [
+    "current_date", "curdate", "to_date", "date", "date_from_unix_date", "make_date", "next_day",
+    "last_day",
+  ]),
+  ...group(fixed(TS), [
+    "current_timestamp", "now", "to_timestamp", "to_timestamp_ltz", "to_timestamp_ntz",
+    "make_timestamp", "make_timestamp_ltz", "make_timestamp_ntz", "timestamp_millis",
+    "timestamp_micros", "timestamp_seconds", "from_utc_timestamp", "to_utc_timestamp",
+    "convert_timezone", "localtimestamp", "date_trunc", "timestamp",
+  ]),
+  ...group(fixed(BIN), ["unhex", "unbase64", "encode", "to_binary", "binary"]),
+  ...group(fixed(INTERVAL), ["make_interval", "make_ym_interval", "make_dt_interval"]),
+  float: fixed(scalar("float")),
+  decimal: fixed(scalar("decimal")),
+
+  // same type as input (numeric ops, ordering aggregates, array → array transforms)
+  ...group(firstArg, [
+    "abs", "negative", "positive", "ceil", "ceiling", "floor", "round", "bround", "trunc", "mod",
+    "pmod", "shiftleft", "shiftright", "min", "max", "first", "first_value", "last", "last_value",
+    "nth_value", "max_by", "min_by", "any_value", "mode", "percentile_disc", "nullif", "nullifzero",
+    "zeroifnull", "reverse", "array_distinct", "array_union", "array_intersect", "array_except",
+    "array_remove", "array_compact", "array_sort", "sort_array", "shuffle", "slice", "array_append",
+    "array_prepend", "array_insert", "array_repeat", "filter",
+  ]),
+  ...group(common, ["coalesce", "ifnull", "nvl", "greatest", "least"]),
+  ...group(restCommon, ["if", "iff", "nvl2"]),
+  sum: (args) => widenSum(args[0] ?? UNKNOWN),
+
+  ...group(arrayOfFirst, ["collect_list", "collect_set", "array_agg", "sequence", "range"]),
+  array: arrayOfCommon,
+  ...group(fixed({ kind: "array", element: S }), ["split", "regexp_extract_all"]),
+  ...group(elementOf, ["array_max", "array_min", "element_at", "explode", "explode_outer", "get"]),
+  map_keys: mapKeys,
+  map_values: mapValues,
+  concat: concatRule,
+
+  ...group(dateArg, ["date_add", "dateadd", "date_sub", "timestampadd", "add_months"]),
+};
