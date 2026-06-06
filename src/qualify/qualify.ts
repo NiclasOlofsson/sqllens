@@ -7,7 +7,7 @@ import {
   type Scope,
   type ScopeTree,
 } from "../scope/scope.js";
-import type { Schema } from "./schema.js";
+import { parseStructFields, type Schema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -17,7 +17,7 @@ import type { Schema } from "./schema.js";
 // ---------------------------------------------------------------------------
 
 export interface Diagnostic {
-  kind: "unknown-table" | "unknown-column" | "ambiguous-column";
+  kind: "unknown-table" | "unknown-column" | "ambiguous-column" | "unknown-field";
   message: string;
   line: number;
   column: number;
@@ -132,8 +132,8 @@ function checkColumn(
   // rather than a column — don't flag it. resolveColumn applies the alias + precedence rules.
   if (resolveColumn(scope, ref).kind === "alias") return;
 
-  // Split off any struct/field navigation: `t.c.f` checks the column `c` (not the field `f`),
-  // and `c.f` checks the column `c`. Field types are not modelled, so fields aren't verified.
+  // Split off struct/field navigation: `t.c.f` checks the column `c`, then walks the field
+  // path `f` against `c`'s struct type (when known from a table schema — see checkFieldPath).
   const split = splitColumnRefInScope(scope, ref.parts);
   const name = normalizeName(split.column);
 
@@ -144,7 +144,9 @@ function checkColumn(
       const cols = sourceColumns(src, schema, resolved);
       if (cols && !cols.some((c) => normalizeName(c) === name)) {
         diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
+        return; // base column missing — don't also walk its (nonexistent) fields
       }
+      checkFieldPath(src, name, split.fields, schema, ref, diagnostics);
       return; // qualifier resolved (or columns unknown) — done
     }
     return; // qualifier visible but not found in this chain — defensive; don't flag
@@ -156,20 +158,61 @@ function checkColumn(
     if (sources.length === 0) continue;
     let matches = 0;
     let unknown = 0;
+    let matched: ResolvedSource | undefined;
     for (const src of sources) {
       const cols = sourceColumns(src, schema, resolved);
       if (!cols) unknown++;
-      else if (cols.some((c) => normalizeName(c) === name)) matches++;
+      else if (cols.some((c) => normalizeName(c) === name)) {
+        matches++;
+        matched = src;
+      }
     }
     if (matches > 1) {
       diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${name}`));
       return;
     }
-    if (matches === 1) return;
+    if (matches === 1) {
+      if (matched) checkFieldPath(matched, name, split.fields, schema, ref, diagnostics);
+      return;
+    }
     if (unknown > 0) return; // might live in a source whose columns we don't know
     // all sources here known, none has it — try an enclosing scope (correlation)
   }
   diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${name}`));
+}
+
+/**
+ * Walk a struct/field path (`addr.city`, `a.b.c`) against the base column's struct type.
+ * The type is known only when the base column comes from a table schema (CTE/subquery
+ * outputs carry names, not types), so otherwise this is a no-op. Conservative: a field is
+ * flagged only when its parent type is a *known struct* that lacks it — arrays, maps,
+ * primitives, and unknown types stop the walk without flagging.
+ */
+function checkFieldPath(
+  src: ResolvedSource,
+  columnName: string,
+  fields: string[],
+  schema: Schema,
+  ref: ColumnRef,
+  diagnostics: Diagnostic[],
+): void {
+  if (fields.length === 0) return;
+  if (src.kind !== "table" || src.source.columnAliases) return; // type known only from a table schema
+  const col = schema
+    .columnsFor(src.name)
+    ?.find((c) => normalizeName(c.name) === normalizeName(columnName));
+  let type = col?.type;
+  for (const field of fields) {
+    if (!type) return; // unknown type — stop
+    const structFields = parseStructFields(type);
+    if (!structFields) return; // not a struct (array/map/primitive) — don't flag
+    const hit = structFields.find((f) => normalizeName(f.name) === normalizeName(field));
+    if (!hit) {
+      diagnostics.push(columnDiag("unknown-field", ref, `Unknown field: ${ref.parts.join(".")}`));
+      return;
+    }
+    type = hit.type;
+  }
 }
 
 /** Schema-resolved columns of a source, or undefined when unknown (needs a catalog). */

@@ -67,6 +67,42 @@ describe("qualify", () => {
     expect(result.diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);
   });
 
+  it("flags a struct field not present in the column's struct type", () => {
+    const schema = new Schema({ t: { addr: "struct<city:string,zip:int>" } });
+    const { result } = run("SELECT t.addr.nope FROM t", schema);
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+  });
+
+  it("does not flag a struct field that exists", () => {
+    const schema = new Schema({ t: { addr: "struct<city:string,zip:int>" } });
+    const { result } = run("SELECT t.addr.city FROM t", schema);
+    expect(result.diagnostics).toEqual([]);
+  });
+
+  it("walks nested struct types (a.b.c) and flags a missing leaf field", () => {
+    const schema = new Schema({ t: { a: "struct<b:struct<c:string>>" } });
+    const { ok } = { ok: run("SELECT t.a.b.c FROM t", schema) };
+    expect(ok.result.diagnostics).toEqual([]);
+    const { result } = run("SELECT t.a.b.nope FROM t", schema);
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-field");
+  });
+
+  it("does not flag field access when the base column is not a struct type", () => {
+    // `addr` is a plain string, not a struct — `.city` isn't validated (we don't model
+    // field access on non-structs), so no false unknown-field.
+    const schema = new Schema({ t: { addr: "string" } });
+    const { result } = run("SELECT t.addr.city FROM t", schema);
+    expect(result.diagnostics.filter((d) => d.kind === "unknown-field")).toEqual([]);
+  });
+
+  it("does not flag field access through a CTE column (type not propagated)", () => {
+    // The CTE output `addr` carries a name but no type, so the struct can't be checked —
+    // conservative: no unknown-field even for a bogus field.
+    const schema = new Schema({ t: { addr: "struct<city:string>" } });
+    const { result } = run("WITH c AS (SELECT addr FROM t) SELECT addr.nope FROM c", schema);
+    expect(result.diagnostics.filter((d) => d.kind === "unknown-field")).toEqual([]);
+  });
+
   it("flags an ambiguous bare column present in two joined tables", () => {
     const { result } = run(
       "SELECT id FROM t JOIN u ON t.x = u.y",

@@ -48,6 +48,58 @@ export class Schema {
   }
 }
 
+/**
+ * Parse a Databricks/Spark struct type string into its fields, or undefined if `type`
+ * is not a struct (a primitive, array, map, or anything unparseable — callers stop there).
+ * Handles nesting: a field's `type` may itself be `struct<…>` and is parsed on demand.
+ *   "struct<city:string,zip:int>" -> [{name:"city",type:"string"}, {name:"zip",type:"int"}]
+ */
+export function parseStructFields(type: string): Column[] | undefined {
+  const m = /^\s*struct\s*<(.*)>\s*$/is.exec(type);
+  if (!m) return undefined;
+  const fields: Column[] = [];
+  for (const part of splitTopLevel(m[1])) {
+    const colon = topLevelColon(part);
+    if (colon < 0) continue; // not a `name:type` field — skip rather than mis-read
+    const name = normalizeName(part.slice(0, colon).trim());
+    let fieldType = part.slice(colon + 1).trim();
+    const comment = fieldType.search(/\s+comment\s+'/i); // strip a trailing COMMENT '…'
+    if (comment >= 0) fieldType = fieldType.slice(0, comment).trim();
+    if (name) fields.push({ name, type: fieldType });
+  }
+  return fields;
+}
+
+/** Split on commas that are not nested inside `<…>` or `(…)`. */
+function splitTopLevel(s: string): string[] {
+  const out: string[] = [];
+  let depth = 0;
+  let start = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "<" || ch === "(") depth++;
+    else if (ch === ">" || ch === ")") depth--;
+    else if (ch === "," && depth === 0) {
+      out.push(s.slice(start, i));
+      start = i + 1;
+    }
+  }
+  out.push(s.slice(start));
+  return out.map((p) => p.trim()).filter((p) => p.length > 0);
+}
+
+/** Index of the first `:` not nested inside `<…>` or `(…)`, or -1. */
+function topLevelColon(s: string): number {
+  let depth = 0;
+  for (let i = 0; i < s.length; i++) {
+    const ch = s[i];
+    if (ch === "<" || ch === "(") depth++;
+    else if (ch === ">" || ch === ")") depth--;
+    else if (ch === ":" && depth === 0) return i;
+  }
+  return -1;
+}
+
 /** Databricks identifiers are case-insensitive; strip surrounding backticks too. */
 function normalizeName(name: string): string {
   const unquoted = name.startsWith("`") && name.endsWith("`") ? name.slice(1, -1) : name;
