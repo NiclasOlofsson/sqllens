@@ -34,4 +34,9 @@ describe("qualify", () => {
     const { tree, result } = run("WITH c AS (SELECT a, b FROM t) SELECT * FROM c", schema);
     expect(result.columnsOf(tree.root)).toEqual(["a", "b"]);
   });
+
+  it("expands a star over a table using its inline column aliases (no schema needed)", () => {
+    const { tree, result } = run("SELECT * FROM t AS u (c1, c2)", new Schema({}));
+    expect(result.columnsOf(tree.root)).toEqual(["c1", "c2"]);
+  });
 });

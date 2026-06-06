@@ -57,6 +57,8 @@ export interface TableSource {
   /** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
   name: string[];
   alias?: string;
+  /** Inline column aliases, e.g. `t AS u (c1, c2)` → ["c1","c2"]. */
+  columnAliases?: string[];
   cst: ParserRuleContext;
 }
 
@@ -64,11 +66,15 @@ export interface SubquerySource {
   kind: "subquery";
   query: QueryExpr;
   alias?: string;
+  /** Inline column aliases, e.g. `(…) s (c1, c2)` → ["c1","c2"]. */
+  columnAliases?: string[];
   cst: ParserRuleContext;
 }
 
 export interface CteDef {
   name: string;
+  /** Declared column aliases, e.g. `WITH c (x, y) AS (…)` → ["x","y"]; these rename the CTE's outputs. */
+  columnAliases?: string[];
   body: QueryExpr;
   cst: ParserRuleContext;
 }
@@ -176,7 +182,21 @@ function lowerNamedQuery(namedQuery: ParserRuleContext): CteDef {
   const name = directChildrenOfRule(namedQuery, P.RULE_errorCapturingIdentifier)[0]?.getText() ?? "";
   const innerQuery = firstOfRule(namedQuery, P.RULE_query);
   if (!innerQuery) throw new Error("lower: CTE without a query body");
-  return { name, body: lowerQuery(innerQuery), cst: namedQuery };
+  return {
+    name,
+    columnAliases: columnAliasList(namedQuery),
+    body: lowerQuery(innerQuery),
+    cst: namedQuery,
+  };
+}
+
+/** The identifier names in a `( a, b, c )` column-alias list directly under `node`, if present. */
+function columnAliasList(node: ParserRuleContext): string[] | undefined {
+  const list = directChildrenOfRule(node, P.RULE_identifierList)[0];
+  if (!list) return undefined;
+  const seq = firstOfRule(list, P.RULE_identifierSeq);
+  if (!seq) return undefined;
+  return directChildrenOfRule(seq, P.RULE_errorCapturingIdentifier).map((i) => i.getText());
 }
 
 function buildSelect(querySpec: ParserRuleContext): SelectExpr {
@@ -261,19 +281,21 @@ function topRelationPrimaries(node: ParseTree): ParserRuleContext[] {
   return out;
 }
 
-function aliasOf(relationPrimary: ParserRuleContext): string | undefined {
-  const tableAlias = directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0];
-  if (!tableAlias) return undefined;
-  return firstOfRule(tableAlias, P.RULE_strictIdentifier)?.getText();
-}
-
 function buildSource(relationPrimary: ParserRuleContext): Source {
-  const alias = aliasOf(relationPrimary);
+  const tableAlias = directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0];
+  const alias = tableAlias ? firstOfRule(tableAlias, P.RULE_strictIdentifier)?.getText() : undefined;
+  const columnAliases = tableAlias ? columnAliasList(tableAlias) : undefined;
 
   // A derived table: `( query ) alias`.
   const innerQuery = firstOfRule(relationPrimary, P.RULE_query);
   if (innerQuery) {
-    return { kind: "subquery", query: lowerQuery(innerQuery), alias, cst: relationPrimary };
+    return {
+      kind: "subquery",
+      query: lowerQuery(innerQuery),
+      alias,
+      columnAliases,
+      cst: relationPrimary,
+    };
   }
 
   const multipart = firstOfRule(relationPrimary, P.RULE_multipartIdentifier);
@@ -284,6 +306,7 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
     kind: "table",
     name: parts.length ? parts : multipart ? [multipart.getText()] : [],
     alias,
+    columnAliases,
     cst: relationPrimary,
   };
 }

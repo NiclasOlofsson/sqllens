@@ -61,6 +61,26 @@ describe("lower: CST -> IR", () => {
     expect(src.query.body.from).toMatchObject([{ kind: "table", name: ["t"] }]);
   });
 
+  it("names an implicit projection alias (no AS)", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a x FROM t").tree).body);
+    expect(sel.projections[0].name).toBe("x");
+  });
+
+  it("captures an implicit table alias (no AS)", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a FROM t u").tree).body);
+    expect(sel.from[0]).toMatchObject({ kind: "table", alias: "u" });
+  });
+
+  it("captures CTE column aliases", () => {
+    const ir = lower(parseDatabricks("WITH c (x, y) AS (SELECT a, b FROM t) SELECT a FROM c").tree);
+    expect(ir.ctes[0].columnAliases).toEqual(["x", "y"]);
+  });
+
+  it("captures table column aliases", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a FROM t AS u (c1, c2)").tree).body);
+    expect(sel.from[0]).toMatchObject({ kind: "table", alias: "u", columnAliases: ["c1", "c2"] });
+  });
+
   it("names a qualified column by its last part (structurally, not by regex)", () => {
     const sel = asSelect(lower(parseDatabricks("SELECT t.col, a.b.c FROM t").tree).body);
     expect(sel.projections.map((p) => p.name)).toEqual(["col", "c"]);

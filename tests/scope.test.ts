@@ -42,4 +42,9 @@ describe("resolveScopes", () => {
     const { root } = scopeOf("WITH c AS (SELECT a, b FROM t) SELECT a FROM c");
     expect(root.ctes.get("c")?.scope.outputs).toEqual(["a", "b"]);
   });
+
+  it("uses a CTE's declared column aliases as its outputs, overriding inner names", () => {
+    const { root } = scopeOf("WITH c (x, y) AS (SELECT a, b FROM t) SELECT a FROM c");
+    expect(root.ctes.get("c")?.scope.outputs).toEqual(["x", "y"]);
+  });
 });

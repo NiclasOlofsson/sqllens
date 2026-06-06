@@ -57,6 +57,8 @@ function buildQueryScope(query: QueryExpr, parent?: Scope): Scope {
   // CTEs are visible to the body and to later CTEs; build them in order.
   for (const cte of query.ctes) {
     const cteScope = buildQueryScope(cte.body, scope);
+    // Declared column aliases (WITH c (x, y) AS …) rename what the CTE exposes.
+    if (cte.columnAliases) cteScope.outputs = cte.columnAliases;
     scope.ctes.set(normalizeName(cte.name), { def: cte, scope: cteScope });
     scope.children.push(cteScope);
   }

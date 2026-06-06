@@ -87,6 +87,8 @@ function columnsOfSource(
   diagnostics: Diagnostic[],
 ): string[] | undefined {
   if (src.kind === "table") {
+    // Inline column aliases (t AS u (c1, c2)) name the columns without a catalog.
+    if (src.source.columnAliases) return src.source.columnAliases;
     const cols = schema.columnsFor(src.name);
     if (!cols) {
       diagnostics.push(unknownTable(src.name, src.source.cst));
@@ -94,9 +96,14 @@ function columnsOfSource(
     }
     return cols.map((c) => c.name);
   }
-  // cte or subquery — use the already-resolved child scope's columns.
-  const childScope = src.kind === "cte" ? src.ref.scope : src.scope;
-  const r = resolved.get(childScope);
+  if (src.kind === "cte") {
+    if (src.ref.def.columnAliases) return src.ref.def.columnAliases; // WITH c (x, y) AS …
+    const r = resolved.get(src.ref.scope);
+    return r === undefined || r === "unknown" ? undefined : r;
+  }
+  // subquery — inline column aliases, else the already-resolved child scope columns.
+  if (src.source.columnAliases) return src.source.columnAliases;
+  const r = resolved.get(src.scope);
   return r === undefined || r === "unknown" ? undefined : r;
 }
 
