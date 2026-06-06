@@ -33,6 +33,10 @@ export interface SelectExpr {
   /** Every column reference at this query level (projections, WHERE, JOIN ON, …),
    *  excluding those inside nested subqueries (which belong to their own scope). */
   columns: ColumnRef[];
+  /** Scalar / IN / EXISTS subqueries appearing in this select's expressions (SELECT list,
+   *  WHERE, …) — not the FROM sources. Scoped as children so their (possibly correlated)
+   *  columns resolve. */
+  subqueries?: QueryExpr[];
   /** A PIVOT applied to the FROM relation, if present (transforms the output columns). */
   pivot?: PivotInfo;
   /** An UNPIVOT applied to the FROM relation, if present. */
@@ -267,15 +271,47 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
   const from: Source[] = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
   if (fromClause) from.push(...extractLateralViews(fromClause));
 
+  // Subqueries in expressions (not the FROM): exclude the FROM sources' own query nodes.
+  const fromSubqueryNodes = new Set<ParserRuleContext>();
+  for (const s of from) {
+    if (s.kind === "subquery") {
+      const q = firstOfRule(s.cst, P.RULE_query);
+      if (q) fromSubqueryNodes.add(q);
+    }
+  }
+  const subqueries = extractExpressionSubqueries(querySpec, fromSubqueryNodes);
+
   return {
     kind: "select",
     projections,
     from,
     columns: extractColumnRefs(querySpec),
+    subqueries: subqueries.length ? subqueries : undefined,
     pivot: fromClause ? extractPivot(fromClause) : undefined,
     unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
     cst: querySpec,
   };
+}
+
+/** Top-level nested queries that are NOT FROM sources — scalar/IN/EXISTS subqueries in expressions. */
+function extractExpressionSubqueries(
+  querySpec: ParserRuleContext,
+  fromSourceQueries: Set<ParserRuleContext>,
+): QueryExpr[] {
+  const out: QueryExpr[] = [];
+  const walk = (n: ParseTree) => {
+    for (let i = 0; i < n.getChildCount(); i++) {
+      const child = n.getChild(i);
+      if (!(child instanceof ParserRuleContext)) continue;
+      if (child.ruleIndex === P.RULE_query) {
+        if (!fromSourceQueries.has(child)) out.push(lowerQuery(child));
+        continue; // never descend into a query — it is its own scope
+      }
+      walk(child);
+    }
+  };
+  walk(querySpec);
+  return out;
 }
 
 /** Collect rule nodes within `node` but not inside nested subqueries (and don't descend into matches). */

@@ -66,6 +66,15 @@ export type ColumnResolution =
  *   several do; needs-schema if a source's columns aren't known without a catalog.
  */
 export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
+  // Walk this scope then enclosing scopes — a correlated reference binds to an outer source.
+  for (let s: Scope | undefined = scope; s; s = s.parent) {
+    const r = resolveColumnInScope(s, ref);
+    if (r.kind !== "unresolved") return r;
+  }
+  return { kind: "unresolved" };
+}
+
+function resolveColumnInScope(scope: Scope, ref: ColumnRef): ColumnResolution {
   if (ref.parts.length >= 2) {
     const qualifier = normalizeName(ref.parts[ref.parts.length - 2]);
     const source = scope.sources.get(qualifier);
@@ -80,7 +89,7 @@ export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
   });
   if (matches.length === 1) return { kind: "bound", source: matches[0] };
   if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
-  // No known source has it — but a source with unknown columns might.
+  // No known source has it — but a source with unknown columns might (here or in a parent).
   return sources.some((s) => sourceOutputs(s) === "unknown")
     ? { kind: "needs-schema" }
     : { kind: "unresolved" };
@@ -143,6 +152,11 @@ function fillScope(scope: Scope): void {
           : { kind: "table", name: source.name, source },
       );
     }
+  }
+
+  // Scalar / IN / EXISTS subqueries in expressions become child scopes (parent set for correlation).
+  for (const sub of body.subqueries ?? []) {
+    scope.children.push(buildQueryScope(sub, scope));
   }
 
   scope.outputs = computeOutputs(scope, body);

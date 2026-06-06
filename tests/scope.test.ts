@@ -15,6 +15,27 @@ function colOf(sql: string, partsJoined: string) {
   return { ref, root: resolveScopes(ir).root };
 }
 
+// Find the (scope, ref) for a column anywhere in the scope tree — needed for refs that
+// live inside a subquery scope rather than the root.
+function findCol(sql: string, partsJoined: string) {
+  const tree = resolveScopes(lower(parseDatabricks(sql).tree));
+  const walk = (s: import("../src/scope/scope.js").Scope): { scope: typeof s; ref: ColumnRefT } | undefined => {
+    if (s.body.kind === "select") {
+      const ref = s.body.columns.find((c) => c.parts.join(".") === partsJoined);
+      if (ref) return { scope: s, ref };
+    }
+    for (const child of s.children) {
+      const found = walk(child);
+      if (found) return found;
+    }
+    return undefined;
+  };
+  const found = walk(tree.root);
+  if (!found) throw new Error(`no column ${partsJoined}`);
+  return found;
+}
+type ColumnRefT = SelectExpr["columns"][number];
+
 describe("resolveScopes", () => {
   it("registers a FROM table as a source keyed by its name", () => {
     const { root } = scopeOf("SELECT a FROM t");
@@ -89,6 +110,14 @@ describe("resolveColumn", () => {
   it("binds a column to a LATERAL VIEW source", () => {
     const { ref, root } = colOf("SELECT v.col FROM t LATERAL VIEW explode(arr) v AS col", "v.col");
     expect(resolveColumn(root, ref).kind).toBe("bound");
+  });
+
+  it("resolves a correlated qualified column against an enclosing scope", () => {
+    const { scope, ref } = findCol(
+      "SELECT (SELECT max(x) FROM inner_t WHERE inner_t.k = o.id) AS m FROM outer_t AS o",
+      "o.id",
+    );
+    expect(resolveColumn(scope, ref).kind).toBe("bound");
   });
 });
 
