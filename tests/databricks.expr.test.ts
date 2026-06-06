@@ -162,6 +162,14 @@ describe("lowerExpression — special forms", () => {
     });
   });
 
+  it("excludes lambda parameters from extracted columns (the param is a local, not a column)", () => {
+    const sel = selectOf("SELECT transform(arr, x -> x + outer_col) FROM t");
+    const cols = sel.columns.map((c) => c.parts.join("."));
+    expect(cols).toContain("outer_col"); // a real outer column the lambda closes over
+    expect(cols).toContain("arr"); // the collection argument
+    expect(cols).not.toContain("x"); // the lambda parameter must not leak as a column ref
+  });
+
   it("reaches the base column of a subscript for resolution (split(s,'-')[1])", () => {
     const sel = selectOf("SELECT split(s, '-')[1] AS first FROM t");
     expect(sel.columns.map((c) => c.parts.join("."))).toContain("s");

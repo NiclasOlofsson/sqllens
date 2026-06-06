@@ -945,11 +945,17 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
       columnsOf(expr.operand, acc, clause);
       expr.args.forEach((a) => columnsOf(a, acc, clause));
       break;
-    case "lambda":
-      // The body may reference outer columns; lambda params are locals (they won't bind to a
-      // source, which is correct — they're not table columns).
-      columnsOf(expr.body, acc, clause);
+    case "lambda": {
+      // The body may close over outer columns, but a reference to a lambda PARAM is a local —
+      // it must not leak as a (table) column. Collect the body's refs, then drop the params.
+      const inner: ColumnRef[] = [];
+      columnsOf(expr.body, inner, clause);
+      const params = new Set(expr.params.map((p) => p.toLowerCase()));
+      for (const ref of inner) {
+        if (!params.has((ref.parts[0] ?? "").toLowerCase())) acc.push(ref);
+      }
       break;
+    }
     case "subscript":
       columnsOf(expr.base, acc, clause);
       columnsOf(expr.index, acc, clause);
