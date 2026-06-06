@@ -119,6 +119,22 @@ describe("resolveColumn", () => {
     );
     expect(resolveColumn(scope, ref).kind).toBe("bound");
   });
+
+  it("resolves a SELECT alias referenced in ORDER BY", () => {
+    const { scope, ref } = findCol("SELECT p + q AS z FROM t ORDER BY z", "z");
+    expect(resolveColumn(scope, ref).kind).toBe("alias");
+  });
+
+  it("resolves a SELECT alias referenced in GROUP BY", () => {
+    const { scope, ref } = findCol("SELECT p AS z FROM t GROUP BY z", "z");
+    expect(resolveColumn(scope, ref).kind).toBe("alias");
+  });
+
+  it("does not treat a bare name in WHERE as a SELECT alias", () => {
+    const { scope, ref } = findCol("SELECT p AS z FROM t WHERE z > 0", "z");
+    // WHERE cannot see SELECT aliases — z must resolve as a (schema-dependent) column, not an alias.
+    expect(resolveColumn(scope, ref).kind).not.toBe("alias");
+  });
 });
 
 describe("pivot / unpivot outputs", () => {

@@ -65,6 +65,7 @@ interface ScopeStats {
   // Column binding (resolveColumn) over every column reference:
   colTotal: number;
   colBound: number;
+  colAlias: number;
   colAmbiguous: number;
   colNeedsSchema: number;
   colUnresolved: number;
@@ -96,6 +97,7 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
       acc.colTotal++;
       const r = resolveColumn(scope, ref);
       if (r.kind === "bound") acc.colBound++;
+      else if (r.kind === "alias") acc.colAlias++;
       else if (r.kind === "ambiguous") acc.colAmbiguous++;
       else if (r.kind === "needs-schema") acc.colNeedsSchema++;
       else acc.colUnresolved++;
@@ -180,6 +182,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       unkExprOnly: 0,
       colTotal: 0,
       colBound: 0,
+      colAlias: 0,
       colAmbiguous: 0,
       colNeedsSchema: 0,
       colUnresolved: 0,
@@ -230,8 +233,8 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         ``,
         `Column binding (${scopeStats.colTotal} refs, schema-free):`,
         `  bound ${scopeStats.colBound} (${pct(scopeStats.colBound, scopeStats.colTotal)}%), ` +
-          `ambiguous ${scopeStats.colAmbiguous}, needs-schema ${scopeStats.colNeedsSchema}, ` +
-          `unresolved ${scopeStats.colUnresolved}`,
+          `alias ${scopeStats.colAlias}, ambiguous ${scopeStats.colAmbiguous}, ` +
+          `needs-schema ${scopeStats.colNeedsSchema}, unresolved ${scopeStats.colUnresolved}`,
         ``,
         `Top failure clusters:`,
         ...top.map(([k, n]) => `  ${String(n).padStart(4)}  ${k}   e.g. ${sample[k]}`),

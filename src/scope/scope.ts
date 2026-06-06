@@ -55,6 +55,7 @@ export function resolveScopes(query: QueryExpr): ScopeTree {
 
 export type ColumnResolution =
   | { kind: "bound"; source: ResolvedSource }
+  | { kind: "alias"; name: string } // resolves to a SELECT-list alias (in GROUP BY/HAVING/ORDER BY)
   | { kind: "ambiguous"; candidates: ResolvedSource[] }
   | { kind: "unresolved" } // qualifier names no visible source
   | { kind: "needs-schema" }; // can't tell without a source's column list
@@ -69,9 +70,32 @@ export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
   // Walk this scope then enclosing scopes — a correlated reference binds to an outer source.
   for (let s: Scope | undefined = scope; s; s = s.parent) {
     const r = resolveColumnInScope(s, ref);
-    if (r.kind !== "unresolved") return r;
+    if (r.kind === "bound" || r.kind === "ambiguous") return r;
+    // GROUP BY / HAVING / ORDER BY of this scope may reference a SELECT alias. Source columns
+    // take precedence (checked above); fall back to a matching projection alias here.
+    if (
+      s === scope &&
+      ref.parts.length === 1 &&
+      aliasVisibleClause(ref.clause) &&
+      matchesProjectionAlias(s, ref.parts[0])
+    ) {
+      return { kind: "alias", name: ref.parts[0] };
+    }
+    if (r.kind === "needs-schema") return r;
+    // r is unresolved — try the enclosing scope (correlation).
   }
   return { kind: "unresolved" };
+}
+
+/** Clauses where a bare name may reference a SELECT-list alias rather than a source column. */
+function aliasVisibleClause(clause: ColumnRef["clause"]): boolean {
+  return clause === "groupBy" || clause === "having" || clause === "orderBy";
+}
+
+function matchesProjectionAlias(scope: Scope, name: string): boolean {
+  if (scope.body.kind !== "select") return false;
+  const n = normalizeName(name);
+  return scope.body.projections.some((p) => p.name !== undefined && normalizeName(p.name) === n);
 }
 
 function resolveColumnInScope(scope: Scope, ref: ColumnRef): ColumnResolution {

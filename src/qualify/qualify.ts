@@ -124,6 +124,19 @@ function checkColumn(
   resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
 ): void {
+  // A bare name in GROUP BY/HAVING/ORDER BY may reference a SELECT-list alias rather than a
+  // column — don't flag it as unknown. (Source columns, if known, are checked normally above.)
+  if (
+    ref.parts.length === 1 &&
+    (ref.clause === "groupBy" || ref.clause === "having" || ref.clause === "orderBy") &&
+    scope.body.kind === "select" &&
+    scope.body.projections.some(
+      (p) => p.name !== undefined && normalizeName(p.name) === normalizeName(ref.parts[0]),
+    )
+  ) {
+    return;
+  }
+
   const name = normalizeName(ref.parts[ref.parts.length - 1] ?? "");
 
   if (ref.parts.length >= 2) {
