@@ -20,7 +20,7 @@ function countSyntaxErrors(sql: string): number {
   lexer.addErrorListener(listener as never);
   parser.removeErrorListeners();
   parser.addErrorListener(listener as never);
-  parser.databricks_file(); // entry rule: statement_list? EOF
+  parser.singleStatement(); // entry rule: (statement | setResetStatement) SEMICOLON* EOF
   return errors;
 }
 
@@ -30,6 +30,9 @@ describe("databricks parser (antlr-ng -> antlr4ng) smoke", () => {
   });
 
   it("flags invalid SQL", () => {
-    expect(countSyntaxErrors("SELECT FROM WHERE")).toBeGreaterThan(0);
+    // Use an incomplete expression, not "SELECT FROM WHERE": in Spark's default
+    // (non-ANSI) mode FROM/WHERE are non-reserved keywords, so that string is valid
+    // SQL (a column "from" aliased as "where"). A trailing operator is unambiguously broken.
+    expect(countSyntaxErrors("SELECT 1 +")).toBeGreaterThan(0);
   });
 });

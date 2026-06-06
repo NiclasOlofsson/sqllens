@@ -1,1636 +1,2728 @@
-// ---------------------------------------------------------------------------
-// Forked from antlr/grammars-v4 (sql/databricks)
-//   upstream commit: 923a1a90f3b9e28c8ac08e170e582ceb15d6f0a9
-//   retrieved:       2026-06-06
-// Upstream MIT license retained below. Local edits tracked in git history.
-// ---------------------------------------------------------------------------
 /*
-Databricks Database grammar.
-The MIT License (MIT).
-
-Copyright (c) 2025, Michał Lorek.
-
-Permission is hereby granted, free of charge, to any person obtaining a copy
-of this software and associated documentation files (the "Software"), to deal
-in the Software without restriction, including without limitation the rights
-to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
-copies of the Software, and to permit persons to whom the Software is
-furnished to do so, subject to the following conditions:
-The above copyright notice and this permission notice shall be included in
-all copies or substantial portions of the Software.
-THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
-IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
-FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
-AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
-LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
-OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
-THE SOFTWARE.
-*/
-
-// $antlr-format alignTrailingComments true, columnLimit 150, minEmptyLines 1, maxEmptyLinesToKeep 1, reflowComments false, useTab false
-// $antlr-format allowShortRulesOnASingleLine false, allowShortBlocksOnASingleLine true, alignSemicolons hanging, alignColons hanging
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ *
+ * This file is an adaptation of Presto's presto-parser/src/main/antlr4/com/facebook/presto/sql/parser/SqlBase.g4 grammar.
+ */
 
 parser grammar DatabricksParser;
 
-options {
-    tokenVocab = DatabricksLexer;
+// Provenance: forked from apache/spark's SqlBaseParser.g4 (Spark SQL == Databricks SQL).
+// Renamed SqlBaseParser -> DatabricksParser; tokenVocab retargeted to DatabricksLexer.
+// Java @members ported to TypeScript for the antlr4ng target: boolean flags as class fields,
+// _input -> this.inputStream, token constants referenced as DatabricksParser.*. Predicate
+// sites in the rules were prefixed with `this.` as the TypeScript target requires.
+options { tokenVocab = DatabricksLexer; }
+
+// Imported so the complexDataType action can cast the token source to the lexer to call
+// decComplexTypeLevelCounter(). Emitted at the top of the generated parser module.
+@header {
+import { DatabricksLexer } from "./DatabricksLexer.js";
 }
 
-databricks_file
-    : statement_list? EOF
+@members {
+  /**
+   * When false, INTERSECT is given greater precedence than the other set operations
+   * (UNION, EXCEPT, MINUS) per the SQL standard.
+   */
+  public legacy_setops_precedence_enabled = false;
+
+  /** When false, an exponent literal is converted to a double rather than a decimal. */
+  public legacy_exponent_literal_as_decimal_enabled = false;
+
+  /** When true, keyword behavior follows the ANSI SQL standard. */
+  public SQL_standard_keyword_behavior = false;
+
+  /** When true, double-quoted literals are identifiers rather than STRINGs. */
+  public double_quoted_identifiers = false;
+
+  /**
+   * When false, parameter markers (? and :param) are only allowed in constant contexts.
+   * When true, parameter markers are allowed everywhere a literal is supported.
+   */
+  public parameter_substitution_enabled = true;
+
+  /**
+   * When false (default), IDENTIFIER('literal') resolves to an identifier at parse time.
+   * When true, only the legacy IDENTIFIER(expression) function syntax is allowed.
+   */
+  public legacy_identifier_clause_only = false;
+
+  /**
+   * When true, the single-character pipe token '|' can be used as an alternative to '|>'
+   * for SQL pipe operators. When false, only '|>' is recognized as a pipe operator.
+   */
+  public single_character_pipe_operator_enabled = true;
+
+  /**
+   * Checks whether the token after PIPE can start a pipe-operator right side. Disambiguates
+   * bitwise OR ('|') in expressions from the pipe operator ('|') in queries. Only applies
+   * when single_character_pipe_operator_enabled is true.
+   */
+  public isOperatorPipeStart(): boolean {
+    if (!this.single_character_pipe_operator_enabled) {
+      return false;
+    }
+    const la = this.inputStream.LA(2); // current token is PIPE; check what follows
+    return la === DatabricksParser.SELECT || la === DatabricksParser.EXTEND || la === DatabricksParser.SET || la === DatabricksParser.DROP ||
+           la === DatabricksParser.AS || la === DatabricksParser.WHERE || la === DatabricksParser.PIVOT || la === DatabricksParser.UNPIVOT ||
+           la === DatabricksParser.TABLESAMPLE || la === DatabricksParser.INNER || la === DatabricksParser.CROSS || la === DatabricksParser.LEFT ||
+           la === DatabricksParser.RIGHT || la === DatabricksParser.FULL || la === DatabricksParser.NATURAL || la === DatabricksParser.SEMI ||
+           la === DatabricksParser.ANTI || la === DatabricksParser.JOIN || la === DatabricksParser.UNION || la === DatabricksParser.EXCEPT ||
+           la === DatabricksParser.SETMINUS || la === DatabricksParser.INTERSECT || la === DatabricksParser.ORDER || la === DatabricksParser.CLUSTER ||
+           la === DatabricksParser.DISTRIBUTE || la === DatabricksParser.SORT || la === DatabricksParser.LIMIT || la === DatabricksParser.OFFSET ||
+           la === DatabricksParser.AGGREGATE || la === DatabricksParser.WINDOW || la === DatabricksParser.LATERAL;
+  }
+}
+
+compoundOrSingleStatement
+    : singleStatement
+    | singleCompoundStatement
     ;
 
-statement_list
-    : statement (SEMI statement)* SEMI?
+singleCompoundStatement
+    : BEGIN (NOT ATOMIC)? compoundBody? END SEMICOLON? EOF
+    ;
+
+beginEndCompoundBlock
+    : beginLabel? BEGIN (NOT ATOMIC)? compoundBody? END endLabel?
+    ;
+
+compoundBody
+    : (compoundStatements+=compoundStatement SEMICOLON)+
+    ;
+
+compoundStatement
+    : declareConditionStatement
+    | statement
+    | setStatementInsideSqlScript
+    | beginEndCompoundBlock
+    | declareHandlerStatement
+    | ifElseStatement
+    | caseStatement
+    | whileStatement
+    | repeatStatement
+    | leaveStatement
+    | iterateStatement
+    | loopStatement
+    | forStatement
+    ;
+
+setStatementInsideSqlScript
+    : SET assignmentList                              #setVariableInsideSqlScript
+    | SET LEFT_PAREN multipartIdentifierList RIGHT_PAREN EQ
+        LEFT_PAREN query RIGHT_PAREN                  #setVariableInsideSqlScript
+    ;
+
+sqlStateValue
+    : stringLit
+    ;
+
+declareConditionStatement
+    : DECLARE strictIdentifier CONDITION (FOR SQLSTATE VALUE? sqlStateValue)?
+    ;
+
+conditionValue
+    : SQLSTATE VALUE? sqlStateValue
+    | SQLEXCEPTION
+    | NOT FOUND
+    | multipartIdentifier
+    ;
+
+conditionValues
+    : cvList+=conditionValue (COMMA cvList+=conditionValue)*
+    ;
+
+declareHandlerStatement
+    : DECLARE (CONTINUE | EXIT) HANDLER FOR conditionValues (beginEndCompoundBlock | statement | setStatementInsideSqlScript)
+    ;
+
+whileStatement
+    : beginLabel? WHILE booleanExpression DO compoundBody END WHILE endLabel?
+    ;
+
+ifElseStatement
+    : IF booleanExpression THEN conditionalBodies+=compoundBody
+        (ELSEIF booleanExpression THEN conditionalBodies+=compoundBody)*
+        (ELSE elseBody=compoundBody)? END IF
+    ;
+
+repeatStatement
+    : beginLabel? REPEAT compoundBody UNTIL booleanExpression END REPEAT endLabel?
+    ;
+
+leaveStatement
+    : LEAVE strictIdentifier
+    ;
+
+iterateStatement
+    : ITERATE strictIdentifier
+    ;
+
+caseStatement
+    : CASE (WHEN conditions+=booleanExpression THEN conditionalBodies+=compoundBody)+
+        (ELSE elseBody=compoundBody)? END CASE                #searchedCaseStatement
+    | CASE caseVariable=expression (WHEN conditionExpressions+=expression THEN conditionalBodies+=compoundBody)+
+        (ELSE elseBody=compoundBody)? END CASE                #simpleCaseStatement
+    ;
+
+loopStatement
+    : beginLabel? LOOP compoundBody END LOOP endLabel?
+    ;
+
+forStatement
+    : beginLabel? FOR (strictIdentifier AS)? query DO compoundBody END FOR endLabel?
+    ;
+
+singleStatement
+    : (statement|setResetStatement) SEMICOLON* EOF
+    ;
+
+beginLabel
+    : strictIdentifier COLON
+    ;
+
+endLabel
+    : strictIdentifier
+    ;
+
+singleExpression
+    : namedExpression EOF
+    ;
+
+singleTableIdentifier
+    : tableIdentifier EOF
+    ;
+
+singleMultipartIdentifier
+    : multipartIdentifier EOF
+    ;
+
+singleFunctionIdentifier
+    : functionIdentifier EOF
+    ;
+
+singleDataType
+    : dataType EOF
+    ;
+
+singleTableSchema
+    : colTypeList EOF
+    ;
+
+singlePathElementList
+    : pathElement (COMMA pathElement)* EOF
+    ;
+
+singleRoutineParamList
+    : colDefinitionList EOF
     ;
 
 statement
-    : ddl_statement
-    | dml_statement
-    | data_retrieval_statement
-    | show_statement
-    | describe_statement
-    | misc_statement
-    | resource_management_statement
-    | security_statement
-    ;
-
-ddl_statement
-    : alter_statement
-    | create_statement
-    | drop_statement
-    | comment_on_statement
-    | declare_variable
-    | msck_repair_table_statement
-    | refresh_statement
-    | set_tag_statement
-    | sync_statement
-    | truncate_table_statement
-    | undrop_table_statement
-    | unset_tag_statement
-    ;
-
-dml_statement
-    : copy_into_statement
-    | delete_statement
-    | insert_statement
-    | insert_overwrite_directory_statement
-    | insert_overwrite_directory_hive_format_statement
-    | load_data_statement
-    | merge_into_statement
-    | update_statement
-    ;
-
-data_retrieval_statement
-    : query_statement
-    | select_statement
-    | values_statement
-    | sql_pipeline
-    | explain_statement
-    ;
-
-show_statement
-    : list
-    | show_all_in_share
-    | show_catalogs
-    | show_columns
-    | show_connections
-    | show_create_table
-    | show_credentials
-    | show_databases
-    | show_functions
-    | show_groups
-    | show_locations
-    | show_partitions
-    | show_procedures
-    | show_providers
-    | show_recipients
-    | show_schemas
-    | show_shares
-    | show_shares_in_provider
-    | show_table
-    | show_tables
-    | show_tables_dropped
-    | show_tblproperties
-    | show_users
-    | show_views
-    | show_volumes
-    ;
-
-describe_statement
-    : describe_catalog
-    | describe_connection
-    | describe_credential
-    | describe_database
-    | describe_function
-    | describe_location
-    | describe_procedure
-    | describe_provider
-    | describe_query
-    | describe_recipient
-    | describe_schema
-    | describe_share
-    | describe_table
-    | describe_volume
-    ;
-
-misc_statement
-    : call
-    | execute_immediate
-    | reset_statement
-    | set
-    | set_recipient
-    | set_timezone
-    | set_variable
-    | use_catalog
-    | use_schema
-    ;
-
-resource_management_statement
-    : add_archive
-    | add_file
-    | add_jar
-    | list_archive
-    | list_file
-    | list_jar
-    | get
-    | put_into
-    | remove
-    ;
-
-security_statement
-    : alter_group
-    | create_group
-    | deny
-    | drop_group
-    | grant
-    | grant_share
-    | repair_privileges
-    | revoke
-    | revoke_share
-    | show_grants
-    | show_grants_on_share
-    | show_grants_to_recipient
-    ;
-
-insert_statement
-    : INSERT (OVERWRITE | INTO) table_name TODO
-    ;
-
-insert_overwrite_directory_statement
-    : TODO
-    ;
-
-insert_overwrite_directory_hive_format_statement
-    : TODO
-    ;
-
-load_data_statement
-    : TODO
-    ;
-
-merge_into_statement
-    : TODO
-    ;
-
-update_statement
-    : UPDATE table_name as_alias? SET column_name EQ expr (COMMA column_name EQ expr)* (
-        FROM TODO
-    )? (WHERE expr)?
-    ;
-
-copy_into_statement
-    : COPY INTO TODO
-    ;
-
-delete_statement
-    : DELETE FROM object_name as_alias? (WHERE expr)?
-    ;
-
-comment_on_statement
-    : COMMENT ON (
-        CATALOG catalog_name |
-        COLUMN relation_name DOT column_name |
-        CONNECTION connection_name |
-        PROVIDER provider_name |
-        (SCHEMA | DATABASE) schema_name |
-        SHARE share_name |
-        TABLE relation_name |
-        VOLUME volume_name
-        ) IS string
-    ;
-
-declare_variable
-    : DECLARE or_replace? VARIABLE? variable_name (COMMA variable_name)* data_type?
-        ((DEFAULT | EQ) expr)?
-    ;
-
-msck_repair_table_statement
-    : MSCK? REPAIR TABLE table_name
-        (
-        ( (ADD | DROP | SYNC) PARTITIONS)?
-        | SYNC METADATA
-        )
-    ;
-
-refresh_statement
-    : REFRESH FOREIGN (
-        CATALOG catalog_name |
-        SCHEMA schema_name (RESOLVE DBFS LOCATION)? |
-        TABLE table_name (RESOLVE DBFS LOCATION)?
-    )
-    | REFRESH (MATERIALIZED VIEW | STREAMING? TABLE) table_name (FULL | SYNC | ASYNC)?
-    ;
-
-set_tag_statement
-    : SET TAG ON (
-        CATALOG catalog_name |
-        COLUMN relation_name DOT column_name |
-        (SCHEMA | DATABASE) schema_name |
-        TABLE relation_name |
-        VIEW relation_name |
-        VOLUME volume_name
-    ) k=id_ (EQ v=id_)?
-    ;
-
-sync_statement
-    : SYNC (
-        SCHEMA ts=schema_name (AS EXTERNAL)? FROM ss=schema_name |
-        TABLE tt=table_name (AS EXTERNAL)? FROM st=table_name
-    )
-    (SET OWNER principal)?
-    (DRY RUN)?
-    ;
-
-undrop_table_statement
-    : UNDROP (MATERIALIZED VIEW | TABLE) (relation_name | WITH ID relation_id)
-    ;
-
-unset_tag_statement
-    : UNSET TAG ON (
-        CATALOG catalog_name |
-        COLUMN relation_name DOT column_name |
-        (SCHEMA | DATABASE) schema_name |
-        TABLE relation_name |
-        VIEW relation_name |
-        VOLUME volume_name
-    ) k=id_
-    ;
-
-execute_immediate
-    : EXECUTE IMMEDIATE string (INTO variable_name_list)? (USING )? TODO
-    ;
-
-variable_name_list
-    : variable_name (COMMA variable_name)*
-    ;
-
-reset_statement
-    : RESET_ id_?
-    ;
-
-set_recipient
-    : SET RECIPIENT recipient_name
-    ;
-
-set_timezone
-    : SET TIME ZONE (LOCAL ) TODO
-    ;
-
-set_variable
-    : SET (VAR | VARIABLE) variable_name EQ (expr | DEFAULT) TODO
-    | SET (VAR | VARIABLE) '(' variable_name_list ')' EQ '(' query_statement ')'
-    ;
-
-use_catalog
-    : (USE | SET) CATALOG (catalog_name | string)?
-    ;
-
-set
-    : SET id_ EQ expr
-    | SET LR_BRACKET id_ (COMMA id_)* RR_BRACKET EQ LR_BRACKET expr (COMMA expr)* RR_BRACKET
-    ;
-
-truncate_table_statement
-    : TRUNCATE TABLE table_name partition_clause?
-    ;
-
-partition_clause
-    : PARTITION '(' partition_column_list ')'
-    ;
-
-partition_column_list
-    : partition_column (EQ partition_value | LIKE string)
-    ;
-
-partition_value
-    : string
-    | num
-    ;
-
-alter_statement
-    : alter_catalog
-    | alter_connection
-    | alter_credential
-    | alter_location
-    | alter_materialized_view
-    | alter_provider
-    | alter_recipient
-    | alter_schema
-    | alter_share
-    | alter_streaming_table
-    | alter_table
-    | alter_view
-    | alter_volume
-    ;
-
-catalog_name
-    : id_
-    ;
-
-default_collation_name
-    : id_
-    ;
-
-location_name
-    : id_
-    ;
-
-principal
-    : id_
-    ;
-
-connection_name
-    : id_
-    ;
-
-clean_room_name
-    : id_
-    ;
-
-credential_name
-    : id_
-    ;
-
-file_name
-    : string
-    ;
-
-partition_column
-    : id_
-    ;
-
-resource_name
-    : string
-    ;
-
-function_name
-    : id_
-    ;
-
-metadata_name
-    : id_
-    ;
-
-procedure_name
-    : id_
-    ;
-
-provider_name
-    : id_
-    ;
-
-recipient_name
-    : id_
-    ;
-
-relation_id
-    : string //UUID
-    ;
-
-relation_name
-    : id_
-    ;
-
-share_name
-    : id_
-    ;
-
-table_name
-    : id_
-    ;
-
-variable_name
-    : id_
-    ;
-
-view_name
-    : id_
-    ;
-
-volume_name
-    : id_
-    ;
-
-alter_catalog
-    : ALTER CATALOG catalog_name?
-        DEFAULT COLLATION default_collation_name
-        | SET? OWNER TO principal
-        SET TAGS '(' tag_list ')' | UNSET TAGS '(' tag_list ')'
-        | (ENABLE | DISABLE | INHERIT) PREDICTIVE OPTIMIZATION
-        | OPTIONS '(' ')'
-    ;
-
-alter_connection
-    : ALTER CONNECTION connection_name
-    (SET? OWNER TO principal | RENAME TO n=connection_name | OPTIONS '(' option_list ')')
-    ;
-
-option_list
-    : TODO
-    ;
-
-alter_credential
-    : ALTER storage_service CREDENTIAL credential_name
-    (RENAME TO n=credential_name | SET? OWNER TO principal)
-    ;
-
-data_type_list
-    : data_type (COMMA data_type)*
-    ;
-
-alter_location
-    : ALTER EXTERNAL LOCATION location_name
-    ;
-
-alter_materialized_view
-    : ALTER MATERIALIZED VIEW view_name TODO
-    ;
-
-alter_provider
-    : ALTER PROVIDER provider_name (RENAME TO n=provider_name | SET? OWNER TO principal)
-    ;
-
-alter_recipient
-    : ALTER RECIPIENT recipient_name (
-        RENAME TO n=recipient_name |
-        SET? OWNER TO principal |
-        SET PROPERTIES '(' property_key_value_list ')' |
-        UNSET PROPERTIES '(' property_key_list ')'
-    )
-    ;
-
-property_key_list
-    : property_key (COMMA property_key)*
-    ;
-
-property_key_value_list
-    : property_key_value (COMMA property_key_value)*
-    ;
-
-property_key_value
-    : property_key EQ? property_value
-    ;
-
-property_key
-    : id_ (DOT id_)*
-    | string
-    ;
-
-property_value
-    : string
-    ;
-
-alter_schema
-    : ALTER (DATABASE | SCHEMA) schema_name TODO
-    ;
-
-alter_share
-    : ALTER SHARE share_name TODO
-    ;
-
-alter_streaming_table
-    : ALTER STREAMING TABLE table_name TODO
-    ;
-
-alter_table
-    : ALTER TABLE table_name TODO
-    ;
-
-alter_view
-    : ALTER VIEW view_name TODO
-    ;
-
-alter_volume
-    : ALTER VOLUME volume_name (
-        SET? OWNER TO principal |
-        SET TAGS TODO |
-        UNSET TAGS TODO
-    )
-    ;
-
-tag_list
-    : TAG object_name (COMMA object_name)*
-    ;
-
-create_statement
-    : create_bloomfilter_index
-    | create_catalog
-    | create_connection
-    | create_function
-    | create_location
-    | create_materialized_view
-    | create_procedure
-    | create_recipient
-    | create_schema
-    | create_share
-    | create_streaming_table
-    | create_table
-    | create_view
-    | create_volume
-    ;
-
-create_bloomfilter_index
-    : CREATE BLOOMFILTER INDEX ON TABLE? table_name
-        FOR COLUMNS '(' TODO ')'
-        (OPTIONS TODO)?
-    ;
-
-create_catalog
-    : CREATE CATALOG if_not_exists? catalog_name
-    (USING SHARE provider_name DOT share_name |
-    MANAGED LOCATION location_path |
-    COMMENT comment |
-    DEFAULT COLLATION default_collation_name |
-    OPTIONS '(' TODO ')'
-    )?
-    ;
-
-location_path
-    : string
-    ;
-
-comment
-    : string
-    ;
-
-create_connection
-    : CREATE (SERVER | CONNECTION) if_not_exists? connection_name (
-        TYPE (DATABRICKS | HTTP | MYSQL | POSTGRESQL | REDSHIFT | SNOWFLAKE | SQLDW | SQLSERVER)
-        OPTIONS '(' TODO ')'
-        inline_comment_clause?
-    )
-    ;
-
-create_function
-    : CREATE or_replace? TEMPORARY? FUNCTION if_not_exists? function_name TODO
-    ;
-
-create_location
-    : CREATE EXTERNAL LOCATION if_not_exists? location_name
-        URL string
-        WITH '(' STORAGE CREDENTIAL credential_name ')'
-        inline_comment_clause?
-    ;
-
-column_list_in_parentheses
-    : '(' column_list ')'
-    ;
-
-create_materialized_view
-    : CREATE or_replace? MATERIALIZED VIEW if_not_exists? view_name TODO
-    ;
-
-create_procedure
-    : CREATE or_replace? PROCEDURE if_not_exists procedure_name TODO
-    ;
-
-create_recipient
-    : TODO
-    ;
-
-create_schema
-    : CREATE (DATABASE | SCHEMA) if_not_exists? schema_name TODO
-    ;
-
-create_share
-    : CREATE or_replace? SHARE id_ comment_clause?
-    ;
-
-true_false
-    : TRUE
-    | FALSE
-    ;
-
-create_streaming_table
-    : TODO
-    ;
-
-create_table
-    : create_table_using
-    | create_table_like
-    | create_table_clone
-    | create_table_hive_format
-    ;
-
-create_table_using
-    : TODO
-    ;
-
-create_table_like
-    : TODO
-    ;
-
-create_table_clone
-    : TODO
-    ;
-
-create_table_hive_format
-    : TODO
-    ;
-
-call
-    : CALL procedure_name '(' (argument_list | named_argument_list)? ')'
-    ;
-
-argument_list
-    : expr_list
-    ;
-
-named_argument_list
-    : id_ '=>' expr (COMMA id_ '=>' expr)*
-    ;
-
-create_view
-    : CREATE or_replace? TEMPORARY? VIEW if_not_exists? view_name TODO
-    ;
-
-create_volume
-    : CREATE EXTERNAL? VOLUME if_not_exists? volume_name
-        (LOCATION location_path)?
-        inline_comment_clause?
-    ;
-
-object_type_plural
-    : DATABASES
-    | ROLES
-    | SCHEMAS
-    | STREAMS
-    | TABLES
-    | TAGS
-    | USERS
-    | VIEWS
-    ;
-
-// drop commands
-drop_statement
-    : drop_bloomfilter_index
-    | drop_catalog
-    | drop_connection
-    | drop_credential
-    | drop_database
-    | drop_function
-    | drop_location
-    | drop_procedure
-    | drop_provider
-    | drop_recipient
-    | drop_schema
-    | drop_share
-    | drop_table
-    | drop_variable
-    | drop_view
-    | drop_volume
-    ;
-
-drop_bloomfilter_index
-    : DROP BLOOMFILTER INDEX ON TABLE? table_name (FOR COLUMNS column_list_in_parentheses)?
-    ;
-
-drop_catalog
-    : DROP CATALOG if_exists? catalog_name cascade_restrict?
-    ;
-
-drop_connection
-    : DROP CONNECTION if_exists? id_
-    ;
-
-drop_credential
-    : DROP storage_service? CREDENTIAL if_exists? credential_name
-    ;
-
-drop_database
-    : DROP DATABASE if_exists? id_ cascade_restrict?
-    ;
-
-drop_function
-    : DROP FUNCTION if_exists? object_name arg_types
-    ;
-
-drop_location
-    : DROP EXTERNAL LOCATION if_exists? location_name
-    ;
-
-drop_procedure
-    : DROP PROCEDURE if_exists? object_name arg_types
-    ;
-
-drop_provider
-    : DROP PROVIDER if_exists? provider_name
-    ;
-
-drop_recipient
-    : DROP RECIPIENT if_exists? recipient_name
-    ;
-
-drop_schema
-    : DROP SCHEMA if_exists? schema_name cascade_restrict?
-    ;
-
-
-drop_share
-    : DROP SHARE if_exists? share_name
-    ;
-
-drop_table
-    : DROP TABLE if_exists? object_name cascade_restrict?
-    ;
-
-drop_variable
-    : DROP TEMPORARY VARIABLE if_exists? variable_name
-    ;
-
-drop_view
-    : DROP MATERIALIZED? VIEW if_exists? view_name
-    ;
-
-drop_volume
-    : DROP VOLUME if_exists? volume_name
-    ;
-
-cascade_restrict
-    : CASCADE
-    | RESTRICT
-    ;
-
-arg_types
-    : LR_BRACKET data_type_list? RR_BRACKET
-    ;
-
-use_schema
-    : USE (DATABASE | SCHEMA) schema_name
-    ;
-
-add_archive
-    : (ADD (ARCHIVE | ARCHIVES) file_name)+
-    ;
-
-add_file
-    : ADD (FILE | FILES) resource_name+
-    ;
-
-add_jar
-    : ADD (JAR | JARS) file_name+
-    ;
-
-list_archive
-    : LIST (ARCHIVE | ARCHIVES) file_name*
-    ;
-
-list_file
-    : LIST (FILE | FILES) resource_name*
-    ;
-
-list_jar
-    : LIST (JAR | JARS) file_name*
-    ;
-
-get
-    : GET vp=string TO lp=string
-    ;
-
-put_into
-    : PUT lp=string INTO vp=string OVERWRITE?
-    ;
-
-remove
-    : REMOVE vp=string
-    ;
-
-alter_group
-    : ALTER GROUP p=principal (ADD | DROP)
-        (
-        user_group principal_list
-        )
-    ;
-
-user_group
-    : USER
-    | GROUP
-    ;
-
-principal_list
-    : principal (COMMA principal)*
-    ;
-
-create_group
-    : CREATE GROUP g=principal (WITH user_group principal_list)?
-    ;
-
-deny
-    : DENY ON TO principal
-    ;
-
-drop_group
-    : DROP GROUP g=principal
-    ;
-
-grant
-    : GRANT privilege_types ON securable_object TO principal
-    ;
-
-privilege_types
-    : ALL PRIVILEGES
-    | privilege_type_list
-    ;
-
-privilege_type_list
-    : privilege_type (COMMA privilege_type)*
-    ;
-
-privilege_type
-    : ACCESS
-    | APPLY TAG
-    | BROWSE
-    | CREATE (
-        CATALOG
-        | CLEAN ROOM
-        | CONNECTION
-        | EXTERNAL (LOCATION | METADATA | TABLE | VOLUME)
-        | FOREIGN (CATALOG | SECURABLE)
-        | FUNCTION
-        | MODEL VERSION?
-        | MANAGED STORAGE
-        | PROVIDER
-        | RECIPIENT
-        | SCHEMA
-        | SHARE
-        | storage_service CREDENTIAL
-        | TABLE
-        | MATERIALIZED VIEW
-        | VOLUME
-    )
-    | EXECUTE (CLEAN ROOM TASK)?
-    | EXTERNAL USE (LOCATION | SCHEMA)
-    | MANAGE ALLOWLIST?
-    | MODIFY (CLEAN ROOM)?
-    | READ (FILES | VOLUME)
-    | REFRESH
-    | SELECT
-    | SET SHARE PERMISSION
-    | USE (
-        CATALOG
-        | CONNECTION
-        | SCHEMA
-        | MARKETPLACE ASSETS
-        | PROVIDER
-        | RECIPIENT
-        | SHARE
-    )
-    | WRITE (FILES | VOLUME)
-    ;
-
-grant_share
-    : GRANT SELECT ON SHARE share_name TO RECIPIENT recipient_name
-    ;
-
-repair_privileges
-    : MSCK REPAIR object PRIVILEGES
-    ;
-
-schema_database
-    : SCHEMA
+    : query                                                            #statementDefault
+    | executeImmediate                                                 #visitExecuteImmediate
+    | ctes? dmlStatementNoWith                                         #dmlStatement
+    | USE identifierReference                                          #use
+    | USE namespace identifierReference                                #useNamespace
+    | SET CATALOG expression                                           #setCatalog
+    | CREATE namespace (IF errorCapturingNot EXISTS)? identifierReference
+        (commentSpec |
+         locationSpec |
+         collationSpec |
+         (WITH (DBPROPERTIES | PROPERTIES) propertyList))*             #createNamespace
+    | ALTER namespace identifierReference
+        SET (DBPROPERTIES | PROPERTIES) propertyList                   #setNamespaceProperties
+    | ALTER namespace identifierReference
+        UNSET (DBPROPERTIES | PROPERTIES) propertyList                 #unsetNamespaceProperties
+    | ALTER namespace identifierReference
+        collationSpec                                                  #setNamespaceCollation
+    | ALTER namespace identifierReference
+        SET locationSpec                                               #setNamespaceLocation
+    | DROP namespace (IF EXISTS)? identifierReference
+        (RESTRICT | CASCADE)?                                          #dropNamespace
+    | SHOW namespaces ((FROM | IN) multipartIdentifier)?
+        (LIKE? pattern=stringLit)?                                        #showNamespaces
+    | createTableHeader (LEFT_PAREN tableElementList RIGHT_PAREN)? tableProvider?
+        createTableClauses
+        (AS? query)?                                                   #createTable
+    | CREATE TABLE (IF errorCapturingNot EXISTS)? target=identifierReference
+        LIKE source=identifierReference
+        (tableProvider |
+        rowFormat |
+        createFileFormat |
+        locationSpec |
+        (TBLPROPERTIES tableProps=propertyList))*                      #createTableLike
+    | replaceTableHeader (LEFT_PAREN tableElementList RIGHT_PAREN)? tableProvider?
+        createTableClauses
+        (AS? query)?                                                   #replaceTable
+    | ANALYZE TABLE identifierReference partitionSpec? COMPUTE STATISTICS
+        (simpleIdentifier | FOR COLUMNS identifierSeq | FOR ALL COLUMNS)?    #analyze
+    | ANALYZE TABLES ((FROM | IN) identifierReference)? COMPUTE STATISTICS
+        (simpleIdentifier)?                                            #analyzeTables
+    | ALTER TABLE identifierReference
+        ADD (COLUMN | COLUMNS)
+        columns=qualifiedColTypeWithPositionList                       #addTableColumns
+    | ALTER TABLE identifierReference
+        ADD (COLUMN | COLUMNS)
+        LEFT_PAREN columns=qualifiedColTypeWithPositionList RIGHT_PAREN #addTableColumns
+    | ALTER TABLE table=identifierReference
+        RENAME COLUMN
+        from=multipartIdentifier TO to=errorCapturingIdentifier        #renameTableColumn
+    | ALTER TABLE identifierReference
+        DROP (COLUMN | COLUMNS) (IF EXISTS)?
+        LEFT_PAREN columns=multipartIdentifierList RIGHT_PAREN         #dropTableColumns
+    | ALTER TABLE identifierReference
+        DROP (COLUMN | COLUMNS) (IF EXISTS)?
+        columns=multipartIdentifierList                                #dropTableColumns
+    | ALTER (TABLE | VIEW) from=identifierReference
+        RENAME TO to=multipartIdentifier                               #renameTable
+    | ALTER (TABLE | VIEW) identifierReference
+        SET TBLPROPERTIES propertyList                                 #setTableProperties
+    | ALTER (TABLE | VIEW) identifierReference
+        UNSET TBLPROPERTIES (IF EXISTS)? propertyList                  #unsetTableProperties
+    | ALTER TABLE table=identifierReference
+        (ALTER | CHANGE) COLUMN? columns=alterColumnSpecList           #alterTableAlterColumn
+    | ALTER TABLE table=identifierReference partitionSpec?
+        CHANGE COLUMN?
+        colName=multipartIdentifier colType colPosition?               #hiveChangeColumn
+    | ALTER TABLE table=identifierReference partitionSpec?
+        REPLACE COLUMNS
+        LEFT_PAREN columns=qualifiedColTypeWithPositionList
+        RIGHT_PAREN                                                    #hiveReplaceColumns
+    | ALTER TABLE identifierReference (partitionSpec)?
+        SET SERDE stringLit (WITH SERDEPROPERTIES propertyList)?       #setTableSerDe
+    | ALTER TABLE identifierReference (partitionSpec)?
+        SET SERDEPROPERTIES propertyList                               #setTableSerDe
+    | ALTER (TABLE | VIEW) identifierReference ADD (IF errorCapturingNot EXISTS)?
+        partitionSpecLocation+                                         #addTablePartition
+    | ALTER TABLE identifierReference
+        from=partitionSpec RENAME TO to=partitionSpec                  #renameTablePartition
+    | ALTER (TABLE | VIEW) identifierReference
+        DROP (IF EXISTS)? partitionSpec (COMMA partitionSpec)* PURGE?  #dropTablePartitions
+    | ALTER TABLE identifierReference
+        (partitionSpec)? SET locationSpec                              #setTableLocation
+    | ALTER TABLE identifierReference RECOVER PARTITIONS                 #recoverPartitions
+    | ALTER TABLE identifierReference
+        (clusterBySpec | CLUSTER BY NONE)                              #alterClusterBy
+    | ALTER TABLE identifierReference collationSpec                    #alterTableCollation
+    | ALTER TABLE identifierReference ADD tableConstraintDefinition    #addTableConstraint
+    | ALTER TABLE identifierReference
+        DROP CONSTRAINT (IF EXISTS)? name=identifier
+        (RESTRICT | CASCADE)?                                     #dropTableConstraint
+    | DROP TABLE (IF EXISTS)? identifierReference PURGE?               #dropTable
+    | DROP VIEW (IF EXISTS)? identifierReference                       #dropView
+    | CREATE (OR REPLACE)? (GLOBAL? TEMPORARY)?
+        VIEW (IF errorCapturingNot EXISTS)? identifierReference
+        identifierCommentList?
+        (commentSpec |
+         schemaBinding |
+         collationSpec |
+         (PARTITIONED ON identifierList) |
+         (TBLPROPERTIES propertyList))*
+        AS query                                                       #createView
+    | CREATE (OR REPLACE)?
+        VIEW (IF errorCapturingNot EXISTS)? identifierReference
+        identifierCommentList?
+        ((WITH METRICS) |
+         routineLanguage |
+         commentSpec |
+         (TBLPROPERTIES propertyList))*
+        AS codeLiteral                                                 #createMetricView
+    | CREATE (OR REPLACE)? GLOBAL? TEMPORARY VIEW
+        tableIdentifier (LEFT_PAREN colTypeList RIGHT_PAREN)? tableProvider
+        (OPTIONS propertyList)?                                        #createTempViewUsing
+    | ALTER VIEW identifierReference AS? query                         #alterViewQuery
+    | ALTER VIEW identifierReference schemaBinding                     #alterViewSchemaBinding
+    | CREATE (OR REPLACE)? TEMPORARY? FUNCTION (IF errorCapturingNot EXISTS)?
+        identifierReference AS className=stringLit
+        (USING resource (COMMA resource)*)?                            #createFunction
+    | CREATE (OR REPLACE)? TEMPORARY? FUNCTION (IF errorCapturingNot EXISTS)?
+        identifierReference LEFT_PAREN parameters=colDefinitionList? RIGHT_PAREN
+        (RETURNS (dataType | TABLE LEFT_PAREN returnParams=colTypeList RIGHT_PAREN))?
+        routineCharacteristics
+        RETURN (query | expression)                                    #createUserDefinedFunction
+    | DROP TEMPORARY? FUNCTION (IF EXISTS)? identifierReference        #dropFunction
+    | DECLARE (OR REPLACE)? variable?
+        identifierReferences+=identifierReference
+        (COMMA identifierReferences+=identifierReference)*
+        dataType? variableDefaultExpression?                           #createVariable
+    | DROP TEMPORARY variable (IF EXISTS)? identifierReference         #dropVariable
+    | DECLARE name=errorCapturingIdentifier (ASENSITIVE | INSENSITIVE)? CURSOR FOR query (FOR READ ONLY)?
+                                                                       #declareCursorStatement
+    | OPEN multipartIdentifier (USING (LEFT_PAREN params=namedExpressionSeq RIGHT_PAREN | params=namedExpressionSeq))?
+                                                                       #openCursorStatement
+    | FETCH ((NEXT? FROM) | FROM)? cursorName=multipartIdentifier INTO targets=multipartIdentifierList
+                                                                       #fetchCursorStatement
+    | CLOSE multipartIdentifier                                        #closeCursorStatement
+    | EXPLAIN (LOGICAL | FORMATTED | EXTENDED | CODEGEN | COST)?
+        (statement|setResetStatement)                                  #explain
+    | SHOW TABLES ((FROM | IN) identifierReference)?
+        (LIKE? pattern=stringLit)?                                        #showTables
+    | SHOW TABLE EXTENDED ((FROM | IN) ns=identifierReference)?
+        LIKE pattern=stringLit partitionSpec?                             #showTableExtended
+    | SHOW TBLPROPERTIES table=identifierReference
+        (LEFT_PAREN key=propertyKeyOrStringLit RIGHT_PAREN)?           #showTblProperties
+    | SHOW COLUMNS (FROM | IN) table=identifierReference
+        ((FROM | IN) ns=multipartIdentifier)?                          #showColumns
+    | SHOW VIEWS ((FROM | IN) identifierReference)?
+        (LIKE? pattern=stringLit)?                                        #showViews
+    | SHOW PARTITIONS identifierReference partitionSpec?               #showPartitions
+    | SHOW functionScope=simpleIdentifier? FUNCTIONS ((FROM | IN) ns=identifierReference)?
+        (LIKE? (legacy=multipartIdentifier | pattern=stringLit))?      #showFunctions
+    | SHOW PROCEDURES ((FROM | IN) identifierReference)?               #showProcedures
+    | SHOW CREATE TABLE identifierReference (AS SERDE)?                #showCreateTable
+    | SHOW CURRENT namespace                                           #showCurrentNamespace
+    | SHOW CATALOGS (LIKE? pattern=stringLit)?                            #showCatalogs
+    | SHOW COLLATIONS (LIKE? pattern=stringLit)?                          #showCollations
+    | (DESC | DESCRIBE) FUNCTION EXTENDED? describeFuncName            #describeFunction
+    | (DESC | DESCRIBE) PROCEDURE identifierReference                  #describeProcedure
+    | (DESC | DESCRIBE) namespace EXTENDED?
+        identifierReference                                            #describeNamespace
+    | (DESC | DESCRIBE) TABLE? option=(EXTENDED | FORMATTED)?
+        identifierReference partitionSpec? describeColName? (AS JSON)? #describeRelation
+    | (DESC | DESCRIBE) QUERY? query                                   #describeQuery
+    | COMMENT ON namespace identifierReference IS
+        comment                                                        #commentNamespace
+    | COMMENT ON TABLE identifierReference IS comment                  #commentTable
+    | REFRESH TABLE identifierReference                                #refreshTable
+    | REFRESH FUNCTION identifierReference                             #refreshFunction
+    | REFRESH (stringLit | .*?)                                        #refreshResource
+    | CACHE LAZY? TABLE identifierReference
+        (OPTIONS options=propertyList)? (AS? query)?                   #cacheTable
+    | UNCACHE TABLE (IF EXISTS)? identifierReference                   #uncacheTable
+    | CLEAR CACHE                                                      #clearCache
+    | LOAD DATA LOCAL? INPATH path=stringLit OVERWRITE? INTO TABLE
+        identifierReference partitionSpec?                             #loadData
+    | TRUNCATE TABLE identifierReference partitionSpec?                #truncateTable
+    | (MSCK)? REPAIR TABLE identifierReference
+        (option=(ADD|DROP|SYNC) PARTITIONS)?                           #repairTable
+    | op=(ADD | LIST) simpleIdentifier .*?                             #manageResource
+    | CREATE INDEX (IF errorCapturingNot EXISTS)? identifier ON TABLE?
+        identifierReference (USING indexType=identifier)?
+        LEFT_PAREN columns=multipartIdentifierPropertyList RIGHT_PAREN
+        (OPTIONS options=propertyList)?                                #createIndex
+    | DROP INDEX (IF EXISTS)? identifier ON TABLE? identifierReference #dropIndex
+    | CALL identifierReference
+        LEFT_PAREN
+        (functionArgument (COMMA functionArgument)*)?
+        RIGHT_PAREN                                                    #call
+    | unsupportedHiveNativeCommands .*?                                #failNativeCommand
+    | createPipelineDatasetHeader (LEFT_PAREN tableElementList? RIGHT_PAREN)? tableProvider?
+        createTableClauses
+        (AS query)?                                                    #createPipelineDataset
+    | createPipelineFlowHeader insertInto query                        #createPipelineInsertIntoFlow
+    ;
+
+materializedView
+    : MATERIALIZED VIEW
+    ;
+
+streamingTable
+    : STREAMING TABLE
+    ;
+
+createPipelineDatasetHeader
+    : CREATE
+      (materializedView | streamingTable)
+      (IF errorCapturingNot EXISTS)?
+      identifierReference
+    ;
+
+streamRelationPrimary
+    : STREAM multipartIdentifier streamChangesClause?
+      optionsClause? identifiedByClause?
+      watermarkClause? tableAlias                                      #streamTableName
+    | STREAM LEFT_PAREN multipartIdentifier RIGHT_PAREN
+      optionsClause? identifiedByClause?
+      watermarkClause? tableAlias                                      #streamTableName
+    | STREAM tableFunctionCallWithTrailingClauses                      #streamTableValuedFunction
+    | STREAM LEFT_PAREN tableFunctionCall RIGHT_PAREN
+      identifiedByClause? watermarkClause? tableAlias                  #streamTableValuedFunction
+    ;
+
+setResetStatement
+    : SET ROLE .*?                                                     #failSetRole
+    | SET TIME ZONE interval                                           #setTimeZone
+    | SET TIME ZONE timezone                                           #setTimeZone
+    | SET TIME ZONE .*?                                                #setTimeZone
+    | SET PATH EQ pathElement (COMMA pathElement)*                     #setPath
+    | SET variable assignmentList                                      #setVariable
+    | SET variable LEFT_PAREN multipartIdentifierList RIGHT_PAREN EQ
+        LEFT_PAREN query RIGHT_PAREN                                   #setVariable
+    | SET configKey EQ configValue                                     #setQuotedConfiguration
+    | SET configKey (EQ .*?)?                                          #setConfiguration
+    | SET .*? EQ configValue                                           #setQuotedConfiguration
+    | SET .*?                                                          #setConfiguration
+    | RESET configKey                                                  #resetQuotedConfiguration
+    | RESET .*?                                                        #resetConfiguration
+    ;
+
+pathElement
+    : DEFAULT_PATH
+    | SYSTEM_PATH
+    | PATH
+    | CURRENT_DATABASE
+    | CURRENT_SCHEMA
+    | multipartIdentifier
+    ;
+
+executeImmediate
+    : EXECUTE IMMEDIATE queryParam=expression (INTO targetVariable=multipartIdentifierList)? executeImmediateUsing?
+    ;
+
+executeImmediateUsing
+    : USING LEFT_PAREN params=namedExpressionSeq RIGHT_PAREN
+    | USING params=namedExpressionSeq
+    ;
+
+timezone
+    : stringLit
+    | LOCAL
+    ;
+
+configKey
+    : quotedIdentifier
+    ;
+
+configValue
+    : backQuotedIdentifier
+    ;
+
+unsupportedHiveNativeCommands
+    : kw1=CREATE kw2=ROLE
+    | kw1=DROP kw2=ROLE
+    | kw1=GRANT kw2=ROLE?
+    | kw1=REVOKE kw2=ROLE?
+    | kw1=SHOW kw2=GRANT
+    | kw1=SHOW kw2=ROLE kw3=GRANT?
+    | kw1=SHOW kw2=PRINCIPALS
+    | kw1=SHOW kw2=ROLES
+    | kw1=SHOW kw2=CURRENT kw3=ROLES
+    | kw1=EXPORT kw2=TABLE
+    | kw1=IMPORT kw2=TABLE
+    | kw1=SHOW kw2=COMPACTIONS
+    | kw1=SHOW kw2=CREATE kw3=TABLE
+    | kw1=SHOW kw2=TRANSACTIONS
+    | kw1=SHOW kw2=INDEXES
+    | kw1=SHOW kw2=LOCKS
+    | kw1=CREATE kw2=INDEX
+    | kw1=DROP kw2=INDEX
+    | kw1=ALTER kw2=INDEX
+    | kw1=LOCK kw2=TABLE
+    | kw1=LOCK kw2=DATABASE
+    | kw1=UNLOCK kw2=TABLE
+    | kw1=UNLOCK kw2=DATABASE
+    | kw1=CREATE kw2=TEMPORARY kw3=MACRO
+    | kw1=DROP kw2=TEMPORARY kw3=MACRO
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=NOT kw4=CLUSTERED
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=CLUSTERED kw4=BY
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=NOT kw4=SORTED
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=SKEWED kw4=BY
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=NOT kw4=SKEWED
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=NOT kw4=STORED kw5=AS kw6=DIRECTORIES
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=SET kw4=SKEWED kw5=LOCATION
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=EXCHANGE kw4=PARTITION
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=ARCHIVE kw4=PARTITION
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=UNARCHIVE kw4=PARTITION
+    | kw1=ALTER kw2=TABLE tableIdentifier kw3=TOUCH
+    | kw1=ALTER kw2=TABLE tableIdentifier partitionSpec? kw3=COMPACT
+    | kw1=ALTER kw2=TABLE tableIdentifier partitionSpec? kw3=CONCATENATE
+    | kw1=ALTER kw2=TABLE tableIdentifier partitionSpec? kw3=SET kw4=FILEFORMAT
+    | kw1=ALTER kw2=TABLE tableIdentifier partitionSpec? kw3=REPLACE kw4=COLUMNS
+    | kw1=START kw2=TRANSACTION
+    | kw1=COMMIT
+    | kw1=ROLLBACK
+    | kw1=DFS
+    ;
+
+createTableHeader
+    : CREATE TEMPORARY? EXTERNAL? TABLE (IF errorCapturingNot EXISTS)? identifierReference
+    ;
+
+replaceTableHeader
+    : (CREATE OR)? REPLACE TABLE identifierReference
+    ;
+
+clusterBySpec
+    : CLUSTER BY LEFT_PAREN multipartIdentifierList RIGHT_PAREN
+    ;
+
+bucketSpec
+    : CLUSTERED BY identifierList
+      (SORTED BY orderedIdentifierList)?
+      INTO integerValue BUCKETS
+    ;
+
+skewSpec
+    : SKEWED BY identifierList
+      ON (constantList | nestedConstantList)
+      (STORED AS DIRECTORIES)?
+    ;
+
+locationSpec
+    : LOCATION stringLit
+    ;
+
+schemaBinding
+    : WITH SCHEMA (BINDING | COMPENSATION | EVOLUTION | TYPE EVOLUTION)
+    ;
+
+commentSpec
+    : COMMENT stringLit
+    ;
+
+singleQuery
+    : query EOF
+    ;
+
+query
+    : ctes? queryTerm queryOrganization
+    ;
+
+insertInto
+    : INSERT (WITH SCHEMA EVOLUTION)? OVERWRITE TABLE? identifierReference optionsClause? (partitionSpec (IF errorCapturingNot EXISTS)?)?  ((BY NAME) | identifierList)? #insertOverwriteTable
+    | INSERT (WITH SCHEMA EVOLUTION)? INTO TABLE? identifierReference optionsClause? partitionSpec? (IF errorCapturingNot EXISTS)? ((BY NAME) | identifierList)?   #insertIntoTable
+    | INSERT (WITH SCHEMA EVOLUTION)? INTO TABLE? identifierReference tableAlias optionsClause? (BY NAME)?
+        REPLACE (WHERE | ON) replaceCondition=booleanExpression        #insertIntoReplaceBooleanCond
+    | INSERT (WITH SCHEMA EVOLUTION)? INTO TABLE? identifierReference tableAlias optionsClause? (BY NAME)?
+        REPLACE USING identifierList                                   #insertIntoReplaceUsing
+    | INSERT OVERWRITE LOCAL? DIRECTORY path=stringLit rowFormat? createFileFormat?                     #insertOverwriteHiveDir
+    | INSERT OVERWRITE LOCAL? DIRECTORY (path=stringLit)? tableProvider (OPTIONS options=propertyList)? #insertOverwriteDir
+    ;
+
+partitionSpecLocation
+    : partitionSpec locationSpec?
+    ;
+
+partitionSpec
+    : PARTITION LEFT_PAREN partitionVal (COMMA partitionVal)* RIGHT_PAREN
+    ;
+
+partitionVal
+    : identifier (EQ constant)?
+    | identifier EQ DEFAULT
+    ;
+
+createPipelineFlowHeader
+    : CREATE FLOW flowName=identifierReference (commentSpec)? AS
+    ;
+
+namespace
+    : NAMESPACE
     | DATABASE
+    | SCHEMA
     ;
 
-object
-    : schema_database schema_name
-    | FUNCTION function_name
-    | TABLE table_name
-    | VIEW view_name
-    | ANONYMOUS FUNCTION
-    | ANY FILE
+namespaces
+    : NAMESPACES
+    | DATABASES
+    | SCHEMAS
     ;
 
-revoke
-    : REVOKE privilege_types ON securable_object FROM principal
+variable
+    : VARIABLE
+    | VAR
     ;
 
-revoke_share
-    : REVOKE SELECT ON SHARE share_name FROM RECIPIENT recipient_name
+describeFuncName
+    : identifierReference
+    | stringLit
+    | comparisonOperator
+    | arithmeticOperator
+    | predicateOperator
+    | shiftOperator
+    | BANG
     ;
 
-show_grants
-    : SHOW GRANTS principal? ON securable_object
+describeColName
+    : nameParts+=errorCapturingIdentifier (DOT nameParts+=errorCapturingIdentifier)*
     ;
 
-securable_object
-    : CATALOG catalog_name?
-    | CONNECTION connection_name
-    | CLEAN ROOM clean_room_name
-    | EXTERNAL LOCATION location_name
-    | EXTERNAL METADATA metadata_name
-    | FUNCTION function_name
-    | METASTORE
-    | PROCEDURE procedure_name
-    | SCHEMA schema_name
-    | SHARE share_name
-    | storage_service? CREDENTIAL credential_name
-    | TABLE? table_name
-    | MATERIALIZED VIEW view_name
-    | VIEW view_name
-    | VOLUME volume_name
+ctes
+    : WITH RECURSIVE? namedQuery (COMMA namedQuery)*
     ;
 
-storage_service
-    : STORAGE
-    | SERVICE
+namedQuery
+    : name=errorCapturingIdentifier (columnAliases=identifierList)? (MAX RECURSION LEVEL integerValue)? AS? LEFT_PAREN query RIGHT_PAREN
     ;
 
-show_grants_on_share
-    : SHOW GRANTS ON SHARE
+tableProvider
+    : USING multipartIdentifier
     ;
 
-show_grants_to_recipient
-    : SHOW GRANTS TO RECIPIENT recipient_name
+createTableClauses
+    :((OPTIONS options=expressionPropertyList) |
+     (PARTITIONED BY partitioning=partitionFieldList) |
+     skewSpec |
+     clusterBySpec |
+     bucketSpec |
+     rowFormat |
+     createFileFormat |
+     locationSpec |
+     commentSpec |
+     collationSpec |
+     (TBLPROPERTIES tableProps=propertyList))*
     ;
 
-comment_clause
-    : COMMENT EQ string
+propertyList
+    : LEFT_PAREN property (COMMA property)* RIGHT_PAREN
     ;
 
-inline_comment_clause
-    : COMMENT string
+property
+    : key=propertyKeyOrStringLit EQ value=propertyValue               #propertyWithKeyAndEquals
+    | key=propertyKeyOrStringLitNoCoalesce value=propertyValue?       #propertyWithKeyNoEquals
     ;
 
-if_exists
-    : IF EXISTS
+propertyKey
+    : errorCapturingIdentifier (DOT errorCapturingIdentifier)*
     ;
 
-if_not_exists
-    : IF NOT EXISTS
+propertyKeyOrStringLit
+    : propertyKey
+    | stringLit
     ;
 
-or_replace
-    : OR REPLACE
+propertyKeyOrStringLitNoCoalesce
+    : propertyKey
+    | singleStringLit
     ;
 
-describe
-    : DESC
-    | DESCRIBE
+propertyValue
+    : INTEGER_VALUE
+    | DECIMAL_VALUE
+    | booleanValue
+    | stringLit
     ;
 
-describe_catalog
-    : describe CATALOG EXTENDED? catalog_name
+expressionPropertyList
+    : LEFT_PAREN expressionProperty (COMMA expressionProperty)* RIGHT_PAREN
     ;
 
-describe_connection
-    : describe CONNECTION EXTENDED? id_ credential_name
+expressionProperty
+    : key=propertyKeyOrStringLit EQ value=expression                  #expressionPropertyWithKeyAndEquals
+    | key=propertyKeyOrStringLitNoCoalesce value=expression?          #expressionPropertyWithKeyNoEquals
     ;
 
-describe_credential
-    : DESCRIBE storage_service CREDENTIAL
+constantList
+    : LEFT_PAREN constant (COMMA constant)* RIGHT_PAREN
     ;
 
-describe_database
-    : describe DATABASE EXTENDED? schema_name
+nestedConstantList
+    : LEFT_PAREN constantList (COMMA constantList)* RIGHT_PAREN
     ;
 
-describe_function
-    : describe FUNCTION EXTENDED? function_name
+createFileFormat
+    : STORED AS fileFormat
+    | STORED BY storageHandler
     ;
 
-describe_location
-    : DESCRIBE EXTERNAL LOCATION location_name
+fileFormat
+    : INPUTFORMAT inFmt=stringLit OUTPUTFORMAT outFmt=stringLit    #tableFileFormat
+    | simpleIdentifier                                             #genericFileFormat
     ;
 
-describe_procedure
-    : describe PROCEDURE EXTENDED? procedure_name
+storageHandler
+    : stringLit (WITH SERDEPROPERTIES propertyList)?
     ;
 
-describe_provider
-    : describe PROVIDER provider_name
+resource
+    : simpleIdentifier stringLit
     ;
 
-describe_query
-    : describe QUERY? query_statement
+dmlStatementNoWith
+    : insertInto (query | LEFT_PAREN query RIGHT_PAREN queryAlias=tableAlias)      #singleInsertQuery
+    | fromClause multiInsertQueryBody+                                             #multiInsertQuery
+    | DELETE FROM identifierReference tableAlias whereClause?                      #deleteFromTable
+    | UPDATE identifierReference tableAlias setClause whereClause?                 #updateTable
+    | MERGE (WITH SCHEMA EVOLUTION)? INTO target=identifierReference targetAlias=tableAlias
+        USING (source=identifierReference |
+          LEFT_PAREN sourceQuery=query RIGHT_PAREN) sourceAlias=tableAlias
+        ON mergeCondition=booleanExpression
+        matchedClause*
+        notMatchedClause*
+        notMatchedBySourceClause*                                                  #mergeIntoTable
     ;
 
-describe_recipient
-    : describe RECIPIENT recipient_name
+identifierReference
+    : IDENTIFIER_KW LEFT_PAREN expression RIGHT_PAREN
+    | multipartIdentifier
     ;
 
-describe_schema
-    : describe SCHEMA EXTENDED? schema_name
+catalogIdentifierReference
+    : IDENTIFIER_KW LEFT_PAREN expression RIGHT_PAREN
+    | errorCapturingIdentifier
+    | stringLit
     ;
 
-describe_share
-    : describe SHARE share_name
+queryOrganization
+    : (ORDER BY order+=sortItem (COMMA order+=sortItem)*)?
+      (CLUSTER BY clusterBy+=expression (COMMA clusterBy+=expression)*)?
+      (DISTRIBUTE BY distributeBy+=expression (COMMA distributeBy+=expression)*)?
+      (SORT BY sort+=sortItem (COMMA sort+=sortItem)*)?
+      windowClause?
+      (LIMIT (ALL | limit=expression))?
+      (OFFSET offset=expression)?
     ;
 
-describe_table
-    : describe TABLE? EXTENDED? table_name (partition_clause | column_name)? (AS JSON)?
+multiInsertQueryBody
+    : insertInto fromStatementBody
     ;
 
-describe_volume
-    : DESCRIBE VOLUME volume_name
+queryTerm
+    : queryPrimary                                                                       #queryTermDefault
+    | left=queryTerm {this.legacy_setops_precedence_enabled}?
+        operator=(INTERSECT | UNION | EXCEPT | SETMINUS) setQuantifier? right=queryTerm  #setOperation
+    | left=queryTerm {!this.legacy_setops_precedence_enabled}?
+        operator=INTERSECT setQuantifier? right=queryTerm                                #setOperation
+    | left=queryTerm {!this.legacy_setops_precedence_enabled}?
+        operator=(UNION | EXCEPT | SETMINUS) setQuantifier? right=queryTerm              #setOperation
+    | left=queryTerm OPERATOR_PIPE operatorPipeRightSide                                 #operatorPipeStatement
+    | left=queryTerm {this.isOperatorPipeStart()}? PIPE operatorPipeRightSide                 #operatorPipeStatement
     ;
 
-list
-    : LIST url=string (WITH '(' CREDENTIAL credential_name ')')? (LIMIT num)?
+queryPrimary
+    : querySpecification                                                    #queryPrimaryDefault
+    | fromStatement                                                         #fromStmt
+    | TABLE identifierReference                                             #table
+    | inlineTable                                                           #inlineTableDefault1
+    | LEFT_PAREN query RIGHT_PAREN                                          #subquery
     ;
 
-show_all_in_share
-    : SHOW ALL IN SHARE id_
+sortItem
+    : expression ordering=(ASC | DESC)? (NULLS nullOrder=(LAST | FIRST))?
     ;
 
-show_catalogs
-    : SHOW CATALOGS like_pattern
+fromStatement
+    : fromClause fromStatementBody*
     ;
 
-show_columns
-    : SHOW COLUMNS in_from object_name in_from id_
+fromStatementBody
+    : transformClause
+      whereClause?
+      queryOrganization
+    | selectClause
+      lateralView*
+      whereClause?
+      aggregationClause?
+      havingClause?
+      windowClause?
+      qualifyClause?
+      queryOrganization
     ;
 
-in_from
-    : IN
-    | FROM
+querySpecification
+    : transformClause
+      fromClause?
+      lateralView*
+      whereClause?
+      aggregationClause?
+      havingClause?
+      windowClause?                                                         #transformQuerySpecification
+    | selectClause
+      fromClause?
+      lateralView*
+      whereClause?
+      aggregationClause?
+      havingClause?
+      windowClause?
+      qualifyClause?                                                        #regularQuerySpecification
     ;
 
-show_connections
-    : SHOW CONNECTIONS
+transformClause
+    : (SELECT kind=TRANSFORM LEFT_PAREN setQuantifier? expressionSeq RIGHT_PAREN
+            | kind=MAP setQuantifier? expressionSeq
+            | kind=REDUCE setQuantifier? expressionSeq)
+      inRowFormat=rowFormat?
+      (RECORDWRITER recordWriter=stringLit)?
+      USING script=stringLit
+      (AS (identifierSeq | colTypeList | (LEFT_PAREN (identifierSeq | colTypeList) RIGHT_PAREN)))?
+      outRowFormat=rowFormat?
+      (RECORDREADER recordReader=stringLit)?
     ;
 
-show_create_table
-    : SHOW CREATE TABLE object_name
+selectClause
+    : SELECT (hints+=hint)* setQuantifier? namedExpressionSeq
     ;
 
-show_credentials
-    : SHOW storage_service? CREDENTIALS
+setClause
+    : SET assignmentList
     ;
 
-show_databases
-    : SHOW DATABASES (in_from catalog_name)? like_pattern?
+matchedClause
+    : WHEN MATCHED (AND matchedCond=booleanExpression)? THEN matchedAction
+    ;
+notMatchedClause
+    : WHEN errorCapturingNot MATCHED (BY TARGET)? (AND notMatchedCond=booleanExpression)? THEN notMatchedAction
     ;
 
-show_functions
-    : SHOW function_kind? FUNCTIONS (in_from schema_name)? like_pattern? TODO
+notMatchedBySourceClause
+    : WHEN errorCapturingNot MATCHED BY SOURCE (AND notMatchedBySourceCond=booleanExpression)? THEN notMatchedBySourceAction
     ;
 
-function_kind
-    : USER
-    | SYSTEM
+matchedAction
+    : DELETE
+    | UPDATE SET ASTERISK
+    | UPDATE SET assignmentList
+    ;
+
+notMatchedAction
+    : INSERT ASTERISK
+    | INSERT LEFT_PAREN columns=multipartIdentifierList RIGHT_PAREN
+        VALUES LEFT_PAREN expression (COMMA expression)* RIGHT_PAREN
+    ;
+
+notMatchedBySourceAction
+    : DELETE
+    | UPDATE SET assignmentList
+    ;
+
+exceptClause
+    : EXCEPT LEFT_PAREN exceptCols=multipartIdentifierList RIGHT_PAREN
+    ;
+
+assignmentList
+    : assignment (COMMA assignment)*
+    ;
+
+assignment
+    : key=multipartIdentifier EQ value=expression
+    ;
+
+whereClause
+    : WHERE booleanExpression
+    ;
+
+havingClause
+    : HAVING booleanExpression
+    ;
+
+qualifyClause
+    : QUALIFY booleanExpression
+    ;
+
+hint
+    : HENT_START hintStatements+=hintStatement (COMMA? hintStatements+=hintStatement)* HENT_END
+    ;
+
+hintStatement
+    : hintName=simpleIdentifier
+    | hintName=simpleIdentifier LEFT_PAREN parameters+=primaryExpression (COMMA parameters+=primaryExpression)* RIGHT_PAREN
+    ;
+
+fromClause
+    : FROM relation (COMMA relation)* lateralView* pivotClause? unpivotClause?
+    ;
+
+temporalClause
+    : FOR? (SYSTEM_VERSION | VERSION) AS OF version
+    | FOR? (SYSTEM_TIME | TIMESTAMP) AS OF timestamp=valueExpression
+    ;
+
+changesClause
+    : CHANGES FROM (SYSTEM_VERSION | VERSION) startingVersion=version (INCLUSIVE | startExclusive=EXCLUSIVE)?
+        (TO (SYSTEM_VERSION | VERSION) endingVersion=version (INCLUSIVE | endExclusive=EXCLUSIVE)?)?
+    | CHANGES FROM (SYSTEM_TIME | TIMESTAMP) startingTimestamp=valueExpression (INCLUSIVE | startExclusive=EXCLUSIVE)?
+        (TO (SYSTEM_TIME | TIMESTAMP) endingTimestamp=valueExpression (INCLUSIVE | endExclusive=EXCLUSIVE)?)?
+    ;
+
+// Like changesClause but startingVersion/startingTimestamp is optional (streaming can start
+// without an explicit starting point) and there is no ending bound (streaming is open-ended).
+streamChangesClause
+    : CHANGES (FROM (SYSTEM_VERSION | VERSION) startingVersion=version (INCLUSIVE | startExclusive=EXCLUSIVE)?)?
+    | CHANGES (FROM (SYSTEM_TIME | TIMESTAMP) startingTimestamp=valueExpression (INCLUSIVE | startExclusive=EXCLUSIVE)?)?
+    ;
+
+aggregationClause
+    : GROUP BY groupingExpressionsWithGroupingAnalytics+=groupByClause
+        (COMMA groupingExpressionsWithGroupingAnalytics+=groupByClause)*
+    | GROUP BY groupingExpressions+=namedExpression (COMMA groupingExpressions+=namedExpression)* (
+      WITH kind=ROLLUP
+    | WITH kind=CUBE
+    | kind=GROUPING SETS LEFT_PAREN groupingSet (COMMA groupingSet)* RIGHT_PAREN)?
+    ;
+
+groupByClause
+    : groupingAnalytics
+    | expression
+    ;
+
+groupingAnalytics
+    : (ROLLUP | CUBE) LEFT_PAREN groupingSet (COMMA groupingSet)* RIGHT_PAREN
+    | GROUPING SETS LEFT_PAREN groupingElement (COMMA groupingElement)* RIGHT_PAREN
+    ;
+
+groupingElement
+    : groupingAnalytics
+    | groupingSet
+    ;
+
+groupingSet
+    : LEFT_PAREN (expression (COMMA expression)*)? RIGHT_PAREN
+    | expression
+    ;
+
+pivotClause
+    : PIVOT LEFT_PAREN aggregates=namedExpressionSeq FOR pivotColumn IN LEFT_PAREN pivotValues+=pivotValue (COMMA pivotValues+=pivotValue)* RIGHT_PAREN RIGHT_PAREN (AS? errorCapturingIdentifier)?
+    ;
+
+pivotColumn
+    : identifiers+=errorCapturingIdentifier
+    | LEFT_PAREN identifiers+=errorCapturingIdentifier (COMMA identifiers+=errorCapturingIdentifier)* RIGHT_PAREN
+    ;
+
+pivotValue
+    : expression (AS? errorCapturingIdentifier)?
+    ;
+
+unpivotClause
+    : UNPIVOT nullOperator=unpivotNullClause? LEFT_PAREN
+        operator=unpivotOperator
+      RIGHT_PAREN (AS? errorCapturingIdentifier)?
+    ;
+
+unpivotNullClause
+    : (INCLUDE | EXCLUDE) NULLS
+    ;
+
+unpivotOperator
+    : (unpivotSingleValueColumnClause | unpivotMultiValueColumnClause)
+    ;
+
+unpivotSingleValueColumnClause
+    : unpivotValueColumn FOR unpivotNameColumn IN LEFT_PAREN unpivotColumns+=unpivotColumnAndAlias (COMMA unpivotColumns+=unpivotColumnAndAlias)* RIGHT_PAREN
+    ;
+
+unpivotMultiValueColumnClause
+    : LEFT_PAREN unpivotValueColumns+=unpivotValueColumn (COMMA unpivotValueColumns+=unpivotValueColumn)* RIGHT_PAREN
+      FOR unpivotNameColumn
+      IN LEFT_PAREN unpivotColumnSets+=unpivotColumnSet (COMMA unpivotColumnSets+=unpivotColumnSet)* RIGHT_PAREN
+    ;
+
+unpivotColumnSet
+    : LEFT_PAREN unpivotColumns+=unpivotColumn (COMMA unpivotColumns+=unpivotColumn)* RIGHT_PAREN unpivotAlias?
+    ;
+
+unpivotValueColumn
+    : identifier
+    ;
+
+unpivotNameColumn
+    : identifier
+    ;
+
+unpivotColumnAndAlias
+    : unpivotColumn unpivotAlias?
+    ;
+
+unpivotColumn
+    : multipartIdentifier
+    ;
+
+unpivotAlias
+    : AS? errorCapturingIdentifier
+    ;
+
+lateralView
+    : LATERAL VIEW (OUTER)? qualifiedName LEFT_PAREN (expression (COMMA expression)*)? RIGHT_PAREN tblName=identifier (AS? colName+=identifier (COMMA colName+=identifier)*)?
+    ;
+
+watermarkClause
+    : WATERMARK colName=namedExpression DELAY OF delay=interval
+    ;
+
+setQuantifier
+    : DISTINCT
     | ALL
     ;
 
-show_groups
-    : SHOW GROUPS (WITH user_group principal)? like_pattern?
+relation
+    : LATERAL? relationPrimary relationExtension*
     ;
 
-show_locations
-    : SHOW EXTERNAL LOCATIONS
+relationExtension
+    : joinRelation
+    | pivotClause
+    | unpivotClause
     ;
 
-show_partitions
-    : SHOW PARTITIONS table_name partition_clause?
+joinRelation
+    : (joinType) JOIN LATERAL? right=relationPrimary (joinCriteria | nearestByClause)?
+    | NATURAL joinType JOIN LATERAL? right=relationPrimary
     ;
 
-show_procedures
-    : SHOW PROCEDURES (in_from schema_name)?
+joinType
+    : INNER?
+    | CROSS
+    | LEFT OUTER?
+    | LEFT? SEMI
+    | RIGHT OUTER?
+    | FULL OUTER?
+    | LEFT? ANTI
     ;
 
-show_providers
-    : SHOW PROVIDERS like_pattern?
+joinCriteria
+    : ON booleanExpression
+    | USING identifierList
     ;
 
-show_recipients
-    : SHOW RECIPIENTS like_pattern?
+nearestByClause
+    : (APPROX | EXACT) NEAREST num=INTEGER_VALUE? BY (DISTANCE | SIMILARITY) expression
     ;
 
-show_schemas
-    : SHOW SCHEMAS (in_from catalog_name)? like_pattern?
+sample
+    : TABLESAMPLE (sampleType=(SYSTEM | BERNOULLI))?
+      LEFT_PAREN sampleMethod? RIGHT_PAREN
+      (REPEATABLE LEFT_PAREN seed=integerValue RIGHT_PAREN)?
     ;
 
-show_shares
-    : SHOW SHARES like_pattern?
+sampleMethod
+    : negativeSign=MINUS? (integerValue | DECIMAL_VALUE) PERCENTLIT   #sampleByPercentile
+    | expression ROWS                                                             #sampleByRows
+    | sampleType=BUCKET numerator=integerValue OUT OF denominator=integerValue
+        (ON (identifier | qualifiedName LEFT_PAREN RIGHT_PAREN))?                 #sampleByBucket
+    | bytes=expression                                                            #sampleByBytes
     ;
 
-show_shares_in_provider
-    : SHOW SHARES IN PROVIDER provider_name like_pattern?
+identifierList
+    : LEFT_PAREN identifierSeq RIGHT_PAREN
     ;
 
-show_table
-    : SHOW TABLE EXTENDED (in_from schema_name)? LIKE string partition_clause?
+identifierSeq
+    : ident+=errorCapturingIdentifier (COMMA ident+=errorCapturingIdentifier)*
     ;
 
-show_tables
-    : SHOW TABLES (in_from schema_name)? like_pattern?
+orderedIdentifierList
+    : LEFT_PAREN orderedIdentifier (COMMA orderedIdentifier)* RIGHT_PAREN
     ;
 
-show_tables_dropped
-    : SHOW TABLES DROPPED (in_from schema_name)? (LIMIT num)?
+orderedIdentifier
+    : ident=errorCapturingIdentifier ordering=(ASC | DESC)?
     ;
 
-show_tblproperties
-    : SHOW TBLPROPERTIES table_name TODO
+identifierCommentList
+    : LEFT_PAREN identifierComment (COMMA identifierComment)* RIGHT_PAREN
     ;
 
-show_users
-    : SHOW USERS like_pattern?
+identifierComment
+    : identifier commentSpec?
     ;
 
-show_views
-    : SHOW VIEWS (in_from schema_name)? like_pattern?
+relationPrimary
+    : streamRelationPrimary                                 #streamRelation
+    | identifierReference changesClause
+      optionsClause? tableAlias                             #changelogTableName
+    | identifierReference temporalClause?
+      optionsClause? sample? watermarkClause? tableAlias    #tableName
+    | LEFT_PAREN query RIGHT_PAREN sample? watermarkClause?
+      tableAlias                                            #aliasedQuery
+    | LEFT_PAREN relation RIGHT_PAREN sample?
+       watermarkClause? tableAlias                          #aliasedRelation
+    | inlineTable                                           #inlineTableDefault2
+    | tableFunctionCallWithTrailingClauses                  #tableValuedFunction
     ;
 
-show_volumes
-    : SHOW VOLUMES (in_from schema_name)? like_pattern?
+optionsClause
+    : WITH options=propertyList
     ;
 
-like_pattern
-    : LIKE? string
+// Clause for naming streaming sources with IDENTIFIED BY
+identifiedByClause
+    : IDENTIFIED BY sourceName=errorCapturingIdentifier
     ;
 
-schema_name
-    : (catalog_name DOT)? s = id_
-    | id_clause
+// Unlike all other types of expression for relation, we do not support watermarkClause for
+// inlineTable.
+inlineTable
+    : VALUES expression (COMMA expression)* tableAlias
     ;
 
-id_clause
-    : IDENTIFIER '(' string ')' TODO
+functionTableSubqueryArgument
+    : TABLE identifierReference tableArgumentPartitioning?
+    | TABLE LEFT_PAREN identifierReference RIGHT_PAREN tableArgumentPartitioning?
+    | TABLE LEFT_PAREN query RIGHT_PAREN tableArgumentPartitioning?
     ;
 
-string
-    : STRING
+tableArgumentPartitioning
+    : ((WITH SINGLE PARTITION)
+        | ((PARTITION | DISTRIBUTE) BY
+            (((LEFT_PAREN partition+=expression (COMMA partition+=expression)* RIGHT_PAREN))
+            | (expression (COMMA invalidMultiPartitionExpression=expression)+)
+            | partition+=expression)))
+      ((ORDER | SORT) BY
+        (((LEFT_PAREN sortItem (COMMA sortItem)* RIGHT_PAREN)
+        | (sortItem (COMMA invalidMultiSortItem=sortItem)+)
+        | sortItem)))?
     ;
 
-id_
-    : ID
-    | DOUBLE_QUOTE_BLANK
-    | keyword
-    | non_reserved_words
-    | object_type_plural
-    | data_type
+functionTableNamedArgumentExpression
+    : key=identifier FAT_ARROW table=functionTableSubqueryArgument
     ;
 
-keyword
-    : COMMENT
+functionTableReferenceArgument
+    : functionTableSubqueryArgument
+    | functionTableNamedArgumentExpression
+    ;
+
+functionTableArgument
+    : functionTableReferenceArgument
+    | functionArgument
+    ;
+
+// A table function call including opening and closing parentheses.
+tableFunctionCall
+    : funcName=functionName LEFT_PAREN
+      (functionTableArgument (COMMA functionTableArgument)*)?
+      RIGHT_PAREN
+    ;
+
+// A table function call with optional trailing clauses for streaming and aliasing.
+// The identifiedByClause is optional and only valid for streaming TVFs. For non-streaming TVFs,
+// the AST builder will reject it with an error. The clause must come before watermarkClause
+// and tableAlias to avoid ambiguity (since IDENTIFIED is a nonReserved keyword).
+tableFunctionCallWithTrailingClauses
+    : tableFunctionCall identifiedByClause? watermarkClause? tableAlias
+    ;
+
+tableAlias
+    : (AS? strictIdentifier identifierList?)?
+    ;
+
+rowFormat
+    : ROW FORMAT SERDE name=stringLit (WITH SERDEPROPERTIES props=propertyList)?       #rowFormatSerde
+    | ROW FORMAT DELIMITED
+      (FIELDS TERMINATED BY fieldsTerminatedBy=stringLit (ESCAPED BY escapedBy=stringLit)?)?
+      (COLLECTION ITEMS TERMINATED BY collectionItemsTerminatedBy=stringLit)?
+      (MAP KEYS TERMINATED BY keysTerminatedBy=stringLit)?
+      (LINES TERMINATED BY linesSeparatedBy=stringLit)?
+      (NULL DEFINED AS nullDefinedAs=stringLit)?                                       #rowFormatDelimited
+    ;
+
+multipartIdentifierList
+    : multipartIdentifier (COMMA multipartIdentifier)*
+    ;
+
+multipartIdentifier
+    : parts+=errorCapturingIdentifier (DOT parts+=errorCapturingIdentifier)*
+    ;
+
+multipartIdentifierPropertyList
+    : multipartIdentifierProperty (COMMA multipartIdentifierProperty)*
+    ;
+
+multipartIdentifierProperty
+    : multipartIdentifier (OPTIONS options=propertyList)?
+    ;
+
+tableIdentifier
+    : (db=errorCapturingIdentifier DOT)? table=errorCapturingIdentifier
+    ;
+
+functionIdentifier
+    : (db=errorCapturingIdentifier DOT)? function=errorCapturingIdentifier
+    ;
+
+namedExpression
+    : expression (AS? (name=errorCapturingIdentifier | identifierList))?
+    ;
+
+namedExpressionSeq
+    : namedExpression (COMMA namedExpression)*
+    ;
+
+partitionFieldList
+    : LEFT_PAREN fields+=partitionField (COMMA fields+=partitionField)* RIGHT_PAREN
+    ;
+
+partitionField
+    : transform  #partitionTransform
+    | colType    #partitionColumn
+    ;
+
+transform
+    : qualifiedName                                                                             #identityTransform
+    | transformName=identifier
+      LEFT_PAREN argument+=transformArgument (COMMA argument+=transformArgument)* RIGHT_PAREN   #applyTransform
+    ;
+
+transformArgument
+    : qualifiedName
+    | constant
+    ;
+
+expression
+    : booleanExpression
+    ;
+
+namedArgumentExpression
+    : key=identifier FAT_ARROW value=expression
+    ;
+
+functionArgument
+    : expression
+    | namedArgumentExpression
+    ;
+
+expressionSeq
+    : expression (COMMA expression)*
+    ;
+
+booleanExpression
+    : (NOT | BANG) booleanExpression                               #logicalNot
+    | EXISTS LEFT_PAREN query RIGHT_PAREN                          #exists
+    | valueExpression predicate?                                   #predicated
+    | left=booleanExpression operator=AND right=booleanExpression  #logicalBinary
+    | left=booleanExpression operator=OR right=booleanExpression   #logicalBinary
+    ;
+
+predicate
+    : errorCapturingNot? kind=BETWEEN lower=valueExpression AND upper=valueExpression
+    | errorCapturingNot? kind=IN (LEFT_PAREN RIGHT_PAREN | LEFT_PAREN expression (COMMA expression)* RIGHT_PAREN)
+    | errorCapturingNot? kind=IN LEFT_PAREN query RIGHT_PAREN
+    | errorCapturingNot? kind=RLIKE pattern=valueExpression
+    | errorCapturingNot? kind=(LIKE | ILIKE) quantifier=(ANY | SOME | ALL) (LEFT_PAREN RIGHT_PAREN | LEFT_PAREN expression (COMMA expression)* RIGHT_PAREN)
+    | errorCapturingNot? kind=(LIKE | ILIKE) pattern=valueExpression (ESCAPE escapeChar=stringLit)?
+    | IS errorCapturingNot? kind=NULL
+    | IS errorCapturingNot? kind=(TRUE | FALSE | UNKNOWN)
+    | IS errorCapturingNot? kind=DISTINCT FROM right=valueExpression
+    ;
+
+errorCapturingNot
+    : NOT
+    | BANG
+    ;
+
+valueExpression
+    : primaryExpression                                                                      #valueExpressionDefault
+    | operator=(MINUS | PLUS | TILDE) valueExpression                                        #arithmeticUnary
+    | left=valueExpression operator=(ASTERISK | SLASH | PERCENT | DIV) right=valueExpression #arithmeticBinary
+    | left=valueExpression operator=(PLUS | MINUS | CONCAT_PIPE) right=valueExpression       #arithmeticBinary
+    | left=valueExpression shiftOperator right=valueExpression                               #shiftExpression
+    | left=valueExpression operator=AMPERSAND right=valueExpression                          #arithmeticBinary
+    | left=valueExpression operator=HAT right=valueExpression                                #arithmeticBinary
+    | left=valueExpression {!this.isOperatorPipeStart()}? operator=PIPE right=valueExpression     #arithmeticBinary
+    | left=valueExpression comparisonOperator right=valueExpression                          #comparison
+    ;
+
+shiftOperator
+    : SHIFT_LEFT
+    | SHIFT_RIGHT
+    | SHIFT_RIGHT_UNSIGNED
+    ;
+
+datetimeUnit
+    : YEAR | QUARTER | MONTH
+    | WEEK | DAY | DAYOFYEAR
+    | HOUR | MINUTE | SECOND | MILLISECOND | MICROSECOND
+    ;
+
+primaryExpression
+    : name=(CURRENT_DATE | CURRENT_TIMESTAMP | CURRENT_USER | USER | SESSION_USER | CURRENT_TIME | CURRENT_PATH)             #currentLike
+    | name=(TIMESTAMPADD | DATEADD | DATE_ADD) LEFT_PAREN (unit=datetimeUnit | invalidUnit=stringLit) COMMA unitsAmount=valueExpression COMMA timestamp=valueExpression RIGHT_PAREN             #timestampadd
+    | name=(TIMESTAMPDIFF | DATEDIFF | DATE_DIFF | TIMEDIFF) LEFT_PAREN (unit=datetimeUnit | invalidUnit=stringLit) COMMA startTimestamp=valueExpression COMMA endTimestamp=valueExpression RIGHT_PAREN    #timestampdiff
+    | CASE whenClause+ (ELSE elseExpression=expression)? END                                   #searchedCase
+    | CASE value=expression whenClause+ (ELSE elseExpression=expression)? END                  #simpleCase
+    | name=(CAST | TRY_CAST) LEFT_PAREN expression AS dataType RIGHT_PAREN                     #cast
+    | primaryExpression collateClause                                                      #collate
+    | primaryExpression DOUBLE_COLON dataType                                                  #castByColon
+    | STRUCT LEFT_PAREN (argument+=namedExpression (COMMA argument+=namedExpression)*)? RIGHT_PAREN #struct
+    | FIRST LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                                  #first
+    | ANY_VALUE LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                              #any_value
+    | LAST LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                                   #last
+    | POSITION LEFT_PAREN substr=valueExpression IN str=valueExpression RIGHT_PAREN            #position
+    | constant                                                                                 #constantDefault
+    | ASTERISK exceptClause?                                                                   #star
+    | qualifiedName DOT ASTERISK exceptClause?                                                 #star
+    | col=primaryExpression COLON path=semiStructuredExtractionPath                            #semiStructuredExtract
+    | LEFT_PAREN namedExpression (COMMA namedExpression)+ RIGHT_PAREN                          #rowConstructor
+    | LEFT_PAREN query RIGHT_PAREN                                                             #subqueryExpression
+    | functionName LEFT_PAREN (setQuantifier? argument+=functionArgument
+       (COMMA argument+=functionArgument)*)? RIGHT_PAREN
+       (WITHIN GROUP LEFT_PAREN ORDER BY sortItem (COMMA sortItem)* RIGHT_PAREN)?
+       (FILTER LEFT_PAREN WHERE where=booleanExpression RIGHT_PAREN)?
+       (nullsOption=(IGNORE | RESPECT) NULLS)? ( OVER windowSpec)?                             #functionCall
+    | identifier ARROW expression                                                              #lambda
+    | LEFT_PAREN identifier (COMMA identifier)+ RIGHT_PAREN ARROW expression                   #lambda
+    | value=primaryExpression LEFT_BRACKET index=valueExpression RIGHT_BRACKET                 #subscript
+    | identifier                                                                               #columnReference
+    | base=primaryExpression DOT fieldName=identifier                                          #dereference
+    | LEFT_PAREN expression RIGHT_PAREN                                                        #parenthesizedExpression
+    | EXTRACT LEFT_PAREN field=simpleIdentifier FROM source=valueExpression RIGHT_PAREN              #extract
+    | (SUBSTR | SUBSTRING) LEFT_PAREN str=valueExpression (FROM | COMMA) pos=valueExpression
+      ((FOR | COMMA) len=valueExpression)? RIGHT_PAREN                                         #substring
+    | TRIM LEFT_PAREN trimOption=(BOTH | LEADING | TRAILING)? (trimStr=valueExpression)?
+       FROM srcStr=valueExpression RIGHT_PAREN                                                 #trim
+    | OVERLAY LEFT_PAREN input=valueExpression PLACING replace=valueExpression
+      FROM position=valueExpression (FOR length=valueExpression)? RIGHT_PAREN                  #overlay
+    ;
+
+semiStructuredExtractionPath
+    : jsonPathFirstPart (jsonPathParts)*
+    ;
+
+jsonPathIdentifier
+    : identifier
+    | BACKQUOTED_IDENTIFIER
+    ;
+
+jsonPathBracketedIdentifier
+    : LEFT_BRACKET stringLit RIGHT_BRACKET
+    ;
+
+jsonPathFirstPart
+    : jsonPathIdentifier
+    | jsonPathBracketedIdentifier
+    | LEFT_BRACKET integerValue RIGHT_BRACKET
+    ;
+
+jsonPathParts
+    : DOT jsonPathIdentifier
+    | jsonPathBracketedIdentifier
+    | LEFT_BRACKET integerValue RIGHT_BRACKET
+    | LEFT_BRACKET identifier RIGHT_BRACKET
+    ;
+
+literalType
+    : DATE
+    | TIME
+    | TIMESTAMP | TIMESTAMP_LTZ | TIMESTAMP_NTZ
+    | INTERVAL
+    | BINARY_HEX
+    | unsupportedType=identifier
+    ;
+
+constant
+    : NULL                                                                                     #nullLiteral
+    | QUESTION                                                                                 #posParameterLiteral
+    | namedParameterMarker                                                                     #namedParameterLiteral
+    | interval                                                                                 #intervalLiteral
+    | literalType singleStringLitWithoutMarker                                                     #typeConstructor
+    | number                                                                                   #numericLiteral
+    | booleanValue                                                                             #booleanLiteral
+    | stringLit                                                                                #stringLiteral
+    ;
+
+namedParameterMarker
+    : COLON simpleIdentifier
+    ;
+comparisonOperator
+    : EQ | NEQ | NEQJ | LT | LTE | GT | GTE | NSEQ
+    ;
+
+arithmeticOperator
+    : PLUS | MINUS | ASTERISK | SLASH | PERCENT | DIV | TILDE | AMPERSAND | PIPE | CONCAT_PIPE | HAT
+    ;
+
+predicateOperator
+    : OR | AND | IN | NOT
+    ;
+
+booleanValue
+    : TRUE | FALSE
+    ;
+
+interval
+    : INTERVAL (errorCapturingMultiUnitsInterval | errorCapturingUnitToUnitInterval)
+    ;
+
+errorCapturingMultiUnitsInterval
+    : body=multiUnitsInterval unitToUnitInterval?
+    ;
+
+multiUnitsInterval
+    : (intervalValue unit+=unitInMultiUnits)+
+    ;
+
+errorCapturingUnitToUnitInterval
+    : body=unitToUnitInterval (error1=multiUnitsInterval | error2=unitToUnitInterval)?
+    ;
+
+unitToUnitInterval
+    : value=intervalValue from=unitInUnitToUnit TO to=unitInUnitToUnit
+    ;
+
+intervalValue
+    : (PLUS | MINUS)?
+      (INTEGER_VALUE | DECIMAL_VALUE | stringLit)
+    ;
+
+unitInMultiUnits
+    : NANOSECOND | NANOSECONDS | MICROSECOND | MICROSECONDS | MILLISECOND | MILLISECONDS
+    | SECOND | SECONDS | MINUTE | MINUTES | HOUR | HOURS | DAY | DAYS | WEEK | WEEKS
+    | MONTH | MONTHS | YEAR | YEARS
+    ;
+
+unitInUnitToUnit
+    : SECOND | MINUTE | HOUR | DAY | MONTH | YEAR
+    ;
+
+colPosition
+    : position=FIRST | position=AFTER afterCol=errorCapturingIdentifier
+    ;
+
+collationSpec
+    : DEFAULT COLLATION collationName=identifier
+    ;
+
+collateClause
+    : COLLATE collationName=multipartIdentifier
+    ;
+
+nonTrivialPrimitiveType
+    : STRING collateClause?
+    | (CHARACTER | CHAR) (LEFT_PAREN length=integerValue RIGHT_PAREN)? collateClause?
+    | VARCHAR (LEFT_PAREN length=integerValue RIGHT_PAREN)? collateClause?
+    | (DECIMAL | DEC | NUMERIC)
+        (LEFT_PAREN precision=integerValue (COMMA scale=integerValue)? RIGHT_PAREN)?
+    | INTERVAL
+        (fromYearMonth=(YEAR | MONTH) (TO to=MONTH)? |
+         fromDayTime=(DAY | HOUR | MINUTE | SECOND) (TO to=(HOUR | MINUTE | SECOND))?)?
+    | TIMESTAMP (LEFT_PAREN precision=integerValue RIGHT_PAREN)?
+        (withLocalTimeZone | withoutTimeZone)?
+    | TIMESTAMP_LTZ (LEFT_PAREN precision=integerValue RIGHT_PAREN)?
+    | TIMESTAMP_NTZ (LEFT_PAREN precision=integerValue RIGHT_PAREN)?
+    | TIME (LEFT_PAREN precision=integerValue RIGHT_PAREN)? (withoutTimeZone)?
+    | GEOGRAPHY LEFT_PAREN (srid=integerValue | any=ANY) RIGHT_PAREN
+    | GEOMETRY LEFT_PAREN (srid=integerValue | any=ANY) RIGHT_PAREN
+    ;
+
+trivialPrimitiveType
+    : BOOLEAN
+    | TINYINT | BYTE
+    | SMALLINT | SHORT
+    | INT | INTEGER
+    | BIGINT | LONG
+    | FLOAT | REAL
+    | DOUBLE
+    | DATE
+    | BINARY
+    | VOID
+    | VARIANT
+    ;
+
+withLocalTimeZone
+    : WITH LOCAL TIME ZONE
+    ;
+
+withoutTimeZone
+    : WITHOUT TIME ZONE
+    ;
+
+primitiveType
+    : nonTrivialPrimitiveType
+    | trivialPrimitiveType
+    | unsupportedType=identifier (LEFT_PAREN integerValue(COMMA integerValue)* RIGHT_PAREN)?
+    ;
+
+dataType
+    : complex=ARRAY (LT dataType GT)?                           #complexDataType
+    | complex=MAP (LT dataType COMMA dataType GT)?              #complexDataType
+    | complex=STRUCT ((LT complexColTypeList? GT) | NEQ {(this.tokenStream.tokenSource as DatabricksLexer).decComplexTypeLevelCounter();})?       #complexDataType
+    | primitiveType                                             #primitiveDataType
+    ;
+
+qualifiedColTypeWithPositionList
+    : qualifiedColTypeWithPosition (COMMA qualifiedColTypeWithPosition)*
+    ;
+
+qualifiedColTypeWithPosition
+    : name=multipartIdentifier dataType colDefinitionDescriptorWithPosition*
+    ;
+
+colDefinitionDescriptorWithPosition
+    : errorCapturingNot NULL
+    | defaultExpression
+    | commentSpec
+    | colPosition
+    ;
+
+defaultExpression
+    : DEFAULT expression
+    ;
+
+variableDefaultExpression
+    : (DEFAULT | EQ) expression
+    ;
+
+colTypeList
+    : colType (COMMA colType)*
+    ;
+
+colType
+    : colName=errorCapturingIdentifier dataType (errorCapturingNot NULL)? commentSpec?
+    ;
+
+tableElementList
+    : tableElement (COMMA tableElement)*
+    ;
+
+tableElement
+    : tableConstraintDefinition
+    | colDefinition
+    ;
+
+colDefinitionList
+    : colDefinition (COMMA colDefinition)*
+    ;
+
+colDefinition
+    : colName=errorCapturingIdentifier dataType colDefinitionOption*
+    ;
+
+colDefinitionOption
+    : errorCapturingNot NULL
+    | defaultExpression
+    | generationExpression
+    | commentSpec
+    | columnConstraintDefinition
+    ;
+
+generationExpression
+    : GENERATED ALWAYS AS LEFT_PAREN expression RIGHT_PAREN     #generatedColumn
+    | GENERATED (ALWAYS | BY DEFAULT) AS IDENTITY identityColSpec? #identityColumn
+    ;
+
+identityColSpec
+    : LEFT_PAREN sequenceGeneratorOption* RIGHT_PAREN
+    ;
+
+sequenceGeneratorOption
+    : START WITH start=sequenceGeneratorStartOrStep
+    | INCREMENT BY step=sequenceGeneratorStartOrStep
+    ;
+
+sequenceGeneratorStartOrStep
+    : MINUS? integerValue
+    | MINUS? BIGINT_LITERAL
+    ;
+
+complexColTypeList
+    : complexColType (COMMA complexColType)*
+    ;
+
+complexColType
+    : errorCapturingIdentifier COLON? dataType (errorCapturingNot NULL)? commentSpec?
+    ;
+
+// The code literal is defined as a dollar quoted string.
+// A dollar quoted string consists of
+// - a begin tag which contains a dollar sign, an optional tag, and another dollar sign,
+// - a string literal that is made up of arbitrary sequence of characters, and
+// - an end tag which has to be exact the same as the begin tag.
+// As the string literal can contain dollar signs, we add + to DOLLAR_QUOTED_STRING_BODY to avoid
+// the parser eagarly matching END_DOLLAR_QUOTED_STRING when seeing a dollar sign.
+codeLiteral
+    : BEGIN_DOLLAR_QUOTED_STRING DOLLAR_QUOTED_STRING_BODY+ END_DOLLAR_QUOTED_STRING
+    ;
+
+routineCharacteristics
+    : (routineLanguage
+    | specificName
+    | deterministic
+    | sqlDataAccess
+    | nullCall
+    | commentSpec
+    | collationSpec
+    | rightsClause)*
+    ;
+
+routineLanguage
+    : LANGUAGE (SQL | IDENTIFIER)
+    ;
+
+specificName
+    : SPECIFIC specific=errorCapturingIdentifier
+    ;
+
+deterministic
+    : DETERMINISTIC
+    | errorCapturingNot DETERMINISTIC
+    ;
+
+sqlDataAccess
+    : access=NO SQL
+    | access=CONTAINS SQL
+    | access=READS SQL DATA
+    | access=MODIFIES SQL DATA
+    ;
+
+nullCall
+    : RETURNS NULL ON NULL INPUT
+    | CALLED ON NULL INPUT
+    ;
+
+rightsClause
+    : SQL SECURITY INVOKER
+    | SQL SECURITY DEFINER
+   ;
+
+whenClause
+    : WHEN condition=expression THEN result=expression
+    ;
+
+windowClause
+    : WINDOW namedWindow (COMMA namedWindow)*
+    ;
+
+namedWindow
+    : name=errorCapturingIdentifier AS windowSpec
+    ;
+
+windowSpec
+    : name=errorCapturingIdentifier                         #windowRef
+    | LEFT_PAREN name=errorCapturingIdentifier RIGHT_PAREN  #windowRef
+    | LEFT_PAREN
+      ( CLUSTER BY partition+=expression (COMMA partition+=expression)*
+      | ((PARTITION | DISTRIBUTE) BY partition+=expression (COMMA partition+=expression)*)?
+        ((ORDER | SORT) BY sortItem (COMMA sortItem)*)?)
+      windowFrame?
+      RIGHT_PAREN                                           #windowDef
+    ;
+
+windowFrame
+    : frameType=RANGE start=frameBound
+    | frameType=ROWS start=frameBound
+    | frameType=RANGE BETWEEN start=frameBound AND end=frameBound
+    | frameType=ROWS BETWEEN start=frameBound AND end=frameBound
+    ;
+
+frameBound
+    : UNBOUNDED boundType=(PRECEDING | FOLLOWING)
+    | boundType=CURRENT ROW
+    | expression boundType=(PRECEDING | FOLLOWING)
+    ;
+
+qualifiedNameList
+    : qualifiedName (COMMA qualifiedName)*
+    ;
+
+functionName
+    : IDENTIFIER_KW LEFT_PAREN expression RIGHT_PAREN
+    | identFunc=IDENTIFIER_KW   // IDENTIFIER itself is also a valid function name.
+    | qualifiedName
+    | FILTER
+    | LEFT
+    | RIGHT
+    ;
+
+qualifiedName
+    : identifier (DOT identifier)*
+    ;
+
+// this rule is used for explicitly capturing wrong identifiers such as test-table, which should actually be `test-table`
+// replace identifier with errorCapturingIdentifier where the immediate follow symbol is not an expression, otherwise
+// valid expressions such as "a-b" can be recognized as an identifier
+errorCapturingIdentifier
+    : identifier errorCapturingIdentifierExtra
+    ;
+
+// extra left-factoring grammar
+errorCapturingIdentifierExtra
+    : (MINUS identifier)+    #errorIdent
+    |                        #realIdent
+    ;
+
+identifier
+    : strictIdentifier
+    | {!this.SQL_standard_keyword_behavior}? strictNonReserved
+    ;
+
+// simpleIdentifier: like identifier but without IDENTIFIER('literal') support
+// Use this for contexts where IDENTIFIER() syntax is not appropriate:
+//   - Named parameters (:param_name)
+//   - Extract field names (EXTRACT(field FROM ...))
+//   - Other keyword-like or string-like uses
+simpleIdentifier
+    : simpleStrictIdentifier
+    | {!this.SQL_standard_keyword_behavior}? strictNonReserved
+    ;
+
+strictIdentifier
+    : IDENTIFIER              #unquotedIdentifier
+    | quotedIdentifier        #quotedIdentifierAlternative
+    | {!this.legacy_identifier_clause_only}? IDENTIFIER_KW LEFT_PAREN stringLit RIGHT_PAREN  #identifierLiteral
+    | {this.SQL_standard_keyword_behavior}? ansiNonReserved #unquotedIdentifier
+    | {!this.SQL_standard_keyword_behavior}? nonReserved    #unquotedIdentifier
+    ;
+
+// simpleStrictIdentifier: like strictIdentifier but without IDENTIFIER('literal') support
+simpleStrictIdentifier
+    : IDENTIFIER              #simpleUnquotedIdentifier
+    | quotedIdentifier        #simpleQuotedIdentifierAlternative
+    | {this.SQL_standard_keyword_behavior}? ansiNonReserved #simpleUnquotedIdentifier
+    | {!this.SQL_standard_keyword_behavior}? nonReserved    #simpleUnquotedIdentifier
+    ;
+
+quotedIdentifier
+    : BACKQUOTED_IDENTIFIER
+    | {this.double_quoted_identifiers}? DOUBLEQUOTED_STRING
+    ;
+
+backQuotedIdentifier
+    : BACKQUOTED_IDENTIFIER
+    ;
+
+number
+    : {!this.legacy_exponent_literal_as_decimal_enabled}? MINUS? EXPONENT_VALUE #exponentLiteral
+    | {!this.legacy_exponent_literal_as_decimal_enabled}? MINUS? DECIMAL_VALUE  #decimalLiteral
+    | {this.legacy_exponent_literal_as_decimal_enabled}? MINUS? (EXPONENT_VALUE | DECIMAL_VALUE) #legacyDecimalLiteral
+    | MINUS? INTEGER_VALUE            #integerLiteral
+    | MINUS? BIGINT_LITERAL           #bigIntLiteral
+    | MINUS? SMALLINT_LITERAL         #smallIntLiteral
+    | MINUS? TINYINT_LITERAL          #tinyIntLiteral
+    | MINUS? DOUBLE_LITERAL           #doubleLiteral
+    | MINUS? FLOAT_LITERAL            #floatLiteral
+    | MINUS? BIGDECIMAL_LITERAL       #bigDecimalLiteral
+    ;
+
+integerValue
+    : INTEGER_VALUE                                                                          #integerVal
+    | parameterMarker                                                                        #parameterIntegerValue
+    ;
+
+columnConstraintDefinition
+    : (CONSTRAINT name=errorCapturingIdentifier)? columnConstraint constraintCharacteristic*
+    ;
+
+columnConstraint
+    : checkConstraint
+    | uniqueSpec
+    | referenceSpec
+    ;
+
+tableConstraintDefinition
+    : (CONSTRAINT name=errorCapturingIdentifier)? tableConstraint constraintCharacteristic*
+    ;
+
+tableConstraint
+    : checkConstraint
+    | uniqueConstraint
+    | foreignKeyConstraint
+    ;
+
+checkConstraint
+    : CHECK LEFT_PAREN (expr=booleanExpression) RIGHT_PAREN
+    ;
+
+uniqueSpec
+    : UNIQUE
+    | PRIMARY KEY
+    ;
+
+uniqueConstraint
+    : uniqueSpec identifierList
+    ;
+
+referenceSpec
+    : REFERENCES multipartIdentifier (parentColumns=identifierList)?
+    ;
+
+foreignKeyConstraint
+    : FOREIGN KEY identifierList referenceSpec
+    ;
+
+constraintCharacteristic
+    : enforcedCharacteristic
+    | relyCharacteristic
+    ;
+
+enforcedCharacteristic
+    : ENFORCED
+    | NOT ENFORCED
+    ;
+
+relyCharacteristic
+    : RELY
+    | NORELY
+    ;
+
+alterColumnSpecList
+    : alterColumnSpec (COMMA alterColumnSpec)*
+    ;
+
+alterColumnSpec
+    : column=multipartIdentifier alterColumnAction?
+    ;
+
+alterColumnAction
+    : TYPE dataType
+    | commentSpec
+    | colPosition
+    | setOrDrop=(SET | DROP) errorCapturingNot NULL
+    | SET defaultExpression
+    | dropDefault=DROP DEFAULT
+    ;
+
+// Matches exactly one string literal without coalescing or parameter markers.
+// Used in type constructors where coalescing is not allowed.
+singleStringLitWithoutMarker
+    : STRING_LITERAL                                                                           #singleStringLiteralValue
+    | {!this.double_quoted_identifiers}? DOUBLEQUOTED_STRING                                        #singleDoubleQuotedStringLiteralValue
+    ;
+
+// Matches one string literal or parameter marker (no coalescing).
+singleStringLit
+    : singleStringLitWithoutMarker
+    | parameterMarker
+    ;
+
+parameterMarker
+    : {this.parameter_substitution_enabled}? namedParameterMarker                                   #namedParameterMarkerRule
+    | {this.parameter_substitution_enabled}? QUESTION                                               #positionalParameterMarkerRule
+    ;
+
+stringLit
+    : singleStringLit+
+    ;
+
+comment
+    : stringLit
+    | NULL
+    ;
+
+version
+    : INTEGER_VALUE
+    | stringLit
+    ;
+
+operatorPipeRightSide
+    : selectClause aggregationClause? windowClause?
+    | EXTEND extendList=namedExpressionSeq
+    | SET operatorPipeSetAssignmentSeq
+    | DROP multipartIdentifierList
+    | AS errorCapturingIdentifier
+    // Note that the WINDOW clause is not allowed in the WHERE pipe operator, but we add it here in
+    // the grammar simply for purposes of catching this invalid syntax and throwing a specific
+    // dedicated error message.
+    | whereClause windowClause?
+    // The following two cases match the PIVOT or UNPIVOT clause, respectively.
+    // For each one, we add the other clause as an option in order to return high-quality error
+    // messages in the event that both are present (this is not allowed).
+    | pivotClause unpivotClause?
+    | unpivotClause pivotClause?
+    | sample
+    | joinRelation
+    | operator=(UNION | EXCEPT | SETMINUS | INTERSECT) setQuantifier? right=queryPrimary
+    | queryOrganization
+    | AGGREGATE namedExpressionSeq? aggregationClause?
+    ;
+
+operatorPipeSetAssignmentSeq
+    : ident+=errorCapturingIdentifier
+        (DOT errorCapturingIdentifier)*  // This is invalid syntax; we just capture it here.
+        EQ expression
+        (COMMA ident+=errorCapturingIdentifier
+          (DOT errorCapturingIdentifier)*  // This is invalid syntax; we just capture it here.
+          EQ expression)*
+    ;
+
+// When `SQL_standard_keyword_behavior=true`, there are 2 kinds of keywords in Spark SQL.
+// - Reserved keywords:
+//     Keywords that are reserved and can't be used as identifiers for table, view, column,
+//     function, alias, etc.
+// - Non-reserved keywords:
+//     Keywords that have a special meaning only in particular contexts and can be used as
+//     identifiers in other contexts. For example, `EXPLAIN SELECT ...` is a command, but EXPLAIN
+//     can be used as identifiers in other places.
+// You can find the full keywords list by searching "Start of the keywords list" in this file.
+// The non-reserved keywords are listed below. Keywords not in this list are reserved keywords.
+ansiNonReserved
+//--ANSI-NON-RESERVED-START
+    : ADD
+    | AFTER
+    | AGGREGATE
+    | ALTER
+    | ALWAYS
+    | ANALYZE
+    | ANTI
+    | ANY_VALUE
+    | APPROX
+    | ARCHIVE
+    | ARRAY
+    | ASC
+    | ASENSITIVE
+    | AT
+    | ATOMIC
+    | BEGIN
+    | BERNOULLI
+    | BETWEEN
+    | BIGINT
+    | BINARY
+    | BINARY_HEX
+    | BINDING
+    | BOOLEAN
+    | BUCKET
+    | BUCKETS
+    | BY
+    | BYTE
+    | CACHE
+    | CALLED
+    | CASCADE
+    | CATALOG
+    | CATALOGS
+    | CHANGE
+    | CHANGES
+    | CHAR
+    | CHARACTER
+    | CLEAR
+    | CLOSE
+    | CLUSTER
+    | CLUSTERED
+    | CODEGEN
+    | COLLECTION
+    | COLUMNS
+    | COMMENT
+    | COMMIT
+    | COMPACT
+    | COMPACTIONS
+    | COMPENSATION
+    | COMPUTE
+    | CONCATENATE
+    | CONDITION
+    | CONTAINS
+    | CONTINUE
+    | COST
+    | CURSOR
+    | CUBE
+    | CURRENT
+    | CURRENT_DATABASE
+    | DATA
+    | DATABASE
+    | DATABASES
+    | DATE
+    | DATEADD
+    | DATE_ADD
+    | DATEDIFF
+    | DATE_DIFF
+    | DAY
+    | DAYS
+    | DAYOFYEAR
+    | DBPROPERTIES
+    | DEC
+    | DECIMAL
+    | DECLARE
+    | DEFAULT
+    | DEFAULT_PATH
+    | DEFINED
+    | DEFINER
+    | DELAY
+    | DELETE
+    | DELIMITED
+    | DESC
+    | DESCRIBE
+    | DETERMINISTIC
+    | DFS
+    | DIRECTORIES
+    | DIRECTORY
+    | DISTANCE
+    | DISTRIBUTE
+    | DIV
+    | DO
+    | DOUBLE
+    | DROP
+    | ELSEIF
+    | ENFORCED
+    | ESCAPED
+    | EVOLUTION
+    | EXACT
+    | EXCHANGE
+    | EXCLUDE
+    | EXCLUSIVE
+    | EXISTS
+    | EXIT
+    | EXPLAIN
+    | EXPORT
+    | EXTEND
+    | EXTENDED
+    | EXTERNAL
+    | EXTRACT
+    | FIELDS
+    | FILEFORMAT
+    | FIRST
+    | FLOAT
+    | FLOW
+    | FOLLOWING
+    | FORMAT
+    | FORMATTED
+    | FOUND
     | FUNCTION
+    | FUNCTIONS
+    | GENERATED
+    | GEOGRAPHY
+    | GEOMETRY
+    | GLOBAL
+    | GROUPING
+    | HANDLER
+    | HOUR
+    | HOURS
+    | IDENTIFIER_KW
+    | IDENTIFIED
+    | IDENTITY
     | IF
-    | JOIN
+    | IGNORE
+    | IMMEDIATE
+    | IMPORT
+    | INCLUDE
+    | INCLUSIVE
+    | INCREMENT
+    | INDEX
+    | INDEXES
+    | INPATH
+    | INPUT
+    | INPUTFORMAT
+    | INSERT
+    | INSENSITIVE
+    | INT
+    | INTEGER
+    | INTERVAL
+    | INVOKER
+    | ITEMS
+    | ITERATE
+    | JSON
     | KEY
+    | KEYS
     | LANGUAGE
-    | ORDER
-    | OUTER
-    | RECURSIVE
+    | LAST
+    | LAZY
+    | LEAVE
+    | LEVEL
+    | LIKE
+    | ILIKE
+    | LIMIT
+    | LINES
+    | LIST
+    | LOAD
+    | LOCAL
+    | LOCATION
+    | LOCK
+    | LOCKS
+    | LOGICAL
+    | LONG
+    | LOOP
+    | MACRO
+    | MAP
+    | MATCHED
+    | MATERIALIZED
+    | MAX
+    | MEASURE
+    | MERGE
+    | METRICS
+    | MICROSECOND
+    | MICROSECONDS
+    | MILLISECOND
+    | MILLISECONDS
+    | MINUTE
+    | MINUTES
+    | MODIFIES
+    | MONTH
+    | MONTHS
+    | MSCK
+    | NAME
+    | NAMESPACE
+    | NAMESPACES
+    | NANOSECOND
+    | NANOSECONDS
+    | NEAREST
+    | NEXT
+    | NO
+    | NONE
+    | NORELY
+    | NULLS
+    | NUMERIC
+    | OF
+    | OPEN
+    | OPTION
+    | OPTIONS
+    | OUT
+    | OUTPUTFORMAT
+    | OVER
+    | OVERLAY
+    | OVERWRITE
+    | PARTITION
+    | PARTITIONED
+    | PARTITIONS
+    | PATH
+    | PERCENTLIT
+    | PIVOT
+    | PLACING
+    | POSITION
+    | PRECEDING
+    | PRINCIPALS
+    | PROCEDURE
+    | PROCEDURES
+    | PROPERTIES
+    | PURGE
+    | QUALIFY
+    | QUARTER
+    | QUERY
+    | RANGE
+    | READ
+    | READS
+    | REAL
+    | RECORDREADER
+    | RECORDWRITER
+    | RECOVER
+    | RECURSION
+    | REDUCE
+    | REFRESH
+    | RELY
+    | RENAME
+    | REPAIR
+    | REPEAT
+    | REPEATABLE
+    | REPLACE
+    | RESET
+    | RESPECT
+    | RESTRICT
+    | RETURN
+    | RETURNS
+    | REVOKE
+    | RLIKE
     | ROLE
-    | TAG
-    | TEMP
+    | ROLES
+    | ROLLBACK
+    | ROLLUP
+    | ROW
+    | ROWS
+    | SCHEMA
+    | SCHEMAS
+    | SECOND
+    | SECONDS
+    | SECURITY
+    | SEMI
+    | SEPARATED
+    | SERDE
+    | SERDEPROPERTIES
+    | SET
+    | SETMINUS
+    | SETS
+    | SHORT
+    | SHOW
+    | SIMILARITY
+    | SINGLE
+    | SKEWED
+    | SMALLINT
+    | SORT
+    | SORTED
+    | SOURCE
+    | SPECIFIC
+    | SQLEXCEPTION
+    | SQLSTATE
+    | START
+    | STATISTICS
+    | STORED
+    | STRATIFY
+    | STRING
+    | STRUCT
+    | STREAM
+    | STREAMING
+    | SUBSTR
+    | SUBSTRING
+    | SYNC
+    | SYSTEM
+    | SYSTEM_PATH
+    | SYSTEM_TIME
+    | SYSTEM_VERSION
+    | TABLES
+    | TABLESAMPLE
+    | TARGET
+    | TBLPROPERTIES
+    | TEMPORARY
+    | TERMINATED
+    | TIMEDIFF
     | TIMESTAMP
+    | TIMESTAMP_LTZ
+    | TIMESTAMP_NTZ
+    | TIMESTAMPADD
+    | TIMESTAMPDIFF
+    | TINYINT
+    | TOUCH
+    | TRANSACTION
+    | TRANSACTIONS
+    | TRANSFORM
+    | TRIM
+    | TRUE
+    | TRUNCATE
+    | TRY_CAST
     | TYPE
+    | UNARCHIVE
+    | UNBOUNDED
+    | UNCACHE
+    | UNLOCK
+    | UNPIVOT
+    | UNSET
+    | UNTIL
+    | UPDATE
+    | USE
+    | VALUE
+    | VALUES
+    | VARCHAR
+    | VAR
+    | VARIABLE
+    | VARIANT
+    | VERSION
+    | VIEW
+    | VIEWS
+    | VOID
+    | WEEK
+    | WEEKS
+    | WHILE
+    | WATERMARK
+    | WINDOW
+    | WITHOUT
+    | YEAR
+    | YEARS
+    | ZONE
+//--ANSI-NON-RESERVED-END
+    ;
+
+// When `SQL_standard_keyword_behavior=false`, there are 2 kinds of keywords in Spark SQL.
+// - Non-reserved keywords:
+//     Same definition as the one when `SQL_standard_keyword_behavior=true`.
+// - Strict-non-reserved keywords:
+//     A strict version of non-reserved keywords, which can not be used as table alias.
+// You can find the full keywords list by searching "Start of the keywords list" in this file.
+// The strict-non-reserved keywords are listed in `strictNonReserved`.
+// The non-reserved keywords are listed in `nonReserved`.
+// These 2 together contain all the keywords.
+strictNonReserved
+    : ANTI
+    | CROSS
+    | EXCEPT
+    | FULL
+    | INNER
+    | INTERSECT
+    | JOIN
+    | LATERAL
+    | LEFT
+    | NATURAL
+    | ON
+    | RIGHT
+    | SEMI
+    | SETMINUS
+    | UNION
+    | USING
+    ;
+
+nonReserved
+//--DEFAULT-NON-RESERVED-START
+    : ADD
+    | AFTER
+    | AGGREGATE
+    | ALL
+    | ALTER
+    | ALWAYS
+    | ANALYZE
+    | AND
+    | ANY
+    | ANY_VALUE
+    | APPROX
+    | ARCHIVE
+    | ARRAY
+    | AS
+    | ASC
+    | ASENSITIVE
+    | AT
+    | ATOMIC
+    | AUTHORIZATION
+    | BEGIN
+    | BERNOULLI
+    | BETWEEN
+    | BIGINT
+    | BINARY
+    | BINARY_HEX
+    | BINDING
+    | BOOLEAN
+    | BOTH
+    | BUCKET
+    | BUCKETS
+    | BY
+    | BYTE
+    | CACHE
+    | CALL
+    | CALLED
+    | CASCADE
+    | CASE
+    | CAST
+    | CATALOG
+    | CATALOGS
+    | CHANGE
+    | CHANGES
+    | CHAR
+    | CHARACTER
+    | CHECK
+    | CLEAR
+    | CLOSE
+    | CLUSTER
+    | CLUSTERED
+    | CODEGEN
+    | COLLATE
+    | COLLATION
+    | COLLATIONS
+    | COLLECTION
+    | COLUMN
+    | COLUMNS
+    | COMMENT
+    | COMMIT
+    | COMPACT
+    | COMPACTIONS
+    | COMPENSATION
+    | COMPUTE
+    | CONCATENATE
+    | CONDITION
+    | CONSTRAINT
+    | CONTAINS
+    | CONTINUE
+    | COST
+    | CREATE
+    | CUBE
+    | CURRENT
+    | CURSOR
+    | CURRENT_DATABASE
+    | CURRENT_DATE
+    | CURRENT_PATH
+    | CURRENT_SCHEMA
+    | CURRENT_TIME
+    | CURRENT_TIMESTAMP
+    | CURRENT_USER
+    | DATA
+    | DATABASE
+    | DATABASES
+    | DATE
+    | DATEADD
+    | DATE_ADD
+    | DATEDIFF
+    | DATE_DIFF
+    | DAY
+    | DAYS
+    | DAYOFYEAR
+    | DBPROPERTIES
+    | DEC
+    | DECIMAL
+    | DECLARE
+    | DEFAULT
+    | DEFAULT_PATH
+    | DEFINED
+    | DEFINER
+    | DELAY
+    | DELETE
+    | DELIMITED
+    | DESC
+    | DESCRIBE
+    | DETERMINISTIC
+    | DFS
+    | DIRECTORIES
+    | DIRECTORY
+    | DISTANCE
+    | DISTINCT
+    | DISTRIBUTE
+    | DIV
+    | DO
+    | DOUBLE
+    | DROP
+    | ELSE
+    | ELSEIF
+    | END
+    | ENFORCED
+    | ESCAPE
+    | ESCAPED
+    | EVOLUTION
+    | EXACT
+    | EXCHANGE
+    | EXCLUDE
+    | EXCLUSIVE
+    | EXECUTE
+    | EXISTS
+    | EXIT
+    | EXPLAIN
+    | EXPORT
+    | EXTEND
+    | EXTENDED
+    | EXTERNAL
+    | EXTRACT
+    | FALSE
+    | FETCH
+    | FILTER
+    | FIELDS
+    | FILEFORMAT
+    | FIRST
+    | FLOAT
+    | FLOW
+    | FOLLOWING
+    | FOR
+    | FOREIGN
+    | FORMAT
+    | FORMATTED
+    | FROM
+    | FOUND
+    | FUNCTION
+    | FUNCTIONS
+    | GENERATED
+    | GEOGRAPHY
+    | GEOMETRY
+    | GLOBAL
+    | GRANT
+    | GROUP
+    | GROUPING
+    | HANDLER
+    | HAVING
+    | HOUR
+    | HOURS
+    | IDENTIFIER_KW
+    | IDENTIFIED
+    | IDENTITY
+    | IF
+    | IGNORE
+    | IMMEDIATE
+    | IMPORT
+    | IN
+    | INCLUDE
+    | INCLUSIVE
+    | INCREMENT
+    | INDEX
+    | INDEXES
+    | INPATH
+    | INPUT
+    | INPUTFORMAT
+    | INSERT
+    | INSENSITIVE
+    | INT
+    | INTEGER
+    | INTERVAL
+    | INTO
+    | INVOKER
+    | IS
+    | ITEMS
+    | ITERATE
+    | JSON
+    | KEY
+    | KEYS
+    | LANGUAGE
+    | LAST
+    | LAZY
+    | LEADING
+    | LEAVE
+    | LEVEL
+    | LIKE
+    | LONG
+    | ILIKE
+    | LIMIT
+    | LINES
+    | LIST
+    | LOAD
+    | LOCAL
+    | LOCATION
+    | LOCK
+    | LOCKS
+    | LOGICAL
+    | LONG
+    | LOOP
+    | MACRO
+    | MAP
+    | MATCHED
+    | MATERIALIZED
+    | MAX
+    | MEASURE
+    | MERGE
+    | METRICS
+    | MICROSECOND
+    | MICROSECONDS
+    | MILLISECOND
+    | MILLISECONDS
+    | MINUTE
+    | MINUTES
+    | MODIFIES
+    | MONTH
+    | MONTHS
+    | MSCK
+    | NAME
+    | NAMESPACE
+    | NAMESPACES
+    | NANOSECOND
+    | NANOSECONDS
+    | NEAREST
+    | NEXT
+    | NO
+    | NONE
+    | NORELY
+    | NOT
+    | NULL
+    | NULLS
+    | NUMERIC
+    | OF
+    | OFFSET
+    | ONLY
+    | OPEN
+    | OPTION
+    | OPTIONS
+    | OR
+    | ORDER
+    | OUT
+    | OUTER
+    | OUTPUTFORMAT
+    | OVER
+    | OVERLAPS
+    | OVERLAY
+    | OVERWRITE
+    | PARTITION
+    | PARTITIONED
+    | PARTITIONS
+    | PATH
+    | PERCENTLIT
+    | PIVOT
+    | PLACING
+    | POSITION
+    | PRECEDING
+    | PRIMARY
+    | PRINCIPALS
+    | PROCEDURE
+    | PROCEDURES
+    | PROPERTIES
+    | PURGE
+    | QUALIFY
+    | QUARTER
+    | QUERY
+    | RANGE
+    | READ
+    | READS
+    | REAL
+    | RECORDREADER
+    | RECORDWRITER
+    | RECOVER
+    | RECURSION
+    | RECURSIVE
+    | REDUCE
+    | REFERENCES
+    | REFRESH
+    | RELY
+    | RENAME
+    | REPAIR
+    | REPEAT
+    | REPEATABLE
+    | REPLACE
+    | RESET
+    | RESPECT
+    | RESTRICT
+    | RETURN
+    | RETURNS
+    | REVOKE
+    | RLIKE
+    | ROLE
+    | ROLES
+    | ROLLBACK
+    | ROLLUP
+    | ROW
+    | ROWS
+    | SCHEMA
+    | SCHEMAS
+    | SECOND
+    | SECONDS
+    | SECURITY
+    | SELECT
+    | SEPARATED
+    | SERDE
+    | SERDEPROPERTIES
+    | SESSION_USER
+    | SET
+    | SETS
+    | SHORT
+    | SHOW
+    | SIMILARITY
+    | SINGLE
+    | SKEWED
+    | SMALLINT
+    | SOME
+    | SORT
+    | SORTED
+    | SOURCE
+    | SPECIFIC
+    | SQL
+    | SQLEXCEPTION
+    | SQLSTATE
+    | START
+    | STATISTICS
+    | STORED
+    | STRATIFY
+    | STREAM
+    | STREAMING
+    | STRING
+    | STRUCT
+    | SUBSTR
+    | SUBSTRING
+    | SYNC
+    | SYSTEM
+    | SYSTEM_PATH
+    | SYSTEM_TIME
+    | SYSTEM_VERSION
+    | TABLE
+    | TABLES
+    | TABLESAMPLE
+    | TARGET
+    | TBLPROPERTIES
+    | TEMPORARY
+    | TERMINATED
+    | THEN
+    | TIME
+    | TIMEDIFF
+    | TIMESTAMP
+    | TIMESTAMP_LTZ
+    | TIMESTAMP_NTZ
+    | TIMESTAMPADD
+    | TIMESTAMPDIFF
+    | TINYINT
+    | TO
+    | TOUCH
+    | TRAILING
+    | TRANSACTION
+    | TRANSACTIONS
+    | TRANSFORM
+    | TRIM
+    | TRUE
+    | TRUNCATE
+    | TRY_CAST
+    | TYPE
+    | UNARCHIVE
+    | UNBOUNDED
+    | UNCACHE
+    | UNIQUE
+    | UNKNOWN
+    | UNLOCK
+    | UNPIVOT
+    | UNSET
+    | UNTIL
+    | UPDATE
+    | USE
     | USER
     | VALUE
     | VALUES
-    // etc
-    ;
-
-non_reserved_words
-    : COMMENT
-    | TIMEZONE
-    ;
-
-column_name
-    : (id_ '.')? id_
-    ;
-
-column_list
-    : column_name (COMMA column_name)*
-    ;
-
-object_name
-    : s = id_ DOT o = id_
-    | o = id_
-    ;
-
-num
-    : DECIMAL
-    ;
-
-/*** expressions ***/
-expr_list
-    : expr (COMMA expr)*
-    ;
-
-expr_list_in_parentheses
-    : '(' expr_list ')'
-    ;
-
-expr
-    : expr '[' expr ']'
-    | expr COLON expr
-    | expr DOT (VALUE | expr)
-    | COLLATE string
-    | case_expression
-    | bracket_expression
-    | op = ( PLUS | MINUS) expr
-    | expr op = (STAR | DIVIDE | MODULE) expr
-    | expr op = (PLUS | MINUS | PIPE_PIPE) expr
-    | l = expr comparison_operator r = expr
-    | op = NOT+ expr
-    | expr AND expr //bool operation
-    | expr OR expr  //bool operation
-    | cast_expr
-    | expr COLON_COLON data_type // Cast operator
-    | function_call
-    | subquery
-    | expr IS NOT? NULL_
-    | expr NOT? IN LR_BRACKET (subquery | expr_list) RR_BRACKET
-    | expr NOT? LIKE expr (ESCAPE expr)?
-    | expr NOT? LIKE ANY LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
-    | primitive_expression
-    ;
-
-cast_expr
-    : CAST LR_BRACKET expr AS data_type RR_BRACKET
-    ;
-
-data_type_size
-    : LR_BRACKET num RR_BRACKET
-    ;
-
-data_type
-    : int_alias = (INT | SMALLINT | TINYINT | BIGINT)
-    | number_alias = (NUMERIC | DECIMAL_ | DEC) (LR_BRACKET num (COMMA num)? RR_BRACKET)?
-    | float_alias = (FLOAT_ | DOUBLE | REAL_)
-    | BOOLEAN
-    | DATE
-    | INTERVAL TODO
-    | TIMESTAMP data_type_size?
-    | TIMESTAMP_NTZ data_type_size?
-    | STRING_
-    | BINARY data_type_size?
+    | VARCHAR
+    | VAR
+    | VARIABLE
     | VARIANT
-    | OBJECT
-    | ARRAY
-    | GEOGRAPHY
-    | GEOMETRY
-    | VOID_
-    | STRUCT TODO
-    | MAP TODO
-    ;
-
-primitive_expression
-    : DEFAULT //?
-    | NULL_
-    | id_ ('.' id_)*
-    | id_ '.' STAR
-    | full_column_name
-    | literal
-    ;
-
-function_call
-    : object_name '(' expr_list? ')'
-    | object_name '(' param_assoc_list ')'
-    ;
-
-param_assoc_list
-    : param_assoc (',' param_assoc)*
-    ;
-
-param_assoc
-    : id_ ASSOC expr
-    ;
-
-literal
-    : STRING // string, date, time, timestamp
-    | sign? DECIMAL
-    | sign? (REAL | FLOAT)
-    | true_false
-    | NULL_
-    ;
-
-sign
-    : PLUS
-    | MINUS
-    ;
-
-full_column_name
-    : schema = id_? DOT tab_name = id_? DOT col_name = id_
-    | tab_name = id_? DOT col_name = id_
-    | col_name = id_
-    ;
-
-bracket_expression
-    : LR_BRACKET expr_list RR_BRACKET
-    | LR_BRACKET subquery RR_BRACKET
-    ;
-
-case_expression
-    : CASE expr switch_section+ (ELSE expr)? END
-    | CASE switch_search_condition_section+ (ELSE expr)? END
-    ;
-
-switch_search_condition_section
-    : WHEN expr THEN expr
-    ;
-
-switch_section
-    : WHEN expr THEN expr
-    ;
-
-query_statement
-    : with_expression?
-    subquery
-    set_operator*
-    (order_by_clause | distribute_by_clause sort_by_clause? | cluster_by_clause)?
-    window_clause?
-    limit_clause?
-    offset_clause?
-    ;
-
-with_expression
-    : WITH RECURSIVE? common_table_expression (COMMA common_table_expression)*
-    ;
-
-common_table_expression
-    : id_ column_list_in_parentheses? recursion_limit? AS? '(' (query_statement | recursive_query) ')'
-    ;
-
-recursion_limit
-    : MAX RECURSION LEVEL
-    ;
-
-recursive_query
-    : bcq=query_statement UNION ALL scq=query_statement
-    ;
-
-subquery
-    : select_statement
-    | values_statement
-    | '(' query_statement ')'
-    | TABLE (table_name | view_name)?
-    | FROM table_reference (COMMA table_reference)*
-    ;
-
-set_operator
-    : (UNION | INTERCEPT | EXCEPT) (ALL | DISTINCT) subquery
-    ;
-
-order_by_clause
-    : ORDER BY order_by_item (COMMA order_by_item)*
-    ;
-
-order_by_item
-    : ALL sort_direction? nulls_sort_order?
-    | expr sort_direction? nulls_sort_order?
-    ;
-
-sort_direction
-    : ASC
-    | DESC
-    ;
-
-nulls_sort_order
-    : NULLS (FIRST | LAST)
-    ;
-
-distribute_by_clause
-    : DISTRIBUTE BY expr_list
-    ;
-
-sort_by_clause
-    : SORT BY sort_by_item (COMMA sort_by_item)*
-    ;
-
-sort_by_item
-    : expr sort_direction? nulls_sort_order?
-    ;
-
-cluster_by_clause
-    : CLUSTER BY expr_list
-    ;
-
-window_clause
-    : WINDOW window_name AS window_spec (COMMA window_name AS window_spec)*
-    ;
-
-window_name
-    : id_
-    ;
-
-window_spec
-    : TODO
-    ;
-
-limit_clause
-    : LIMIT (ALL | ie=expr)
-    ;
-
-offset_clause
-    : OFFSET ie=expr
-    ;
-
-select_statement
-    : select_clause
-    FROM table_reference
-    lateral_view_clause?
-    where_clause?
-    group_by_clause?
-    having_clause?
-    qualify_clause?
-    ;
-
-select_clause
-    : SELECT hints? (ALL | DISTINCT)? select_item (COMMA select_item)*
-    ;
-
-hints
-    : TODO //partition_hint | join_hint | skew_hint
-    ;
-
-select_item
-    : named_expression
-    | star_clause
-    ;
-
-named_expression
-    : expr as_alias?
-    ;
-
-star_clause
-    : n=id_? STAR except_clause?
-    ;
-
-except_clause
-    : EXCEPT column_list_in_parentheses
-    ;
-
-table_reference
-    : table_name tablesample_clause? table_alias?
-    | STREAM table_name_with_optional_parentheses table_alias?
-    | view_name table_alias?
-    | table_reference join_clause
-    | table_reference pivot_clause
-    | table_reference unpivot_clause
-    | (STREAM | LATERAL)? table_valued_function table_alias?
-    | values_statement
-    | LATERAL? '(' query_statement ')' tablesample_clause? table_alias?
-    ;
-
-join_clause
-    : join_type? JOIN r=table_reference ON expr
-    | NATURAL join_type JOIN r=table_reference USING column_list_in_parentheses
-    | CROSS JOIN r=table_reference
-    ;
-
-join_type
-    : INNER
-    | (LEFT | RIGHT | FULL) OUTER?
-    | LEFT? (SEMI | ANTI)
-    ;
-
-pivot_clause
-    : PIVOT '(' expr as_alias? (COMMA expr as_alias?)* ')'
-        FOR (column_name | column_list)
-        IN '(' expr_list_with_alias ')'
-    ;
-
-expr_list_with_alias
-    : expr as_alias?
-    | expr_list_in_parentheses as_alias? (COMMA expr_list_in_parentheses as_alias?)*
-    ;
-
-unpivot_clause
-    : UNPIVOT (include_exclude NULLS)?
-    (single_value | multi_value)
-    '(' vc=column_name FOR upc=column_name IN '(' column_list_with_aliases ')' ')'
-    ;
-
-single_value
-    : '(' vc=column_name FOR upc=column_name IN '(' column_list_with_aliases ')' ')'
-    ;
-
-multi_value
-    : '('
-        vcl=column_list_in_parentheses
-        FOR upc=column_name
-        IN '(' column_list_in_parentheses alias? (column_list_in_parentheses alias?)* ')'
-    ')'
-    ;
-
-column_list_with_aliases
-    : column_name alias? (COMMA column_name alias?)
-    ;
-
-include_exclude
-    : INCLUDE
-    | EXCLUDE
-    ;
-
-table_valued_function
-    : function_name '(' expr_list ')'
-    ;
-
-table_name_with_optional_parentheses
-    : table_name
-    | '(' table_name ')'
-    ;
-
-tablesample_clause
-    : TABLESAMPLE '(' (
-        percentage=num PERCENT
-        | num_rows=num ROWS
-        | BUCKET fraction=num OUT OF total=num
-    ) ')'
-    (REPEATABLE '(' seed=num ')')?
-    ;
-
-table_alias
-    : AS? id_ column_list_in_parentheses?
-    ;
-
-lateral_view_clause
-    : LATERAL VIEW OUTER? function_name '(' expr_list ')' table_identifier? AS column_list
-    ;
-
-table_identifier
-    : alias
-    ;
-
-where_clause
-    : WHERE expr
-    ;
-
-group_by_clause
-    : GROUP BY (
-        ALL
-        | expr_list (WITH (ROLLUP | CUBE))?
-        | group_by_item_list
-    )
-    ;
-
-group_by_item_list
-    : group_by_item (COMMA group_by_item)*
-    ;
-
-group_by_item
-    : (expr | ROLLUP | CUBE | GROUPING SETS) '(' grouping_set (COMMA grouping_set)* ')'
-    ;
-
-grouping_set
-    : expr
-    | '(' expr_list? ')'
-    ;
-
-having_clause
-    : HAVING expr
-    ;
-
-qualify_clause
-    : QUALIFY expr
-    ;
-
-values_statement
-    : VALUES values_item (COMMA values_item)* table_alias?
-    | SELECT expr_list table_alias?
-    ;
-
-values_item
-    : expr
-    | expr_list_in_parentheses
-    ;
-
-sql_pipeline
-    : TODO
-    ;
-
-explain_statement
-    : EXPLAIN (EXTENDED | CODEGEN | COST | FORMATTED)? statement
-    ;
-
-as_alias
-    : AS? alias
-    ;
-
-alias
-    : id_
-    ;
-
-comparison_operator
-    : EQ
-    | GT
-    | LT
-    | LE
-    | GE
-    | LTGT
-    | NE
+    | VERSION
+    | VIEW
+    | VIEWS
+    | VOID
+    | WATERMARK
+    | WEEK
+    | WEEKS
+    | WHILE
+    | WHEN
+    | WHERE
+    | WINDOW
+    | WITH
+    | WITHIN
+    | WITHOUT
+    | YEAR
+    | YEARS
+    | ZONE
+//--DEFAULT-NON-RESERVED-END
     ;

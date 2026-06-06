@@ -1,0 +1,9 @@
+{
+  // This project is deliberately Java-free: `npm run gen` runs antlr-ng on Node.
+  // Stop the vscode-antlr4 extension from shelling out to its bundled Java jar
+  // (which writes interpreter data into a `.antlr/` folder). Syntax highlighting,
+  // completion, and railroad diagrams are pure-TS and still work with "none".
+  "antlr4.generation": {
+    "mode": "none"
+  }
+}
