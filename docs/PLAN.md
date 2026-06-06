@@ -4,11 +4,11 @@
 
 **Goal:** Build **TypeScript SQL parsers we can consume in our own projects**, generated from open, split ANTLR4 grammars, each validated against a known-good corpus it must parse with zero errors. The parser is the deliverable; the `.g4` grammar is the means (and a by-product we contribute back upstream when we improve it). Two kinds of target: **fork-and-clean** from an existing grammars-v4 `.g4` (**Databricks, T-SQL** — the current focus) and **hand-author** from the manual (the warehouse dialects with no open grammar: **Redshift, Snowflake, BigQuery**).
 
-**Architecture:** ANTLR4 split grammars (`lexer grammar` + `parser grammar`), **one standalone pair per dialect — no shared "core" grammar, no inheritance** (ANTLR `import` doesn't compose; "core SQL" is a concept, not an artifact). Each dialect is forked from its best starting point: **Databricks** ← grammars-v4 `sql/databricks`, **T-SQL** ← grammars-v4 `sql/tsql`, and Redshift/Snowflake/BigQuery hand-authored. The ANTLR TypeScript target + antlr4ng runtime generate the parsers. A conformance harness parses a per-dialect **known-good corpus** and requires **zero syntax errors** (sqlglot optional, end-stage). Syntax only — parse tree, no semantic layer.
+**Architecture:** ANTLR4 split grammars (`lexer grammar` + `parser grammar`), **one standalone pair per dialect — no shared "core" grammar, no inheritance** (ANTLR `import` doesn't compose; "core SQL" is a concept, not an artifact). Each dialect is forked from its best starting point: **Databricks** ← grammars-v4 `sql/databricks`, **T-SQL** ← grammars-v4 `sql/tsql`, and Redshift/Snowflake/BigQuery hand-authored. The ANTLR TypeScript target + antlr4ng runtime generate the parsers. A conformance harness parses a per-dialect **known-good corpus** and requires **zero syntax errors**. Syntax only — parse tree, no semantic layer.
 
-> **Updated 2026-06-06:** (1) **No shared "core" grammar** — each dialect is a standalone fork (see Architecture); Phase 1 is now the Databricks fork, not a core build. (2) Dialect order: Databricks → T-SQL → Redshift → Snowflake → BigQuery. (3) Validation gate is a **known-good corpus that must parse with zero errors**; sqlglot is an optional end-stage cross-check (Phase 2). Phases 3–5 below still hold the original Redshift-first detail and are **pending a clean re-sequence** — the per-dialect *method* (corpus → fail → manual → grammar edit → green → commit) is unchanged. See CLAUDE.md for rationale.
+> **Updated 2026-06-06:** (1) **No shared "core" grammar** — each dialect is a standalone fork (see Architecture); Phase 1 is now the Databricks fork, not a core build. (2) Dialect order: Databricks → T-SQL → Redshift → Snowflake → BigQuery. (3) Validation gate is a **known-good corpus that must parse with zero errors**. Phases 3–5 below still hold the original Redshift-first detail and are **pending a clean re-sequence** — the per-dialect *method* (corpus → fail → manual → grammar edit → green → commit) is unchanged. See CLAUDE.md for rationale.
 
-**Tech Stack:** ANTLR4 (grammars), antlr4ng (TS runtime) + antlr-ng or the ANTLR jar (generator), TypeScript, vitest, Node 20+. Optional, end-stage only: Python + sqlglot for an offline cross-check.
+**Tech Stack:** ANTLR4 (grammars), antlr4ng (TS runtime) + antlr-ng or the ANTLR jar (generator), TypeScript, vitest, Node 20+. No Python in the loop.
 
 ---
 
@@ -27,7 +27,7 @@ src/databricks/     parse.ts (parseDatabricks wrapper), ir.ts (IR types + lower 
 src/scope/          scope.ts (resolveScopes: schema-free name resolution over the IR)     [Phase 1.5]
 src/qualify/        schema.ts (sqlglot-style schema input), qualify.ts (schema-fed)        [Phase 1.5]
 src/index.ts        public API: parseDatabricks, lower, resolveScopes, qualify, Schema
-harness/            corpus loader + zero-errors runner (sqlglot cross-check optional)
+harness/            corpus loader + zero-errors runner
 tools/gen.mjs       generation driver (antlr-ng or jar)
 tests/              vitest specs
 docs/PLAN.md        this file
@@ -257,7 +257,7 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 ## Phase 2 — Conformance harness (the gate for everything after)
 
-Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid SQL and requires **zero syntax errors**. No Python in the loop — the corpus *is* the spec of "must parse." Built once, reused for every dialect. Harness shape ported in spirit from `dbt-studio-vscode/experiments/native-sql-parser-v7/harness`, minus the oracle.
+Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid SQL and requires **zero syntax errors**. No Python in the loop — the corpus *is* the spec of "must parse." Built once, reused for every dialect. Harness shape ported in spirit from `dbt-studio-vscode/experiments/native-sql-parser-v7/harness`.
 
 ### Task 2.1: Assemble the known-good corpus
 
@@ -275,10 +275,6 @@ Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid
 - [ ] **Step 1:** For each corpus item, parse with our generated `<dialect>` parser, counting syntax errors via an error listener (same shape as the toy test). Bucket into **pass** (0 errors) and **fail** (>0); capture the first error message + line/col for each failure.
 - [ ] **Step 2:** Print a KPI line: `dialect=databricks  corpus=N  pass=NN%  fail=K` and list the failing statements. Exit non-zero if K > threshold (start high, ratchet to 0).
 - [ ] **Step 3:** Commit: `feat(harness): zero-errors conformance runner over known-good corpus`.
-
-### Task 2.3 (optional, end-stage): sqlglot cross-check
-
-Not required to ship a dialect — do this only when we want it. Two uses: (a) bulk-expand a corpus from sqlglot's dialect fixtures; (b) audit **over-permissiveness** (SQL we accept that sqlglot rejects). Add a one-off `harness/sqlglot-check.py` that labels statements `{id, accepts, error}` via `sqlglot.parse_one(sql, dialect=<d>)`, and diff it against our results offline. Python + sqlglot stay out of the normal dev/CI loop.
 
 **Phase 2 done when:** `npm run harness -- --dialect=databricks` runs end to end and prints a zero-errors KPI over its corpus.
 
@@ -348,7 +344,7 @@ Warehouse SQL lets most keywords double as identifiers; getting the reserved set
 
 - Keep a `nonReserved` parser rule per dialect listing keyword tokens usable as identifiers (Spark's grammar already has one to fork).
 - Seed each dialect's reserved/non-reserved partition from: the vendor manual's reserved-words page (authoritative) + sqlglot's keyword sets + dbt's `*Lexer.tokens`.
-- Add corpus cases that use keywords as column/table aliases (e.g. `SELECT 1 AS value`) — these catch over-reservation, which the sqlglot oracle will flag as `we-reject-they-accept`.
+- Add corpus cases that use keywords as column/table aliases (e.g. `SELECT 1 AS value`) — these catch over-reservation.
 
 ## Cross-cutting: lexer modes
 
@@ -357,7 +353,7 @@ Default to a single lexer mode. Introduce a mode only when a construct can't be 
 ## Risks & open questions
 
 - **antlr-ng maturity:** if the pure-TS generator can't handle a large grammar, fall back to the ANTLR jar (Java). Phase 0 settles this.
-- **No automatic over-permissiveness check:** with sqlglot out of the loop, nothing flags SQL we *accept* that is actually invalid. Accepted as a tradeoff given scope (a parse tree for tooling, fed already-valid SQL); if it ever matters, run the optional sqlglot cross-check (Task 2.3). The manual is always truth.
+- **No automatic over-permissiveness check:** nothing flags SQL we *accept* that is actually invalid. Accepted as a tradeoff given scope (a parse tree for tooling, fed already-valid SQL). The manual is always truth.
 - **Parse tree (CST) vs AST:** ~~Decide in Phase 1...~~ **Resolved 2026-06-06:** consumers walk the CST directly for purely positional work (diagnostics, semantic tokens), but the **scope/qualify** semantic layer needs a normalized model, so Phase 1.5 adds a thin **IR** (`lower(tree)`) — built because semantics need it, not speculatively. The IR keeps CST back-refs so positions are never lost.
 - **Corpus coverage ≠ correctness:** a green corpus means "parses these inputs," not "complete." Log corpus size and expand it as gaps surface; never claim a dialect is "done," only "passes corpus N."
 
