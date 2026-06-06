@@ -27,6 +27,8 @@ export interface Scope {
   ctes: Map<string, CteRef>;
   /** Output column names, or "unknown" when a star/anonymous projection needs a schema. */
   outputs: string[] | "unknown";
+  /** For a set-op body, the left/right branch scopes (also in `children`). */
+  branches?: { left: Scope; right: Scope };
   parent?: Scope;
   children: Scope[];
 }
@@ -77,6 +79,7 @@ function fillScope(scope: Scope): void {
     const left = buildBodyScope(body.left, scope);
     const right = buildBodyScope(body.right, scope);
     scope.children.push(left, right);
+    scope.branches = { left, right };
     scope.outputs = left.outputs; // set-op output names come from the left branch
     return;
   }

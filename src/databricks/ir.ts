@@ -1,5 +1,11 @@
 import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
-import { DatabricksParser as P } from "../generated/databricks/DatabricksParser.js";
+import {
+  ColumnReferenceContext,
+  DatabricksParser as P,
+  DereferenceContext,
+  PrimaryExpressionContext,
+  StarContext,
+} from "../generated/databricks/DatabricksParser.js";
 
 // ---------------------------------------------------------------------------
 // IR — a compact semantic model lowered from the deep Databricks CST. Every node
@@ -187,16 +193,53 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 
 function buildProjection(named: ParserRuleContext): Projection {
   const alias = directChildrenOfRule(named, P.RULE_errorCapturingIdentifier)[0];
+  const exprCtx = directChildrenOfRule(named, P.RULE_expression)[0];
+  const expr = exprCtx ? classifyExpression(exprCtx) : ({ kind: "expr" } as const);
+
   let name: string | undefined;
   if (alias) {
-    name = alias.getText();
-  } else {
-    const text = named.getText();
-    // A bare column reference: use its name. Anything with operators/calls gets no
-    // inferred name until expressions are modelled.
-    if (/^`[^`]*`$|^[A-Za-z_]\w*$/.test(text)) name = text;
+    name = alias.getText(); // explicit alias wins
+  } else if (expr.kind === "column") {
+    name = expr.parts[expr.parts.length - 1]; // output name is the column's last part
   }
-  return { name, isStar: named.getText() === "*", cst: named };
+  return { name, isStar: expr.kind === "star", cst: named };
+}
+
+type ClassifiedExpr =
+  | { kind: "column"; parts: string[] }
+  | { kind: "star" }
+  | { kind: "expr" };
+
+/**
+ * Decide, from the tree, whether a select expression is a plain column reference
+ * (`a`, `t.a`, `a.b.c`), a star (`*`, `t.*`), or a compound expression. Descends
+ * through the single-child expression wrappers; any branching (an operator, a
+ * call, a predicate) means it is not a bare column/star.
+ */
+function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
+  let node: ParserRuleContext = expr;
+  while (!(node instanceof PrimaryExpressionContext)) {
+    if (node.getChildCount() !== 1) return { kind: "expr" };
+    const only = node.getChild(0);
+    if (!(only instanceof ParserRuleContext)) return { kind: "expr" };
+    node = only;
+  }
+  if (node instanceof StarContext) return { kind: "star" };
+  const parts = columnParts(node);
+  return parts ? { kind: "column", parts } : { kind: "expr" };
+}
+
+/** The identifier parts of a column-reference primaryExpression, or undefined if it isn't one. */
+function columnParts(primary: PrimaryExpressionContext): string[] | undefined {
+  if (primary instanceof ColumnReferenceContext) {
+    return [primary.identifier().getText()];
+  }
+  if (primary instanceof DereferenceContext) {
+    const base = columnParts(primary.primaryExpression()); // base must itself be a column path
+    if (!base) return undefined;
+    return [...base, primary.identifier().getText()];
+  }
+  return undefined;
 }
 
 /**

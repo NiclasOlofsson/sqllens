@@ -21,11 +21,26 @@ interface ScopeStats {
   srcTable: number;
   srcCte: number;
   srcSubquery: number;
+  // Why a scope's outputs are unknown:
+  unkTableStar: number; // star over physical table(s)/model(s) only — needs the catalog
+  unkDerivedStar: number; // star where a source is a CTE/subquery — resolvable schema-free
+  unkExprOnly: number; // no star; an unaliased expression has no name
 }
 
 function walkScopes(scope: Scope, acc: ScopeStats): void {
   acc.scopes++;
   if (scope.outputs !== "unknown") acc.outputsKnown++;
+  else if (scope.body.kind === "select") {
+    const hasStar = scope.body.projections.some((p) => p.isStar);
+    if (!hasStar) {
+      acc.unkExprOnly++;
+    } else {
+      const srcKinds = [...scope.sources.values()];
+      const allPhysical = srcKinds.length > 0 && srcKinds.every((s) => s.kind === "table");
+      if (allPhysical) acc.unkTableStar++;
+      else acc.unkDerivedStar++;
+    }
+  }
   for (const src of scope.sources.values()) {
     if (src.kind === "table") acc.srcTable++;
     else if (src.kind === "cte") acc.srcCte++;
@@ -97,6 +112,9 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       srcTable: 0,
       srcCte: 0,
       srcSubquery: 0,
+      unkTableStar: 0,
+      unkDerivedStar: 0,
+      unkExprOnly: 0,
     };
     const clusters = new Map<string, number>();
     const sample: Record<string, string> = {};
@@ -135,6 +153,8 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         ``,
         `Scope resolution (${scopeStats.scopes} scopes):`,
         `  outputs known: ${scopeStats.outputsKnown} (${pct(scopeStats.outputsKnown, scopeStats.scopes)}%)`,
+        `  outputs unknown by cause: table-star ${scopeStats.unkTableStar} (needs catalog), ` +
+          `derived-star ${scopeStats.unkDerivedStar} (schema-free), expr-only ${scopeStats.unkExprOnly}`,
         `  sources: table ${scopeStats.srcTable}, cte ${scopeStats.srcCte}, subquery ${scopeStats.srcSubquery}`,
         ``,
         `Top failure clusters:`,

@@ -61,6 +61,22 @@ describe("lower: CST -> IR", () => {
     expect(src.query.body.from).toMatchObject([{ kind: "table", name: ["t"] }]);
   });
 
+  it("names a qualified column by its last part (structurally, not by regex)", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT t.col, a.b.c FROM t").tree).body);
+    expect(sel.projections.map((p) => p.name)).toEqual(["col", "c"]);
+  });
+
+  it("gives a compound expression no inferred name", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a + b FROM t").tree).body);
+    expect(sel.projections[0].name).toBeUndefined();
+    expect(sel.projections[0].isStar).toBe(false);
+  });
+
+  it("flags a qualified star (t.*) as a star", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT t.* FROM t").tree).body);
+    expect(sel.projections[0].isStar).toBe(true);
+  });
+
   it("lowers a set operation into a SetOpExpr with both branches", () => {
     const ir = lower(parseDatabricks("SELECT a FROM t UNION ALL SELECT b FROM u").tree);
     expect(ir.body.kind).toBe("setop");
