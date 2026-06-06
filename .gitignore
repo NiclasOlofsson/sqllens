@@ -1,0 +1,10 @@
+# dependencies
+node_modules/
+
+# build output
+dist/
+src/generated/
+*.tsbuildinfo
+
+# reference grammars (sparse clone of antlr/grammars-v4 — not our source)
+vendor/

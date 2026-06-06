@@ -1,0 +1,29 @@
+{
+  "name": "sql-dialect-grammars",
+  "version": "1.0.0",
+  "description": "",
+  "main": "index.js",
+  "directories": {
+    "doc": "docs",
+    "test": "tests"
+  },
+  "scripts": {
+    "gen": "node tools/gen.mjs",
+    "typecheck": "tsgo -p tsconfig.json",
+    "test": "vitest run"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "devDependencies": {
+    "@types/node": "^25.9.2",
+    "@typescript/native-preview": "^7.0.0-dev.20260605.1",
+    "antlr-ng": "^1.0.10",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.8"
+  },
+  "dependencies": {
+    "antlr4ng": "^3.0.16"
+  }
+}

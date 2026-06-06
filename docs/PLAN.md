@@ -1,0 +1,312 @@
+# TS SQL Dialect Parser — Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Build **TypeScript SQL parsers we can consume in our own projects**, generated from open, split ANTLR4 grammars, each validated against a known-good corpus it must parse with zero errors. The parser is the deliverable; the `.g4` grammar is the means (and a by-product we contribute back upstream when we improve it). Two kinds of target: **fork-and-clean** from an existing grammars-v4 `.g4` (**Databricks, T-SQL** — the current focus) and **hand-author** from the manual (the warehouse dialects with no open grammar: **Redshift, Snowflake, BigQuery**).
+
+**Architecture:** ANTLR4 split grammars (`lexer grammar` + `parser grammar`), **one standalone pair per dialect — no shared "core" grammar, no inheritance** (ANTLR `import` doesn't compose; "core SQL" is a concept, not an artifact). Each dialect is forked from its best starting point: **Databricks** ← grammars-v4 `sql/databricks`, **T-SQL** ← grammars-v4 `sql/tsql`, and Redshift/Snowflake/BigQuery hand-authored. The ANTLR TypeScript target + antlr4ng runtime generate the parsers. A conformance harness parses a per-dialect **known-good corpus** and requires **zero syntax errors** (sqlglot optional, end-stage). Syntax only — parse tree, no semantic layer.
+
+> **Updated 2026-06-06:** (1) **No shared "core" grammar** — each dialect is a standalone fork (see Architecture); Phase 1 is now the Databricks fork, not a core build. (2) Dialect order: Databricks → T-SQL → Redshift → Snowflake → BigQuery. (3) Validation gate is a **known-good corpus that must parse with zero errors**; sqlglot is an optional end-stage cross-check (Phase 2). Phases 3–5 below still hold the original Redshift-first detail and are **pending a clean re-sequence** — the per-dialect *method* (corpus → fail → manual → grammar edit → green → commit) is unchanged. See CLAUDE.md for rationale.
+
+**Tech Stack:** ANTLR4 (grammars), antlr4ng (TS runtime) + antlr-ng or the ANTLR jar (generator), TypeScript, vitest, Node 20+. Optional, end-stage only: Python + sqlglot for an offline cross-check.
+
+---
+
+## Scope
+
+**In:** lexer + parser grammars that recognize each dialect's surface (queries, DML, the common DDL); generated TS parsers; a public `parse(sql, dialect)` returning a parse tree (or a syntax error); a conformance harness.
+
+**Out (explicitly, do not build):** semantic analysis (types/scope/lineage), SQL transpilation, IDE-grade error recovery/diagnostics (default ANTLR recovery is sufficient for a spec — see transcript), a query engine.
+
+## Repo layout (target)
+
+```
+grammars/<dialect>/ <Dialect>Lexer.g4, <Dialect>Parser.g4   (standalone fork of a grammars-v4 grammar, or hand-authored)
+src/generated/      ANTLR output (gitignored, via `npm run gen`)
+src/index.ts        public parse() API over the generated parsers
+harness/            corpus loader + zero-errors runner (sqlglot cross-check optional)
+tools/gen.mjs       generation driver (antlr-ng or jar)
+tests/              vitest specs
+docs/PLAN.md        this file
+```
+
+---
+
+## Phase 0 — Prove "ANTLR → TypeScript" works (de-risk the central bet)
+
+Goal: a generated TS parser parsing a string in a test, before any SQL. This validates the toolchain choice on day one.
+
+### Task 0.1: Scaffold the Node/TS project
+
+**Files:**
+- Create: `package.json`, `tsconfig.json`, `.gitignore`, `vitest.config.ts`
+
+- [ ] **Step 1: Init project**
+
+Run:
+```bash
+cd /c/Development/github/sql-dialect-grammars
+npm init -y
+npm i -D typescript vitest @types/node
+npm i antlr4ng
+```
+
+- [ ] **Step 2: Write `tsconfig.json`** (antlr4ng needs ES2022)
+
+```json
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "outDir": "dist",
+    "rootDir": "src"
+  },
+  "include": ["src"]
+}
+```
+
+- [ ] **Step 3: Write `.gitignore`**
+
+```
+node_modules/
+dist/
+src/generated/
+harness/corpus/
+harness/oracle/
+*.tsbuildinfo
+```
+
+- [ ] **Step 4: Commit**
+
+```bash
+git init && git add -A && git commit -m "chore: scaffold sql-dialect-grammars project"
+```
+
+### Task 0.2: Generate a toy grammar to TypeScript
+
+**Files:**
+- Create: `grammars/toy/ToyLexer.g4`, `grammars/toy/ToyParser.g4`, `tools/gen.mjs`
+- Test: `tests/toy.test.ts`
+
+- [ ] **Step 1: Write the toy split grammar**
+
+`grammars/toy/ToyLexer.g4`:
+```antlr
+lexer grammar ToyLexer;
+NUMBER : [0-9]+ ;
+PLUS   : '+' ;
+WS     : [ \t\r\n]+ -> skip ;
+```
+
+`grammars/toy/ToyParser.g4`:
+```antlr
+parser grammar ToyParser;
+options { tokenVocab=ToyLexer; }
+sum : NUMBER (PLUS NUMBER)* EOF ;
+```
+
+- [ ] **Step 2: Write the generation driver** `tools/gen.mjs`
+
+Try the no-Java path first; document the fallback in a comment.
+```js
+// Generation driver. Primary: antlr-ng (pure TS, no Java).
+// Fallback: `java -jar antlr-4.13.2-complete.jar -Dlanguage=TypeScript ...`
+import { execSync } from "node:child_process";
+const dialect = process.argv[2] ?? "toy";
+const out = `src/generated/${dialect}`;
+execSync(
+  `npx antlr-ng -Dlanguage=TypeScript -o ${out} grammars/${dialect}/*.g4`,
+  { stdio: "inherit" }
+);
+```
+Add to `package.json` scripts: `"gen": "node tools/gen.mjs"`.
+
+- [ ] **Step 3: Run generation, verify it fails first if antlr-ng is missing, then install and succeed**
+
+Run: `npm i -D antlr-ng && npm run gen toy`
+Expected: files appear under `src/generated/toy/` (`ToyLexer.ts`, `ToyParser.ts`).
+If antlr-ng cannot generate, switch `gen.mjs` to the jar path (requires a JRE) and re-run. **Record which path worked in CLAUDE.md.**
+
+- [ ] **Step 4: Write the failing parse test** `tests/toy.test.ts`
+
+```ts
+import { CharStream, CommonTokenStream } from "antlr4ng";
+import { ToyLexer } from "../src/generated/toy/ToyLexer.js";
+import { ToyParser } from "../src/generated/toy/ToyParser.js";
+import { expect, test } from "vitest";
+
+function parse(input: string) {
+  const lexer = new ToyLexer(CharStream.fromString(input));
+  const parser = new ToyParser(new CommonTokenStream(lexer));
+  let errors = 0;
+  parser.removeErrorListeners();
+  parser.addErrorListener({ syntaxError: () => { errors++; },
+    reportAmbiguity(){}, reportAttemptingFullContext(){}, reportContextSensitivity(){} });
+  const tree = parser.sum();
+  return { tree, errors };
+}
+
+test("parses a sum", () => {
+  expect(parse("1 + 2 + 3").errors).toBe(0);
+});
+test("flags a syntax error", () => {
+  expect(parse("1 + + 2").errors).toBeGreaterThan(0);
+});
+```
+
+- [ ] **Step 5: Run tests**
+
+Run: `npm test`
+Expected: both pass. If imports resolve and a tree comes back, the toolchain is proven.
+
+- [ ] **Step 6: Commit**
+
+```bash
+git add -A && git commit -m "feat: prove ANTLR4 -> TypeScript (antlr4ng) toolchain with toy grammar"
+```
+
+**Phase 0 done when:** `npm run gen toy && npm test` is green and CLAUDE.md records the working generation path.
+
+---
+
+## Phase 1 — Dialect #1: Databricks (fork → generate → smoke test)
+
+Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sql/databricks`, that generates to TS and smoke-parses a handful of canonical statements. (Replaces the old "core grammar" phase — there is no core.)
+
+### Task 1.1: Fork the Databricks grammar
+
+**Files:**
+- Create: `grammars/databricks/DatabricksLexer.g4`, `grammars/databricks/DatabricksParser.g4`
+
+- [ ] **Step 1:** Copy grammars-v4's `DatabricksLexer.g4` + `DatabricksParser.g4` into `grammars/databricks/`. Keep the upstream BSD/MIT license header and record the source commit SHA in a header comment (provenance).
+- [ ] **Step 2:** `npm run gen databricks` → generate to `src/generated/databricks/`. If the grammar uses ANTLR features `antlr-ng` can't handle, fall back to the jar (record which worked).
+- [ ] **Step 3:** Commit: `feat(databricks): fork grammar from grammars-v4`.
+
+### Task 1.2: Databricks smoke tests
+
+**Files:**
+- Test: `tests/databricks.test.ts`
+
+- [ ] **Step 1:** Write a `parseDatabricks(sql)` helper (same shape as the toy test's `parse`, pointing at the Databricks lexer/parser, calling the top rule).
+- [ ] **Step 2:** Add tests for ~15 canonical statements (a `SELECT … JOIN … WHERE … GROUP BY … HAVING … ORDER BY … LIMIT`; a CTE; `UNION ALL`; a window function; `INSERT … SELECT`; `CREATE TABLE … USING DELTA`; `CREATE VIEW`). Assert zero syntax errors.
+- [ ] **Step 3:** Run, fix the entry rule / any generation issues until green. If the grammars-v4 grammar is too thin for a canonical case, fill the gap (Spark's `SqlBase*.g4` is the reference — Databricks SQL = Spark SQL).
+- [ ] **Step 4:** Commit: `test(databricks): canonical statements parse`.
+
+**Phase 1 done when:** the canonical Databricks statements parse with zero errors and `npm run gen databricks` is reproducible.
+
+---
+
+## Phase 2 — Conformance harness (the gate for everything after)
+
+Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid SQL and requires **zero syntax errors**. No Python in the loop — the corpus *is* the spec of "must parse." Built once, reused for every dialect. Harness shape ported in spirit from `dbt-studio-vscode/experiments/native-sql-parser-v7/harness`, minus the oracle.
+
+### Task 2.1: Assemble the known-good corpus
+
+**Files:**
+- Create: `harness/corpus/<dialect>/` (committed seed files), `harness/load-corpus.ts`
+
+- [ ] **Step 1:** Collect valid SQL into `harness/corpus/<dialect>/*.sql`, one statement per file (or a JSONL of `{id, sql}`). Sources in priority order: the forked grammar's own `examples/` from grammars-v4 (Databricks and T-SQL both ship these), then a `seed/` of our own real compiled queries, then hand-added cases as gaps surface. Everything in the corpus is *asserted valid* by virtue of being there.
+- [ ] **Step 2:** `npm run harness:load -- --dialect=databricks` reports a non-empty corpus count. Commit the seed statements.
+
+### Task 2.2: Runner + KPI (zero-errors gate)
+
+**Files:**
+- Create: `harness/run.ts`
+
+- [ ] **Step 1:** For each corpus item, parse with our generated `<dialect>` parser, counting syntax errors via an error listener (same shape as the toy test). Bucket into **pass** (0 errors) and **fail** (>0); capture the first error message + line/col for each failure.
+- [ ] **Step 2:** Print a KPI line: `dialect=databricks  corpus=N  pass=NN%  fail=K` and list the failing statements. Exit non-zero if K > threshold (start high, ratchet to 0).
+- [ ] **Step 3:** Commit: `feat(harness): zero-errors conformance runner over known-good corpus`.
+
+### Task 2.3 (optional, end-stage): sqlglot cross-check
+
+Not required to ship a dialect — do this only when we want it. Two uses: (a) bulk-expand a corpus from sqlglot's dialect fixtures; (b) audit **over-permissiveness** (SQL we accept that sqlglot rejects). Add a one-off `harness/sqlglot-check.py` that labels statements `{id, accepts, error}` via `sqlglot.parse_one(sql, dialect=<d>)`, and diff it against our results offline. Python + sqlglot stay out of the normal dev/CI loop.
+
+**Phase 2 done when:** `npm run harness -- --dialect=databricks` runs end to end and prints a zero-errors KPI over its corpus.
+
+---
+
+## Phase 3 — Dialect #1: Redshift (prove the fork-and-edit loop)
+
+Goal: a `grammars/redshift/` grammar (fork of core + Redshift edits) that drives `we-reject-they-accept` to ~0 on the Redshift corpus. Redshift is chosen because its surface is the smallest of the three (Postgres-derived).
+
+### Task 3.1: Fork core → redshift
+
+- [ ] **Step 1:** Copy `grammars/core/*` → `grammars/redshift/` as `RedshiftLexer`/`RedshiftParser`. `npm run gen redshift`. Add a `parseRedshift` test helper. Commit.
+
+### Task 3.2: Drive the corpus green (TDD-for-grammars loop, repeat per failure cluster)
+
+For each cluster of `we-reject-they-accept` failures the harness reports:
+- [ ] **Step 1:** Run `npm run harness -- --dialect=redshift`; read the top failing statements.
+- [ ] **Step 2:** Identify the missing/incorrect construct; find it in the **Redshift manual** and cross-check **sqlglot's `redshift.py`**.
+- [ ] **Step 3:** Edit the grammar to add/adjust the rule. Comment it with the manual link.
+- [ ] **Step 4:** `npm run gen redshift && npm run harness -- --dialect=redshift`; confirm the cluster is now accepted and nothing regressed.
+- [ ] **Step 5:** Commit: `feat(redshift): support <construct>`.
+
+Known Redshift clusters to expect (seed the corpus with these): `COPY`/`UNLOAD` with option lists, `CREATE TABLE` DISTKEY/SORTKEY (`COMPOUND`/`INTERLEAVED`)/ENCODE, late-binding views (`WITH NO SCHEMA BINDING`), `APPROXIMATE`, `GETDATE()`/Redshift functions, `::` casts, `QUALIFY`.
+
+**Phase 3 done when:** Redshift `we-reject-they-accept` ≤ agreed threshold (target 0 on the seed corpus) and the loop in 3.2 is documented as the per-dialect method.
+
+---
+
+## Phase 4 — Dialect #2: Snowflake (the hard one)
+
+> Detailed bite-sized tasks for this phase are written **after Phase 3** lands, because the exact rule edits depend on the harness output. The method is identical to Task 3.2 (corpus → fail → manual+sqlglot → grammar edit → green → commit). What differs is volume and these known-hard areas, each of which gets its own corpus seed + task cluster:
+
+- **Lexer modes** (this forces real work in `SnowflakeLexer.g4`): dollar-quoted strings `$$ … $$`, and **embedded UDF bodies** (JS/Python/Java/Scala inside `CREATE FUNCTION … AS`). Decide per body: opaque blob vs sub-mode. Default to opaque blob unless a corpus case needs structure.
+- **Semi-structured access:** `col:path.to.field`, `col['key']`, `arr[0]`, `FLATTEN`/`LATERAL FLATTEN`, `OBJECT_CONSTRUCT`, VARIANT/OBJECT/ARRAY types, `::` casts everywhere.
+- **The DDL jungle:** `CREATE TABLE` with its large option grammar, plus `STAGE`/`PIPE`/`STREAM`/`TASK`/`FILE FORMAT`/masking & row-access policies, `COPY INTO`, `MERGE`, time travel (`AT`/`BEFORE`), `QUALIFY`, `MATCH_RECOGNIZE`.
+- **Reserved vs non-reserved keywords:** see the dedicated strategy below — Snowflake lets most keywords be identifiers.
+
+Seed the corpus from sqlglot's snowflake fixtures + dbt's `SnowflakeLexer.tokens` vocabulary checklist + grammars-v4 `sql/snowflake` as a structural reference.
+
+**Phase 4 done when:** Snowflake `we-reject-they-accept` ≤ threshold on the corpus, including at least one embedded-UDF and one semi-structured-access case.
+
+---
+
+## Phase 5 — Dialect #3: BigQuery
+
+> Bite-sized tasks written after Phase 4. Method identical. Known-hard areas:
+
+- `STRUCT<…>` / `ARRAY<…>` typed literals, `UNNEST`, `SELECT * EXCEPT(…) REPLACE(…)`, backtick-quoted multipart names, `SAFE.` / `SAFE_CAST`, parameterized types, `FOR SYSTEM_TIME AS OF`, scripting (`DECLARE`/`SET`/`BEGIN…END`).
+- **Ground truth:** read Google's **ZetaSQL** Bison grammar as the authoritative spec for ambiguous cases (do not port it).
+
+**Phase 5 done when:** BigQuery `we-reject-they-accept` ≤ threshold on the corpus.
+
+---
+
+## Phase 6 — Packaging
+
+- [ ] Public `src/index.ts`: `parse(sql: string, dialect: "redshift"|"snowflake"|"bigquery"): ParseResult`.
+- [ ] `npm run build` produces a consumable package; document `npm run gen` as a prepublish step.
+- [ ] Decide on contributing the grammars upstream (grammars-v4 is BSD and accepts contributions; the dialects with no existing grammar are the highest-value additions).
+- [ ] Write `README.md` (deferred until the shape is real).
+
+---
+
+## Cross-cutting: reserved-word strategy (the genuinely hard part)
+
+Warehouse SQL lets most keywords double as identifiers; getting the reserved set right per dialect is the #1 source of grammar pain.
+
+- Keep a `nonReserved` parser rule per dialect listing keyword tokens usable as identifiers (Spark's grammar already has one to fork).
+- Seed each dialect's reserved/non-reserved partition from: the vendor manual's reserved-words page (authoritative) + sqlglot's keyword sets + dbt's `*Lexer.tokens`.
+- Add corpus cases that use keywords as column/table aliases (e.g. `SELECT 1 AS value`) — these catch over-reservation, which the sqlglot oracle will flag as `we-reject-they-accept`.
+
+## Cross-cutting: lexer modes
+
+Default to a single lexer mode. Introduce a mode only when a construct can't be tokenized context-free: dollar-quoting and embedded UDF bodies (Snowflake/BigQuery). This is the concrete reason the grammars are **split** (combined grammars can't define modes).
+
+## Risks & open questions
+
+- **antlr-ng maturity:** if the pure-TS generator can't handle a large grammar, fall back to the ANTLR jar (Java). Phase 0 settles this.
+- **No automatic over-permissiveness check:** with sqlglot out of the loop, nothing flags SQL we *accept* that is actually invalid. Accepted as a tradeoff given scope (a parse tree for tooling, fed already-valid SQL); if it ever matters, run the optional sqlglot cross-check (Task 2.3). The manual is always truth.
+- **Parse tree (CST) vs AST:** ANTLR yields a CST. Decide in Phase 1 whether consumers walk the CST directly or we add a thin visitor to a normalized AST. Defer the visitor until a consumer needs it (YAGNI).
+- **Corpus coverage ≠ correctness:** a green corpus means "parses these inputs," not "complete." Log corpus size and expand it as gaps surface; never claim a dialect is "done," only "passes corpus N."
+
+## Success criteria
+
+- Each shipped dialect: **zero syntax errors** on its committed known-good corpus, corpus ≥ an agreed minimum size, `npm run gen <dialect> && npm run harness -- --dialect=<dialect>` reproducibly green.
+- The grammars are readable, manual-cross-referenced `.g4` files that generate working TypeScript parsers via `npm run gen`.
