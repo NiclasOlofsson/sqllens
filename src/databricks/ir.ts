@@ -7,19 +7,25 @@ import {
   ColumnReferenceContext,
   ComparisonContext,
   ConstantDefaultContext,
+  CurrentLikeContext,
   DatabricksParser as P,
   DereferenceContext,
   ExistsContext,
   FunctionCallContext,
+  LambdaContext,
   LogicalBinaryContext,
   LogicalNotContext,
   ParenthesizedExpressionContext,
+  PredicatedContext,
   PrimaryExpressionContext,
   SearchedCaseContext,
   ShiftExpressionContext,
   SimpleCaseContext,
   StarContext,
   SubqueryExpressionContext,
+  SubscriptContext,
+  TimestampaddContext,
+  TimestampdiffContext,
 } from "../generated/databricks/DatabricksParser.js";
 
 // ---------------------------------------------------------------------------
@@ -131,6 +137,24 @@ export type Expr =
   | { kind: "cast"; expr: Expr; typeText: string; cst: ParserRuleContext }
   | { kind: "subquery"; query: QueryExpr; cst: ParserRuleContext }
   | { kind: "exists"; query: QueryExpr; cst: ParserRuleContext }
+  | {
+      /** A predicate test: `a IS [NOT] NULL`, `a [NOT] IN (…)`, `a [NOT] BETWEEN x AND y`,
+       *  `a [NOT] LIKE p`, `a IS [NOT] DISTINCT FROM b`, … */
+      kind: "predicate";
+      /** between | in | like | ilike | rlike | null | true | false | unknown | distinct from */
+      op: string;
+      negated: boolean;
+      /** The value being tested (left of the predicate). */
+      operand: Expr;
+      /** Operands of the predicate: BETWEEN → [lower, upper]; IN → list items or a subquery;
+       *  LIKE/RLIKE → [pattern]; DISTINCT FROM → [right]; IS NULL/TRUE/… → []. */
+      args: Expr[];
+      cst: ParserRuleContext;
+    }
+  /** A lambda used as a higher-order function argument: `x -> x + 1`, `(acc, x) -> …`. */
+  | { kind: "lambda"; params: string[]; body: Expr; cst: ParserRuleContext }
+  /** Element/array/map access: `arr[0]`, `m['k']`, `split(s,'-')[1]`. */
+  | { kind: "subscript"; base: Expr; index: Expr; cst: ParserRuleContext }
   /** An expression the IR does not model yet — kept, not dropped. */
   | { kind: "other"; text: string; cst: ParserRuleContext };
 
@@ -485,6 +509,12 @@ function hasAggregate(expr: Expr): boolean {
     case "case":
       return expr.whens.some((w) => hasAggregate(w.when) || hasAggregate(w.then)) ||
         (expr.elseExpr !== undefined && hasAggregate(expr.elseExpr));
+    case "predicate":
+      return hasAggregate(expr.operand) || expr.args.some(hasAggregate);
+    case "lambda":
+      return hasAggregate(expr.body);
+    case "subscript":
+      return hasAggregate(expr.base) || hasAggregate(expr.index);
     default:
       return false;
   }
@@ -647,6 +677,39 @@ function lowerExpression(node: ParserRuleContext): Expr {
     const q = firstOfRule(node, P.RULE_query);
     return q ? { kind: "exists", query: lowerQuery(q), cst: node } : otherExpr(node);
   }
+  if (node instanceof PredicatedContext) {
+    // `valueExpression predicate?` — only the form WITH a predicate is a predicate node;
+    // a bare wrapper (no predicate) falls through to the soleExprChild recursion below.
+    const pred = directChildrenOfRule(node, P.RULE_predicate)[0];
+    if (pred) return lowerPredicated(node, pred);
+  }
+  // Special-form functions whose first argument is a time-unit keyword, plus the niladic
+  // CURRENT_* keywords — all modelled as ordinary function calls.
+  if (node instanceof TimestampaddContext || node instanceof TimestampdiffContext) {
+    return lowerTimestampFn(node);
+  }
+  if (node instanceof CurrentLikeContext) {
+    return { kind: "function", name: leadingTokenText(node), args: [], aggregate: false, distinct: false, cst: node };
+  }
+  if (node instanceof LambdaContext) {
+    const bodyCtx = directChildrenOfRule(node, P.RULE_expression)[0];
+    return {
+      kind: "lambda",
+      params: directChildrenOfRule(node, P.RULE_identifier).map((i) => i.getText()),
+      body: bodyCtx ? lowerExpression(bodyCtx) : otherExpr(node),
+      cst: node,
+    };
+  }
+  if (node instanceof SubscriptContext) {
+    const base = directChildrenOfRule(node, P.RULE_primaryExpression)[0];
+    const index = directChildrenOfRule(node, P.RULE_valueExpression)[0];
+    return {
+      kind: "subscript",
+      base: base ? lowerExpression(base) : otherExpr(node),
+      index: index ? lowerExpression(index) : otherExpr(node),
+      cst: node,
+    };
+  }
   if (
     node instanceof ArithmeticBinaryContext ||
     node instanceof ComparisonContext ||
@@ -662,6 +725,59 @@ function lowerExpression(node: ParserRuleContext): Expr {
   // recurse into the single expression child if that's all there is.
   const sole = soleExprChild(node);
   return sole ? lowerExpression(sole) : otherExpr(node);
+}
+
+/** Lower a `valueExpression predicate` (PredicatedContext) into a typed predicate Expr. */
+function lowerPredicated(predicated: ParserRuleContext, predicate: ParserRuleContext): Expr {
+  const operandCtx = directChildrenOfRule(predicated, P.RULE_valueExpression)[0];
+  const operand = operandCtx ? lowerExpression(operandCtx) : otherExpr(predicated);
+  const negated = directChildrenOfRule(predicate, P.RULE_errorCapturingNot).length > 0;
+  const args: Expr[] = [];
+  for (let i = 0; i < predicate.getChildCount(); i++) {
+    const child = predicate.getChild(i);
+    if (!(child instanceof ParserRuleContext)) continue;
+    if (child.ruleIndex === P.RULE_query) {
+      args.push({ kind: "subquery", query: lowerQuery(child), cst: child });
+    } else if (EXPR_RULES.has(child.ruleIndex)) {
+      args.push(lowerExpression(child));
+    }
+  }
+  return { kind: "predicate", op: predicateOp(predicate), negated, operand, args, cst: predicated };
+}
+
+function predicateOp(predicate: ParserRuleContext): string {
+  const t = directTokenType(predicate, [
+    P.BETWEEN, P.IN, P.RLIKE, P.LIKE, P.ILIKE, P.NULL, P.TRUE, P.FALSE, P.UNKNOWN, P.DISTINCT,
+  ]);
+  switch (t) {
+    case P.BETWEEN: return "between";
+    case P.IN: return "in";
+    case P.RLIKE: return "rlike";
+    case P.LIKE: return "like";
+    case P.ILIKE: return "ilike";
+    case P.NULL: return "null";
+    case P.TRUE: return "true";
+    case P.FALSE: return "false";
+    case P.UNKNOWN: return "unknown";
+    case P.DISTINCT: return "distinct from";
+    default: return "";
+  }
+}
+
+/** Lower a date_add/datediff-style special form (time-unit keyword + value args) as a function call. */
+function lowerTimestampFn(node: ParserRuleContext): Expr {
+  const args: Expr[] = [];
+  const unit =
+    directChildrenOfRule(node, P.RULE_datetimeUnit)[0] ?? directChildrenOfRule(node, P.RULE_stringLit)[0];
+  if (unit) args.push({ kind: "literal", text: unit.getText(), cst: unit });
+  for (const ve of directChildrenOfRule(node, P.RULE_valueExpression)) args.push(lowerExpression(ve));
+  return { kind: "function", name: leadingTokenText(node), args, aggregate: false, distinct: false, cst: node };
+}
+
+/** The text of a node's first child token — the `name=` keyword of these labelled alternatives. */
+function leadingTokenText(node: ParserRuleContext): string {
+  const c = node.getChild(0);
+  return c instanceof TerminalNode ? c.getText() : "";
 }
 
 /** The single expression-rule child of `node`, if `node` is just a wrapper (no operator/predicate). */
@@ -819,6 +935,19 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
         columnsOf(w.then, acc, clause);
       });
       if (expr.elseExpr) columnsOf(expr.elseExpr, acc, clause);
+      break;
+    case "predicate":
+      columnsOf(expr.operand, acc, clause);
+      expr.args.forEach((a) => columnsOf(a, acc, clause));
+      break;
+    case "lambda":
+      // The body may reference outer columns; lambda params are locals (they won't bind to a
+      // source, which is correct — they're not table columns).
+      columnsOf(expr.body, acc, clause);
+      break;
+    case "subscript":
+      columnsOf(expr.base, acc, clause);
+      columnsOf(expr.index, acc, clause);
       break;
     case "other":
       cstColumnRefs(expr.cst, acc, clause);

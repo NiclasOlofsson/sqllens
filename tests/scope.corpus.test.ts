@@ -49,6 +49,17 @@ function walkExpr(e: Expr, acc: Stats): void {
       });
       if (e.elseExpr) walkExpr(e.elseExpr, acc);
       break;
+    case "predicate":
+      walkExpr(e.operand, acc);
+      e.args.forEach((a) => walkExpr(a, acc));
+      break;
+    case "lambda":
+      walkExpr(e.body, acc);
+      break;
+    case "subscript":
+      walkExpr(e.base, acc);
+      walkExpr(e.index, acc);
+      break;
   }
 }
 
