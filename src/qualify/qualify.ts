@@ -1,15 +1,14 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { ColumnRef, Projection } from "../databricks/ir.js";
+import type { ColumnRef } from "../databricks/ir.js";
 import {
   resolveColumn,
   splitColumnRefInScope,
   type ResolvedSource,
   type Scope,
   type ScopeTree,
-  type SplitRef,
 } from "../scope/scope.js";
 import { inferType } from "../infer/infer.js";
-import { parseStructFields, type Column, type Schema } from "./schema.js";
+import { type Schema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -33,7 +32,7 @@ export interface Qualification {
 
 export function qualify(tree: ScopeTree, schema: Schema): Qualification {
   const diagnostics: Diagnostic[] = [];
-  const resolved = new Map<Scope, Column[] | "unknown">();
+  const resolved = new Map<Scope, string[] | "unknown">();
 
   // Post-order: a scope's columns (and their types) may depend on its CTE/subquery children.
   const visit = (scope: Scope): void => {
@@ -45,25 +44,22 @@ export function qualify(tree: ScopeTree, schema: Schema): Qualification {
 
   return {
     diagnostics,
-    columnsOf: (scope) => {
-      const r = resolved.get(scope);
-      return r === undefined || r === "unknown" ? "unknown" : r.map((c) => c.name);
-    },
+    columnsOf: (scope) => resolved.get(scope) ?? "unknown",
   };
 }
 
 function resolveColumns(
   scope: Scope,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
+  resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
-): Column[] | "unknown" {
+): string[] | "unknown" {
   const body = scope.body;
   if (body.kind === "setop") {
     return scope.branches ? (resolved.get(scope.branches.left) ?? "unknown") : "unknown";
   }
 
-  const out: Column[] = [];
+  const out: string[] = [];
   for (const p of body.projections) {
     if (p.isStar) {
       const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
@@ -71,9 +67,7 @@ function resolveColumns(
       if (cols === undefined) return "unknown";
       out.push(...cols);
     } else if (p.name !== undefined) {
-      // A pass-through column ref carries its source column's type; a computed expression has
-      // no type without inference (the one honest boundary), so its type stays undefined.
-      out.push({ name: p.name, type: projectionType(scope, p, schema, resolved) });
+      out.push(p.name);
     } else {
       return "unknown"; // anonymous expression — not nameable without modelling it
     }
@@ -81,59 +75,17 @@ function resolveColumns(
   return out;
 }
 
-/** The type of a projection's output when it is a pass-through column reference (else undefined). */
-function projectionType(
-  scope: Scope,
-  p: Projection,
-  schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
-): string | undefined {
-  if (p.expr.kind !== "column") return undefined; // computed — needs the type-inference engine
-  const split = splitColumnRefInScope(scope, p.expr.parts);
-  const src = sourceOfColumn(scope, split, schema, resolved);
-  if (!src) return undefined;
-  const base = sourceColumnType(src, split.column, schema, resolved);
-  return split.fields.length ? walkFieldType(base, split.fields) : base;
-}
-
-/**
- * The source a (possibly qualified) column resolves to, using the schema for membership —
- * unlike scope's schema-free resolveColumn, which can't bind a bare column over a bare table.
- */
-function sourceOfColumn(
-  scope: Scope,
-  split: SplitRef,
-  schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
-): ResolvedSource | undefined {
-  if (split.qualifier !== undefined) {
-    for (let s: Scope | undefined = scope; s; s = s.parent) {
-      const src = s.sources.get(split.qualifier);
-      if (src) return src;
-    }
-    return undefined;
-  }
-  const name = normalizeName(split.column);
-  for (let s: Scope | undefined = scope; s; s = s.parent) {
-    for (const src of s.sources.values()) {
-      const cols = sourceColumns(src, schema, resolved);
-      if (cols?.some((c) => normalizeName(c) === name)) return src;
-    }
-  }
-  return undefined;
-}
-
 function expandStar(
   scope: Scope,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
+  resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
   qualifier?: string[],
-): Column[] | undefined {
+): string[] | undefined {
   // A qualified star `t.*` expands only the source keyed by `t` (its last name part); a bare
   // `*` expands every source in order.
   const want = qualifier ? normalizeName(qualifier[qualifier.length - 1] ?? "") : undefined;
-  const cols: Column[] = [];
+  const cols: string[] = [];
   let matched = false;
   for (const [key, src] of scope.sources) {
     if (want !== undefined && key !== want) continue;
@@ -146,91 +98,31 @@ function expandStar(
   return cols;
 }
 
+/** The output column names of a source — schema for a table (reporting unknown-table if absent),
+ *  the resolved child names for a CTE/subquery (column aliases rename them), the AS columns for a
+ *  lateral view. Types are not threaded here; type inference (src/infer) owns types. */
 function columnsOfSource(
   src: ResolvedSource,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
+  resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
-): Column[] | undefined {
+): string[] | undefined {
   if (src.kind === "table") {
-    // Inline column aliases (t AS u (c1, c2)) name the columns without a catalog (no types).
-    if (src.source.columnAliases) return src.source.columnAliases.map((name) => ({ name }));
+    if (src.source.columnAliases) return src.source.columnAliases;
     const cols = schema.columnsFor(src.name);
     if (!cols) {
       diagnostics.push(unknownTable(src.name, src.source.cst));
       return undefined;
     }
-    return cols;
+    return cols.map((c) => c.name);
   }
-  if (src.kind === "cte") {
-    const body = resolved.get(src.ref.scope);
-    if (src.ref.def.columnAliases) return renameColumns(src.ref.def.columnAliases, body); // WITH c (x,y) AS …
-    return body === undefined || body === "unknown" ? undefined : body;
-  }
-  if (src.kind === "lateral") return src.source.columns.map((name) => ({ name })); // AS columns, no types
-  // subquery — inline column aliases (rename, keep types by position), else the child columns.
-  const body = resolved.get(src.scope);
-  if (src.source.columnAliases) return renameColumns(src.source.columnAliases, body);
-  return body === undefined || body === "unknown" ? undefined : body;
+  if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
+  if (src.kind === "lateral") return src.source.columns;
+  return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
-/** Rename a derived relation's columns by position (its alias list), carrying each type along. */
-function renameColumns(aliases: string[], body: Column[] | "unknown" | undefined): Column[] {
-  const cols = body !== undefined && body !== "unknown" ? body : undefined;
-  return aliases.map((name, i) => ({ name, type: cols?.[i]?.type }));
-}
-
-/**
- * The declared type of `columnName` in a resolved source — the schema for a table, the
- * already-computed child columns for a CTE/subquery (honoring a positional alias list).
- * This is how a struct type threads through derived columns without expression inference.
- */
-function sourceColumnType(
-  src: ResolvedSource,
-  columnName: string,
-  schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
-): string | undefined {
-  if (src.kind === "table") {
-    if (src.source.columnAliases) return undefined; // inline aliases carry no type
-    return schema.columnsFor(src.name)?.find((c) => normalizeName(c.name) === normalizeName(columnName))
-      ?.type;
-  }
-  if (src.kind === "cte") {
-    return columnFrom(resolved.get(src.ref.scope), columnName, src.ref.def.columnAliases)?.type;
-  }
-  if (src.kind === "subquery") {
-    return columnFrom(resolved.get(src.scope), columnName, src.source.columnAliases)?.type;
-  }
-  return undefined; // lateral — no types
-}
-
-/** Find a column by output name in a resolved column list, honoring a positional alias list. */
-function columnFrom(
-  cols: Column[] | "unknown" | undefined,
-  name: string,
-  aliases: string[] | undefined,
-): Column | undefined {
-  if (cols === undefined || cols === "unknown") return undefined;
-  if (aliases) {
-    const i = aliases.findIndex((a) => normalizeName(a) === normalizeName(name));
-    return i >= 0 ? cols[i] : undefined;
-  }
-  return cols.find((c) => normalizeName(c.name) === normalizeName(name));
-}
-
-/** Walk a field path through nested struct types, returning the leaf type, or undefined if unknown. */
-function walkFieldType(type: string | undefined, fields: string[]): string | undefined {
-  let t = type;
-  for (const field of fields) {
-    if (!t) return undefined;
-    const structFields = parseStructFields(t);
-    if (!structFields) return undefined;
-    const hit = structFields.find((f) => normalizeName(f.name) === normalizeName(field));
-    if (!hit) return undefined;
-    t = hit.type;
-  }
-  return t;
+function known(r: string[] | "unknown" | undefined): string[] | undefined {
+  return r === undefined || r === "unknown" ? undefined : r;
 }
 
 /**
@@ -242,7 +134,7 @@ function checkColumn(
   scope: Scope,
   ref: ColumnRef,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
+  resolved: Map<Scope, string[] | "unknown">,
   diagnostics: Diagnostic[],
 ): void {
   // A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias
@@ -327,21 +219,15 @@ function checkFieldPath(
 function sourceColumns(
   src: ResolvedSource,
   schema: Schema,
-  resolved: Map<Scope, Column[] | "unknown">,
+  resolved: Map<Scope, string[] | "unknown">,
 ): string[] | undefined {
   if (src.kind === "table") {
     if (src.source.columnAliases) return src.source.columnAliases;
     return schema.columnsFor(src.name)?.map((c) => c.name);
   }
-  if (src.kind === "cte") {
-    if (src.ref.def.columnAliases) return src.ref.def.columnAliases;
-    const r = resolved.get(src.ref.scope);
-    return r === undefined || r === "unknown" ? undefined : r.map((c) => c.name);
-  }
+  if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
   if (src.kind === "lateral") return src.source.columns;
-  if (src.source.columnAliases) return src.source.columnAliases;
-  const r = resolved.get(src.scope);
-  return r === undefined || r === "unknown" ? undefined : r.map((c) => c.name);
+  return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
 function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): Diagnostic {
