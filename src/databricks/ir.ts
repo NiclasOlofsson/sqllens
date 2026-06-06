@@ -188,7 +188,17 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 export function lower(tree: ParserRuleContext): QueryExpr {
   const query = firstOfRule(tree, P.RULE_query);
   if (!query) {
-    throw new Error("lower: no query found (non-query statements not modelled yet)");
+    // A non-query statement (DDL/DML without a SELECT). Return an empty, flagged body
+    // rather than throwing, so consumers get a stable IR they can recognize and skip.
+    const body: SelectExpr = {
+      kind: "select",
+      projections: [],
+      from: [],
+      columns: [],
+      unsupported: ["non-query"],
+      cst: tree,
+    };
+    return { kind: "query", ctes: [], body, cst: tree };
   }
   return lowerQuery(query);
 }

@@ -21,6 +21,13 @@ describe("lower: CST -> IR", () => {
     expect(ir.body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
   });
 
+  it("does not throw on a non-query statement; flags it as non-query", () => {
+    const ir = lower(parseDatabricks("CREATE TABLE t (a INT, b STRING)").tree);
+    const sel = asSelect(ir.body);
+    expect(sel.from).toEqual([]);
+    expect(sel.unsupported).toContain("non-query");
+  });
+
   it("lowers a WITH clause into CteDefs with a name and a query body", () => {
     const { tree, errors } = parseDatabricks("WITH c AS (SELECT 1 AS x) SELECT a FROM c");
     expect(errors).toBe(0);
