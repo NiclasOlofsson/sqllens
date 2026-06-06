@@ -97,6 +97,30 @@ describe("lower: CST -> IR", () => {
     expect(sel.projections[0].isStar).toBe(true);
   });
 
+  it("uses the query's own FROM, not a scalar subquery's in the SELECT list", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT (SELECT x FROM inner_t) AS s, a FROM main_t").tree).body,
+    );
+    expect(sel.from).toMatchObject([{ kind: "table", name: ["main_t"] }]);
+  });
+
+  it("does not count a scalar subquery's inner projection as a top-level projection", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT (SELECT x FROM inner_t) AS s, a FROM main_t").tree).body,
+    );
+    expect(sel.projections.map((p) => p.name)).toEqual(["s", "a"]);
+  });
+
+  it("does not treat a subquery in a JOIN/WHERE condition as a FROM source", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT a FROM t JOIN u ON t.id IN (SELECT id FROM other)").tree).body,
+    );
+    expect(sel.from).toMatchObject([
+      { kind: "table", name: ["t"] },
+      { kind: "table", name: ["u"] },
+    ]);
+  });
+
   it("collects column references at the select level (projections + WHERE)", () => {
     const sel = asSelect(lower(parseDatabricks("SELECT a, t.b FROM t WHERE c > 1").tree).body);
     expect(sel.columns.map((c) => c.parts.join("."))).toEqual(

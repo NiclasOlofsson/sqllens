@@ -107,10 +107,21 @@ function firstOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext | un
   return undefined;
 }
 
-function nodesOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext[] {
-  const out: ParserRuleContext[] = [];
-  for (const d of descendants(node)) if (d.ruleIndex === ruleIndex) out.push(d);
-  return out;
+/**
+ * Like firstOfRule, but never descends into a nested `query` — so it finds a query's
+ * OWN clause, not one belonging to a subquery in its SELECT/WHERE. Without this, a
+ * scalar subquery in the select list hijacks the outer query's FROM.
+ */
+function shallowFirstOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext | undefined {
+  for (let i = 0; i < node.getChildCount(); i++) {
+    const child = node.getChild(i);
+    if (!(child instanceof ParserRuleContext)) continue;
+    if (child.ruleIndex === ruleIndex) return child;
+    if (child.ruleIndex === P.RULE_query) continue; // belongs to a subquery
+    const found = shallowFirstOfRule(child, ruleIndex);
+    if (found) return found;
+  }
+  return undefined;
 }
 
 function directChildrenOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext[] {
@@ -209,12 +220,16 @@ function columnAliasList(node: ParserRuleContext): string[] | undefined {
 }
 
 function buildSelect(querySpec: ParserRuleContext): SelectExpr {
-  const selectClause = firstOfRule(querySpec, P.RULE_selectClause);
-  const projections = selectClause
-    ? nodesOfRule(selectClause, P.RULE_namedExpression).map(buildProjection)
+  // Each clause must be THIS query's own — never one nested inside a subquery in
+  // the select/where list. The top-level projections are the direct children of
+  // the select's namedExpressionSeq (not namedExpressions nested in subqueries).
+  const selectClause = shallowFirstOfRule(querySpec, P.RULE_selectClause);
+  const seq = selectClause ? shallowFirstOfRule(selectClause, P.RULE_namedExpressionSeq) : undefined;
+  const projections = seq
+    ? directChildrenOfRule(seq, P.RULE_namedExpression).map(buildProjection)
     : [];
 
-  const fromClause = firstOfRule(querySpec, P.RULE_fromClause);
+  const fromClause = shallowFirstOfRule(querySpec, P.RULE_fromClause);
   const from = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
 
   return { kind: "select", projections, from, columns: extractColumnRefs(querySpec), cst: querySpec };
@@ -311,6 +326,7 @@ function topRelationPrimaries(node: ParseTree): ParserRuleContext[] {
       const child = n.getChild(i);
       if (!(child instanceof ParserRuleContext)) continue;
       if (child.ruleIndex === P.RULE_relationPrimary) out.push(child);
+      else if (child.ruleIndex === P.RULE_query) continue; // a subquery in an ON/WHERE — not a source
       else walk(child);
     }
   };
