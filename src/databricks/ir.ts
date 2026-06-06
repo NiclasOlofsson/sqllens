@@ -193,6 +193,8 @@ export interface LateralViewSource {
   kind: "lateral";
   /** The lateral view's table alias (`LATERAL VIEW explode(x) v AS c` → "v"). */
   alias?: string;
+  /** The alias identifier's own CST node (for its precise span), when aliased. */
+  aliasCst?: ParserRuleContext;
   /** The columns it exposes (the AS list — `… AS c1, c2`). */
   columns: string[];
   cst: ParserRuleContext;
@@ -203,6 +205,8 @@ export interface TableSource {
   /** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
   name: string[];
   alias?: string;
+  /** The alias identifier's own CST node (for its precise span), when aliased. */
+  aliasCst?: ParserRuleContext;
   /** Inline column aliases, e.g. `t AS u (c1, c2)` → ["c1","c2"]. */
   columnAliases?: string[];
   cst: ParserRuleContext;
@@ -212,6 +216,8 @@ export interface SubquerySource {
   kind: "subquery";
   query: QueryExpr;
   alias?: string;
+  /** The alias identifier's own CST node (for its precise span), when aliased. */
+  aliasCst?: ParserRuleContext;
   /** Inline column aliases, e.g. `(…) s (c1, c2)` → ["c1","c2"]. */
   columnAliases?: string[];
   cst: ParserRuleContext;
@@ -560,6 +566,7 @@ function extractLateralViews(fromClause: ParserRuleContext): LateralViewSource[]
     return {
       kind: "lateral",
       alias: ids[0]?.getText(),
+      aliasCst: ids[0],
       columns: ids.slice(1).map((i) => i.getText()),
       cst: lv,
     };
@@ -1020,7 +1027,8 @@ function topRelationPrimaries(node: ParseTree): ParserRuleContext[] {
 
 function buildSource(relationPrimary: ParserRuleContext): Source {
   const tableAlias = directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0];
-  const alias = tableAlias ? firstOfRule(tableAlias, P.RULE_strictIdentifier)?.getText() : undefined;
+  const aliasCst = tableAlias ? firstOfRule(tableAlias, P.RULE_strictIdentifier) : undefined;
+  const alias = aliasCst?.getText();
   const columnAliases = tableAlias ? columnAliasList(tableAlias) : undefined;
 
   // A derived table: `( query ) alias`.
@@ -1030,6 +1038,7 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
       kind: "subquery",
       query: lowerQuery(innerQuery),
       alias,
+      aliasCst,
       columnAliases,
       cst: relationPrimary,
     };
@@ -1043,6 +1052,7 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
     kind: "table",
     name: parts.length ? parts : multipart ? [multipart.getText()] : [],
     alias,
+    aliasCst,
     columnAliases,
     cst: relationPrimary,
   };

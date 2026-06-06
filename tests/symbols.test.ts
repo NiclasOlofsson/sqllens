@@ -69,6 +69,32 @@ describe("deriveSymbols — columns", () => {
   });
 });
 
+describe("deriveSymbols — aliases & definition links", () => {
+  it("emits a relation alias as an alias declaration", () => {
+    const x = symbolsOf("SELECT a FROM tbl AS x").find((s) => s.kind === "alias" && s.name === "x");
+    expect(x).toMatchObject({ kind: "alias", modifiers: ["declaration"], frame: "_main_" });
+  });
+
+  it("links a CTE reference to its declaration span (go-to-definition)", () => {
+    const syms = symbolsOf("WITH c AS (SELECT a FROM t) SELECT a FROM c");
+    const decl = syms.find((s) => s.kind === "cte" && s.modifiers.includes("declaration"));
+    const ref = syms.find((s) => s.kind === "cte" && s.modifiers.includes("reference"));
+    expect(ref?.definition).toEqual(decl?.span);
+  });
+
+  it("links a column reference to the projection that produces it in a CTE", () => {
+    const ref = symbolsOf("WITH c AS (SELECT x AS a FROM t) SELECT a FROM c").find(
+      (s) => s.kind === "column" && s.name === "a" && s.modifiers.includes("reference"),
+    );
+    expect(ref?.definition).toBeDefined();
+  });
+
+  it("has no in-query definition for a catalog-table column", () => {
+    const ref = symbolsOf("SELECT a FROM t").find((s) => s.kind === "column" && s.name === "a");
+    expect(ref?.definition).toBeUndefined();
+  });
+});
+
 describe("deriveSymbols — functions", () => {
   it("emits a function symbol with its name", () => {
     const f = symbolsOf("SELECT coalesce(a, b) FROM t").find((s) => s.kind === "function");

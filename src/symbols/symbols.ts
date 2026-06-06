@@ -1,6 +1,12 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { Expr } from "../databricks/ir.js";
-import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
+import type { Expr, Projection } from "../databricks/ir.js";
+import {
+  resolveColumn,
+  type ColumnResolution,
+  type ResolvedSource,
+  type Scope,
+  type ScopeTree,
+} from "../scope/scope.js";
 
 // ---------------------------------------------------------------------------
 // Symbols — a SQL-native symbol model derived from the scope tree (and, later,
@@ -15,20 +21,19 @@ import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "
 // the expression-level symbols build on top of this.
 // ---------------------------------------------------------------------------
 
+// The symbol model is the graph of NAMED relational entities. Token-level concerns
+// (literals, keyword highlighting) belong to a separate SemanticTokens projection, not here;
+// `view`/parameters would need a catalog / param modelling we don't have, so they aren't kinds.
 export type SymbolKind =
   // relations
   | "table"
-  | "view"
   | "cte"
   | "subquery"
   | "lateral"
   // within a relation / expression
   | "column"
   | "alias"
-  | "function"
-  | "parameter"
-  | "literal"
-  | "keyword";
+  | "function";
 
 export type SymbolModifier =
   | "declaration"
@@ -54,6 +59,10 @@ export interface Sym {
   span: Span;
   /** The frame the symbol lives in: a CTE's name, a subquery alias, or "_main_". */
   frame: string;
+  /** For a reference, the span of the in-query declaration it resolves to (a CTE, or the
+   *  projection in a CTE/subquery that produces a column). Absent for a catalog table/column
+   *  whose declaration is not in the query — go-to-definition there needs the catalog. */
+  definition?: Span;
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
@@ -81,9 +90,11 @@ function walk(scope: Scope, frame: string, out: Sym[]): void {
     walked.add(scope.branches.left);
     walked.add(scope.branches.right);
   }
-  // Source references in this frame; a subquery source opens its own frame.
+  // Source references in this frame, plus any alias declaration; a subquery opens its own frame.
   for (const src of scope.sources.values()) {
     out.push(relationSymbol(src, frame));
+    const alias = aliasSymbol(src, frame);
+    if (alias) out.push(alias);
     if (src.kind === "subquery") {
       walk(src.scope, src.source.alias ?? "_subquery_", out);
       walked.add(src.scope);
@@ -180,7 +191,14 @@ function emitColumns(scope: Scope, frame: string, out: Sym[]): void {
     const modifiers: SymbolModifier[] = ["reference"];
     // A reference that binds to a source outside this scope is correlated.
     if (res.kind === "bound" && !isLocalSource(scope, res.source)) modifiers.push("correlated");
-    out.push({ kind: "column", modifiers, name: ref.parts.join("."), span: spanOf(ref.cst), frame });
+    out.push({
+      kind: "column",
+      modifiers,
+      name: ref.parts.join("."),
+      span: spanOf(ref.cst),
+      frame,
+      definition: columnDefinition(res),
+    });
   }
 }
 
@@ -189,13 +207,51 @@ function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
   return false;
 }
 
+/** An alias declaration symbol for a source written `… AS x`, or undefined when unaliased. */
+function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
+  const s = src.source;
+  if (!s.alias) return undefined;
+  return { kind: "alias", modifiers: ["declaration"], name: s.alias, span: spanOf(s.aliasCst ?? s.cst), frame };
+}
+
+/** The in-query declaration span a bound column resolves to: the projection in the CTE /
+ *  subquery that produces it. A catalog table column has none (resolved via the schema). */
+function columnDefinition(res: ColumnResolution): Span | undefined {
+  if (res.kind !== "bound") return undefined;
+  const src = res.source;
+  if (src.kind === "cte") return projectionSpan(src.ref.scope, res.column, src.ref.def.columnAliases);
+  if (src.kind === "subquery") return projectionSpan(src.scope, res.column, src.source.columnAliases);
+  return undefined;
+}
+
+function projectionSpan(scope: Scope, column: string, aliases: string[] | undefined): Span | undefined {
+  if (scope.body.kind !== "select") return undefined;
+  const projs = scope.body.projections;
+  const c = column.toLowerCase();
+  let p: Projection | undefined;
+  if (aliases) {
+    const i = aliases.findIndex((a) => a.toLowerCase() === c);
+    p = i >= 0 ? projs[i] : undefined;
+  } else {
+    p = projs.find((pp) => pp.name !== undefined && pp.name.toLowerCase() === c);
+  }
+  return p ? spanOf(p.cst) : undefined;
+}
+
 function relationSymbol(src: ResolvedSource, frame: string): Sym {
   const ref = ["reference"] as SymbolModifier[];
   if (src.kind === "table") {
     return { kind: "table", modifiers: ref, name: src.name.join("."), span: spanOf(src.source.cst), frame };
   }
   if (src.kind === "cte") {
-    return { kind: "cte", modifiers: ref, name: src.ref.def.name, span: spanOf(src.source.cst), frame };
+    return {
+      kind: "cte",
+      modifiers: ref,
+      name: src.ref.def.name,
+      span: spanOf(src.source.cst),
+      frame,
+      definition: spanOf(src.ref.def.cst),
+    };
   }
   if (src.kind === "lateral") {
     return { kind: "lateral", modifiers: ref, name: src.source.alias ?? "", span: spanOf(src.source.cst), frame };
