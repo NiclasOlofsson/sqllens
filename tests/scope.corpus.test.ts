@@ -31,6 +31,7 @@ interface ScopeStats {
   colAmbiguous: number;
   colNeedsSchema: number;
   colUnresolved: number;
+  unsupported: number; // select blocks carrying a construct the IR does not model
 }
 
 function walkScopes(scope: Scope, acc: ScopeStats): void {
@@ -53,6 +54,7 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
     else acc.srcSubquery++;
   }
   if (scope.body.kind === "select") {
+    if (scope.body.unsupported) acc.unsupported++;
     for (const ref of scope.body.columns) {
       acc.colTotal++;
       const r = resolveColumn(scope, ref);
@@ -136,6 +138,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
       colAmbiguous: 0,
       colNeedsSchema: 0,
       colUnresolved: 0,
+      unsupported: 0,
     };
     const clusters = new Map<string, number>();
     const sample: Record<string, string> = {};
@@ -177,6 +180,7 @@ describe.skipIf(!existsSync(CORPUS))("semantic layer over the Oatly corpus", () 
         `  outputs unknown by cause: table-star ${scopeStats.unkTableStar} (needs catalog), ` +
           `derived-star ${scopeStats.unkDerivedStar} (schema-free), expr-only ${scopeStats.unkExprOnly}`,
         `  sources: table ${scopeStats.srcTable}, cte ${scopeStats.srcCte}, subquery ${scopeStats.srcSubquery}`,
+        `  scopes with unmodelled constructs (pivot/unpivot/lateral): ${scopeStats.unsupported}`,
         ``,
         `Column binding (${scopeStats.colTotal} refs, schema-free):`,
         `  bound ${scopeStats.colBound} (${pct(scopeStats.colBound, scopeStats.colTotal)}%), ` +

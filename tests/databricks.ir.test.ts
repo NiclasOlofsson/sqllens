@@ -133,6 +133,18 @@ describe("lower: CST -> IR", () => {
     expect(sel.columns.map((c) => c.parts.join("."))).not.toContain("inner_col");
   });
 
+  it("flags an unsupported PIVOT rather than silently mis-modelling it", () => {
+    const sel = asSelect(
+      lower(parseDatabricks("SELECT * FROM t PIVOT (sum(x) FOR y IN ('a', 'b'))").tree).body,
+    );
+    expect(sel.unsupported).toContain("pivot");
+  });
+
+  it("has no unsupported flag for a plain select", () => {
+    const sel = asSelect(lower(parseDatabricks("SELECT a FROM t").tree).body);
+    expect(sel.unsupported).toBeUndefined();
+  });
+
   it("lowers a set operation into a SetOpExpr with both branches", () => {
     const ir = lower(parseDatabricks("SELECT a FROM t UNION ALL SELECT b FROM u").tree);
     expect(ir.body.kind).toBe("setop");

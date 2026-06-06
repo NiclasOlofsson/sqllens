@@ -33,6 +33,10 @@ export interface SelectExpr {
   /** Every column reference at this query level (projections, WHERE, JOIN ON, …),
    *  excluding those inside nested subqueries (which belong to their own scope). */
   columns: ColumnRef[];
+  /** Constructs present here that the IR does not model (e.g. "pivot", "unpivot",
+   *  "lateralView") — a flag so consumers know this block's sources/columns are
+   *  incomplete rather than trusting them silently. Absent when fully modelled. */
+  unsupported?: string[];
   cst: ParserRuleContext;
 }
 
@@ -232,7 +236,19 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
   const fromClause = shallowFirstOfRule(querySpec, P.RULE_fromClause);
   const from = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
 
-  return { kind: "select", projections, from, columns: extractColumnRefs(querySpec), cst: querySpec };
+  const unsupported: string[] = [];
+  if (shallowFirstOfRule(querySpec, P.RULE_pivotClause)) unsupported.push("pivot");
+  if (shallowFirstOfRule(querySpec, P.RULE_unpivotClause)) unsupported.push("unpivot");
+  if (shallowFirstOfRule(querySpec, P.RULE_lateralView)) unsupported.push("lateralView");
+
+  return {
+    kind: "select",
+    projections,
+    from,
+    columns: extractColumnRefs(querySpec),
+    unsupported: unsupported.length ? unsupported : undefined,
+    cst: querySpec,
+  };
 }
 
 function buildProjection(named: ParserRuleContext): Projection {
