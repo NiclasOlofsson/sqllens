@@ -55,6 +55,18 @@ describe("qualify", () => {
     expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-column");
   });
 
+  it("flags a struct base column not present in the table (t.badcol.city)", () => {
+    // `badcol` is the column being navigated; it must exist in t. The field `city` is not
+    // type-checked (struct field types are not modelled), but a bad base column is caught.
+    const { result } = run("SELECT t.badcol.city FROM t", new Schema({ t: { addr: "struct" } }));
+    expect(result.diagnostics.map((d) => d.kind)).toContain("unknown-column");
+  });
+
+  it("does not flag the field of a valid struct column (t.addr.city)", () => {
+    const { result } = run("SELECT t.addr.city FROM t", new Schema({ t: { addr: "struct" } }));
+    expect(result.diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);
+  });
+
   it("flags an ambiguous bare column present in two joined tables", () => {
     const { result } = run(
       "SELECT id FROM t JOIN u ON t.x = u.y",

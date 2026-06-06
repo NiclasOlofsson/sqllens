@@ -54,22 +54,75 @@ export function resolveScopes(query: QueryExpr): ScopeTree {
 }
 
 export type ColumnResolution =
-  | { kind: "bound"; source: ResolvedSource }
+  | { kind: "bound"; source: ResolvedSource; column: string; fields: string[] }
   | { kind: "alias"; name: string } // resolves to a SELECT-list alias (in GROUP BY/HAVING/ORDER BY)
   | { kind: "ambiguous"; candidates: ResolvedSource[] }
-  | { kind: "unresolved" } // qualifier names no visible source
+  | { kind: "unresolved" } // names neither a visible source nor a known column
   | { kind: "needs-schema" }; // can't tell without a source's column list
+
+/** A column reference split into its table qualifier, the column, and struct/field navigation. */
+export interface SplitRef {
+  /** The matched source key, when a leading part names a visible source (else unqualified). */
+  qualifier?: string;
+  /** The column name. */
+  column: string;
+  /** Struct/map field navigation after the column: `a.b.c` bound to column `a` → ["b","c"]. */
+  fields: string[];
+}
+
+/**
+ * Split a (possibly dotted) reference into qualifier / column / field path. A leading part is a
+ * table qualifier only if it names a visible source — otherwise the first part is the column and
+ * the rest is field access (`a.b.c` where `a` is a column → fields b, c). This mirrors Spark's
+ * resolution order (try table-qualified first, then nested field access on a column), so struct
+ * access is no longer mistaken for `table.column`. `isSource` reports whether a key is visible.
+ */
+export function splitColumnRef(parts: string[], isSource: (key: string) => boolean): SplitRef {
+  // `schema.table.col[.field…]` — the 2-token qualifier is keyed by the table (its last part).
+  if (parts.length >= 3 && isSource(normalizeName(parts[1]))) {
+    return { qualifier: normalizeName(parts[1]), column: parts[2], fields: parts.slice(3) };
+  }
+  // `alias.col[.field…]` — single-token qualifier.
+  if (parts.length >= 2 && isSource(normalizeName(parts[0]))) {
+    return { qualifier: normalizeName(parts[0]), column: parts[1], fields: parts.slice(2) };
+  }
+  // Unqualified: the first part is the column; anything after it is struct/field navigation.
+  return { column: parts[0] ?? "", fields: parts.slice(1) };
+}
+
+/** Split a reference against the sources visible from `scope` (including enclosing scopes). */
+export function splitColumnRefInScope(scope: Scope, parts: string[]): SplitRef {
+  return splitColumnRef(parts, (key) => hasVisibleSource(scope, key));
+}
+
+/** True if `key` names a source in this scope or any enclosing one (for correlation). */
+function hasVisibleSource(scope: Scope, key: string): boolean {
+  for (let s: Scope | undefined = scope; s; s = s.parent) if (s.sources.has(key)) return true;
+  return false;
+}
 
 /**
  * Bind a column reference to the source it comes from, schema-free.
- * - Qualified (`t.c`): the source whose key matches the qualifier, else unresolved.
- * - Unqualified (`c`): the single source whose known columns include it; ambiguous if
- *   several do; needs-schema if a source's columns aren't known without a catalog.
+ * - Qualified (`t.c`, `t.c.field`): the source whose key matches the qualifier; the part after
+ *   it is the column and any further parts are struct/field navigation.
+ * - Unqualified (`c`, `c.field`): the single source whose known columns include the column;
+ *   ambiguous if several do; needs-schema if a source's columns aren't known without a catalog.
  */
 export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
-  // Walk this scope then enclosing scopes — a correlated reference binds to an outer source.
+  const split = splitColumnRefInScope(scope, ref.parts);
+
+  // Qualified: bind to the nearest enclosing scope that defines the qualifier source.
+  if (split.qualifier !== undefined) {
+    for (let s: Scope | undefined = scope; s; s = s.parent) {
+      const source = s.sources.get(split.qualifier);
+      if (source) return { kind: "bound", source, column: split.column, fields: split.fields };
+    }
+    return { kind: "unresolved" }; // qualifier was visible a moment ago — defensive only
+  }
+
+  // Unqualified: resolve the column name against sources, walking enclosing scopes (correlation).
   for (let s: Scope | undefined = scope; s; s = s.parent) {
-    const r = resolveColumnInScope(s, ref);
+    const r = resolveByColumnName(s, split.column, split.fields);
     if (r.kind === "bound" || r.kind === "ambiguous") return r;
     // GROUP BY / HAVING / ORDER BY of this scope may reference a SELECT alias. Source columns
     // take precedence (checked above); fall back to a matching projection alias here.
@@ -77,9 +130,9 @@ export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
       s === scope &&
       ref.parts.length === 1 &&
       aliasVisibleClause(ref.clause) &&
-      matchesProjectionAlias(s, ref.parts[0])
+      matchesProjectionAlias(s, split.column)
     ) {
-      return { kind: "alias", name: ref.parts[0] };
+      return { kind: "alias", name: split.column };
     }
     if (r.kind === "needs-schema") return r;
     // r is unresolved — try the enclosing scope (correlation).
@@ -106,20 +159,15 @@ function aliasNames(scope: Scope): string[] {
   return scope.branches ? aliasNames(scope.branches.left) : [];
 }
 
-function resolveColumnInScope(scope: Scope, ref: ColumnRef): ColumnResolution {
-  if (ref.parts.length >= 2) {
-    const qualifier = normalizeName(ref.parts[ref.parts.length - 2]);
-    const source = scope.sources.get(qualifier);
-    return source ? { kind: "bound", source } : { kind: "unresolved" };
-  }
-
-  const name = normalizeName(ref.parts[0] ?? "");
+/** Resolve an unqualified column name against a single scope's sources (no qualifier given). */
+function resolveByColumnName(scope: Scope, column: string, fields: string[]): ColumnResolution {
+  const name = normalizeName(column);
   const sources = [...scope.sources.values()];
   const matches = sources.filter((s) => {
     const cols = sourceOutputs(s);
     return cols !== "unknown" && cols.some((c) => normalizeName(c) === name);
   });
-  if (matches.length === 1) return { kind: "bound", source: matches[0] };
+  if (matches.length === 1) return { kind: "bound", source: matches[0], column, fields };
   if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
   // No known source has it — but a source with unknown columns might (here or in a parent).
   return sources.some((s) => sourceOutputs(s) === "unknown")

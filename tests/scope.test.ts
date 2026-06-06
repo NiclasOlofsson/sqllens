@@ -82,8 +82,17 @@ describe("resolveColumn", () => {
     expect(resolveColumn(root, ref).kind).toBe("bound");
   });
 
-  it("does not bind a qualified column whose qualifier matches no source", () => {
+  it("reads x.y over a bare table as possible struct access (needs schema, not unresolved)", () => {
+    // Schema-free, `nope` could be a struct column of the bare table `t`, so `nope.a` cannot
+    // be proven unresolved without the catalog — it is needs-schema, not a bad qualifier.
     const { ref, root } = colOf("SELECT nope.a FROM tbl AS t", "nope.a");
+    expect(resolveColumn(root, ref).kind).toBe("needs-schema");
+  });
+
+  it("leaves a multi-part ref unresolved when its lead is neither a source nor a known column", () => {
+    // `p` exposes only `x`; `nope` is neither a visible source nor a column of `p`, so even
+    // read as struct access (nope.a) it cannot bind — genuinely unresolved.
+    const { ref, root } = colOf("WITH p AS (SELECT x FROM t) SELECT nope.a FROM p", "nope.a");
     expect(resolveColumn(root, ref).kind).toBe("unresolved");
   });
 
@@ -108,6 +117,31 @@ describe("resolveColumn", () => {
   it("binds a column to a LATERAL VIEW source", () => {
     const { ref, root } = colOf("SELECT v.col FROM t LATERAL VIEW explode(arr) v AS col", "v.col");
     expect(resolveColumn(root, ref).kind).toBe("bound");
+  });
+
+  it("binds a qualified struct field access (t.addr.city) to the table, not the field", () => {
+    // `t` is the source, `addr` the (struct) column, `city` a field of it. The old flat
+    // split read `addr` as the qualifier and reported unresolved — this asserts the fix.
+    const { ref, root } = colOf("SELECT t.addr.city FROM people AS t", "t.addr.city");
+    expect(resolveColumn(root, ref).kind).toBe("bound");
+  });
+
+  it("models struct navigation: t.addr.city is column `addr` with field path [city]", () => {
+    const { ref, root } = colOf("SELECT t.addr.city FROM people AS t", "t.addr.city");
+    const r = resolveColumn(root, ref);
+    if (r.kind !== "bound") throw new Error(`expected bound, got ${r.kind}`);
+    expect(r.column).toBe("addr");
+    expect(r.fields).toEqual(["city"]);
+  });
+
+  it("binds an unqualified struct field access (addr.city) to the column it navigates", () => {
+    // CTE `p` exposes column `addr`; `addr.city` reaches into it. `addr` is not a source,
+    // so it must be read as the column, with `city` a field — not as a qualifier.
+    const { ref, root } = colOf("WITH p AS (SELECT addr FROM t) SELECT addr.city FROM p", "addr.city");
+    const r = resolveColumn(root, ref);
+    if (r.kind !== "bound") throw new Error(`expected bound, got ${r.kind}`);
+    expect(r.column).toBe("addr");
+    expect(r.fields).toEqual(["city"]);
   });
 
   it("resolves a correlated qualified column against an enclosing scope", () => {

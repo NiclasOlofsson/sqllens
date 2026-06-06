@@ -1,6 +1,12 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { ColumnRef } from "../databricks/ir.js";
-import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
+import {
+  resolveColumn,
+  splitColumnRefInScope,
+  type ResolvedSource,
+  type Scope,
+  type ScopeTree,
+} from "../scope/scope.js";
 import type { Schema } from "./schema.js";
 
 // ---------------------------------------------------------------------------
@@ -126,12 +132,14 @@ function checkColumn(
   // rather than a column — don't flag it. resolveColumn applies the alias + precedence rules.
   if (resolveColumn(scope, ref).kind === "alias") return;
 
-  const name = normalizeName(ref.parts[ref.parts.length - 1] ?? "");
+  // Split off any struct/field navigation: `t.c.f` checks the column `c` (not the field `f`),
+  // and `c.f` checks the column `c`. Field types are not modelled, so fields aren't verified.
+  const split = splitColumnRefInScope(scope, ref.parts);
+  const name = normalizeName(split.column);
 
-  if (ref.parts.length >= 2) {
-    const qualifier = normalizeName(ref.parts[ref.parts.length - 2]);
+  if (split.qualifier !== undefined) {
     for (let s: Scope | undefined = scope; s; s = s.parent) {
-      const src = s.sources.get(qualifier);
+      const src = s.sources.get(split.qualifier);
       if (!src) continue;
       const cols = sourceColumns(src, schema, resolved);
       if (cols && !cols.some((c) => normalizeName(c) === name)) {
@@ -139,7 +147,7 @@ function checkColumn(
       }
       return; // qualifier resolved (or columns unknown) — done
     }
-    return; // qualifier matched no source (struct access / correlated) — don't flag
+    return; // qualifier visible but not found in this chain — defensive; don't flag
   }
 
   // Unqualified: the innermost scope with a known match wins; ambiguous if several here.
