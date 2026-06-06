@@ -38,6 +38,8 @@ export interface QueryExpr {
   kind: "query";
   ctes: CteDef[];
   body: QueryBody;
+  /** ORDER BY sort expressions (from the query's queryOrganization), if present. */
+  orderBy?: Expr[];
   cst: ParserRuleContext;
 }
 
@@ -277,7 +279,32 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
   // the CTE bodies (which sit under `ctes`, earlier in the tree).
   const queryTerm = directChildrenOfRule(query, P.RULE_queryTerm)[0];
   if (!queryTerm) throw new Error("lower: query has no queryTerm body");
-  return { kind: "query", ctes, body: lowerQueryTerm(queryTerm), cst: query };
+  return { kind: "query", ctes, body: lowerQueryTerm(queryTerm), orderBy: extractOrderBy(query), cst: query };
+}
+
+/** The ORDER BY sort expressions from the query's queryOrganization (not SORT/CLUSTER/DISTRIBUTE BY). */
+function extractOrderBy(query: ParserRuleContext): Expr[] | undefined {
+  const qo = directChildrenOfRule(query, P.RULE_queryOrganization)[0];
+  if (!qo) return undefined;
+  const items: Expr[] = [];
+  let started = false;
+  for (let i = 0; i < qo.getChildCount(); i++) {
+    const child = qo.getChild(i);
+    if (!(child instanceof ParserRuleContext)) {
+      const t = (child as TerminalNode | null)?.symbol?.type;
+      if (t === P.ORDER) started = true;
+      else if (started && (t === P.SORT || t === P.CLUSTER || t === P.DISTRIBUTE)) break;
+      continue;
+    }
+    if (!started) continue;
+    if (child.ruleIndex === P.RULE_sortItem) {
+      const e = firstOfRule(child, P.RULE_expression);
+      items.push(e ? lowerExpression(e) : otherExpr(child));
+    } else {
+      break; // a clusterBy/distributeBy expression — past the ORDER BY group
+    }
+  }
+  return items.length ? items : undefined;
 }
 
 /** A queryTerm is either a set operation (two queryTerm branches) or a single select. */
@@ -293,6 +320,12 @@ function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
       cst: queryTerm,
     };
   }
+  // A parenthesized query — queryPrimary is `( query )`. Unwrap to its body, or nested
+  // set ops / WHEREs inside the parens are silently lost.
+  const queryPrimary = firstOfRule(queryTerm, P.RULE_queryPrimary);
+  const innerQuery = queryPrimary ? directChildrenOfRule(queryPrimary, P.RULE_query)[0] : undefined;
+  if (innerQuery) return lowerQuery(innerQuery).body;
+
   const querySpec = firstOfRule(queryTerm, P.RULE_querySpecification);
   if (!querySpec) throw new Error("lower: queryTerm has no querySpecification");
   return buildSelect(querySpec);
