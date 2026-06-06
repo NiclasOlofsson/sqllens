@@ -8,3 +8,7 @@ src/generated/
 
 # reference grammars (sparse clone of antlr/grammars-v4 — not our source)
 vendor/
+
+# local-only corpus: real compiled SQL copied from our dbt projects.
+# NEVER commit — proprietary. Snapshot so dbt re-runs don't disturb our tests.
+harness/local/
