@@ -7,36 +7,30 @@ export { parseDatabricks, type ParseResult } from "./databricks/parse.js";
 export { lower } from "./databricks/lower.js";
 
 export type {
-  CteDef,
-  Projection,
-  QueryBody,
-  QueryExpr,
-  SelectExpr,
-  SetOpExpr,
-  Source,
-  SubquerySource,
-  TableSource,
+	CteDef,
+	Projection,
+	QueryBody,
+	QueryExpr,
+	SelectExpr,
+	SetOpExpr,
+	Source,
+	SubquerySource,
+	TableSource,
 } from "./ir/ir.js";
 
-export {
-  resolveScopes,
-  type CteRef,
-  type ResolvedSource,
-  type Scope,
-  type ScopeTree,
-} from "./scope/scope.js";
+export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
 export { qualify, type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
 
 export {
-  deriveSymbols,
-  MAIN_FRAME,
-  type Span,
-  type Sym,
-  type SymbolKind,
-  type SymbolModifier,
+	deriveSymbols,
+	MAIN_FRAME,
+	type Span,
+	type Sym,
+	type SymbolKind,
+	type SymbolModifier,
 } from "./symbols/symbols.js";
 
 export { inferType } from "./infer/infer.js";

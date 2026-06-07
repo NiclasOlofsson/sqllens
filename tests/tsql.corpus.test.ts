@@ -22,48 +22,58 @@ const EXAMPLES = resolve("vendor/grammars-v4/sql/tsql/examples");
 
 /** Parse a whole T-SQL script with the full-file entry rule; return the syntax-error count. */
 function parseFullFile(sql: string): number {
-  const lexer = new TSqlLexer(CharStream.fromString(sql));
-  const parser = new TSqlParser(new CommonTokenStream(lexer));
-  let errors = 0;
-  const listener = {
-    syntaxError() { errors++; },
-    reportAmbiguity() {}, reportAttemptingFullContext() {}, reportContextSensitivity() {},
-  };
-  lexer.removeErrorListeners(); lexer.addErrorListener(listener as never);
-  parser.removeErrorListeners(); parser.addErrorListener(listener as never);
-  parser.tsql_file();
-  return errors;
+	const lexer = new TSqlLexer(CharStream.fromString(sql));
+	const parser = new TSqlParser(new CommonTokenStream(lexer));
+	let errors = 0;
+	const listener = {
+		syntaxError() {
+			errors++;
+		},
+		reportAmbiguity() {},
+		reportAttemptingFullContext() {},
+		reportContextSensitivity() {},
+	};
+	lexer.removeErrorListeners();
+	lexer.addErrorListener(listener as never);
+	parser.removeErrorListeners();
+	parser.addErrorListener(listener as never);
+	parser.tsql_file();
+	return errors;
 }
 
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
-  const files = readdirSync(EXAMPLES).filter((f) => f.endsWith(".sql"));
+	const files = readdirSync(EXAMPLES).filter((f) => f.endsWith(".sql"));
 
-  it("parses the full T-SQL example scripts via tsql_file (>= baseline)", () => {
-    let ok = 0;
-    const fails: string[] = [];
-    for (const rel of files) {
-      let errs = 1;
-      try { errs = parseFullFile(readFileSync(join(EXAMPLES, rel), "utf8")); } catch { errs = -1; }
-      if (errs === 0) ok++;
-      else fails.push(rel);
-    }
-    // 135/137 today; the two failures (constants.sql, keywords_reserved.sql) are upstream
-    // grammars-v4 grammar gaps. Assert no regression below the current pass count.
-    expect(ok).toBeGreaterThanOrEqual(135);
-    expect(fails.sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
-  }, 120000);
+	it("parses the full T-SQL example scripts via tsql_file (>= baseline)", () => {
+		let ok = 0;
+		const fails: string[] = [];
+		for (const rel of files) {
+			let errs = 1;
+			try {
+				errs = parseFullFile(readFileSync(join(EXAMPLES, rel), "utf8"));
+			} catch {
+				errs = -1;
+			}
+			if (errs === 0) ok++;
+			else fails.push(rel);
+		}
+		// 135/137 today; the two failures (constants.sql, keywords_reserved.sql) are upstream
+		// grammars-v4 grammar gaps. Assert no regression below the current pass count.
+		expect(ok).toBeGreaterThanOrEqual(135);
+		expect(fails.sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
+	}, 120000);
 
-  it("lowers + scopes every example our SELECT parser accepts, without throwing", () => {
-    let accepted = 0;
-    for (const rel of files) {
-      const sql = readFileSync(join(EXAMPLES, rel), "utf8");
-      const r = parseTSql(sql);
-      if (r.errors === 0) {
-        accepted++;
-        expect(() => resolveScopes(lower(r.tree)), rel).not.toThrow();
-      }
-    }
-    // The SELECT-bearing subset of the examples (~19 files) — proves lower() survives them.
-    expect(accepted).toBeGreaterThan(0);
-  }, 120000);
+	it("lowers + scopes every example our SELECT parser accepts, without throwing", () => {
+		let accepted = 0;
+		for (const rel of files) {
+			const sql = readFileSync(join(EXAMPLES, rel), "utf8");
+			const r = parseTSql(sql);
+			if (r.errors === 0) {
+				accepted++;
+				expect(() => resolveScopes(lower(r.tree)), rel).not.toThrow();
+			}
+		}
+		// The SELECT-bearing subset of the examples (~19 files) — proves lower() survives them.
+		expect(accepted).toBeGreaterThan(0);
+	}, 120000);
 });

@@ -7,5 +7,10 @@ src/generated/
 vendor/
 harness/local/
 
-# Dependencies.
+# Dependencies. package-lock.json is npm-managed (npm rewrites it to 2-space on
+# install, so formatting it just churns).
 node_modules/
+package-lock.json
+
+# Hand-maintained prose docs — Prettier's markdown reflow just churns them.
+*.md

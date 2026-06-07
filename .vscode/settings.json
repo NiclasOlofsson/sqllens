@@ -22,8 +22,12 @@
 	"[jsonc]": {
 		"editor.defaultFormatter": "esbenp.prettier-vscode"
 	},
+	// Tabs, width 4. detectIndentation MUST be false — otherwise VS Code auto-detects
+	// indentation per file and silently overrides insertSpaces/tabSize (the "it thinks
+	// I have 2 spaces" bug). Reload the window after changing this.
 	"editor.insertSpaces": false,
 	"editor.tabSize": 4,
+	"editor.detectIndentation": false,
 	"files.trimTrailingWhitespace": true,
 	"files.insertFinalNewline": true
 }
