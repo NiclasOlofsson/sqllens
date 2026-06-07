@@ -247,13 +247,27 @@ function fillScope(scope: Scope): void {
 	}
 
 	scope.outputs = computeOutputs(scope, body);
+	registerPivotAliasSource(scope, body);
 }
 
 /** A select's output columns, accounting for a PIVOT/UNPIVOT transforming the FROM relation. */
 function computeOutputs(scope: Scope, body: SelectExpr): string[] | "unknown" {
-	if (body.unpivot) return unpivotOutputs(scope, body.unpivot);
-	if (body.pivot) return pivotOutputs(scope, body.pivot);
+	// T-SQL exposes the pivoted/unpivoted relation under an alias (registered as a source below);
+	// the SELECT's own output is then its projections. Spark's pivot transforms the SELECT directly.
+	if (body.unpivot && !body.unpivot.alias) return unpivotOutputs(scope, body.unpivot);
+	if (body.pivot && !body.pivot.alias) return pivotOutputs(scope, body.pivot);
 	return outputsOf(body);
+}
+
+/** T-SQL: a `… PIVOT/UNPIVOT (…) AS x` is a named relation. Expose it under `x` as a synthetic
+ *  source whose columns are the passthrough + produced columns, so later `x.col` refs resolve. */
+function registerPivotAliasSource(scope: Scope, body: SelectExpr): void {
+	const alias = body.pivot?.alias ?? body.unpivot?.alias;
+	if (!alias) return;
+	const cols = body.unpivot ? unpivotOutputs(scope, body.unpivot) : pivotOutputs(scope, body.pivot!);
+	if (cols === "unknown") return;
+	const source: TableSource = { kind: "table", name: [alias], alias, columnAliases: cols, cst: body.cst };
+	scope.sources.set(normalizeName(alias), { kind: "table", name: [alias], source });
 }
 
 /** The columns of the relation being pivoted/unpivoted — the first non-lateral source. */

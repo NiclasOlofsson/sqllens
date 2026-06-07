@@ -5,11 +5,13 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	PivotInfo,
 	Projection,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,
 	Source,
+	UnpivotInfo,
 } from "../ir/ir.js";
 
 // ---------------------------------------------------------------------------
@@ -172,8 +174,51 @@ function buildSelect(spec: ParserRuleContext): SelectExpr {
 		having,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
+		pivot: fromClause ? extractPivot(fromClause) : undefined,
+		unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
 		cst: spec,
 	};
+}
+
+// --- PIVOT / UNPIVOT --------------------------------------------------------
+
+function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
+	// pivot: PIVOT pivot_clause as_table_alias
+	// pivot_clause: '(' aggregate_windowed_function FOR full_column_name IN column_alias_list ')'
+	const pivot = shallowNodesOfRule(fromClause, P.RULE_pivot)[0];
+	if (!pivot) return undefined;
+	const clause = firstOfRule(pivot, P.RULE_pivot_clause);
+	if (!clause) return undefined;
+	const list = directChildrenOfRule(clause, P.RULE_column_alias_list)[0];
+	const values = list ? directChildrenOfRule(list, P.RULE_column_alias).map((c) => stripQuotes(c.getText())) : [];
+	const forCol = directChildrenOfRule(clause, P.RULE_full_column_name)[0];
+	const forColumns = forCol ? [lastPart(nameParts(forCol))] : [];
+	const agg = firstOfRule(clause, P.RULE_aggregate_windowed_function);
+	const aggColumns = agg ? collectOfRule(agg, P.RULE_full_column_name).map((c) => lastPart(nameParts(c))) : [];
+	return { values, forColumns, aggColumns, alias: tableAlias(pivot)?.text };
+}
+
+function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined {
+	// unpivot: UNPIVOT unpivot_clause as_table_alias
+	// unpivot_clause: '(' unpivot_exp=expression FOR full_column_name IN '(' full_column_name_list ')' ')'
+	const unpivot = shallowNodesOfRule(fromClause, P.RULE_unpivot)[0];
+	if (!unpivot) return undefined;
+	const clause = firstOfRule(unpivot, P.RULE_unpivot_clause);
+	if (!clause) return undefined;
+	const valueExpr = directChildrenOfRule(clause, P.RULE_expression)[0];
+	const valueFcn = valueExpr ? firstOfRule(valueExpr, P.RULE_full_column_name) : undefined;
+	const valueColumn = valueFcn ? lastPart(nameParts(valueFcn)) : stripQuotes(valueExpr?.getText() ?? "");
+	const nameCol = directChildrenOfRule(clause, P.RULE_full_column_name)[0];
+	const nameColumn = nameCol ? lastPart(nameParts(nameCol)) : "";
+	const listNode = firstOfRule(clause, P.RULE_full_column_name_list);
+	const removed = listNode
+		? directChildrenOfRule(listNode, P.RULE_full_column_name).map((c) => lastPart(nameParts(c)))
+		: [];
+	return { valueColumn, nameColumn, removed, alias: tableAlias(unpivot)?.text };
+}
+
+function lastPart(parts: string[]): string {
+	return parts[parts.length - 1] ?? "";
 }
 
 // --- projections -----------------------------------------------------------
@@ -212,7 +257,8 @@ function buildSource(item: ParserRuleContext): Source {
 	const alias = tableAlias(item);
 	const derived = firstOfRule(item, P.RULE_derived_table);
 	if (derived) {
-		const inner = directChildrenOfRule(derived, P.RULE_select_statement)[0];
+		// derived_table -> subquery -> select_statement (the select is a grandchild, not direct).
+		const inner = firstOfRule(derived, P.RULE_select_statement);
 		return {
 			kind: "subquery",
 			query: inner ? lowerSelect(inner) : emptyQuery(derived),

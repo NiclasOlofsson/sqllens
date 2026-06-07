@@ -61,6 +61,9 @@ export interface PivotInfo {
 	forColumns: string[];
 	/** Columns referenced by the aggregate(s), consumed by the pivot. */
 	aggColumns: string[];
+	/** The pivoted relation's alias (T-SQL `… PIVOT (…) AS pvt`), referenced by later columns.
+	 *  Absent for Spark, where the pivot transforms the SELECT directly. */
+	alias?: string;
 }
 
 export interface UnpivotInfo {
@@ -70,6 +73,8 @@ export interface UnpivotInfo {
 	nameColumn: string;
 	/** The input columns consumed (turned into rows). */
 	removed: string[];
+	/** The unpivoted relation's alias (T-SQL `… UNPIVOT (…) AS u`), referenced by later columns. */
+	alias?: string;
 }
 
 export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "orderBy";

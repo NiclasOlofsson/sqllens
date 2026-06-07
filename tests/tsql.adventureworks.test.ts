@@ -56,17 +56,17 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 		expect(parsed).toBe(aw.views.length);
 		// Every table referenced by every view resolves against the extracted 71-table catalog.
 		expect(unknownTableTotal).toBe(0);
-		// All but the PIVOT view (whose `pvt.*` pivoted columns lower() doesn't model) resolve every
-		// column too — real schema-fed name resolution on real T-SQL.
-		expect(columnCleanViews).toBeGreaterThanOrEqual(aw.views.length - 2);
-	});
+		// Every view resolves every column against the real catalog — including the PIVOT view
+		// (the pivoted relation is exposed under its alias) and the derived-table views.
+		expect(columnCleanViews).toBe(aw.views.length);
+	}, 60000);
 
 	it("resolves real columns against the schema on a multi-join view (no unknown-table)", () => {
 		const v = view("Sales.vStoreWithAddresses");
 		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
 		const q = qualify(tree, schema);
 		expect(q.diagnostics.filter((d) => d.kind === "unknown-table")).toEqual([]);
-	});
+	}, 30000);
 
 	it("traces an aliased view column back to its base table (lineage on real T-SQL)", () => {
 		// [HumanResources].[vEmployeeDepartment]: `d.[Name] AS [Department]` where d = HumanResources.Department.
@@ -76,7 +76,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 		expect(dept?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain(
 			"HumanResources.Department.Name",
 		);
-	});
+	}, 30000);
 
 	it("infers a column's type from the real catalog (infer travels on real T-SQL)", () => {
 		// vEmployeeDepartment projects `edh.[StartDate]` → EmployeeDepartmentHistory.StartDate (date).
@@ -86,7 +86,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 		if (body.kind !== "select") throw new Error("select");
 		const startDate = body.projections.find((p) => p.name === "StartDate");
 		expect(inferType(startDate!.expr, tree.root, schema)).toEqual({ kind: "scalar", name: "date" });
-	});
+	}, 30000);
 
 	function view(name: string): { name: string; body: string } {
 		const v = aw.views.find((x) => x.name.toLowerCase() === name.toLowerCase());
