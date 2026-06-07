@@ -1,4 +1,4 @@
-import type { Expr, Projection, QueryExpr } from "../databricks/ir.js";
+import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { Schema } from "../qualify/schema.js";
 import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { normalizeName, resolveColumnSource } from "../sema/resolve.js";

@@ -10,7 +10,7 @@ import type {
   SubquerySource,
   TableSource,
   UnpivotInfo,
-} from "../databricks/ir.js";
+} from "../ir/ir.js";
 
 // ---------------------------------------------------------------------------
 // Scope — the symbol table over the IR. One Scope per query block; it records

@@ -1,20 +1,22 @@
-// Public API for the Databricks semantic layer: parse -> lower -> scope -> qualify.
-// Syntax + name resolution only (see docs/PLAN.md Phase 1.5); no transpilation or lineage.
+// Public API: parse (Databricks) -> lower -> scope -> qualify -> infer / lineage / symbols, all
+// over the shared dialect-neutral IR (src/ir/ir.ts). Name resolution + type inference + column
+// lineage; no transpilation. (T-SQL parse/lower exist under src/tsql but aren't exported here yet.)
 
 export { parseDatabricks, type ParseResult } from "./databricks/parse.js";
 
-export {
-  lower,
-  type CteDef,
-  type Projection,
-  type QueryBody,
-  type QueryExpr,
-  type SelectExpr,
-  type SetOpExpr,
-  type Source,
-  type SubquerySource,
-  type TableSource,
-} from "./databricks/ir.js";
+export { lower } from "./databricks/lower.js";
+
+export type {
+  CteDef,
+  Projection,
+  QueryBody,
+  QueryExpr,
+  SelectExpr,
+  SetOpExpr,
+  Source,
+  SubquerySource,
+  TableSource,
+} from "./ir/ir.js";
 
 export {
   resolveScopes,

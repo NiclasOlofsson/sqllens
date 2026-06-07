@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { Expr, Projection } from "../databricks/ir.js";
+import type { Expr, Projection } from "../ir/ir.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";

@@ -2,7 +2,8 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { ParserRuleContext, type ParseTree } from "antlr4ng";
 import { describe, expect, it } from "vitest";
-import { lower, type Expr, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
+import { lower } from "../src/databricks/lower.js";
+import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { DatabricksParser as P } from "../src/generated/databricks/DatabricksParser.js";
 

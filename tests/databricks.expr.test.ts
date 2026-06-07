@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { lower, type Expr, type SelectExpr } from "../src/databricks/ir.js";
+import { lower } from "../src/databricks/lower.js";
+import type { Expr, SelectExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 
 function selectOf(sql: string): SelectExpr {

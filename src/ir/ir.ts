@@ -2,7 +2,7 @@ import type { ParserRuleContext } from "antlr4ng";
 
 // ---------------------------------------------------------------------------
 // IR — a compact, DIALECT-NEUTRAL semantic model. Each dialect's `lower()` (e.g.
-// src/databricks/ir.ts, src/tsql/lower.ts) maps its CST to these same types; the
+// src/databricks/lower.ts, src/tsql/lower.ts) maps its CST to these same types; the
 // semantic layer (scope, qualify, infer, lineage, symbols) operates only on the
 // IR and is therefore dialect-agnostic. Every node keeps a back-reference to its
 // CST context (`cst`) so exact source spans remain available (cst.start/cst.stop).

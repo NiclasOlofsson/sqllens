@@ -230,7 +230,7 @@ Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sq
 
 ### Task 1.5.1: Parse wrapper + IR types + `lower(tree)`
 
-**Files:** Create `src/databricks/parse.ts`, `src/databricks/ir.ts`; Test `tests/databricks.ir.test.ts`
+**Files:** Create `src/databricks/parse.ts`, `src/databricks/lower.ts` (the CST→IR lowering; IR types live in `src/ir/ir.ts`); Test `tests/databricks.ir.test.ts`
 
 - [ ] **Step 1:** `parseDatabricks(sql) → { tree, errors }` — one wrapper that dedupes the lexer/parser/error-listener boilerplate currently copied across the test files.
 - [ ] **Step 2:** Define the IR node types in `ir.ts`: `QueryExpr` (CTEs + body), `SelectExpr` (projections, sources, clauses we use), `Source` (`table | subquery | cte-ref | join`), `Projection` (expr CST-ref, output name, `isStar`), `ColumnRef` (qualifier?, name), `CteDef` (name, column aliases?, body). Every node carries a back-ref to its CST context + a `span` helper.

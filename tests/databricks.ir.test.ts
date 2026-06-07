@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { parseDatabricks } from "../src/databricks/parse.js";
-import { lower, type QueryBody, type SelectExpr } from "../src/databricks/ir.js";
+import { lower } from "../src/databricks/lower.js";
+import type { QueryBody, SelectExpr } from "../src/ir/ir.js";
 
 function asSelect(body: QueryBody): SelectExpr {
   if (body.kind !== "select") throw new Error("expected a select body");

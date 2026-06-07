@@ -38,27 +38,6 @@ import {
 // an explicit `other` node, never dropped (the IR-completeness gate keeps it 0).
 // ---------------------------------------------------------------------------
 
-// The IR types live dialect-neutrally in src/ir/ir.ts; re-export them so existing
-// `from "../databricks/ir.js"` imports (tests, etc.) keep resolving.
-export type {
-  Clause,
-  ColumnRef,
-  CteDef,
-  Expr,
-  LateralViewSource,
-  PivotInfo,
-  Projection,
-  QueryBody,
-  QueryExpr,
-  SelectExpr,
-  SetOpExpr,
-  Source,
-  SubquerySource,
-  TableSource,
-  UnpivotInfo,
-  WindowSpec,
-} from "../ir/ir.js";
-
 import type {
   Clause,
   ColumnRef,

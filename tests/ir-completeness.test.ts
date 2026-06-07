@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
-import { lower, type Expr, type QueryBody, type QueryExpr } from "../src/databricks/ir.js";
+import { lower } from "../src/databricks/lower.js";
+import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 
 // IR completeness gate: every expression in every real Oatly model must lower to a TYPED

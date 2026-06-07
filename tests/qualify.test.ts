@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { lower } from "../src/databricks/ir.js";
+import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";

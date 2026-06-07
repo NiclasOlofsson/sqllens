@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { ColumnRef } from "../databricks/ir.js";
+import type { ColumnRef } from "../ir/ir.js";
 import {
   resolveColumn,
   splitColumnRefInScope,
