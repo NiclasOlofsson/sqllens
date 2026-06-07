@@ -45,6 +45,7 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 				expr.op,
 				inferType(expr.left, scope, schema, ctx),
 				inferType(expr.right, scope, schema, ctx),
+				d.floatDivision,
 			);
 		case "unary":
 			return unaryType(expr.op, inferType(expr.operand, scope, schema, ctx));
@@ -242,14 +243,20 @@ function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx, dialect: strin
 const COMPARISON = new Set(["=", "==", "!=", "<>", "<", "<=", ">", ">=", "<=>"]);
 const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "div"]);
 
-function binaryType(op: string, l: Type, r: Type): Type {
+function binaryType(op: string, l: Type, r: Type, floatDivision: boolean): Type {
 	const o = op.toLowerCase().trim();
 	if (COMPARISON.has(o) || o === "and" || o === "or") return BOOLEAN;
 	if (o === "||") return scalar("string");
+	if (o === "/" && floatDivision) {
+		// Spark/Databricks `/` is float division: decimal/decimal stays decimal, otherwise → double.
+		if (l.kind === "unknown" || r.kind === "unknown") return UNKNOWN;
+		const decimal = l.kind === "scalar" && l.name === "decimal" && r.kind === "scalar" && r.name === "decimal";
+		return decimal ? scalar("decimal") : scalar("double");
+	}
 	if (ARITHMETIC.has(o)) {
 		if (isDate(l) && isInterval(r)) return l; // date/timestamp ± interval keeps the date type
 		if (isDate(r) && isInterval(l)) return r;
-		return coerce(l, r);
+		return coerce(l, r); // typed division (T-SQL int/int → int) and the other arithmetic ops
 	}
 	return UNKNOWN;
 }

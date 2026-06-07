@@ -340,6 +340,12 @@ export const FUNCTION_RETURNS: Record<string, FnRule> = {
 	concat: concatRule,
 
 	...group(dateArg, ["date_add", "dateadd", "date_sub", "timestampadd", "add_months"]),
+
+	// window/ranking — Spark's ranking functions return int (T-SQL's return bigint); the
+	// value-returning analytics keep their argument's type.
+	...group(fixed(I), ["row_number", "rank", "dense_rank", "ntile"]),
+	...group(fixed(D), ["percent_rank", "cume_dist"]),
+	...group(firstArg, ["lag", "lead"]),
 };
 
 /** T-SQL SUM/AVG return type (per the MS reference): tinyint/smallint promote to int; int/bigint/

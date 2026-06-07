@@ -57,6 +57,20 @@ describe("inferType", () => {
 		});
 	});
 
+	it("types Spark `/` as float division (int / int → double, not int)", () => {
+		expect(typeOf("SELECT a / b FROM t", new Schema({ t: { a: "int", b: "int" } }))).toEqual({
+			kind: "scalar",
+			name: "double",
+		});
+	});
+
+	it("types Spark ranking functions as int", () => {
+		expect(typeOf("SELECT row_number() OVER (ORDER BY a) FROM t", new Schema({ t: { a: "int" } }))).toEqual({
+			kind: "scalar",
+			name: "int",
+		});
+	});
+
 	it("does not terminate-loop on a recursive CTE (returns a type, unknown is fine)", () => {
 		const t = typeOf(
 			"WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c) SELECT n FROM c",

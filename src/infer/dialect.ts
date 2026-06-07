@@ -12,18 +12,23 @@ export interface InferDialect {
 	functions: Record<string, FnRule>;
 	literal(text: string): Type;
 	parseType(text: string): Type;
+	/** `/` returns a float for any numeric operands (Spark: int/int → double). When false the
+	 *  operator is typed by ordinary coercion (T-SQL: int/int → int, "typed division"). */
+	floatDivision: boolean;
 }
 
 const databricks: InferDialect = {
 	functions: FUNCTION_RETURNS,
 	literal: databricksLiteral,
 	parseType: (t) => parseType(t),
+	floatDivision: true,
 };
 
 const tsql: InferDialect = {
 	functions: TSQL_FUNCTION_RETURNS,
 	literal: tsqlLiteral,
 	parseType: (t) => parseType(t, TSQL_ALIASES),
+	floatDivision: false,
 };
 
 const DIALECTS: Record<string, InferDialect> = { databricks, tsql };
