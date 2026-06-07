@@ -5,6 +5,7 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	LimitInfo,
 	PivotInfo,
 	Projection,
 	QueryBody,
@@ -57,7 +58,7 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 	const body = query ? lowerQueryExpression(query) : emptyBody(selectStmt);
 	const orderBy = extractOrderBy(selectStmt);
 	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
-	return { kind: "query", ctes, body, orderBy, cst: query ?? selectStmt };
+	return { kind: "query", ctes, body, orderBy, limit: extractLimit(selectStmt), cst: query ?? selectStmt };
 }
 
 function lowerCte(cte: ParserRuleContext): CteDef {
@@ -82,7 +83,39 @@ function lowerSelect(selectStmt: ParserRuleContext): QueryExpr {
 	const body = query ? lowerQueryExpression(query) : emptyBody(selectStmt);
 	const orderBy = extractOrderBy(selectStmt);
 	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
-	return { kind: "query", ctes: [], body, orderBy, cst: selectStmt };
+	return { kind: "query", ctes: [], body, orderBy, limit: extractLimit(selectStmt), cst: selectStmt };
+}
+
+/** TOP n / TOP (expr) [PERCENT] [WITH TIES] from the query_specification, and OFFSET/FETCH from the
+ *  select_order_by_clause. Row-limiting only — captured so it's modelled, not dropped. */
+function extractLimit(selectStmt: ParserRuleContext): LimitInfo | undefined {
+	const info: LimitInfo = {};
+	let any = false;
+
+	const top = shallowFirstOfRule(selectStmt, P.RULE_top_clause);
+	if (top) {
+		any = true;
+		const percent = firstOfRule(top, P.RULE_top_percent);
+		const countNode = percent ?? firstOfRule(top, P.RULE_top_count);
+		const expr = countNode ? firstOfRule(countNode, P.RULE_expression) : undefined;
+		info.top = expr
+			? lowerExpression(expr)
+			: { kind: "literal", text: countNode ? (leftmostToken(countNode) ?? "") : "", cst: top };
+		if (percent) info.percent = true;
+		if (hasToken(top, P.TIES)) info.withTies = true;
+	}
+
+	const obc = shallowFirstOfRule(selectStmt, P.RULE_select_order_by_clause);
+	// select_order_by_clause: order_by_clause (OFFSET expr ROWS (FETCH … expr ROWS ONLY)?)? — the
+	// offset/fetch expressions are direct children (the sort keys live inside order_by_clause).
+	const offsetFetch = obc ? directChildrenOfRule(obc, P.RULE_expression) : [];
+	if (offsetFetch.length) {
+		any = true;
+		info.offset = lowerExpression(offsetFetch[0]);
+		if (offsetFetch[1]) info.fetch = lowerExpression(offsetFetch[1]);
+	}
+
+	return any ? info : undefined;
 }
 
 /** query_expression: query_specification select_order_by? sql_union* | '(' query_expression ')' (UNION …)? */
@@ -268,9 +301,53 @@ function buildSource(item: ParserRuleContext): Source {
 			cst: item,
 		};
 	}
+
+	// OPENJSON / OPENXML — columns come from the `WITH (col type, …)` schema; the alias lives inside
+	// the open_json/open_xml node. Without a WITH clause, OPENJSON's default shape is key/value/type.
+	const openNode = directChildrenOfRule(item, P.RULE_open_json)[0] ?? directChildrenOfRule(item, P.RULE_open_xml)[0];
+	if (openNode) {
+		const al = innerTableAlias(openNode) ?? alias;
+		const declared = collectOfRule(openNode, P.RULE_column_declaration)
+			.map((cd) => stripQuotes(firstOfRule(cd, P.RULE_id_)?.getText() ?? ""))
+			.filter((c) => c.length > 0);
+		const isJson = openNode.ruleIndex === P.RULE_open_json;
+		const columnAliases = declared.length ? declared : isJson ? ["key", "value", "type"] : undefined;
+		return {
+			kind: "table",
+			name: [al?.text ?? (isJson ? "openjson" : "openxml")],
+			alias: al?.text,
+			aliasCst: al?.cst,
+			columnAliases,
+			cst: item,
+		};
+	}
+
+	// Table-valued function or XML `.nodes()` — opaque columns (a TVF's columns need its signature; a
+	// `.nodes()` relation's columns are produced by later `.value()` calls, i.e. XML shredding, a
+	// separate subsystem). Modelled as a source so refs resolve to it rather than mis-binding.
+	const fn = directChildrenOfRule(item, P.RULE_function_call)[0];
+	const nodes = firstOfRule(item, P.RULE_nodes_method);
+	if (fn || nodes) {
+		return {
+			kind: "table",
+			name: [fn ? functionName(fn) : "nodes"],
+			alias: alias?.text,
+			aliasCst: alias?.cst,
+			columnAliases: columnAliasList(item), // `… AS f(c1, c2)` declares the output columns
+			cst: item,
+		};
+	}
+
 	const full = directChildrenOfRule(item, P.RULE_full_table_name)[0];
 	const parts = full ? nameParts(full) : [stripQuotes(item.getText())];
 	return { kind: "table", name: parts, alias: alias?.text, aliasCst: alias?.cst, cst: item };
+}
+
+/** The as_table_alias nested inside an open_json/open_xml node (not a direct child of the item). */
+function innerTableAlias(node: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
+	const asAlias = firstOfRule(node, P.RULE_as_table_alias);
+	const id = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
+	return id ? { text: stripQuotes(id.getText()), cst: id } : undefined;
 }
 
 function tableAlias(item: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
@@ -376,6 +453,11 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 	const cmp = directChildrenOfRule(pred, P.RULE_comparison_operator)[0];
 	if (cmp && exprs.length >= 2) {
 		return { kind: "binary", op: cmp.getText(), left: operand, right: lowerExpression(exprs[1]), cst: pred };
+	}
+	// Legacy non-ANSI outer-join operator `*=` (SQL-82) appearing in WHERE — modelled as a comparison
+	// so its columns are captured (the outer-join semantics aren't reconstructed).
+	if (hasDirectToken(pred, P.MULT_ASSIGN) && exprs.length >= 2) {
+		return { kind: "binary", op: "*=", left: operand, right: lowerExpression(exprs[1]), cst: pred };
 	}
 	return otherExpr(pred);
 }

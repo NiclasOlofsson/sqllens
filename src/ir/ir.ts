@@ -18,7 +18,23 @@ export interface QueryExpr {
 	body: QueryBody;
 	/** ORDER BY sort expressions, if present. */
 	orderBy?: Expr[];
+	/** Row-limiting clause (Spark LIMIT, T-SQL TOP / OFFSET-FETCH). Does not change the output
+	 *  columns or types — kept so the clause is modelled rather than silently dropped. */
+	limit?: LimitInfo;
 	cst: ParserRuleContext;
+}
+
+export interface LimitInfo {
+	/** TOP n / TOP (expr) / LIMIT n — the row-count expression. */
+	top?: Expr;
+	/** TOP … PERCENT. */
+	percent?: boolean;
+	/** TOP … WITH TIES. */
+	withTies?: boolean;
+	/** OFFSET n ROWS. */
+	offset?: Expr;
+	/** FETCH NEXT n ROWS ONLY. */
+	fetch?: Expr;
 }
 
 export type QueryBody = SelectExpr | SetOpExpr;
