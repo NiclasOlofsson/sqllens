@@ -346,6 +346,19 @@ export const FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(fixed(I), ["row_number", "rank", "dense_rank", "ntile"]),
 	...group(fixed(D), ["percent_rank", "cume_dist"]),
 	...group(firstArg, ["lag", "lead"]),
+	// string-returning system / session functions
+	...group(fixed(S), [
+		"current_user",
+		"current_database",
+		"current_schema",
+		"current_catalog",
+		"collation",
+		"randstr",
+		"uuid",
+	]),
+	factorial: fixed(BIG),
+	bitmap_count: fixed(BIG),
+	regexp_split: fixed({ kind: "array", element: S }),
 };
 
 /** T-SQL SUM/AVG return type (per the MS reference): tinyint/smallint promote to int; int/bigint/
@@ -468,6 +481,60 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(common, ["coalesce"]),
 	iif: (args) => commonType(args.slice(-2)),
 	choose: (args) => commonType(args.slice(1)),
+	// logical / choice (SQL Server 2022+)
+	...group(common, ["greatest", "least"]),
+	// window/analytic value functions keep the argument's type; PERCENTILE_CONT → float
+	...group(firstArg, ["first_value", "last_value"]),
+	percentile_cont: fixed(D),
+	// JSON builders → string; JSON_PATH_EXISTS → int (bit)
+	...group(fixed(S), ["json_object", "json_array"]),
+	json_path_exists: fixed(I),
+	// date/time helpers — DATETRUNC/DATE_BUCKET keep the date argument's type
+	...group(dateArg, ["datetrunc", "date_bucket"]),
+	datetimeoffsetfromparts: fixed(TS),
+	...group(fixed(S), ["current_timezone", "current_timezone_id"]),
+	// string-returning system / user / metadata-name functions
+	...group(fixed(S), [
+		"formatmessage",
+		"system_user",
+		"session_user",
+		"current_user",
+		"user_name",
+		"suser_name",
+		"suser_sname",
+		"host_name",
+		"host_id",
+		"app_name",
+		"original_login",
+		"error_message",
+		"error_procedure",
+		"db_name",
+		"object_name",
+		"object_schema_name",
+		"schema_name",
+		"col_name",
+	]),
+	// int-returning error / metadata-id / property functions
+	...group(fixed(I), [
+		"error_number",
+		"error_severity",
+		"error_state",
+		"error_line",
+		"db_id",
+		"schema_id",
+		"col_length",
+		"columnproperty",
+		"objectproperty",
+		"objectpropertyex",
+		"type_id",
+		"xact_state",
+		"checksum_agg",
+	]),
+	approx_count_distinct: fixed(BIG),
+	rowcount_big: fixed(BIG),
+	current_transaction_id: fixed(BIG),
+	// binary-returning compression / context functions
+	...group(fixed(BIN), ["compress", "decompress", "context_info"]),
 	// system / metadata
 	newid: fixed(S),
 	newsequentialid: fixed(S),

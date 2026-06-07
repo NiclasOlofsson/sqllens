@@ -99,4 +99,13 @@ describe("T-SQL function registry (return types verified against MS docs)", () =
 	it("`/` is typed division in T-SQL (int / int → int, unlike Spark's double)", () => {
 		expect(ty("SELECT i / i AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
 	});
+
+	it("system / metadata / logical functions (registry completeness for a library)", () => {
+		expect(ty("SELECT GREATEST(i, b) AS r FROM t")).toEqual({ kind: "scalar", name: "bigint" });
+		expect(ty("SELECT FIRST_VALUE(f) OVER (ORDER BY i) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+		expect(ty("SELECT ERROR_NUMBER() AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
+		expect(ty("SELECT HOST_NAME() AS r FROM t")).toEqual({ kind: "scalar", name: "string" });
+		expect(ty("SELECT ROWCOUNT_BIG() AS r FROM t")).toEqual({ kind: "scalar", name: "bigint" });
+		expect(ty("SELECT COMPRESS(s) AS r FROM t")).toEqual({ kind: "scalar", name: "binary" });
+	});
 });

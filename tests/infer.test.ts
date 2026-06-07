@@ -71,6 +71,14 @@ describe("inferType", () => {
 		});
 	});
 
+	it("types added Spark system functions (factorial → bigint, current_user → string)", () => {
+		expect(typeOf("SELECT factorial(a) FROM t", new Schema({ t: { a: "int" } }))).toEqual({
+			kind: "scalar",
+			name: "bigint",
+		});
+		expect(typeOf("SELECT current_user() FROM t", new Schema({}))).toEqual({ kind: "scalar", name: "string" });
+	});
+
 	it("does not terminate-loop on a recursive CTE (returns a type, unknown is fine)", () => {
 		const t = typeOf(
 			"WITH RECURSIVE c(n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM c) SELECT n FROM c",
