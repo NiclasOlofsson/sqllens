@@ -62,3 +62,37 @@ describe("T-SQL type inference (dialect-specific knowledge)", () => {
 		expect(tsqlType("SELECT a AS r FROM t", T)).toEqual({ kind: "scalar", name: "bigint" });
 	});
 });
+
+describe("T-SQL function registry (return types verified against MS docs)", () => {
+	const N = new Schema({ t: { i: "int", b: "bigint", f: "float", n: "decimal", s: "varchar" } });
+	const ty = (sql: string) => tsqlType(sql, N);
+
+	it("SUM/AVG keep int as int (not bigint like Spark); bigint stays bigint", () => {
+		expect(ty("SELECT SUM(i) AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
+		expect(ty("SELECT AVG(i) AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
+		expect(ty("SELECT SUM(b) AS r FROM t")).toEqual({ kind: "scalar", name: "bigint" });
+	});
+
+	it("MIN/MAX/ROUND/CEILING preserve the argument type", () => {
+		expect(ty("SELECT MAX(f) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+		expect(ty("SELECT ROUND(i, 0) AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
+		expect(ty("SELECT CEILING(n) AS r FROM t")).toEqual({ kind: "scalar", name: "decimal" });
+	});
+
+	it("DEGREES is same-type-as-input; SQUARE/SQRT are float (per MS reference)", () => {
+		expect(ty("SELECT DEGREES(f) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+		expect(ty("SELECT SQUARE(i) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+		expect(ty("SELECT SQRT(i) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+	});
+
+	it("JSON_VALUE → string; ISJSON → int; NEWID → string", () => {
+		expect(ty("SELECT JSON_VALUE(s, '$.a') AS r FROM t")).toEqual({ kind: "scalar", name: "string" });
+		expect(ty("SELECT ISJSON(s) AS r FROM t")).toEqual({ kind: "scalar", name: "int" });
+		expect(ty("SELECT NEWID() AS r FROM t")).toEqual({ kind: "scalar", name: "string" });
+	});
+
+	it("ROW_NUMBER → bigint; LAG keeps the value type", () => {
+		expect(ty("SELECT ROW_NUMBER() OVER (ORDER BY i) AS r FROM t")).toEqual({ kind: "scalar", name: "bigint" });
+		expect(ty("SELECT LAG(f) OVER (ORDER BY i) AS r FROM t")).toEqual({ kind: "scalar", name: "double" });
+	});
+});

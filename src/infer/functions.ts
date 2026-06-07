@@ -342,11 +342,20 @@ export const FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(dateArg, ["date_add", "dateadd", "date_sub", "timestampadd", "add_months"]),
 };
 
+/** T-SQL SUM/AVG return type (per the MS reference): tinyint/smallint promote to int; int/bigint/
+ *  decimal/float keep their (canonical) type. Unlike Spark, SUM(int) is int, not bigint. */
+const tsqlNumericAgg: FnRule = (args) => {
+	const t = args[0];
+	if (t?.kind !== "scalar") return UNKNOWN;
+	return t.name === "tinyint" || t.name === "smallint" ? I : t;
+};
+
 // Function return-type registry for T-SQL (Transact-SQL), from Microsoft's built-in function
-// reference. Same discipline as the Spark registry: a missing rule yields `unknown`, never a wrong
-// type. Where T-SQL and Spark share a name but differ in meaning, the T-SQL rule wins here (e.g.
-// `count` is int, not bigint; `isnull(check, repl)` returns check's type, not a boolean predicate).
-// CAST/CONVERT/TRY_CAST/PARSE are lowered to cast nodes, not functions, so they aren't here.
+// reference (verified against MS Learn). Same discipline as the Spark registry: a missing rule
+// yields `unknown`, never a wrong type. Where T-SQL and Spark share a name but differ in meaning,
+// the T-SQL rule wins here (e.g. `count` is int, not bigint; `sum(int)` is int, not bigint;
+// `isnull(check, repl)` returns check's type, not a boolean predicate). CAST/CONVERT/TRY_CAST/PARSE
+// lower to cast nodes, not functions, so they aren't here.
 export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// string → string
 	...group(fixed(S), [
@@ -374,12 +383,14 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"nchar",
 		"char",
 		"parsename",
-		"lpad",
-		"rpad",
+		"string_agg",
+		"json_value",
+		"json_query",
+		"json_modify",
 	]),
 	// string → int
 	...group(fixed(I), ["len", "datalength", "charindex", "patindex", "ascii", "unicode", "difference"]),
-	// date/time → timestamp
+	// date/time → datetime (canonical timestamp)
 	...group(fixed(TS), [
 		"getdate",
 		"getutcdate",
@@ -396,21 +407,32 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 	]),
 	datefromparts: fixed(DATE),
 	timefromparts: fixed(scalar("time")),
-	// date → int
-	...group(fixed(I), ["datediff", "datepart", "year", "month", "day", "isdate", "isnumeric"]),
+	// date → int / bigint / string
+	...group(fixed(I), ["datediff", "datepart", "year", "month", "day"]),
 	datediff_big: fixed(BIG),
 	datename: fixed(S),
-	// DATEADD keeps the date argument's type (timestamp by default)
+	// DATEADD keeps the date argument's type (datetime by default)
 	dateadd: dateArg,
-	// numeric → same type as input
-	...group(firstArg, ["abs", "ceiling", "floor", "round", "sign", "power", "square"]),
-	// numeric → float/double
+	// predicates that return int 0/1
+	...group(fixed(I), [
+		"isdate",
+		"isnumeric",
+		"isjson",
+		"checksum",
+		"binary_checksum",
+		"object_id",
+		"grouping",
+		"grouping_id",
+	]),
+	// numeric → same type as input (MS: ABS, CEILING, FLOOR, ROUND, SIGN, POWER, DEGREES, RADIANS)
+	...group(firstArg, ["abs", "ceiling", "floor", "round", "sign", "power", "degrees", "radians"]),
+	// numeric → float (MS: EXP, LOG, LOG10, SQUARE, SQRT and the trig fns cast to float → canonical double)
 	...group(fixed(D), [
 		"sqrt",
+		"square",
 		"exp",
 		"log",
 		"log10",
-		"pi",
 		"sin",
 		"cos",
 		"tan",
@@ -419,16 +441,21 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"asin",
 		"atan",
 		"cot",
-		"degrees",
-		"radians",
+		"pi",
 		"rand",
 	]),
-	// aggregates — note T-SQL COUNT is int (COUNT_BIG is bigint); AVG/MIN/MAX preserve arg type
+	// aggregates — COUNT is int (COUNT_BIG bigint); SUM/AVG promote small ints to int; MIN/MAX keep type
 	count: fixed(I),
 	count_big: fixed(BIG),
-	sum: (args) => widenSum(args[0] ?? UNKNOWN),
-	...group(firstArg, ["min", "max", "avg"]),
+	sum: tsqlNumericAgg,
+	avg: tsqlNumericAgg,
+	...group(firstArg, ["min", "max"]),
 	...group(fixed(D), ["stdev", "stdevp", "var", "varp"]),
+	// window/ranking — ROW_NUMBER/RANK/DENSE_RANK/NTILE → bigint; PERCENT_RANK/CUME_DIST → float;
+	// the value-returning analytics keep their argument's type
+	...group(fixed(BIG), ["row_number", "rank", "dense_rank", "ntile"]),
+	...group(fixed(D), ["percent_rank", "cume_dist"]),
+	...group(firstArg, ["lag", "lead", "first_value", "last_value"]),
 	// null / choice — ISNULL/NULLIF return the first argument's type; COALESCE/IIF/CHOOSE a common type
 	isnull: firstArg,
 	nullif: firstArg,
@@ -437,5 +464,7 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 	choose: (args) => commonType(args.slice(1)),
 	// system / metadata
 	newid: fixed(S),
-	...group(fixed(I), ["scope_identity", "object_id", "ident_current", "checksum", "binary_checksum"]),
+	newsequentialid: fixed(S),
+	hashbytes: fixed(BIN),
+	...group(fixed(scalar("decimal")), ["scope_identity", "ident_current"]),
 };
