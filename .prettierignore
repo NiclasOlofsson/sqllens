@@ -1,0 +1,11 @@
+# Build output / generated parsers — never hand-formatted.
+dist/
+src/generated/
+*.tsbuildinfo
+
+# Vendored reference grammars and local-only corpora (gitignored anyway).
+vendor/
+harness/local/
+
+# Dependencies.
+node_modules/

@@ -1,22 +1,29 @@
 {
-  // This project is deliberately Java-free: `npm run gen` runs antlr-ng on Node.
-  // Stop the vscode-antlr4 extension from shelling out to its bundled Java jar
-  // (which writes interpreter data into a `.antlr/` folder). Syntax highlighting,
-  // completion, and railroad diagrams are pure-TS and still work with "none".
-  "antlr4.generation": {
-    "mode": "none"
-  },
-  "[typescript]": {
-    "editor.defaultFormatter": "dbaeumer.vscode-eslint",
-    "editor.formatOnSave": true,
-    "editor.insertSpaces": false,
-    "editor.tabSize": 4
-  },
-  "[javascript]": {
-    "editor.formatOnSave": true,
-    "editor.insertSpaces": false,
-    "editor.tabSize": 4
-  },
-  "files.trimTrailingWhitespace": true,
-  "files.insertFinalNewline": true,
+	// This project is deliberately Java-free: `npm run gen` runs antlr-ng on Node.
+	// Stop the vscode-antlr4 extension from shelling out to its bundled Java jar
+	// (which writes interpreter data into a `.antlr/` folder). Syntax highlighting,
+	// completion, and railroad diagrams are pure-TS and still work with "none".
+	"antlr4.generation": {
+		"mode": "none"
+	},
+	// Prettier (esbenp.prettier-vscode extension) formats on save; style is pinned in
+	// .prettierrc.json (tabs, width 4, 120 cols). Install the extension for this to take effect.
+	"editor.defaultFormatter": "esbenp.prettier-vscode",
+	"editor.formatOnSave": true,
+	"[typescript]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"[javascript]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"[json]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"[jsonc]": {
+		"editor.defaultFormatter": "esbenp.prettier-vscode"
+	},
+	"editor.insertSpaces": false,
+	"editor.tabSize": 4,
+	"files.trimTrailingWhitespace": true,
+	"files.insertFinalNewline": true
 }

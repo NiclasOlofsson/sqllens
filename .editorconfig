@@ -1,0 +1,15 @@
+# Cross-editor style (https://editorconfig.org). Mirrors microsoft/vscode: tabs
+# everywhere. Works in any editor + CI; Prettier reads it too. YAML keeps spaces
+# because the YAML spec forbids tab indentation.
+root = true
+
+[*]
+indent_style = tab
+tab_width = 4
+charset = utf-8
+trim_trailing_whitespace = true
+insert_final_newline = true
+
+[*.{yml,yaml}]
+indent_style = space
+indent_size = 2
