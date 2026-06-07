@@ -36,6 +36,9 @@ export interface Scope {
 	branches?: { left: Scope; right: Scope };
 	parent?: Scope;
 	children: Scope[];
+	/** The dialect this query was lowered from ("databricks" | "tsql"). Drives dialect-specific
+	 *  type inference (function/literal/type knowledge); the rest of the layer ignores it. */
+	dialect: string;
 }
 
 export interface CteRef {
@@ -49,8 +52,8 @@ export type ResolvedSource =
 	| { kind: "subquery"; scope: Scope; source: SubquerySource }
 	| { kind: "lateral"; source: LateralViewSource };
 
-export function resolveScopes(query: QueryExpr): ScopeTree {
-	return { root: buildQueryScope(query) };
+export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
+	return { root: buildQueryScope(query, undefined, dialect) };
 }
 
 export type ColumnResolution =
@@ -173,13 +176,21 @@ function resolveByColumnName(scope: Scope, column: string, fields: string[]): Co
 	return sources.some((s) => sourceOutputs(s) === "unknown") ? { kind: "needs-schema" } : { kind: "unresolved" };
 }
 
-function newScope(body: QueryBody, parent?: Scope): Scope {
-	return { body, sources: new Map(), ctes: new Map(), outputs: "unknown", parent, children: [] };
+function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
+	return {
+		body,
+		sources: new Map(),
+		ctes: new Map(),
+		outputs: "unknown",
+		parent,
+		children: [],
+		dialect: dialect ?? parent?.dialect ?? "databricks",
+	};
 }
 
 /** Build the scope for a full query (which may declare its own CTEs). */
-function buildQueryScope(query: QueryExpr, parent?: Scope): Scope {
-	const scope = newScope(query.body, parent);
+function buildQueryScope(query: QueryExpr, parent?: Scope, dialect?: string): Scope {
+	const scope = newScope(query.body, parent, dialect);
 	// CTEs are visible to the body and to later CTEs; build them in order.
 	for (const cte of query.ctes) {
 		const cteScope = buildQueryScope(cte.body, scope);

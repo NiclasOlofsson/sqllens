@@ -45,7 +45,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 				continue;
 			}
 			parsed++;
-			const tree = resolveScopes(lower(r.tree)); // must not throw
+			const tree = resolveScopes(lower(r.tree), "tsql"); // must not throw
 			const q = qualify(tree, schema); // must not throw
 			unknownTableTotal += q.diagnostics.filter((d) => d.kind === "unknown-table").length;
 			if (!q.diagnostics.some((d) => d.kind === "unknown-column")) columnCleanViews++;
@@ -63,7 +63,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 
 	it("resolves real columns against the schema on a multi-join view (no unknown-table)", () => {
 		const v = view("Sales.vStoreWithAddresses");
-		const tree = resolveScopes(lower(parseTSql(v.body).tree));
+		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
 		const q = qualify(tree, schema);
 		expect(q.diagnostics.filter((d) => d.kind === "unknown-table")).toEqual([]);
 	});
@@ -71,7 +71,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 	it("traces an aliased view column back to its base table (lineage on real T-SQL)", () => {
 		// [HumanResources].[vEmployeeDepartment]: `d.[Name] AS [Department]` where d = HumanResources.Department.
 		const v = view("HumanResources.vEmployeeDepartment");
-		const tree = resolveScopes(lower(parseTSql(v.body).tree));
+		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
 		const dept = lineage(tree, schema).find((c) => c.output === "Department");
 		expect(dept?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain(
 			"HumanResources.Department.Name",
@@ -81,7 +81,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 	it("infers a column's type from the real catalog (infer travels on real T-SQL)", () => {
 		// vEmployeeDepartment projects `edh.[StartDate]` → EmployeeDepartmentHistory.StartDate (date).
 		const v = view("HumanResources.vEmployeeDepartment");
-		const tree = resolveScopes(lower(parseTSql(v.body).tree));
+		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
 		const body = tree.root.body;
 		if (body.kind !== "select") throw new Error("select");
 		const startDate = body.projections.find((p) => p.name === "StartDate");

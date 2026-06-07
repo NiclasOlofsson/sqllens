@@ -3,7 +3,7 @@ import type { Schema } from "../qualify/schema.js";
 import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { normalizeName, resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
-import { FUNCTION_RETURNS } from "./functions.js";
+import { inferDialect, type InferDialect } from "./dialect.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -29,11 +29,12 @@ const INT = scalar("int");
 const freshCtx = (): Ctx => ({ seen: new Set(), env: new Map() });
 
 export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = freshCtx()): Type {
+	const d = inferDialect(scope.dialect);
 	switch (expr.kind) {
 		case "literal":
-			return literalType(expr.text);
+			return d.literal(expr.text);
 		case "cast":
-			return parseType(expr.typeText);
+			return d.parseType(expr.typeText);
 		case "predicate":
 		case "exists":
 			return BOOLEAN;
@@ -61,7 +62,7 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 			return UNKNOWN;
 		}
 		case "subquery":
-			return subqueryType(expr.query, schema, ctx);
+			return subqueryType(expr.query, schema, ctx, scope.dialect);
 		default:
 			// star / lambda (typed only inside its higher-order function) / other.
 			return UNKNOWN;
@@ -77,15 +78,15 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 	}
 	const found = resolveColumnSource(scope, col.parts, schema);
 	if (!found) return UNKNOWN;
-	const base = sourceColumnType(found.source, found.column, schema, ctx);
+	const base = sourceColumnType(found.source, found.column, schema, ctx, inferDialect(scope.dialect));
 	return found.fields.length ? fieldType(base, found.fields) : base;
 }
 
-function sourceColumnType(src: ResolvedSource, column: string, schema: Schema, ctx: Ctx): Type {
+function sourceColumnType(src: ResolvedSource, column: string, schema: Schema, ctx: Ctx, d: InferDialect): Type {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
 		const t = schema.columnsFor(src.name)?.find((c) => eq(c.name, column))?.type;
-		return t ? parseType(t) : UNKNOWN;
+		return t ? d.parseType(t) : UNKNOWN;
 	}
 	if (src.kind === "cte") return derivedColumnType(src.ref.scope, column, src.ref.def.columnAliases, schema, ctx);
 	if (src.kind === "subquery") return derivedColumnType(src.scope, column, src.source.columnAliases, schema, ctx);
@@ -134,7 +135,7 @@ function functionType(name: string, args: Expr[], scope: Scope, schema: Schema, 
 	if (hof !== undefined) return hof;
 	const ctor = constructor(name, args, scope, schema, ctx);
 	if (ctor !== undefined) return ctor;
-	const rule = FUNCTION_RETURNS[name];
+	const rule = inferDialect(scope.dialect).functions[name];
 	return rule ? rule(args.map((a) => inferType(a, scope, schema, ctx))) : UNKNOWN;
 }
 
@@ -230,8 +231,8 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
 
 // --- subqueries ------------------------------------------------------------
 
-function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx): Type {
-	const root = resolveScopes(query).root;
+function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx, dialect: string): Type {
+	const root = resolveScopes(query, dialect).root;
 	if (root.body.kind !== "select" || root.body.projections.length === 0) return UNKNOWN;
 	return inferType(root.body.projections[0].expr, root, schema, { seen: ctx.seen, env: ctx.env });
 }
@@ -264,19 +265,6 @@ function isDate(t: Type): boolean {
 
 function isInterval(t: Type): boolean {
 	return t.kind === "scalar" && t.name === "interval";
-}
-
-function literalType(text: string): Type {
-	const t = text.trim();
-	if (/^['"]/.test(t)) return scalar("string");
-	if (/^(true|false)$/i.test(t)) return BOOLEAN;
-	if (/^null$/i.test(t)) return UNKNOWN; // null literal — type is context-dependent
-	if (/^date\s*'/i.test(t)) return scalar("date");
-	if (/^timestamp\s*'/i.test(t)) return scalar("timestamp");
-	if (/^interval\b/i.test(t)) return scalar("interval");
-	if (/^[+-]?\d+$/.test(t)) return INT;
-	if (/^[+-]?(\d+\.\d*|\.\d+|\d+)([eed][+-]?\d+)?$/i.test(t) && /[.eed]/i.test(t)) return scalar("double");
-	return UNKNOWN;
 }
 
 function stringValue(text: string): string {

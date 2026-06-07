@@ -24,8 +24,10 @@ export function scalar(name: string): Type {
 	return { kind: "scalar", name: normalizeScalar(name) };
 }
 
-/** Parse a Databricks/Spark type string into a `Type`; `unknown` if it's empty/unparseable. */
-export function parseType(text: string): Type {
+/** Parse a SQL type string into a `Type`; `unknown` if it's empty/unparseable. `aliases` maps a
+ *  dialect's scalar names onto the shared canonical names (Spark by default; pass TSQL_ALIASES for
+ *  T-SQL, e.g. bit→boolean, datetime→timestamp, nvarchar→string). */
+export function parseType(text: string, aliases: Record<string, string> = SCALAR_ALIASES): Type {
 	const s = text.trim();
 	if (s === "") return UNKNOWN;
 
@@ -55,7 +57,7 @@ export function parseType(text: string): Type {
 		.replace(/\(.*\)$/s, "")
 		.trim()
 		.toLowerCase();
-	return base === "" ? UNKNOWN : { kind: "scalar", name: normalizeScalar(base) };
+	return base === "" ? UNKNOWN : { kind: "scalar", name: normalizeScalar(base, aliases) };
 }
 
 const SCALAR_ALIASES: Record<string, string> = {
@@ -74,9 +76,37 @@ const SCALAR_ALIASES: Record<string, string> = {
 	timestamp_ltz: "timestamp",
 };
 
-function normalizeScalar(name: string): string {
+/** T-SQL scalar type names → the shared canonical names. T-SQL has no array/map/struct types, so
+ *  only scalar normalisation differs from Spark. float is double-precision in T-SQL; real is single. */
+export const TSQL_ALIASES: Record<string, string> = {
+	bit: "boolean",
+	integer: "int",
+	numeric: "decimal",
+	dec: "decimal",
+	money: "decimal",
+	smallmoney: "decimal",
+	float: "double",
+	real: "float",
+	char: "string",
+	varchar: "string",
+	nchar: "string",
+	nvarchar: "string",
+	text: "string",
+	ntext: "string",
+	sysname: "string",
+	uniqueidentifier: "string",
+	datetime: "timestamp",
+	datetime2: "timestamp",
+	smalldatetime: "timestamp",
+	datetimeoffset: "timestamp",
+	binary: "binary",
+	varbinary: "binary",
+	image: "binary",
+};
+
+function normalizeScalar(name: string, aliases: Record<string, string> = SCALAR_ALIASES): string {
 	const n = name.toLowerCase();
-	return SCALAR_ALIASES[n] ?? n;
+	return aliases[n] ?? n;
 }
 
 /** Split on commas not nested inside `<…>` or `(…)`. */

@@ -18,7 +18,7 @@ function ir(sql: string) {
 	return { q: lower(tree), errors };
 }
 function scopes(sql: string) {
-	return resolveScopes(lower(parseTSql(sql).tree));
+	return resolveScopes(lower(parseTSql(sql).tree), "tsql");
 }
 function origins(sql: string, output: string, schema = new Schema({})): string[] {
 	const col = lineage(scopes(sql), schema).find((c) => c.output === output);

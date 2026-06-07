@@ -341,3 +341,101 @@ export const FUNCTION_RETURNS: Record<string, FnRule> = {
 
 	...group(dateArg, ["date_add", "dateadd", "date_sub", "timestampadd", "add_months"]),
 };
+
+// Function return-type registry for T-SQL (Transact-SQL), from Microsoft's built-in function
+// reference. Same discipline as the Spark registry: a missing rule yields `unknown`, never a wrong
+// type. Where T-SQL and Spark share a name but differ in meaning, the T-SQL rule wins here (e.g.
+// `count` is int, not bigint; `isnull(check, repl)` returns check's type, not a boolean predicate).
+// CAST/CONVERT/TRY_CAST/PARSE are lowered to cast nodes, not functions, so they aren't here.
+export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
+	// string → string
+	...group(fixed(S), [
+		"left",
+		"right",
+		"substring",
+		"upper",
+		"lower",
+		"ltrim",
+		"rtrim",
+		"trim",
+		"replace",
+		"replicate",
+		"reverse",
+		"stuff",
+		"concat",
+		"concat_ws",
+		"format",
+		"str",
+		"quotename",
+		"space",
+		"soundex",
+		"translate",
+		"string_escape",
+		"nchar",
+		"char",
+		"parsename",
+		"lpad",
+		"rpad",
+	]),
+	// string → int
+	...group(fixed(I), ["len", "datalength", "charindex", "patindex", "ascii", "unicode", "difference"]),
+	// date/time → timestamp
+	...group(fixed(TS), [
+		"getdate",
+		"getutcdate",
+		"sysdatetime",
+		"sysutcdatetime",
+		"sysdatetimeoffset",
+		"current_timestamp",
+		"eomonth",
+		"switchoffset",
+		"todatetimeoffset",
+		"datetimefromparts",
+		"datetime2fromparts",
+		"smalldatetimefromparts",
+	]),
+	datefromparts: fixed(DATE),
+	timefromparts: fixed(scalar("time")),
+	// date → int
+	...group(fixed(I), ["datediff", "datepart", "year", "month", "day", "isdate", "isnumeric"]),
+	datediff_big: fixed(BIG),
+	datename: fixed(S),
+	// DATEADD keeps the date argument's type (timestamp by default)
+	dateadd: dateArg,
+	// numeric → same type as input
+	...group(firstArg, ["abs", "ceiling", "floor", "round", "sign", "power", "square"]),
+	// numeric → float/double
+	...group(fixed(D), [
+		"sqrt",
+		"exp",
+		"log",
+		"log10",
+		"pi",
+		"sin",
+		"cos",
+		"tan",
+		"atn2",
+		"acos",
+		"asin",
+		"atan",
+		"cot",
+		"degrees",
+		"radians",
+		"rand",
+	]),
+	// aggregates — note T-SQL COUNT is int (COUNT_BIG is bigint); AVG/MIN/MAX preserve arg type
+	count: fixed(I),
+	count_big: fixed(BIG),
+	sum: (args) => widenSum(args[0] ?? UNKNOWN),
+	...group(firstArg, ["min", "max", "avg"]),
+	...group(fixed(D), ["stdev", "stdevp", "var", "varp"]),
+	// null / choice — ISNULL/NULLIF return the first argument's type; COALESCE/IIF/CHOOSE a common type
+	isnull: firstArg,
+	nullif: firstArg,
+	...group(common, ["coalesce"]),
+	iif: (args) => commonType(args.slice(-2)),
+	choose: (args) => commonType(args.slice(1)),
+	// system / metadata
+	newid: fixed(S),
+	...group(fixed(I), ["scope_identity", "object_id", "ident_current", "checksum", "binary_checksum"]),
+};

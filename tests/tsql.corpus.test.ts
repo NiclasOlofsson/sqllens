@@ -70,7 +70,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 			const r = parseTSql(sql);
 			if (r.errors === 0) {
 				accepted++;
-				expect(() => resolveScopes(lower(r.tree)), rel).not.toThrow();
+				expect(() => resolveScopes(lower(r.tree), "tsql"), rel).not.toThrow();
 			}
 		}
 		// The SELECT-bearing subset of the examples (~19 files) — proves lower() survives them.
