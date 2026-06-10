@@ -925,6 +925,9 @@ fromClause
 temporalClause
     : FOR? (SYSTEM_VERSION | VERSION) AS OF version
     | FOR? (SYSTEM_TIME | TIMESTAMP) AS OF timestamp=valueExpression
+    // Databricks-only @ shorthand: t@v123 (version) or t@yyyyMMddHHmmssSSS (timestamp)
+    // — docs.databricks.com delta time travel (sql-ref-syntax-qry-select-table-reference).
+    | AT_SIGN (identifier | INTEGER_VALUE)
     ;
 
 changesClause

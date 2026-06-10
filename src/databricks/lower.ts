@@ -115,6 +115,20 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 
 /** Lower a parsed Databricks statement (CST) into the IR. */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
+	// whole thing rather than modelling whichever SELECT happens to come first inside it.
+	if (firstOfRule(tree, P.RULE_singleCompoundStatement)) {
+		const body: SelectExpr = {
+			kind: "select",
+			projections: [],
+			from: [],
+			columns: [],
+			aggregated: false,
+			unsupported: ["compound"],
+			cst: tree,
+		};
+		return { kind: "query", ctes: [], body, cst: tree };
+	}
 	const query = firstOfRule(tree, P.RULE_query);
 	if (!query) {
 		// A non-query statement (DDL/DML without a SELECT). Return an empty, flagged body

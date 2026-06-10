@@ -11,7 +11,8 @@ import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
 
 export interface ParseResult {
-	/** The CST rooted at `singleStatement` (one statement + EOF). */
+	/** The CST rooted at `compoundOrSingleStatement` (one statement, or a BEGIN…END
+	 *  SQL-scripting compound, + EOF). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
@@ -45,7 +46,7 @@ export function parseDatabricks(sql: string): ParseResult {
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		return { tree: parser.singleStatement(), errors };
+		return { tree: parser.compoundOrSingleStatement(), errors };
 	} catch {
 		// Stage 2: full LL with the normal error strategy (reports + recovers).
 		tokens.seek(0);
@@ -54,7 +55,7 @@ export function parseDatabricks(sql: string): ParseResult {
 		sim.predictionMode = PredictionMode.LL;
 		errors = 0; // discount anything the SLL attempt may have reported
 		attachErrorCounter(lexer, parser, listener);
-		return { tree: parser.singleStatement(), errors };
+		return { tree: parser.compoundOrSingleStatement(), errors };
 	}
 }
 

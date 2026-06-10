@@ -570,6 +570,9 @@ SLASH: '/';
 PERCENT: '%';
 TILDE: '~';
 AMPERSAND: '&';
+// Databricks Delta time-travel shorthand `t@v123` / `t@20240101000000000`
+// (docs.databricks.com delta history: "Query an earlier version of the table").
+AT_SIGN: '@';
 PIPE: '|';
 CONCAT_PIPE: '||';
 OPERATOR_PIPE: '|>';
