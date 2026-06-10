@@ -135,8 +135,9 @@ delete_statement
     )?
     ;
 
+// Any number of rows, not two: docs.snowflake.com/en/sql-reference/sql/insert
 values_builder
-    : VALUES '(' expr_list ')' (COMMA '(' expr_list ')')?
+    : VALUES '(' expr_list ')' (COMMA '(' expr_list ')')*
     ;
 
 other_command
@@ -420,8 +421,9 @@ object_privilege
     | REFERENCE_USAGE
     ;
 
+// DATABASE ROLE form: docs.snowflake.com/en/sql-reference/sql/grant-database-role
 grant_role
-    : GRANT ROLE role_name TO (ROLE role_name | USER id_)
+    : GRANT DATABASE? ROLE object_name TO (DATABASE? ROLE object_name | USER id_)
     ;
 
 role_name
@@ -457,8 +459,25 @@ named_stage
     : AT object_name stage_path?
     ;
 
+// Path segments are file names — dots included (mydata.csv.gz):
+// docs.snowflake.com/en/sql-reference/sql/copy-into-table
 stage_path
-    : DIVIDE (ID (DIVIDE ID)* DIVIDE?)?
+    : DIVIDE (stage_path_segment (DIVIDE stage_path_segment)* DIVIDE?)?
+    ;
+
+stage_path_segment
+    : stage_path_atom (DOT stage_path_atom)*
+    ;
+
+// File-name parts collide with format-name tokens (data.csv, dump.json, …).
+stage_path_atom
+    : id_
+    | CSV
+    | JSON
+    | AVRO
+    | ORC
+    | PARQUET
+    | XML
     ;
 
 put
@@ -682,6 +701,9 @@ session_params
     | USE_CACHED_RESULT EQ true_false
     | WEEK_OF_YEAR_POLICY EQ num
     | WEEK_START EQ num
+    // any other documented parameter — the full catalogue is
+    // docs.snowflake.com/en/sql-reference/parameters and grows faster than this list
+    | (session_parameter | id_) EQ (string | num | true_false)
     ;
 
 alter_account
@@ -1193,8 +1215,10 @@ security_integration_scim_property
     | COMMENT
     ;
 
+// SET takes one or more space-separated assignments of any documented parameter:
+// docs.snowflake.com/en/sql-reference/sql/alter-session + /en/sql-reference/parameters
 alter_session
-    : ALTER SESSION SET session_params
+    : ALTER SESSION SET session_params+
     | ALTER SESSION UNSET param_name (COMMA param_name)*
     ;
 
@@ -1247,23 +1271,23 @@ alter_stream
     ;
 
 alter_table
-    : ALTER TABLE if_exists? object_name RENAME TO object_name
-    | ALTER TABLE if_exists? object_name SWAP WITH object_name
-    | ALTER TABLE if_exists? object_name (
+    : ALTER ICEBERG? TABLE if_exists? object_name RENAME TO object_name
+    | ALTER ICEBERG? TABLE if_exists? object_name SWAP WITH object_name
+    | ALTER ICEBERG? TABLE if_exists? object_name (
         clustering_action
         | table_column_action
         | constraint_action
     )
-    | ALTER TABLE if_exists? object_name ext_table_column_action
-    | ALTER TABLE if_exists? object_name search_optimization_action
-    | ALTER TABLE if_exists? object_name SET stage_file_format? (
+    | ALTER ICEBERG? TABLE if_exists? object_name ext_table_column_action
+    | ALTER ICEBERG? TABLE if_exists? object_name search_optimization_action
+    | ALTER ICEBERG? TABLE if_exists? object_name SET stage_file_format? (
         STAGE_COPY_OPTIONS EQ '(' copy_options ')'
     )? (DATA_RETENTION_TIME_IN_DAYS EQ num)? (MAX_DATA_EXTENSION_TIME_IN_DAYS EQ num)? (
         CHANGE_TRACKING EQ true_false
     )? default_ddl_collation? comment_clause?
-    | ALTER TABLE if_exists? object_name set_tags
-    | ALTER TABLE if_exists? object_name unset_tags
-    | ALTER TABLE if_exists? object_name UNSET (
+    | ALTER ICEBERG? TABLE if_exists? object_name set_tags
+    | ALTER ICEBERG? TABLE if_exists? object_name unset_tags
+    | ALTER ICEBERG? TABLE if_exists? object_name UNSET (
         DATA_RETENTION_TIME_IN_DAYS
         | MAX_DATA_EXTENSION_TIME_IN_DAYS
         | CHANGE_TRACKING
@@ -1272,7 +1296,7 @@ alter_table
         |
     )
     //[ , ... ]
-    | ALTER TABLE if_exists? object_name rls_operations
+    | ALTER ICEBERG? TABLE if_exists? object_name rls_operations
     ;
 
 rls_operations
@@ -1675,7 +1699,7 @@ create_connection
     ;
 
 create_database
-    : CREATE or_replace? TRANSIENT? DATABASE if_not_exists? id_ clone_at_before? (
+    : CREATE or_replace? TRANSIENT? DATABASE if_not_exists? object_name clone_at_before? (
         DATA_RETENTION_TIME_IN_DAYS EQ num
     )? (MAX_DATA_EXTENSION_TIME_IN_DAYS EQ num)? default_ddl_collation? with_tags? comment_clause?
     ;
@@ -2628,6 +2652,7 @@ table_type
     | VOLATILE
     | TRANSIENT
     | HYBRID
+    | ICEBERG // docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
     ;
 
 with_tags
@@ -2724,6 +2749,21 @@ create_table_optionnal_clause
     | deprecated_table_options
     | copy_grants
     | copy_tags
+    | iceberg_table_option
+    ;
+
+// docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
+iceberg_table_option
+    : (
+        EXTERNAL_VOLUME
+        | CATALOG
+        | BASE_LOCATION
+        | CATALOG_SYNC
+        | CATALOG_TABLE_NAME
+        | CATALOG_NAMESPACE
+        | AUTO_REFRESH
+        | REPLACE_INVALID_CHARACTERS
+    ) EQ (string | true_false | id_)
     ;
 
 addable_table_options
@@ -2942,8 +2982,10 @@ task_scripting_return
     : RETURN expr
     ;
 
+// optional !method for class instances (docs.snowflake.com/en/sql-reference/classes);
+// args may be positional or named (name => value)
 call
-    : CALL object_name '(' expr_list? ')'
+    : CALL object_name (BANG id_)? '(' (expr_list | param_assoc_list)? ')'
     ;
 
 create_user
@@ -3991,6 +4033,36 @@ snowflake_region_id
 string
     : STRING
     | DBL_DOLLAR
+    | quoted_keyword_string
+    ;
+
+// The lexer turns these exact quoted strings into dedicated tokens for option values
+// (TYPE = 'CSV', …); anywhere else they are ordinary string literals.
+quoted_keyword_string
+    : AAD_PROVISIONER_Q
+    | ARRAY_Q
+    | AT_Q
+    | AUTO_Q
+    | AVRO_Q
+    | AZURE_CSE_Q
+    | AZURE_Q
+    | BOTH_Q
+    | CSV_Q
+    | GCS_SSE_KMS_Q
+    | GENERIC_Q
+    | GENERIC_SCIM_PROVISIONER_Q
+    | HALF_AWAY_FROM_ZERO_Q
+    | HALF_TO_EVEN_Q
+    | JSON_Q
+    | NONE_Q
+    | OBJECT_Q
+    | OKTA_PROVISIONER_Q
+    | OKTA_Q
+    | ORC_Q
+    | PARQUET_Q
+    | SNOWFLAKE_FULL_Q
+    | SNOWFLAKE_SSE_Q
+    | XML_Q
     ;
 
 string_list
@@ -4029,6 +4101,7 @@ keyword
     | ACTION
     | ALERT
     | AT_KEYWORD
+    | BODY
     | CLUSTER
     | COMMENT
     | COMPUTE
@@ -4050,6 +4123,7 @@ keyword
     | MAX_CONCURRENCY_LEVEL
     | MODE
     | NOORDER
+    | ONE
     | ORDER
     | OUTER
     | POLICY
@@ -4060,6 +4134,7 @@ keyword
     | ROLE
     | ROLLUP
     | ROW_NUMBER
+    | SEARCH
     | SEQUENCE
     | SERVICE
     | SERVICES
@@ -4358,6 +4433,9 @@ object_name
     : d = id_ DOT s = id_ DOT o = id_
     | s = id_ DOT o = id_
     | o = id_
+    // IDENTIFIER(...) substitutes for any object name; arg is a string or a $session_variable:
+    // docs.snowflake.com/en/sql-reference/identifier-literal
+    | IDENTIFIER LR_BRACKET (string | DOLLAR id_) RR_BRACKET
     ;
 
 object_name_or_identifier
@@ -4384,6 +4462,8 @@ expr
     | expr COLON expr   //json access
     | expr DOT (VALUE | expr)
     | expr COLLATE string
+    // instance method call <instance>!<method>(args): docs.snowflake.com/en/sql-reference/classes
+    | expr BANG id_ '(' (expr_list | param_assoc_list)? ')'
     | case_expression
     | iff_expr
     | bracket_expression
@@ -4437,6 +4517,7 @@ cast_expr
 
 json_literal
     : LCB kv_pair (COMMA kv_pair)* RCB
+    | LCB STAR RCB // {*} shorthand in class-method args, e.g. model!PREDICT(INPUT_DATA => {*})
     | LCB RCB
     ;
 
@@ -4481,11 +4562,19 @@ data_type
     ) data_type_size?
     | binary_alias = ( BINARY | VARBINARY) data_type_size?
     | VARIANT
-    | OBJECT
+    // structured OBJECT(field type [NOT NULL], …) / MAP(key, value):
+    // docs.snowflake.com/en/sql-reference/data-types-structured
+    | OBJECT ('(' object_field (COMMA object_field)* ')')?
     | ARRAY ('(' data_type ')')?
+    | MAP '(' data_type COMMA data_type ')'
     | GEOGRAPHY
     | GEOMETRY
+    | FILE // docs.snowflake.com/en/sql-reference/data-types-unstructured
     | VECTOR '(' vector_element_type COMMA num ')'
+    ;
+
+object_field
+    : id_ data_type (NOT NULL_)?
     ;
 
 vector_element_type
@@ -4503,12 +4592,6 @@ primitive_expression
     | id_ '.' STAR
     | full_column_name
     | literal
-    | ARRAY_Q
-    | AUTO_Q
-    | AZURE_Q
-    | BOTH_Q
-    | NONE_Q
-    | OBJECT_Q
     //| json_literal
     //| arr_literal
     ;
@@ -4567,8 +4650,10 @@ param_assoc_list
     : param_assoc (',' param_assoc)*
     ;
 
+// FILE_FORMAT / PATTERN are stage-query option names (docs.snowflake.com/en/user-guide/querying-stage)
+// that lex as their own tokens.
 param_assoc
-    : id_ ASSOC expr
+    : (id_ | FILE_FORMAT | PATTERN) ASSOC expr
     ;
 
 ignore_or_repect_nulls
@@ -4582,8 +4667,10 @@ ranking_windowed_function
     | (FIRST_VALUE | LAST_VALUE) LR_BRACKET expr RR_BRACKET ignore_or_repect_nulls? over_clause
     ;
 
+// WITHIN GROUP applies to any ordered-set aggregate (PERCENTILE_CONT/DISC, MODE, …),
+// not just LISTAGG/ARRAY_AGG: docs.snowflake.com/en/sql-reference/functions/percentile_cont
 aggregate_function
-    : id_ '(' DISTINCT? expr_list ')'
+    : id_ '(' DISTINCT? expr_list ')' (WITHIN GROUP '(' order_by_clause ')')?
     | id_ '(' STAR ')'
     | (LISTAGG | ARRAY_AGG) '(' DISTINCT? expr (COMMA string)? ')' (
         WITHIN GROUP '(' order_by_clause ')'
@@ -4593,11 +4680,11 @@ aggregate_function
 literal
     : STRING // string, date, time, timestamp
     | DBL_DOLLAR // $$-quoted string constant
+    | quoted_keyword_string
     | sign? DECIMAL
     | sign? (REAL | FLOAT)
     | true_false
     | NULL_
-    | AT_Q
     ;
 
 sign
@@ -4785,9 +4872,9 @@ object_ref
     | values_table sample?
     | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses?
     | LATERAL (flatten_table | splited_table) as_alias?
-    //| AT id_ PATH?
-    //    ('(' FILE_FORMAT ASSOC id_ COMMA pattern_assoc ')')?
-    //    as_alias?
+    // querying staged files — @stage[/path] [( FILE_FORMAT => …, PATTERN => … )] [alias]:
+    // docs.snowflake.com/en/user-guide/querying-stage
+    | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? as_alias?
     ;
 
 flatten_table_option

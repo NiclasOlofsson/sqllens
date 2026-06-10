@@ -136,6 +136,8 @@ AZURE_SAS_TOKEN                 : 'AZURE_SAS_TOKEN';
 AZURE_STORAGE_QUEUE_PRIMARY_URI : 'AZURE_STORAGE_QUEUE_PRIMARY_URI';
 AZURE_TENANT_ID                 : 'AZURE_TENANT_ID';
 BASE64                          : 'BASE64';
+// Iceberg tables: docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
+BASE_LOCATION                   : 'BASE_LOCATION';
 BEFORE                          : 'BEFORE';
 BEGIN                           : 'BEGIN';
 BERNOULLI                       : 'BERNOULLI';
@@ -163,6 +165,11 @@ CALLED           : 'CALLED';
 CALLER           : 'CALLER';
 CASCADE          : 'CASCADE';
 CASE             : 'CASE';
+// Iceberg tables: docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
+CATALOG          : 'CATALOG';
+CATALOG_NAMESPACE: 'CATALOG_NAMESPACE';
+CATALOG_SYNC     : 'CATALOG_SYNC';
+CATALOG_TABLE_NAME: 'CATALOG_TABLE_NAME';
 CASE_INSENSITIVE : 'CASE_INSENSITIVE';
 CASE_SENSITIVE   : 'CASE_SENSITIVE';
 CAST             : 'CAST';
@@ -346,6 +353,7 @@ EXPR        : 'EXPR';
 EXTENSION   : 'EXTENSION';
 // EXPLICIT:                                              'EXPLICIT';
 EXTERNAL                     : 'EXTERNAL';
+EXTERNAL_VOLUME              : 'EXTERNAL_VOLUME'; // Iceberg tables: docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
 EXTERNAL_ACCESS_INTEGRATIONS : 'EXTERNAL_ACCESS_INTEGRATIONS';
 EXTERNAL_OAUTH               : 'EXTERNAL_OAUTH';
 EXTERNAL_OAUTH_ADD_PRIVILEGED_ROLES_TO_BLOCKED_LIST:
@@ -436,6 +444,7 @@ HIGH       : 'HIGH';
 HISTORY    : 'HISTORY';
 HOURS      : 'HOURS';
 HYBRID     : 'HYBRID';
+ICEBERG    : 'ICEBERG'; // docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
 IDENTIFIER : 'IDENTIFIER';
 IDENTITY   : 'IDENTITY';
 IF         : 'IF';
@@ -542,6 +551,7 @@ MANAGE     : 'MANAGE';
 MANAGED    : 'MANAGED';
 // MASK:                                                  'MASK';
 // MASKED:                                                'MASKED';
+MAP    : 'MAP'; // structured types: docs.snowflake.com/en/sql-reference/data-types-structured
 MASKING: 'MASKING';
 // MASTER:                                                'MASTER';
 MASTER_KEY                      : 'MASTER_KEY';
@@ -1272,7 +1282,7 @@ GT   : '>';
 GE   : '>=';
 LT   : '<';
 LE   : '<=';
-// EXCLAMATION:         '!';
+BANG: '!'; // instance method calls: docs.snowflake.com/en/sql-reference/classes
 
 PIPE_PIPE : '||';
 DOT       : '.';
