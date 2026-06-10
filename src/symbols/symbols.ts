@@ -169,6 +169,7 @@ function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: Schema):
 	for (const j of body.joinConditions ?? []) visit(j);
 	for (const g of body.groupBy ?? []) visit(g);
 	if (body.having) visit(body.having);
+	if (body.qualify) visit(body.qualify);
 }
 
 function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {

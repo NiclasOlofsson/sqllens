@@ -199,10 +199,12 @@ function foldSetChain(chain: SetChainItem[], cst: ParserRuleContext): QueryBody 
 		} else {
 			const t = pendingOp ? directTokenType(pendingOp, [P.UNION, P.EXCEPT, P.MINUS_, P.INTERSECT]) : undefined;
 			const op = t === P.INTERSECT ? "intersect" : t === P.EXCEPT || t === P.MINUS_ ? "except" : "union";
+			const byName = pendingOp !== undefined && directChildrenOfRule(pendingOp, P.RULE_by_name).length > 0;
 			body = {
 				kind: "setop",
 				op,
 				all: pendingOp !== undefined && hasDirectToken(pendingOp, P.ALL),
+				byName: byName || undefined,
 				left: body,
 				right: item.body,
 				columns: [],
@@ -236,7 +238,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 
 	const selectList = firstOfRule(stmt, P.RULE_select_list);
 	const projections = selectList
-		? directChildrenOfRule(selectList, P.RULE_select_list_elem).map((e) => buildProjection(e, unsupported))
+		? directChildrenOfRule(selectList, P.RULE_select_list_elem).map(buildProjection)
 		: [];
 
 	const optional = directChildrenOfRule(stmt, P.RULE_select_optional_clauses)[0];
@@ -257,9 +259,11 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	const havingSc = havingClause ? directChildrenOfRule(havingClause, P.RULE_search_condition)[0] : undefined;
 	const having = havingSc ? lowerSearch(havingSc) : undefined;
 
-	// QUALIFY filters on window results; not in the shared IR yet — flagged, not dropped.
+	// qualify_clause: QUALIFY expr
 	const qualifyClause = optional ? shallowFirstOfRule(optional, P.RULE_qualify_clause) : undefined;
-	if (qualifyClause) unsupported.push("qualify");
+	const qualifyExpr = qualifyClause ? directChildrenOfRule(qualifyClause, P.RULE_expr)[0] : undefined;
+	const qualifyP = qualifyClause ? directChildrenOfRule(qualifyClause, P.RULE_predicate)[0] : undefined;
+	const qualify = qualifyExpr ? lowerExpr(qualifyExpr) : qualifyP ? lowerPredicate(qualifyP) : undefined;
 
 	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
 	const subqueries = extractExpressionSubqueries(stmt, fromSubqueryNodes(from));
@@ -276,6 +280,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	for (const j of joinConditions) columnsOf(j, columns, "join");
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (having) columnsOf(having, columns, "having");
+	if (qualify) columnsOf(qualify, columns, "qualify");
 
 	return {
 		kind: "select",
@@ -286,6 +291,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 		joinConditions: joinConditions.length ? joinConditions : undefined,
 		groupBy,
 		having,
+		qualify,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
 		pivot: fromClause ? extractPivot(fromClause) : undefined,
@@ -416,18 +422,43 @@ function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined 
 
 // --- projections --------------------------------------------------------------
 
-function buildProjection(elem: ParserRuleContext, unsupported: string[]): Projection {
-	// column_elem_star star_modifier*
+function buildProjection(elem: ParserRuleContext): Projection {
+	// column_elem_star star_modifier* — docs.snowflake.com/en/sql-reference/sql/select
 	const star = directChildrenOfRule(elem, P.RULE_column_elem_star)[0];
 	if (star) {
-		if (directChildrenOfRule(elem, P.RULE_star_modifier).length) unsupported.push("star-modifier");
 		const qualifier = directChildrenOfRule(star, P.RULE_object_name_or_alias)[0];
-		return {
-			name: undefined,
-			isStar: true,
-			expr: { kind: "star", qualifier: qualifier ? nameParts(qualifier) : undefined, cst: star },
-			cst: elem,
+		const expr: Extract<Expr, { kind: "star" }> = {
+			kind: "star",
+			qualifier: qualifier ? nameParts(qualifier) : undefined,
+			cst: star,
 		};
+		for (const mod of directChildrenOfRule(elem, P.RULE_star_modifier)) {
+			const excludeClause = directChildrenOfRule(mod, P.RULE_exclude_clause)[0];
+			if (excludeClause) {
+				expr.exclude = [
+					...(expr.exclude ?? []),
+					...collectOfRule(excludeClause, P.RULE_column_name).map((c) => stripQuotes(c.getText())),
+				];
+			} else if (hasDirectToken(mod, P.ILIKE)) {
+				const pat = directChildrenOfRule(mod, P.RULE_string)[0];
+				expr.ilike = stripString(pat?.getText() ?? "");
+			} else if (hasDirectToken(mod, P.REPLACE)) {
+				const exprs = directChildrenOfRule(mod, P.RULE_expr);
+				const names = directChildrenOfRule(mod, P.RULE_column_name);
+				expr.replace = [
+					...(expr.replace ?? []),
+					...exprs.map((e, i) => ({ column: stripQuotes(names[i]?.getText() ?? ""), expr: lowerExpr(e) })),
+				];
+			} else if (hasDirectToken(mod, P.RENAME)) {
+				const names = directChildrenOfRule(mod, P.RULE_column_name);
+				const pairs: { from: string; to: string }[] = [];
+				for (let i = 0; i + 1 < names.length; i += 2) {
+					pairs.push({ from: stripQuotes(names[i].getText()), to: stripQuotes(names[i + 1].getText()) });
+				}
+				expr.rename = [...(expr.rename ?? []), ...pairs];
+			}
+		}
+		return { name: undefined, isStar: true, expr, cst: elem };
 	}
 
 	const alias = directChildrenOfRule(elem, P.RULE_as_alias)[0];

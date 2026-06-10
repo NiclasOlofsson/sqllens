@@ -353,6 +353,9 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 	const groupBy = groupByCtx ? extractGroupBy(groupByCtx) : undefined;
 	const havingCtx = shallowFirstOfRule(querySpec, P.RULE_havingClause);
 	const having = havingCtx ? lowerClausePredicate(havingCtx) : undefined;
+	// qualifyClause: QUALIFY booleanExpression — filters on window results (Databricks SQL).
+	const qualifyCtx = shallowFirstOfRule(querySpec, P.RULE_qualifyClause);
+	const qualify = qualifyCtx ? lowerClausePredicate(qualifyCtx) : undefined;
 
 	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
 
@@ -369,6 +372,7 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 	for (const j of joinConditions) columnsOf(j, columns, "join");
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (having) columnsOf(having, columns, "having");
+	if (qualify) columnsOf(qualify, columns, "qualify");
 
 	return {
 		kind: "select",
@@ -379,6 +383,7 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 		joinConditions: joinConditions.length ? joinConditions : undefined,
 		groupBy,
 		having,
+		qualify,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
 		pivot: fromClause ? extractPivot(fromClause) : undefined,
@@ -633,7 +638,9 @@ function lowerExpression(node: ParserRuleContext): Expr {
 		const parts = columnParts(node);
 		return parts ? { kind: "column", parts, cst: node } : otherExpr(node);
 	}
-	if (node instanceof StarContext) return { kind: "star", qualifier: starQualifier(node), cst: node };
+	if (node instanceof StarContext) {
+		return { kind: "star", qualifier: starQualifier(node), exclude: starExclude(node), cst: node };
+	}
 	if (node instanceof ConstantDefaultContext) return { kind: "literal", text: node.getText(), cst: node };
 	if (node instanceof FunctionCallContext) return lowerFunction(node);
 	if (node instanceof SearchedCaseContext || node instanceof SimpleCaseContext) return lowerCase(node);
@@ -788,6 +795,14 @@ function leadingTokenText(node: ParserRuleContext): string {
 function starQualifier(node: StarContext): string[] | undefined {
 	const qn = directChildrenOfRule(node, P.RULE_qualifiedName)[0];
 	return qn ? directChildrenOfRule(qn, P.RULE_identifier).map((i) => i.getText()) : undefined;
+}
+
+/** `* EXCEPT (a, b)` — exceptClause: EXCEPT '(' multipartIdentifierList ')'. */
+function starExclude(node: StarContext): string[] | undefined {
+	const except = directChildrenOfRule(node, P.RULE_exceptClause)[0];
+	if (!except) return undefined;
+	const cols = collectOfRule(except, P.RULE_multipartIdentifier).map((m) => m.getText());
+	return cols.length ? cols : undefined;
 }
 
 /** The single expression-rule child of `node`, if `node` is just a wrapper (no operator/predicate). */

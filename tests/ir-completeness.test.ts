@@ -74,6 +74,7 @@ function walkBody(body: QueryBody, tally: Map<string, number>, samples: Map<stri
 	for (const j of body.joinConditions ?? []) walkExpr(j, tally, samples);
 	for (const g of body.groupBy ?? []) walkExpr(g, tally, samples);
 	if (body.having) walkExpr(body.having, tally, samples);
+	if (body.qualify) walkExpr(body.qualify, tally, samples);
 	for (const sub of body.subqueries ?? []) walkIr(sub, tally, samples);
 	for (const s of body.from) if (s.kind === "subquery") walkIr(s.query, tally, samples);
 }

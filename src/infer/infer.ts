@@ -45,7 +45,7 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 				expr.op,
 				inferType(expr.left, scope, schema, ctx),
 				inferType(expr.right, scope, schema, ctx),
-				d.floatDivision,
+				d.division,
 			);
 		case "unary":
 			return unaryType(expr.op, inferType(expr.operand, scope, schema, ctx));
@@ -60,6 +60,11 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 			const base = inferType(expr.base, scope, schema, ctx);
 			if (base.kind === "array") return base.element;
 			if (base.kind === "map") return base.value;
+			// Semi-structured access stays semi-structured: variant:path / variant[i] → variant,
+			// and OBJECT values are VARIANT (Snowflake).
+			if (base.kind === "scalar" && (base.name === "variant" || base.name === "object")) {
+				return scalar("variant");
+			}
 			return UNKNOWN;
 		}
 		case "subquery":
@@ -243,15 +248,22 @@ function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx, dialect: strin
 const COMPARISON = new Set(["=", "==", "!=", "<>", "<", "<=", ">", ">=", "<=>"]);
 const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "div"]);
 
-function binaryType(op: string, l: Type, r: Type, floatDivision: boolean): Type {
+function binaryType(op: string, l: Type, r: Type, division: "float" | "integer" | "decimal"): Type {
 	const o = op.toLowerCase().trim();
 	if (COMPARISON.has(o) || o === "and" || o === "or") return BOOLEAN;
 	if (o === "||") return scalar("string");
-	if (o === "/" && floatDivision) {
+	if (o === "/" && division === "float") {
 		// Spark/Databricks `/` is float division: decimal/decimal stays decimal, otherwise → double.
 		if (l.kind === "unknown" || r.kind === "unknown") return UNKNOWN;
 		const decimal = l.kind === "scalar" && l.name === "decimal" && r.kind === "scalar" && r.name === "decimal";
 		return decimal ? scalar("decimal") : scalar("double");
+	}
+	if (o === "/" && division === "decimal") {
+		// Snowflake `/` is decimal division: a scaled NUMBER (10/3 → 3.333333) unless a
+		// float is involved, in which case the result is approximate.
+		if (l.kind === "unknown" || r.kind === "unknown") return UNKNOWN;
+		const isFloat = (t: Type) => t.kind === "scalar" && (t.name === "double" || t.name === "float");
+		return isFloat(l) || isFloat(r) ? scalar("double") : scalar("decimal");
 	}
 	if (ARITHMETIC.has(o)) {
 		if (isDate(l) && isInterval(r)) return l; // date/timestamp ± interval keeps the date type

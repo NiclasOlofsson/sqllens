@@ -54,6 +54,8 @@ export interface SelectExpr {
 	groupBy?: Expr[];
 	/** The HAVING predicate, modelled. */
 	having?: Expr;
+	/** The QUALIFY predicate (filters on window-function results; Databricks + Snowflake), modelled. */
+	qualify?: Expr;
 	/** True when the query aggregates: a GROUP BY, or an aggregate function in the projections/HAVING. */
 	aggregated: boolean;
 	/** Scalar / IN / EXISTS subqueries appearing in this select's expressions (SELECT list,
@@ -93,7 +95,7 @@ export interface UnpivotInfo {
 	alias?: string;
 }
 
-export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "orderBy";
+export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "qualify" | "orderBy";
 
 export interface ColumnRef {
 	/** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
@@ -112,8 +114,22 @@ export interface ColumnRef {
 export type Expr =
 	| { kind: "column"; parts: string[]; cst: ParserRuleContext }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
-	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. */
-	| { kind: "star"; qualifier?: string[]; cst: ParserRuleContext }
+	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. The optional
+	 *  modifiers transform the expansion (Snowflake `* EXCLUDE/ILIKE/RENAME/REPLACE …`,
+	 *  Databricks `* EXCEPT (…)`); they are applied by the qualify pass, which owns expansion. */
+	| {
+			kind: "star";
+			qualifier?: string[];
+			/** Columns removed from the expansion (Snowflake EXCLUDE, Databricks EXCEPT). */
+			exclude?: string[];
+			/** SQL LIKE pattern (case-insensitive) the expanded names must match (Snowflake ILIKE). */
+			ilike?: string;
+			/** `REPLACE (<expr> AS <col>)` — the column keeps its name/position, swaps its expression. */
+			replace?: { column: string; expr: Expr }[];
+			/** `RENAME (<col> AS <new>)` — renames applied to the expansion. */
+			rename?: { from: string; to: string }[];
+			cst: ParserRuleContext;
+	  }
 	| { kind: "binary"; op: string; left: Expr; right: Expr; cst: ParserRuleContext }
 	| { kind: "unary"; op: string; operand: Expr; cst: ParserRuleContext }
 	| {
@@ -163,6 +179,9 @@ export interface SetOpExpr {
 	op: "union" | "except" | "intersect";
 	/** true for ALL (e.g. UNION ALL); false for the default DISTINCT. */
 	all: boolean;
+	/** Snowflake `UNION [ALL] BY NAME` — branch columns align by name, not position;
+	 *  the output is the name-matched column set rather than the left branch's positions. */
+	byName?: boolean;
 	left: QueryBody;
 	right: QueryBody;
 	/** Set-op-level column references (e.g. a trailing ORDER BY) that resolve against the

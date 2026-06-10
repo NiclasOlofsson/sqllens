@@ -29,6 +29,21 @@ describe("lower: CST -> IR", () => {
 		expect(sel.unsupported).toContain("non-query");
 	});
 
+	it("models * EXCEPT (…) as a star exclusion", () => {
+		const { tree, errors } = parseDatabricks("SELECT * EXCEPT (a, b) FROM t");
+		expect(errors).toBe(0);
+		const sel = asSelect(lower(tree).body);
+		expect(sel.projections[0].expr).toMatchObject({ kind: "star", exclude: ["a", "b"] });
+	});
+
+	it("models QUALIFY (Databricks SQL) with clause-tagged column refs", () => {
+		const { tree, errors } = parseDatabricks("SELECT a, row_number() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1");
+		expect(errors).toBe(0);
+		const sel = asSelect(lower(tree).body);
+		expect(sel.qualify).toMatchObject({ kind: "binary", op: "=" });
+		expect(sel.columns.some((c) => c.clause === "qualify" && c.parts.join(".") === "rn")).toBe(true);
+	});
+
 	it("lowers a WITH clause into CteDefs with a name and a query body", () => {
 		const { tree, errors } = parseDatabricks("WITH c AS (SELECT 1 AS x) SELECT a FROM c");
 		expect(errors).toBe(0);

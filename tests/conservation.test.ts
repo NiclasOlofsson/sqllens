@@ -46,6 +46,7 @@ function cstCounts(tree: ParseTree): Counts {
 		where: countRule(tree, P.RULE_whereClause),
 		groupBy: countRule(tree, P.RULE_aggregationClause),
 		having: countRule(tree, P.RULE_havingClause),
+		qualify: countRule(tree, P.RULE_qualifyClause),
 		pivot: countRule(tree, P.RULE_pivotClause),
 		unpivot: countRule(tree, P.RULE_unpivotClause),
 		orderBy: countOrderBy(tree),
@@ -66,6 +67,7 @@ function walkBody(b: QueryBody, acc: Counts): void {
 	if (b.where) acc.where++;
 	if (b.groupBy) acc.groupBy++;
 	if (b.having) acc.having++;
+	if (b.qualify) acc.qualify++;
 	if (b.pivot) acc.pivot++;
 	if (b.unpivot) acc.unpivot++;
 	for (const s of b.from) if (s.kind === "subquery") irCounts(s.query, acc);
@@ -78,6 +80,7 @@ describe("CST <-> IR clause conservation", () => {
 	const cases = [
 		"SELECT a FROM t WHERE w > 1",
 		"SELECT a, sum(x) FROM t GROUP BY a HAVING sum(x) > 0",
+		"SELECT a, row_number() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1",
 		"SELECT * FROM t PIVOT (max(v) FOR s IN ('a' AS a))",
 		"SELECT * FROM t UNPIVOT (v FOR n IN (c1, c2))",
 		"SELECT a FROM t ORDER BY a",
@@ -86,14 +89,14 @@ describe("CST <-> IR clause conservation", () => {
 	];
 
 	it("the IR represents every clause the CST contains", () => {
-		const total: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
-		const cstTotal: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+		const total: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+		const cstTotal: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
 		const mismatches: string[] = [];
 
 		for (const sql of cases) {
 			const tree = parseDatabricks(sql).tree;
 			const cst = cstCounts(tree);
-			const ir: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+			const ir: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
 			irCounts(lower(tree), ir);
 			for (const k of Object.keys(cst)) {
 				cstTotal[k] += cst[k];
@@ -115,14 +118,14 @@ describe.skipIf(!existsSync(CORPUS))("CST <-> IR conservation over the Oatly cor
 			(f): f is string => typeof f === "string" && f.endsWith(".sql"),
 		);
 
-		const cstTotal: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
-		const irTotal: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+		const cstTotal: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+		const irTotal: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
 		const offenders: Record<string, string> = {};
 
 		for (const rel of files) {
 			const tree = parseDatabricks(readFileSync(join(CORPUS, rel), "utf8")).tree;
 			const cst = cstCounts(tree);
-			const ir: Counts = { where: 0, groupBy: 0, having: 0, pivot: 0, unpivot: 0, orderBy: 0 };
+			const ir: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
 			irCounts(lower(tree), ir);
 			for (const k of Object.keys(cst)) {
 				cstTotal[k] += cst[k];

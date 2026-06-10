@@ -47,6 +47,28 @@ describe("Snowflake qualify (star expansion + diagnostics)", () => {
 		const result = qualify(tree, T);
 		expect(result.diagnostics.some((d) => d.kind === "unknown-column" && d.message.includes("nope"))).toBe(true);
 	});
+
+	it("QUALIFY sees select-list aliases (like HAVING/ORDER BY), so no false diagnostic", () => {
+		const tree = scopes("SELECT a, ROW_NUMBER() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1");
+		const result = qualify(tree, T);
+		expect(result.diagnostics.filter((d) => d.message.includes("rn"))).toEqual([]);
+	});
+
+	it("star expansion applies EXCLUDE / ILIKE / RENAME", () => {
+		// schema t = { a, s, ts, v }
+		const exclude = scopes("SELECT * EXCLUDE (a, v) FROM t");
+		expect(qualify(exclude, T).columnsOf(exclude.root)).toEqual(["s", "ts"]);
+
+		const ilike = scopes("SELECT * ILIKE '%s%' FROM t");
+		expect(qualify(ilike, T).columnsOf(ilike.root)).toEqual(["s", "ts"]);
+
+		const rename = scopes("SELECT * RENAME (a AS id) FROM t");
+		expect(qualify(rename, T).columnsOf(rename.root)).toEqual(["id", "s", "ts", "v"]);
+
+		// REPLACE keeps the column's name and position.
+		const replace = scopes("SELECT * REPLACE (a / 100 AS a) FROM t");
+		expect(qualify(replace, T).columnsOf(replace.root)).toEqual(["a", "s", "ts", "v"]);
+	});
 });
 
 describe("Snowflake lineage", () => {
@@ -104,8 +126,15 @@ describe("Snowflake type inference (dialect-specific knowledge)", () => {
 		expect(typeOf("SELECT TO_DOUBLE(s) AS x FROM t", T)).toEqual({ kind: "scalar", name: "double" });
 	});
 
-	it("int/int division is non-integer (Snowflake decimal division)", () => {
-		const got = typeOf("SELECT 10/3 AS x");
-		expect(got).not.toEqual({ kind: "scalar", name: "int" });
+	it("variant paths and subscripts stay variant", () => {
+		expect(typeOf("SELECT v:a.b AS x FROM t", T)).toEqual({ kind: "scalar", name: "variant" });
+		expect(typeOf("SELECT v:items[0] AS x FROM t", T)).toEqual({ kind: "scalar", name: "variant" });
+		expect(typeOf("SELECT v:a::STRING AS x FROM t", T)).toEqual({ kind: "scalar", name: "string" });
+	});
+
+	it("division is decimal division: numeric/numeric → decimal, float operand → double", () => {
+		expect(typeOf("SELECT 10/3 AS x")).toEqual({ kind: "scalar", name: "decimal" });
+		expect(typeOf("SELECT a/2 AS x FROM t", T)).toEqual({ kind: "scalar", name: "decimal" });
+		expect(typeOf("SELECT TO_DOUBLE(s)/2 AS x FROM t", T)).toEqual({ kind: "scalar", name: "double" });
 	});
 });

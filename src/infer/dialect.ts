@@ -1,5 +1,5 @@
-import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "../snowflake/infer.js";
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
+import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
@@ -13,34 +13,32 @@ export interface InferDialect {
 	functions: Record<string, FnRule>;
 	literal(text: string): Type;
 	parseType(text: string): Type;
-	/** `/` returns a float for any numeric operands (Spark: int/int → double). When false the
-	 *  operator is typed by ordinary coercion (T-SQL: int/int → int, "typed division"). */
-	floatDivision: boolean;
+	/** What `/` returns:
+	 *  - "float"   — double for any numerics except decimal/decimal (Spark: int/int → double);
+	 *  - "integer" — ordinary coercion (T-SQL: int/int → int, "typed division");
+	 *  - "decimal" — a scaled NUMBER unless a float is involved (Snowflake: 10/3 → 3.333333). */
+	division: "float" | "integer" | "decimal";
 }
 
 const databricks: InferDialect = {
 	functions: FUNCTION_RETURNS,
 	literal: databricksLiteral,
 	parseType: (t) => parseType(t),
-	floatDivision: true,
+	division: "float",
 };
 
 const tsql: InferDialect = {
 	functions: TSQL_FUNCTION_RETURNS,
 	literal: tsqlLiteral,
 	parseType: (t) => parseType(t, TSQL_ALIASES),
-	floatDivision: false,
+	division: "integer",
 };
 
 const snowflake: InferDialect = {
 	functions: SNOWFLAKE_FUNCTION_RETURNS,
 	literal: snowflakeLiteral,
 	parseType: snowflakeParseType,
-	// Snowflake int/int is decimal division (10/3 → 3.333333, a scaled NUMBER) — neither
-	// Spark's double nor T-SQL's integer division. `true` gives the closer approximation
-	// (non-integer result); the exact NUMBER-scale semantics need a richer division hook
-	// (docs/snowflake-backlog.md).
-	floatDivision: true,
+	division: "decimal",
 };
 
 const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake };

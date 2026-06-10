@@ -62,9 +62,10 @@ function resolveColumns(
 	const out: string[] = [];
 	for (const p of body.projections) {
 		if (p.isStar) {
-			const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
-			const cols = expandStar(scope, schema, resolved, diagnostics, qualifier);
+			const star = p.expr.kind === "star" ? p.expr : undefined;
+			let cols = expandStar(scope, schema, resolved, diagnostics, star?.qualifier);
 			if (cols === undefined) return "unknown";
+			if (star) cols = applyStarModifiers(cols, star);
 			out.push(...cols);
 		} else if (p.name !== undefined) {
 			out.push(p.name);
@@ -96,6 +97,31 @@ function expandStar(
 	}
 	if (want !== undefined && !matched) return undefined; // qualified star naming no visible source
 	return cols;
+}
+
+/** Apply the star modifiers to an expansion: EXCLUDE/EXCEPT removes, ILIKE filters by
+ *  pattern, RENAME renames (REPLACE keeps name and position — no expansion change). */
+function applyStarModifiers(cols: string[], star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] }): string[] {
+	let out = cols;
+	if (star.exclude) {
+		const removed = new Set(star.exclude.map(normalizeName));
+		out = out.filter((c) => !removed.has(normalizeName(c)));
+	}
+	if (star.ilike !== undefined) {
+		const rx = likePatternToRegExp(star.ilike);
+		out = out.filter((c) => rx.test(normalizeName(c)));
+	}
+	if (star.rename) {
+		const renames = new Map(star.rename.map((r) => [normalizeName(r.from), r.to]));
+		out = out.map((c) => renames.get(normalizeName(c)) ?? c);
+	}
+	return out;
+}
+
+/** SQL LIKE pattern → an anchored case-insensitive RegExp (`%` → `.*`, `_` → `.`). */
+function likePatternToRegExp(pattern: string): RegExp {
+	const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
+	return new RegExp(`^${escaped}$`, "i");
 }
 
 /** The output column names of a source — schema for a table (reporting unknown-table if absent),

@@ -1,15 +1,12 @@
-import { commonType, widenSum } from "../infer/coerce.js";
-import type { FnRule } from "../infer/functions.js";
-import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import { commonType, widenSum } from "./coerce.js";
+import type { FnRule } from "./functions.js";
+import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
 // Snowflake inference knowledge — function return types, literal forms, and scalar-type
 // aliases — from the SQL function reference (docs.snowflake.com/en/sql-reference/functions).
 // Same contract as the other dialects: a rule is absent (→ unknown) only when the documented
 // return type is argument-value-dependent (DECODE, GET on heterogeneous data, …). We never
 // guess: a missing rule yields `unknown`, never a wrong type.
-//
-// Lives under src/snowflake/ (not src/infer/) while another dialect is being developed in
-// parallel — see docs/snowflake-backlog.md for the move-to-convention note.
 
 const S = scalar("string");
 const I = scalar("int");

@@ -232,6 +232,16 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.body.left.all).toBe(true);
 	});
 
+	it("records UNION BY NAME (name-matched column alignment)", () => {
+		const { q } = ir("SELECT a, b FROM t1 UNION ALL BY NAME SELECT b, a FROM t2");
+		if (q.body.kind !== "setop") throw new Error("setop");
+		expect(q.body.byName).toBe(true);
+		expect(q.body.all).toBe(true);
+		const plain = ir("SELECT a FROM t1 UNION SELECT a FROM t2").q;
+		if (plain.body.kind !== "setop") throw new Error("setop");
+		expect(plain.body.byName ?? false).toBe(false);
+	});
+
 	it("captures JOIN ON conditions and their column refs", () => {
 		const { body } = selectBody("SELECT * FROM a JOIN b ON a.id = b.id");
 		expect(body.joinConditions).toHaveLength(1);
@@ -267,18 +277,44 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.limit?.top).toMatchObject({ kind: "literal", text: "3" });
 	});
 
-	it("flags QUALIFY as unsupported (IR backlog) rather than dropping it silently", () => {
+	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
-		expect(body.unsupported).toContain("qualify");
+		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });
+		expect(body.columns.some((c) => c.clause === "qualify" && c.parts.join(".") === "rn")).toBe(true);
+		expect(body.unsupported ?? []).not.toContain("qualify");
 	});
 
-	it("lowers stars, qualified stars, and flags star modifiers", () => {
+	it("lowers stars and qualified stars", () => {
 		const plain = selectBody("SELECT * FROM t").body;
 		expect(plain.projections[0]).toMatchObject({ isStar: true, expr: { kind: "star" } });
 		const qualified = selectBody("SELECT t.* FROM t").body;
 		expect(qualified.projections[0].expr).toMatchObject({ kind: "star", qualifier: ["t"] });
-		const excluded = selectBody("SELECT * EXCLUDE (a) FROM t").body;
-		expect(excluded.unsupported).toContain("star-modifier");
+	});
+
+	it("models the star modifiers EXCLUDE / ILIKE / RENAME / REPLACE", () => {
+		const ex = selectBody("SELECT * EXCLUDE (a, b) FROM t").body.projections[0].expr;
+		expect(ex).toMatchObject({ kind: "star", exclude: ["a", "b"] });
+
+		const il = selectBody("SELECT * ILIKE '%amount%' FROM t").body.projections[0].expr;
+		expect(il).toMatchObject({ kind: "star", ilike: "%amount%" });
+
+		const rn = selectBody("SELECT * RENAME (a AS x, b AS y) FROM t").body.projections[0].expr;
+		expect(rn).toMatchObject({
+			kind: "star",
+			rename: [
+				{ from: "a", to: "x" },
+				{ from: "b", to: "y" },
+			],
+		});
+
+		const rp = selectBody("SELECT * REPLACE (amount / 100 AS amount) FROM t").body.projections[0].expr;
+		if (rp.kind !== "star") throw new Error("star");
+		expect(rp.replace?.[0].column).toBe("amount");
+		expect(rp.replace?.[0].expr).toMatchObject({ kind: "binary", op: "/" });
+
+		const combined = selectBody("SELECT t.* EXCLUDE (a) RENAME (c AS d) FROM t").body;
+		expect(combined.projections[0].expr).toMatchObject({ kind: "star", exclude: ["a"], rename: [{ from: "c", to: "d" }] });
+		expect(combined.unsupported ?? []).not.toContain("star-modifier");
 	});
 
 	it("collects scalar/IN/EXISTS subqueries into subqueries and predicate args", () => {

@@ -145,7 +145,7 @@ export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
 
 /** Clauses where a bare name may reference a SELECT-list alias rather than a source column. */
 function aliasVisibleClause(clause: ColumnRef["clause"]): boolean {
-	return clause === "groupBy" || clause === "having" || clause === "orderBy";
+	return clause === "groupBy" || clause === "having" || clause === "qualify" || clause === "orderBy";
 }
 
 function matchesProjectionAlias(scope: Scope, name: string): boolean {

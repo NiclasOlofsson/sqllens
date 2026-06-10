@@ -321,18 +321,17 @@ Known Redshift clusters to expect (seed the corpus with these): `COPY`/`UNLOAD` 
 
 ---
 
-## Phase 4 — Dialect #2: Snowflake (the hard one)
+## Phase 4 — Dialect #2: Snowflake — DONE 2026-06-10 (fork-and-clean, not hand-authored)
 
-> Detailed bite-sized tasks for this phase are written **after Phase 3** lands, because the exact rule edits depend on the harness output. The method is identical to Task 3.2 (corpus → fail → manual+sqlglot → grammar edit → green → commit). What differs is volume and these known-hard areas, each of which gets its own corpus seed + task cluster:
+> **Superseded by the build.** The original framing (hand-author; "no open grammar exists") was wrong: grammars-v4 `sql/snowflake` exists (4.3k-line split parser, actively maintained since 2022, used in production by Bytebase). Snowflake was **forked** from it at `923a1a9` — the same approach as T-SQL — and cleaned against the official docs.
 
-- **Lexer modes** (this forces real work in `SnowflakeLexer.g4`): dollar-quoted strings `$$ … $$`, and **embedded UDF bodies** (JS/Python/Java/Scala inside `CREATE FUNCTION … AS`). Decide per body: opaque blob vs sub-mode. Default to opaque blob unless a corpus case needs structure.
-- **Semi-structured access:** `col:path.to.field`, `col['key']`, `arr[0]`, `FLATTEN`/`LATERAL FLATTEN`, `OBJECT_CONSTRUCT`, VARIANT/OBJECT/ARRAY types, `::` casts everywhere.
-- **The DDL jungle:** `CREATE TABLE` with its large option grammar, plus `STAGE`/`PIPE`/`STREAM`/`TASK`/`FILE FORMAT`/masking & row-access policies, `COPY INTO`, `MERGE`, time travel (`AT`/`BEFORE`), `QUALIFY`, `MATCH_RECOGNIZE`.
-- **Reserved vs non-reserved keywords:** see the dedicated strategy below — Snowflake lets most keywords be identifiers.
+What was built (all gated, see `tests/snowflake.*`):
 
-Seed the corpus from sqlglot's snowflake fixtures + dbt's `SnowflakeLexer.tokens` vocabulary checklist + grammars-v4 `sql/snowflake` as a structural reference.
+- **Grammar** (`grammars/snowflake/`): fork plus doc-cited fixes — window frames (upstream had them commented out), `SELECT *` ILIKE/EXCLUDE/REPLACE/RENAME, `$$` strings as expressions, real MATCH_RECOGNIZE patterns, WITHIN GROUP on ordered-set aggregates, multi-row VALUES, structured `OBJECT(…)`/`MAP(…)`/FILE types, quoted-keyword strings (`'CSV'` &c. were lexer tokens), ALTER SESSION with any parameter, `!method()` calls, ICEBERG tables, stage queries in FROM, `IDENTIFIER('…')`, GRANT DATABASE ROLE.
+- **Conformance corpus**: every SQL example from all 2,348 docs.snowflake.com sql-reference pages (`tools/scrape-snowflake-docs.mjs` → gitignored `harness/local/snowflake-docs/`, 6,259 files). Gates: grammars-v4's 51 examples at **100%**; the docs corpus as a **ratchet** (baseline in `tests/snowflake.corpus.test.ts`). Remaining shortfall is platform DDL (LISTING/APPLICATION/CORTEX …), standalone Snowflake Scripting blocks, and the statement-option long tail — raise the baseline as fixes land.
+- **Pipeline**: `src/snowflake/parse.ts` + `lower.ts` onto the shared IR (QUALIFY, star modifiers, UNION BY NAME, FLATTEN→lateral, PIVOT/UNPIVOT, variant paths→subscript, VALUES→modelled selects, `$n` refs); the semantic layer runs unchanged (`snowflake.pipeline` suite). Inference knowledge in `src/infer/snowflake.ts` (~300 doc-sourced rules, NUMBER→decimal aliases, decimal division).
 
-**Phase 4 done when:** Snowflake `we-reject-they-accept` ≤ threshold on the corpus, including at least one embedded-UDF and one semi-structured-access case.
+Open (tracked in `docs/snowflake-backlog.md`): the docs-corpus grammar long tail, embedded UDF bodies beyond `$$`-blob treatment, star-REPLACE type threading, `src/index.ts` export at packaging.
 
 ---
 
