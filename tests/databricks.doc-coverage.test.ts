@@ -10,11 +10,13 @@ import { resolveScopes } from "../src/scope/scope.js";
 //   "query"    — parses, lowers to a modelled query (or the statement's inner query,
 //                e.g. INSERT/CTAS), and scopes without throwing
 //   "nonquery" — parses; lower flags it unsupported (no query scope) instead of modelling
-//   "noparse"  — the grammar rejects it. These are the Databricks-platform statements the
-//                Spark fork never had (COPY INTO, Delta utilities, UC DDL, …) — out of
-//                scope per the parser's queries-first use case (Nicke, 2026-06-10)
+//   "noparse"  — the grammar rejects it: Databricks-platform statements the Spark fork
+//                never had. Object DDL (UC CREATE/ALTER/DROP, MASK/ROW FILTER, Python UDF
+//                bodies) is OUT by decision ("we don't do regular DDL" — Nicke 2026-06-10);
+//                the operational statements (COPY INTO, Delta maintenance, GRANT) are open
+//                gaps, likely future scope ("might become in scope … we do it occasionally")
 //
-// "nonquery"/"noparse" entries are documented Databricks SQL: each is a known, deliberate
+// "nonquery"/"noparse" entries are documented Databricks SQL: each is a known, recorded
 // boundary, not an oversight. Flip the flag in the same change that closes one.
 
 type Expected = "query" | "nonquery" | "noparse";
@@ -68,7 +70,11 @@ const PROBES: Record<string, Probe[]> = {
 		["time-travel-at", "SELECT * FROM t@v1", "query"],
 		["window-named", "SELECT sum(a) OVER w FROM t WINDOW w AS (PARTITION BY b ORDER BY a)", "query"],
 		["window-frame", "SELECT sum(a) OVER (ORDER BY b ROWS BETWEEN 1 PRECEDING AND CURRENT ROW) FROM t", "query"],
-		["window-range", "SELECT sum(a) OVER (ORDER BY b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t", "query"],
+		[
+			"window-range",
+			"SELECT sum(a) OVER (ORDER BY b RANGE BETWEEN UNBOUNDED PRECEDING AND CURRENT ROW) FROM t",
+			"query",
+		],
 		["distribute-sort", "SELECT a FROM t DISTRIBUTE BY a SORT BY a", "query"],
 		["cluster-by", "SELECT a FROM t CLUSTER BY a", "query"],
 		["hint", "SELECT /*+ BROADCAST(u) */ * FROM t JOIN u ON t.id = u.id", "query"],
