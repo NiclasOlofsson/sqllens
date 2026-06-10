@@ -18,6 +18,7 @@ import {
 	ParenthesizedExpressionContext,
 	PredicatedContext,
 	PrimaryExpressionContext,
+	RowConstructorContext,
 	SearchedCaseContext,
 	ShiftExpressionContext,
 	SimpleCaseContext,
@@ -193,9 +194,88 @@ function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
 	const innerQuery = queryPrimary ? directChildrenOfRule(queryPrimary, P.RULE_query)[0] : undefined;
 	if (innerQuery) return lowerQuery(innerQuery).body;
 
+	if (queryPrimary) {
+		// The primary's own select — checked directly (not deep) so a scalar subquery
+		// inside a VALUES row can't be mistaken for the body.
+		const direct = directChildrenOfRule(queryPrimary, P.RULE_querySpecification)[0];
+		if (direct) return buildSelect(direct);
+
+		// VALUES (1,'a'),(2,'b') [AS v(x,y)] — an inline table is a leaf relation; its
+		// output columns come from the alias list, else Spark's default col1..colN.
+		const inlineTable = directChildrenOfRule(queryPrimary, P.RULE_inlineTable)[0];
+		if (inlineTable) return buildInlineTable(inlineTable);
+
+		// TABLE t — shorthand for SELECT * FROM t.
+		if (directTokenType(queryPrimary, [P.TABLE]) !== undefined) return buildTableShorthand(queryPrimary);
+	}
+
 	const querySpec = firstOfRule(queryTerm, P.RULE_querySpecification);
-	if (!querySpec) throw new Error("lower: queryTerm has no querySpecification");
-	return buildSelect(querySpec);
+	if (querySpec) return buildSelect(querySpec);
+
+	// Any other body shape (e.g. FROM-first statements): flag it — a valid parse must never throw.
+	return {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["query-body"],
+		cst: queryTerm,
+	};
+}
+
+/** VALUES rows: the first row fixes the output shape — its expressions become the
+ *  projections, named by the table alias's column list or Spark's default col1..colN. */
+function buildInlineTable(inlineTable: ParserRuleContext): SelectExpr {
+	const rows = directChildrenOfRule(inlineTable, P.RULE_expression);
+	const first = rows[0];
+
+	// A multi-column row is a rowConstructor `(a, b, …)`; otherwise the row is one bare expression.
+	let ctor: ParserRuleContext | undefined;
+	let cur: ParseTree | null = first ?? null;
+	while (cur instanceof ParserRuleContext) {
+		if (cur instanceof RowConstructorContext) {
+			ctor = cur;
+			break;
+		}
+		if (cur.getChildCount() !== 1) break;
+		cur = cur.getChild(0);
+	}
+	const colExprs = ctor
+		? directChildrenOfRule(ctor, P.RULE_namedExpression).map((n) => directChildrenOfRule(n, P.RULE_expression)[0] ?? n)
+		: first
+			? [first]
+			: [];
+
+	const tableAlias = directChildrenOfRule(inlineTable, P.RULE_tableAlias)[0];
+	const aliases = tableAlias ? columnAliasList(tableAlias) : undefined;
+
+	const projections: Projection[] = colExprs.map((e, i) => ({
+		name: aliases?.[i] ?? `col${i + 1}`,
+		isStar: false,
+		expr: lowerExpression(e),
+		cst: e,
+	}));
+	const columns: ColumnRef[] = [];
+	for (const p of projections) columnsOf(p.expr, columns, "projection");
+	return { kind: "select", projections, from: [], columns, aggregated: false, cst: inlineTable };
+}
+
+/** `TABLE t` — shorthand for `SELECT * FROM t`. */
+function buildTableShorthand(queryPrimary: ParserRuleContext): SelectExpr {
+	const multipart = firstOfRule(queryPrimary, P.RULE_multipartIdentifier);
+	const name = multipart
+		? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier).map((p) => p.getText())
+		: [];
+	const star: Expr = { kind: "star", cst: queryPrimary };
+	return {
+		kind: "select",
+		projections: [{ isStar: true, expr: star, cst: queryPrimary }],
+		from: [{ kind: "table", name, cst: queryPrimary }],
+		columns: [],
+		aggregated: false,
+		cst: queryPrimary,
+	};
 }
 
 function setOpKind(queryTerm: ParserRuleContext): "union" | "except" | "intersect" {
