@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { lower } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
 
 // Snowflake is the third dialect: grammar forked from grammars-v4 sql/snowflake, cleaned
@@ -8,6 +9,18 @@ import { parseSnowflake } from "../src/snowflake/parse.js";
 
 function errorsOf(sql: string): number {
 	return parseSnowflake(sql).errors;
+}
+
+function ir(sql: string) {
+	const { tree, errors } = parseSnowflake(sql);
+	return { q: lower(tree), errors };
+}
+
+function selectBody(sql: string) {
+	const { q, errors } = ir(sql);
+	expect(errors).toBe(0);
+	if (q.body.kind !== "select") throw new Error(`expected select body, got ${q.body.kind}`);
+	return { q, body: q.body };
 }
 
 describe("Snowflake parse", () => {
@@ -178,5 +191,193 @@ describe("Snowflake parse", () => {
 					DEFINE up AS price > 10, down AS price < 10, flat AS price = 10, dip AS price < 5
 				)`),
 		).toBe(0);
+	});
+});
+
+describe("Snowflake lower -> IR", () => {
+	it("lowers a basic SELECT to a select body with projections and a table source", () => {
+		const { body } = selectBody("SELECT a, b FROM t");
+		expect(body.projections.map((p) => p.name)).toEqual(["a", "b"]);
+		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+	});
+
+	it("captures column and table aliases, with and without AS", () => {
+		const { body } = selectBody("SELECT t.a AS x, t.b y FROM db.sch.tbl t");
+		expect(body.projections[0].name).toBe("x");
+		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "a"] });
+		expect(body.projections[1].name).toBe("y");
+		expect(body.from[0]).toMatchObject({ kind: "table", name: ["db", "sch", "tbl"], alias: "t" });
+	});
+
+	it("models WHERE and tags its column refs with the where clause", () => {
+		const { body } = selectBody("SELECT a FROM t WHERE b > 1");
+		expect(body.where).toMatchObject({ kind: "binary", op: ">" });
+		expect(body.columns.some((c) => c.clause === "where" && c.parts.join(".") === "b")).toBe(true);
+	});
+
+	it("lowers CTEs with declared column aliases", () => {
+		const { q } = selectBody("WITH c (x, y) AS (SELECT a, b FROM t) SELECT x FROM c");
+		expect(q.ctes).toHaveLength(1);
+		expect(q.ctes[0].name).toBe("c");
+		expect(q.ctes[0].columnAliases).toEqual(["x", "y"]);
+		expect(q.ctes[0].body.body.kind).toBe("select");
+	});
+
+	it("lowers set operators including MINUS as except", () => {
+		const { q } = ir("SELECT a FROM t1 UNION ALL SELECT a FROM t2 MINUS SELECT a FROM t3");
+		if (q.body.kind !== "setop") throw new Error("setop");
+		expect(q.body.op).toBe("except");
+		if (q.body.left.kind !== "setop") throw new Error("nested setop");
+		expect(q.body.left.op).toBe("union");
+		expect(q.body.left.all).toBe(true);
+	});
+
+	it("captures JOIN ON conditions and their column refs", () => {
+		const { body } = selectBody("SELECT * FROM a JOIN b ON a.id = b.id");
+		expect(body.joinConditions).toHaveLength(1);
+		expect(body.columns.some((c) => c.clause === "join" && c.parts.join(".") === "a.id")).toBe(true);
+	});
+
+	it("captures the ASOF JOIN match condition as a join condition", () => {
+		const { body } = selectBody("SELECT * FROM trades t ASOF JOIN quotes q MATCH_CONDITION (t.ts >= q.ts) ON t.sym = q.sym");
+		expect(body.joinConditions).toHaveLength(2);
+	});
+
+	it("models GROUP BY and HAVING and sets aggregated", () => {
+		const { body } = selectBody("SELECT g, SUM(x) FROM t GROUP BY g HAVING SUM(x) > 0");
+		expect(body.groupBy).toHaveLength(1);
+		expect(body.having).toMatchObject({ kind: "binary", op: ">" });
+		expect(body.aggregated).toBe(true);
+	});
+
+	it("sets aggregated for GROUP BY ALL and bare aggregates", () => {
+		expect(selectBody("SELECT g, COUNT(*) FROM t GROUP BY ALL").body.aggregated).toBe(true);
+		expect(selectBody("SELECT MAX(x) FROM t").body.aggregated).toBe(true);
+	});
+
+	it("models ORDER BY and LIMIT/OFFSET", () => {
+		const { q } = selectBody("SELECT a FROM t ORDER BY a DESC LIMIT 10 OFFSET 5");
+		expect(q.orderBy).toHaveLength(1);
+		expect(q.limit?.top).toMatchObject({ kind: "literal", text: "10" });
+		expect(q.limit?.offset).toMatchObject({ kind: "literal", text: "5" });
+	});
+
+	it("models TOP n as the limit", () => {
+		const { q } = selectBody("SELECT TOP 3 a FROM t");
+		expect(q.limit?.top).toMatchObject({ kind: "literal", text: "3" });
+	});
+
+	it("flags QUALIFY as unsupported (IR backlog) rather than dropping it silently", () => {
+		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
+		expect(body.unsupported).toContain("qualify");
+	});
+
+	it("lowers stars, qualified stars, and flags star modifiers", () => {
+		const plain = selectBody("SELECT * FROM t").body;
+		expect(plain.projections[0]).toMatchObject({ isStar: true, expr: { kind: "star" } });
+		const qualified = selectBody("SELECT t.* FROM t").body;
+		expect(qualified.projections[0].expr).toMatchObject({ kind: "star", qualifier: ["t"] });
+		const excluded = selectBody("SELECT * EXCLUDE (a) FROM t").body;
+		expect(excluded.unsupported).toContain("star-modifier");
+	});
+
+	it("collects scalar/IN/EXISTS subqueries into subqueries and predicate args", () => {
+		const { body } = selectBody(
+			"SELECT (SELECT MAX(x) FROM m) mx FROM t WHERE a IN (SELECT id FROM ids) AND EXISTS (SELECT 1 FROM e)",
+		);
+		expect(body.subqueries?.length).toBeGreaterThanOrEqual(3);
+	});
+
+	it("lowers FROM subqueries with alias", () => {
+		const { body } = selectBody("SELECT * FROM (SELECT a FROM t) s");
+		expect(body.from[0]).toMatchObject({ kind: "subquery", alias: "s" });
+	});
+
+	it("lowers variant paths and subscripts onto subscript, :: onto cast", () => {
+		const { body } = selectBody("SELECT payload:a.b::STRING, arr[0] FROM t");
+		const cast = body.projections[0].expr;
+		expect(cast.kind).toBe("cast");
+		if (cast.kind !== "cast") return;
+		expect(cast.expr.kind).toBe("subscript");
+		if (cast.expr.kind !== "subscript") return;
+		expect(cast.expr.base).toMatchObject({ kind: "column", parts: ["payload"] });
+		expect(body.projections[1].expr).toMatchObject({ kind: "subscript", index: { kind: "literal", text: "0" } });
+		expect(body.columns.some((c) => c.parts.join(".") === "payload")).toBe(true);
+	});
+
+	it("lowers searched and simple CASE (simple desugars to equality)", () => {
+		const searched = selectBody("SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END FROM t").body;
+		expect(searched.projections[0].expr.kind).toBe("case");
+		const simple = selectBody("SELECT CASE a WHEN 1 THEN 'x' END FROM t").body;
+		const expr = simple.projections[0].expr;
+		if (expr.kind !== "case") throw new Error("case");
+		expect(expr.whens[0].when).toMatchObject({ kind: "binary", op: "=" });
+	});
+
+	it("lowers IFF to a case", () => {
+		const { body } = selectBody("SELECT IFF(a > 0, 'p', 'n') FROM t");
+		expect(body.projections[0].expr.kind).toBe("case");
+	});
+
+	it("lowers lambdas as higher-order function arguments", () => {
+		const { body } = selectBody("SELECT FILTER(arr, x -> x > 10) FROM t");
+		const fn = body.projections[0].expr;
+		if (fn.kind !== "function") throw new Error("function");
+		expect(fn.args.some((a) => a.kind === "lambda" && a.params.includes("x"))).toBe(true);
+	});
+
+	it("lowers LATERAL FLATTEN to a lateral source exposing the six FLATTEN columns", () => {
+		const { body } = selectBody("SELECT f.value FROM t, LATERAL FLATTEN(input => t.payload) f");
+		const lateral = body.from.find((s) => s.kind === "lateral");
+		expect(lateral).toBeDefined();
+		if (lateral?.kind !== "lateral") return;
+		expect(lateral.alias).toBe("f");
+		expect(lateral.columns).toEqual(["SEQ", "KEY", "PATH", "INDEX", "VALUE", "THIS"]);
+	});
+
+	it("lowers PIVOT to PivotInfo", () => {
+		const { body } = selectBody(
+			"SELECT * FROM monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB')) p",
+		);
+		expect(body.pivot).toBeDefined();
+		expect(body.pivot?.values).toEqual(["JAN", "FEB"]);
+		expect(body.pivot?.forColumns).toEqual(["month"]);
+		expect(body.pivot?.aggColumns).toEqual(["amount"]);
+	});
+
+	it("lowers UNPIVOT to UnpivotInfo", () => {
+		const { body } = selectBody("SELECT * FROM p UNPIVOT (sales FOR month IN (jan, feb, mar))");
+		expect(body.unpivot).toMatchObject({ valueColumn: "sales", nameColumn: "month" });
+		expect(body.unpivot?.removed).toEqual(["jan", "feb", "mar"]);
+	});
+
+	it("lowers an inline VALUES source to a modelled subquery select", () => {
+		const { body } = selectBody("SELECT * FROM (VALUES (1, 'a'), (2, 'b')) v (id, name)");
+		const src = body.from[0];
+		expect(src).toMatchObject({ kind: "subquery", alias: "v", columnAliases: ["id", "name"] });
+		if (src.kind !== "subquery") return;
+		expect(src.query.body.kind).toBe("select");
+		if (src.query.body.kind !== "select") return;
+		expect(src.query.body.projections).toHaveLength(2);
+	});
+
+	it("lowers $n positional references as columns", () => {
+		const { body } = selectBody("SELECT $1, $2 FROM @my_stage");
+		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["$1"] });
+	});
+
+	it("captures window functions with partition and order keys", () => {
+		const { body } = selectBody("SELECT ROW_NUMBER() OVER (PARTITION BY g ORDER BY ts DESC) rn FROM t");
+		const fn = body.projections[0].expr;
+		if (fn.kind !== "function") throw new Error("function");
+		expect(fn.window?.partitionBy).toHaveLength(1);
+		expect(fn.window?.orderBy).toHaveLength(1);
+		expect(body.columns.some((c) => c.parts.join(".") === "g")).toBe(true);
+	});
+
+	it("flags non-query statements instead of throwing", () => {
+		const { q } = ir("DELETE FROM t WHERE a = 1");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.unsupported).toContain("non-query");
 	});
 });
