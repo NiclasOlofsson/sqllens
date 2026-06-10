@@ -26,10 +26,12 @@ import { SnowflakeParser } from "../src/generated/snowflake/SnowflakeParser.js";
 const VENDOR_EXAMPLES = resolve("vendor/grammars-v4/sql/snowflake/examples");
 const DOCS_CORPUS = resolve("harness/local/snowflake-docs");
 
-// Locked 2026-06-10: 4442/6259 (71.0%). The shortfall is concentrated in platform DDL
-// (ALTER LISTING/APPLICATION/CORTEX …), Snowflake Scripting blocks, and long-tail
-// statement options — tracked as open grammar gaps, not query-layer failures.
-const DOCS_BASELINE = 4442;
+// Locked 2026-06-10 (second raise): 4703/5832 (80.6%) — platform DDL now parses
+// generically, standalone scripting blocks and COPY FILES landed, and the corpus
+// cleaner drops clause fragments / template placeholders. The remaining shortfall
+// is a flat long tail (≤8 files per failure class): statement options, scripting
+// statement kinds, and assorted DDL details. Raise as fixes land.
+const DOCS_BASELINE = 4703;
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {

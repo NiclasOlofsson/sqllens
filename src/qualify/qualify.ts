@@ -1,6 +1,8 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { ColumnRef } from "../ir/ir.js";
 import {
+	applyStarModifiers,
+	mergeByName,
 	resolveColumn,
 	splitColumnRefInScope,
 	type ResolvedSource,
@@ -56,7 +58,10 @@ function resolveColumns(
 ): string[] | "unknown" {
 	const body = scope.body;
 	if (body.kind === "setop") {
-		return scope.branches ? (resolved.get(scope.branches.left) ?? "unknown") : "unknown";
+		if (!scope.branches) return "unknown";
+		const left = resolved.get(scope.branches.left) ?? "unknown";
+		if (!body.byName) return left;
+		return mergeByName(left, resolved.get(scope.branches.right) ?? "unknown");
 	}
 
 	const out: string[] = [];
@@ -97,31 +102,6 @@ function expandStar(
 	}
 	if (want !== undefined && !matched) return undefined; // qualified star naming no visible source
 	return cols;
-}
-
-/** Apply the star modifiers to an expansion: EXCLUDE/EXCEPT removes, ILIKE filters by
- *  pattern, RENAME renames (REPLACE keeps name and position — no expansion change). */
-function applyStarModifiers(cols: string[], star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] }): string[] {
-	let out = cols;
-	if (star.exclude) {
-		const removed = new Set(star.exclude.map(normalizeName));
-		out = out.filter((c) => !removed.has(normalizeName(c)));
-	}
-	if (star.ilike !== undefined) {
-		const rx = likePatternToRegExp(star.ilike);
-		out = out.filter((c) => rx.test(normalizeName(c)));
-	}
-	if (star.rename) {
-		const renames = new Map(star.rename.map((r) => [normalizeName(r.from), r.to]));
-		out = out.map((c) => renames.get(normalizeName(c)) ?? c);
-	}
-	return out;
-}
-
-/** SQL LIKE pattern → an anchored case-insensitive RegExp (`%` → `.*`, `_` → `.`). */
-function likePatternToRegExp(pattern: string): RegExp {
-	const escaped = pattern.replace(/[.*+?^${}()|[\]\\]/g, "\\$&").replace(/%/g, ".*").replace(/_/g, ".");
-	return new RegExp(`^${escaped}$`, "i");
 }
 
 /** The output column names of a source — schema for a table (reporting unknown-table if absent),

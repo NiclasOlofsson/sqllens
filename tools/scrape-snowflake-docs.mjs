@@ -31,14 +31,21 @@ function unescapeHtml(s) {
 // Docs code blocks mix SQL with non-SQL: ASCII result tables pasted after the statement,
 // `...` ellipsis fragments, and JSON output mislabeled as highlight-sql. Cleaned here so
 // the corpus stays a parse corpus.
+// First words that can begin a Snowflake statement — a block starting with anything else
+// (ON …, PACKAGES = …, WHEN …) is a clause fragment, not a parse-corpus statement.
+const STATEMENT_STARTERS =
+	/^(alter|begin|call|comment|commit|copy|create|declare|delete|desc|describe|drop|execute|explain|get|grant|insert|list|ls|merge|put|remove|revoke|rollback|select|set|show|start|truncate|undrop|unset|update|use|with|!)\b/i;
+
 export function cleanSql(sql) {
 	const lines = sql.split("\n");
 	const border = lines.findIndex((l) => /^\s*\+[-+=]+\+?\s*$/.test(l));
 	const kept = (border === -1 ? lines : lines.slice(0, border)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
-	if (lines.some((l) => l.trimStart().startsWith("..."))) return null; // ellipsis fragment
+	if (/(^|[\s(,])\.\.\.([\s),;]|$)/.test(kept)) return null; // ellipsis placeholder anywhere
+	if (/<[a-z_][a-z0-9_]*>/i.test(kept)) return null; // <placeholder> template, not real SQL
 	if (/^\(\s*(?!select|with|\()/i.test(kept)) return null; // call-argument fragment, e.g. (mytable.*)
+	if (!/^\(/.test(kept) && !STATEMENT_STARTERS.test(kept)) return null; // clause fragment
 	return kept;
 }
 

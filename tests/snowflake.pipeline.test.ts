@@ -41,6 +41,24 @@ describe("Snowflake scope resolution", () => {
 	});
 });
 
+describe("UNION BY NAME output columns", () => {
+	it("scope outputs are the name-aligned union (left order, right-only appended)", () => {
+		const tree = scopes("SELECT a, b FROM t1 UNION ALL BY NAME SELECT c, a FROM t2");
+		expect(tree.root.outputs).toEqual(["a", "b", "c"]);
+	});
+
+	it("a positional union keeps the left branch's outputs", () => {
+		const tree = scopes("SELECT a, b FROM t1 UNION ALL SELECT c, a FROM t2");
+		expect(tree.root.outputs).toEqual(["a", "b"]);
+	});
+
+	it("star expansion through a by-name union merges schema columns", () => {
+		const schema = new Schema({ t: { a: "number", s: "varchar" }, u: { a: "number", x: "boolean" } });
+		const tree = scopes("SELECT * FROM t UNION ALL BY NAME SELECT * FROM u");
+		expect(qualify(tree, schema).columnsOf(tree.root)).toEqual(["a", "s", "x"]);
+	});
+});
+
 describe("Snowflake qualify (star expansion + diagnostics)", () => {
 	it("expands * against a schema and reports unknown columns", () => {
 		const tree = scopes("SELECT * FROM t WHERE nope > 1");
@@ -124,6 +142,22 @@ describe("Snowflake type inference (dialect-specific knowledge)", () => {
 	it("TO_NUMBER returns decimal; TO_DOUBLE returns double", () => {
 		expect(typeOf("SELECT TO_NUMBER(s) AS x FROM t", T)).toEqual({ kind: "scalar", name: "decimal" });
 		expect(typeOf("SELECT TO_DOUBLE(s) AS x FROM t", T)).toEqual({ kind: "scalar", name: "double" });
+	});
+
+	it("types flow through a star projection in a CTE", () => {
+		expect(typeOf("WITH c AS (SELECT * FROM t) SELECT a FROM c", T)).toEqual({ kind: "scalar", name: "decimal" });
+	});
+
+	it("star REPLACE rebinds the column's type; RENAME follows the original; EXCLUDE removes it", () => {
+		expect(typeOf("WITH c AS (SELECT * REPLACE (a::STRING AS a) FROM t) SELECT a FROM c", T)).toEqual({
+			kind: "scalar",
+			name: "string",
+		});
+		expect(typeOf("WITH c AS (SELECT * RENAME (a AS b) FROM t) SELECT b FROM c", T)).toEqual({
+			kind: "scalar",
+			name: "decimal",
+		});
+		expect(typeOf("WITH c AS (SELECT * EXCLUDE (a) FROM t) SELECT a FROM c", T)).toEqual({ kind: "unknown" });
 	});
 
 	it("variant paths and subscripts stay variant", () => {

@@ -1,5 +1,11 @@
 import type { Schema } from "../qualify/schema.js";
-import { splitColumnRefInScope, type ResolvedSource, type Scope } from "../scope/scope.js";
+import {
+	applyStarModifiers,
+	mergeByName,
+	splitColumnRefInScope,
+	type ResolvedSource,
+	type Scope,
+} from "../scope/scope.js";
 
 // Schema-aware column resolution, shared by the post-qualify analyses (type inference and
 // lineage). Unlike scope's schema-free `resolveColumn`, this binds a bare column over a physical
@@ -64,19 +70,25 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 	visited.add(scope);
 	const body = scope.body;
 	if (body.kind === "setop") {
-		return scope.branches ? outputNames(scope.branches.left, schema, visited) : undefined;
+		if (!scope.branches) return undefined;
+		const left = outputNames(scope.branches.left, schema, visited);
+		if (!body.byName) return left;
+		const merged = mergeByName(left ?? "unknown", outputNames(scope.branches.right, schema, visited) ?? "unknown");
+		return merged === "unknown" ? undefined : merged;
 	}
 	const out: string[] = [];
 	for (const p of body.projections) {
 		if (p.isStar) {
-			const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
-			const want = qualifier ? normalizeName(qualifier[qualifier.length - 1] ?? "") : undefined;
+			const star = p.expr.kind === "star" ? p.expr : undefined;
+			const want = star?.qualifier ? normalizeName(star.qualifier[star.qualifier.length - 1] ?? "") : undefined;
+			const expanded: string[] = [];
 			for (const [key, src] of scope.sources) {
 				if (want !== undefined && key !== want) continue;
 				const cols = columnNamesOf(src, schema, visited);
 				if (!cols) return undefined;
-				out.push(...cols);
+				expanded.push(...cols);
 			}
+			out.push(...(star ? applyStarModifiers(expanded, star) : expanded));
 		} else if (p.name !== undefined) {
 			out.push(p.name);
 		} else {

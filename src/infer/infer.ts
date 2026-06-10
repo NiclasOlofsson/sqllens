@@ -1,6 +1,6 @@
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { Schema } from "../qualify/schema.js";
-import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { normalizeName, resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
 import { inferDialect, type InferDialect } from "./dialect.js";
@@ -116,11 +116,38 @@ function derivedColumnType(
 	} else {
 		p = projs.find((pp) => pp.name !== undefined && eq(pp.name, column));
 	}
-	if (!p) return UNKNOWN;
+	if (!p) return starPassthroughType(child, column, schema, ctx);
 	ctx.seen.add(child);
 	const t = inferType(p.expr, child, schema, { seen: ctx.seen, env: new Map() }); // fresh env across scopes
 	ctx.seen.delete(child);
 	return t;
+}
+
+/** A column with no named projection may pass through a `*` projection (possibly modified):
+ *  resolve it inside the producing scope, honouring EXCLUDE/ILIKE (removed → unknown),
+ *  RENAME (the output name maps back to the source column) and REPLACE (the column's type
+ *  is the replacing expression's). */
+function starPassthroughType(child: Scope, column: string, schema: Schema, ctx: Ctx): Type {
+	for (const p of child.body.kind === "select" ? child.body.projections : []) {
+		if (!p.isStar || p.expr.kind !== "star") continue;
+		const star = p.expr;
+		// Map the requested output name back to the underlying column (RENAME a AS b → b comes from a).
+		const renamedTo = star.rename?.find((r) => eq(r.to, column));
+		const under = renamedTo ? renamedTo.from : column;
+		if (!renamedTo && star.rename?.some((r) => eq(r.from, column))) continue; // renamed away
+		if (star.exclude?.some((e) => eq(e, under))) continue;
+		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(normalizeName(under))) continue;
+
+		ctx.seen.add(child);
+		const replaced = star.replace?.find((r) => eq(r.column, under));
+		const parts = star.qualifier ? [star.qualifier[star.qualifier.length - 1], under] : [under];
+		const t = replaced
+			? inferType(replaced.expr, child, schema, { seen: ctx.seen, env: new Map() })
+			: inferType({ kind: "column", parts, cst: star.cst }, child, schema, { seen: ctx.seen, env: new Map() });
+		ctx.seen.delete(child);
+		if (t.kind !== "unknown") return t;
+	}
+	return UNKNOWN;
 }
 
 function fieldType(type: Type, fields: string[]): Type {

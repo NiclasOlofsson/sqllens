@@ -219,7 +219,9 @@ function fillScope(scope: Scope): void {
 		const right = buildBodyScope(body.right, scope);
 		scope.children.push(left, right);
 		scope.branches = { left, right };
-		scope.outputs = left.outputs; // set-op output names come from the left branch
+		// Positional set ops take the left branch's names; BY NAME aligns by name —
+		// the output is the left branch's columns plus the right's not present on the left.
+		scope.outputs = body.byName ? mergeByName(left.outputs, right.outputs) : left.outputs;
 		return;
 	}
 
@@ -292,6 +294,44 @@ function pivotOutputs(scope: Scope, p: PivotInfo): string[] | "unknown" {
 	const consumed = new Set([...p.forColumns, ...p.aggColumns].map(normalizeName));
 	const passthrough = base.filter((c) => !consumed.has(normalizeName(c)));
 	return [...passthrough, ...p.values];
+}
+
+/** `UNION BY NAME` output: left columns in order, then right-only columns appended. */
+export function mergeByName(left: string[] | "unknown", right: string[] | "unknown"): string[] | "unknown" {
+	if (left === "unknown" || right === "unknown") return "unknown";
+	const seen = new Set(left.map(normalizeName));
+	return [...left, ...right.filter((c) => !seen.has(normalizeName(c)))];
+}
+
+/** Apply a star node's modifiers to an expansion: EXCLUDE/EXCEPT removes, ILIKE filters by
+ *  pattern, RENAME renames (REPLACE keeps name and position — no expansion change). */
+export function applyStarModifiers(
+	cols: string[],
+	star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] },
+): string[] {
+	let out = cols;
+	if (star.exclude) {
+		const removed = new Set(star.exclude.map(normalizeName));
+		out = out.filter((c) => !removed.has(normalizeName(c)));
+	}
+	if (star.ilike !== undefined) {
+		const rx = likePatternToRegExp(star.ilike);
+		out = out.filter((c) => rx.test(normalizeName(c)));
+	}
+	if (star.rename) {
+		const renames = new Map(star.rename.map((r) => [normalizeName(r.from), r.to]));
+		out = out.map((c) => renames.get(normalizeName(c)) ?? c);
+	}
+	return out;
+}
+
+/** SQL LIKE pattern → an anchored case-insensitive RegExp (`%` → `.*`, `_` → `.`). */
+export function likePatternToRegExp(pattern: string): RegExp {
+	const escaped = pattern
+		.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+		.replace(/%/g, ".*")
+		.replace(/_/g, ".");
+	return new RegExp(`^${escaped}$`, "i");
 }
 
 function outputsOf(body: SelectExpr): string[] | "unknown" {

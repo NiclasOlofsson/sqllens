@@ -143,11 +143,14 @@ values_builder
 other_command
     : copy_into_table
     | copy_into_location
+    | copy_files
     | comment
     | commit
     | execute_immediate
     | execute_task
     | explain
+    | generic_platform_ddl
+    | scripting_block
     | get_dml
     | grant_ownership
     | grant_to_role
@@ -171,6 +174,43 @@ other_command
 begin_txn
     : BEGIN (WORK | TRANSACTION)? (NAME id_)?
     | START TRANSACTION ( NAME id_)?
+    ;
+
+// Platform-object management not modelled per object — Snowflake grows these object kinds
+// (LISTING, APPLICATION [PACKAGE], CORTEX …, ORGANIZATION …, POSTGRES …, AGENT, NETWORK RULE)
+// faster than per-object rules earn their keep. Gated on the object keyword after the verb,
+// then consumed opaquely to the statement end. Catalogue: docs.snowflake.com/en/sql-reference/sql-all
+generic_platform_ddl
+    : (CREATE or_replace? | ALTER | DROP | SHOW TERSE? | DESC | DESCRIBE) generic_platform_object (~SEMI)*
+    ;
+
+// ICEBERG appears here only for SHOW/DESC — CREATE/ALTER ICEBERG TABLE are modelled
+// (ddl_command wins those by alternative order).
+generic_platform_object
+    : LISTING
+    | APPLICATION PACKAGE?
+    | CORTEX
+    | ORGANIZATION
+    | POSTGRES
+    | AGENT
+    | NETWORK RULE
+    | BACKUP
+    | CATALOG
+    | ICEBERG
+    | SNAPSHOT
+    | NOTEBOOK
+    | TYPE
+    ;
+
+// docs.snowflake.com/en/sql-reference/sql/copy-files
+copy_files
+    : COPY FILES INTO (table_stage | user_stage | named_stage) FROM (table_stage | user_stage | named_stage) files? pattern?
+    ;
+
+// A standalone Snowflake Scripting anonymous block (DECLARE? BEGIN … END):
+// docs.snowflake.com/en/developer-guide/snowflake-scripting/blocks
+scripting_block
+    : task_scripting_block
     ;
 
 copy_into_table
@@ -702,8 +742,9 @@ session_params
     | WEEK_OF_YEAR_POLICY EQ num
     | WEEK_START EQ num
     // any other documented parameter — the full catalogue is
-    // docs.snowflake.com/en/sql-reference/parameters and grows faster than this list
-    | (session_parameter | id_) EQ (string | num | true_false)
+    // docs.snowflake.com/en/sql-reference/parameters and grows faster than this list;
+    // values may be bare identifiers (TIMEZONE = UTC)
+    | (session_parameter | id_) EQ (string | num | true_false | id_)
     ;
 
 alter_account
@@ -806,6 +847,8 @@ alter_dynamic_table
         resume_suspend
         | REFRESH
         | SET dynamic_table_settable_params+
+        | search_optimization_action // docs.snowflake.com/en/sql-reference/sql/alter-dynamic-table
+        | clustering_action
     )
     | ALTER DYNAMIC TABLE if_exists? object_name (SWAP WITH | RENAME TO) object_name
     | ALTER DYNAMIC TABLE if_exists? object_name (set_tags | unset_tags)
@@ -1215,10 +1258,11 @@ security_integration_scim_property
     | COMMENT
     ;
 
-// SET takes one or more space-separated assignments of any documented parameter:
+// SET takes one or more assignments of any documented parameter — space-separated per the
+// docs, comma-separated in the docs' own examples; both accepted:
 // docs.snowflake.com/en/sql-reference/sql/alter-session + /en/sql-reference/parameters
 alter_session
-    : ALTER SESSION SET session_params+
+    : ALTER SESSION SET session_params (COMMA? session_params)*
     | ALTER SESSION UNSET param_name (COMMA param_name)*
     ;
 
@@ -1419,8 +1463,9 @@ search_optimization_action
     | DROP SEARCH OPTIMIZATION (ON search_method_with_target (COMMA search_method_with_target)*)?
     ;
 
+// the target is a column list: docs.snowflake.com/en/sql-reference/sql/alter-table
 search_method_with_target
-    : (EQUALITY | SUBSTRING | GEO) '(' (STAR | expr) ')'
+    : (EQUALITY | SUBSTRING | GEO) '(' (STAR | expr_list) ')'
     ;
 
 alter_table_alter_column
@@ -2787,11 +2832,13 @@ deprecated_table_options
     ;
 
 
+// the column list may be names-only (types come from the query):
+// docs.snowflake.com/en/sql-reference/sql/create-table#create-table-as-select-also-referred-to-as-ctas
 create_table_as_select
     : CREATE or_replace? table_type? TABLE (
         if_not_exists? object_name
         | object_name if_not_exists?
-    ) ('(' column_decl_item_list ')')? cluster_by? copy_grants? with_row_access_policy? with_tags? comment_clause? AS query_statement
+    ) ('(' (column_decl_item_list | column_list) ')')? cluster_by? copy_grants? with_row_access_policy? with_tags? comment_clause? AS query_statement
     ;
 
 create_table_like
@@ -3986,6 +4033,8 @@ account_identifier
 schema_name
     : d = id_ DOT s = id_
     | s = id_
+    // IDENTIFIER(...) substitutes for any object name: docs.snowflake.com/en/sql-reference/identifier-literal
+    | IDENTIFIER LR_BRACKET (string | DOLLAR id_) RR_BRACKET
     ;
 
 object_type
@@ -4381,9 +4430,14 @@ list_function
     // To complete as needed
     ;
 
+// PATTERN = '<regex>' — the stage-file filter used by COPY INTO / GET / LIST / REMOVE.
+pattern
+    : PATTERN EQ string
+    ;
+
 // MATCH_RECOGNIZE pattern: a regex over pattern variables, not a string —
 // docs.snowflake.com/en/sql-reference/constructs/match_recognize#pattern-specifying-the-pattern-to-match
-pattern
+mr_pattern
     : PATTERN LR_BRACKET pattern_alt RR_BRACKET
     ;
 
@@ -4644,6 +4698,10 @@ function_call
     | to_date = ( TO_DATE | DATE) LR_BRACKET expr RR_BRACKET
     | length = ( LENGTH | LEN) LR_BRACKET expr RR_BRACKET
     | TO_BOOLEAN LR_BRACKET expr RR_BRACKET
+    // statement keywords that are also functions: docs.snowflake.com/en/sql-reference/functions/insert
+    | INSERT LR_BRACKET expr_list RR_BRACKET
+    // instance method call as a table function: TABLE(job!SPCS_GET_LOGS()) — docs.snowflake.com/en/sql-reference/classes
+    | object_name BANG id_ LR_BRACKET (expr_list | param_assoc_list)? RR_BRACKET
     ;
 
 param_assoc_list
@@ -4994,7 +5052,7 @@ define
     ;
 
 match_recognize
-    : MATCH_RECOGNIZE LR_BRACKET partition_by? order_by_clause? measures? row_match? after_match? pattern? define? RR_BRACKET
+    : MATCH_RECOGNIZE LR_BRACKET partition_by? order_by_clause? measures? row_match? after_match? mr_pattern? define? RR_BRACKET
     ;
 
 pivot_unpivot

@@ -177,6 +177,77 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("GRANT DATABASE ROLE r1 TO ROLE r2")).toBe(0);
 	});
 
+	// Platform-object DDL parses generically (opaque to statement end) — Snowflake adds
+	// these object kinds faster than they're worth modelling individually.
+	it("parses platform-object statements generically", () => {
+		expect(errorsOf("ALTER LISTING my_listing SET COMMENT = 'x'")).toBe(0);
+		expect(errorsOf("ALTER APPLICATION PACKAGE pkg SET DISTRIBUTION = EXTERNAL")).toBe(0);
+		expect(errorsOf("ALTER CORTEX SEARCH SERVICE svc SET TARGET_LAG = '1 hour'")).toBe(0);
+		expect(errorsOf("ALTER ORGANIZATION ACCOUNT SET COMMENT = 'x'")).toBe(0);
+		expect(errorsOf("CREATE POSTGRES INSTANCE pg COMPUTE_FAMILY = 'CPU_X64_XS'")).toBe(0);
+		expect(errorsOf("CREATE OR REPLACE NETWORK RULE r MODE = INGRESS TYPE = IPV4 VALUE_LIST = ('1.2.3.4')")).toBe(0);
+		expect(errorsOf("ALTER NETWORK RULE r SET COMMENT = 'x'")).toBe(0);
+	});
+
+	it("parses COPY INTO with a PATTERN option (regression: MATCH_RECOGNIZE repurposed `pattern`)", () => {
+		expect(errorsOf("COPY INTO t FROM @s PATTERN = '.*[.]csv' FILE_FORMAT = (TYPE = 'CSV')")).toBe(0);
+	});
+
+	it("parses SHOW/DESC for platform objects generically", () => {
+		expect(errorsOf("SHOW POSTGRES INSTANCES")).toBe(0);
+		expect(errorsOf("SHOW ICEBERG TABLES IN SCHEMA s")).toBe(0);
+		expect(errorsOf("ALTER BACKUP POLICY bp SET SCHEDULE = '8 HOURS'")).toBe(0);
+		expect(errorsOf("CREATE CATALOG INTEGRATION ci CATALOG_SOURCE = GLUE ENABLED = TRUE")).toBe(0);
+	});
+
+	it("parses more generic platform objects (SNAPSHOT, NOTEBOOK, TYPE)", () => {
+		expect(errorsOf("CREATE SNAPSHOT POLICY sp SCHEDULE = '1 DAY'")).toBe(0);
+		expect(errorsOf("ALTER SNAPSHOT s SET COMMENT = 'x'")).toBe(0);
+		expect(errorsOf("CREATE NOTEBOOK nb FROM '@stage' MAIN_FILE = 'nb.ipynb'")).toBe(0);
+		expect(errorsOf("CREATE TYPE my_type AS OBJECT (a NUMBER)")).toBe(0);
+	});
+
+	it("parses CTAS with a names-only column list", () => {
+		expect(errorsOf("CREATE OR REPLACE TABLE t (c1) AS SELECT 1 FROM s")).toBe(0);
+	});
+
+	it("parses a bang method call inside TABLE(...)", () => {
+		expect(errorsOf("SELECT * FROM TABLE(db.s.my_job!SPCS_GET_LOGS())")).toBe(0);
+	});
+
+	// INSERT is also a string function: docs.snowflake.com/en/sql-reference/functions/insert
+	it("parses INSERT(...) as a function call", () => {
+		expect(errorsOf("SELECT INSERT('abcdef', 3, 2, 'zzz')")).toBe(0);
+	});
+
+	// docs.snowflake.com/en/sql-reference/sql/alter-table — search optimization targets take a column list
+	it("parses ADD SEARCH OPTIMIZATION ON EQUALITY(c1, c2), including on dynamic tables", () => {
+		expect(errorsOf("ALTER TABLE t ADD SEARCH OPTIMIZATION ON EQUALITY(c1, c2)")).toBe(0);
+		expect(errorsOf("ALTER DYNAMIC TABLE dt ADD SEARCH OPTIMIZATION ON EQUALITY(c1, c2)")).toBe(0);
+	});
+
+	// docs.snowflake.com/en/sql-reference/sql/copy-files
+	it("parses COPY FILES between stages", () => {
+		expect(errorsOf("COPY FILES INTO @target_stage FROM @source_stage FILES = ('a.csv', 'b.csv')")).toBe(0);
+		expect(errorsOf("COPY FILES INTO @t FROM @s PATTERN = '.*[.]csv'")).toBe(0);
+	});
+
+	it("parses ALTER SESSION SET with bare-identifier values and comma separators", () => {
+		expect(errorsOf("ALTER SESSION SET TIMEZONE = UTC")).toBe(0);
+		expect(errorsOf("ALTER SESSION SET WEEK_OF_YEAR_POLICY=0, WEEK_START=0")).toBe(0);
+	});
+
+	it("parses IDENTIFIER('…') as a schema name in CREATE SCHEMA", () => {
+		expect(errorsOf("CREATE OR REPLACE SCHEMA IDENTIFIER('my_schema')")).toBe(0);
+	});
+
+	// Standalone Snowflake Scripting blocks (not just CREATE TASK bodies):
+	// docs.snowflake.com/en/developer-guide/snowflake-scripting/blocks
+	it("parses standalone scripting blocks", () => {
+		expect(errorsOf("BEGIN CREATE TABLE t (c INT); RETURN 'done'; END")).toBe(0);
+		expect(errorsOf("DECLARE i INTEGER; BEGIN i := 1; RETURN i; END")).toBe(0);
+	});
+
 	// MATCH_RECOGNIZE with real pattern variables (upstream's `symbol` rule was a
 	// DUMMY-token stub): docs.snowflake.com/en/sql-reference/constructs/match_recognize
 	it("parses MATCH_RECOGNIZE with pattern variables", () => {

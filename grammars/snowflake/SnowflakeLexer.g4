@@ -58,6 +58,7 @@ ADMIN_NAME     : 'ADMIN_NAME';
 ADMIN_PASSWORD : 'ADMIN_PASSWORD';
 AES            : 'AES';
 AFTER          : 'AFTER';
+AGENT          : 'AGENT'; // platform-object DDL (parsed generically)
 //AGGREGATE:                                             'AGGREGATE';
 ALERT  : 'ALERT';
 ALERTS : 'ALERTS';
@@ -135,6 +136,7 @@ AZURE_Q                         : '\'AZURE\'';
 AZURE_SAS_TOKEN                 : 'AZURE_SAS_TOKEN';
 AZURE_STORAGE_QUEUE_PRIMARY_URI : 'AZURE_STORAGE_QUEUE_PRIMARY_URI';
 AZURE_TENANT_ID                 : 'AZURE_TENANT_ID';
+BACKUP                          : 'BACKUP'; // platform-object DDL (parsed generically)
 BASE64                          : 'BASE64';
 // Iceberg tables: docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
 BASE_LOCATION                   : 'BASE_LOCATION';
@@ -614,6 +616,7 @@ NO           : 'NO';
 NONE         : 'NONE';
 NONE_Q       : '\'NONE\'';
 NOORDER      : 'NOORDER';
+NOTEBOOK     : 'NOTEBOOK'; // platform-object DDL (parsed generically)
 NORELY       : 'NORELY';
 NOT          : 'NOT';
 NOTIFICATION : 'NOTIFICATION';
@@ -734,6 +737,7 @@ POLICIES : 'POLICIES';
 POLICY   : 'POLICY';
 POOL     : 'POOL';
 PORT     : 'PORT';
+POSTGRES : 'POSTGRES'; // platform-object DDL (parsed generically)
 PERMUTE   : 'PERMUTE'; // MATCH_RECOGNIZE patterns: docs.snowflake.com/en/sql-reference/constructs/match_recognize
 PRECEDING : 'PRECEDING'; // window frames: docs.snowflake.com/en/sql-reference/functions-analytic
 // PREDICATE:                                             'PREDICATE';
@@ -857,6 +861,7 @@ ROLLBACK      : 'ROLLBACK';
 ROLLUP        : 'ROLLUP';
 ROUND         : 'ROUND';
 ROUNDING_MODE : 'ROUNDING_MODE';
+RULE          : 'RULE'; // NETWORK RULE: docs.snowflake.com/en/sql-reference/sql/create-network-rule
 // ROOT:                                                  'ROOT';
 ROW: 'ROW';
 // ROWCOUNT:                                              'ROWCOUNT';
