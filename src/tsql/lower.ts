@@ -322,6 +322,20 @@ function buildSource(item: ParserRuleContext): Source {
 		};
 	}
 
+	// OPENQUERY / OPENDATASOURCE — a remote rowset; its columns need the remote schema,
+	// so an opaque source under its alias (same treatment as a TVF).
+	const limited = directChildrenOfRule(item, P.RULE_rowset_function_limited)[0];
+	if (limited) {
+		return {
+			kind: "table",
+			name: [leftmostToken(limited)?.toLowerCase() ?? "openquery"],
+			alias: alias?.text,
+			aliasCst: alias?.cst,
+			columnAliases: columnAliasList(item),
+			cst: item,
+		};
+	}
+
 	// Table-valued function or XML `.nodes()` — opaque columns (a TVF's columns need its signature; a
 	// `.nodes()` relation's columns are produced by later `.value()` calls, i.e. XML shredding, a
 	// separate subsystem). Modelled as a source so refs resolve to it rather than mis-binding.
@@ -419,6 +433,18 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 	const operand = exprs[0] ? lowerExpression(exprs[0]) : otherExpr(pred);
 	const negated = hasToken(pred, P.NOT);
 
+	// IS [NOT] DISTINCT FROM (2022) — checked before the plain IS branch, which would
+	// otherwise read it as a null test.
+	if (hasDirectToken(pred, P.IS) && hasDirectToken(pred, P.DISTINCT)) {
+		return {
+			kind: "predicate",
+			op: "distinct from",
+			negated,
+			operand,
+			args: exprs.slice(1, 2).map(lowerExpression),
+			cst: pred,
+		};
+	}
 	if (hasDirectToken(pred, P.IS)) {
 		return { kind: "predicate", op: "null", negated, operand, args: [], cst: pred };
 	}
@@ -596,14 +622,61 @@ function functionName(node: ParserRuleContext): string {
 }
 
 function lowerOver(over: ParserRuleContext): { partitionBy: Expr[]; orderBy: Expr[]; cst: ParserRuleContext } {
-	const partitionBy = directChildrenOfRule(over, P.RULE_expression_list_)
+	const own = windowParts(over);
+	// 2022 named windows: `OVER w` or `OVER (w …)` — the name resolves against the
+	// enclosing select's WINDOW clause; the OVER's own parts override the base's.
+	const refName = directChildrenOfRule(over, P.RULE_id_)[0]?.getText();
+	const base = refName ? resolveNamedWindow(over, refName, new Set()) : undefined;
+	return {
+		partitionBy: own.partitionBy.length ? own.partitionBy : (base?.partitionBy ?? []),
+		orderBy: own.orderBy.length ? own.orderBy : (base?.orderBy ?? []),
+		cst: over,
+	};
+}
+
+/** The PARTITION BY / ORDER BY expressions directly inside an over_clause or window_specification. */
+function windowParts(node: ParserRuleContext): { partitionBy: Expr[]; orderBy: Expr[] } {
+	const partitionBy = directChildrenOfRule(node, P.RULE_expression_list_)
 		.flatMap((l) => directChildrenOfRule(l, P.RULE_expression))
 		.map(lowerExpression);
-	const orderBy = collectOfRule(over, P.RULE_order_by_expression)
+	const orderBy = collectOfRule(node, P.RULE_order_by_expression)
 		.map((o) => firstOfRule(o, P.RULE_expression))
 		.filter((e): e is ParserRuleContext => e !== undefined)
 		.map(lowerExpression);
-	return { partitionBy, orderBy, cst: over };
+	return { partitionBy, orderBy };
+}
+
+/** Resolve a window name against the enclosing query spec's WINDOW clause. A definition may
+ *  itself start with another window's name (chained); `seen` guards against cycles. */
+function resolveNamedWindow(
+	from: ParserRuleContext,
+	name: string,
+	seen: Set<string>,
+): { partitionBy: Expr[]; orderBy: Expr[] } | undefined {
+	const key = stripQuotes(name).toLowerCase();
+	if (seen.has(key)) return undefined;
+	seen.add(key);
+
+	let spec: ParserRuleContext | null = from.parent;
+	while (spec && spec.ruleIndex !== P.RULE_query_specification) spec = spec.parent;
+	if (!spec) return undefined;
+	const clause = directChildrenOfRule(spec, P.RULE_select_window_clause)[0];
+	if (!clause) return undefined;
+
+	for (const def of directChildrenOfRule(clause, P.RULE_window_definition)) {
+		const defName = directChildrenOfRule(def, P.RULE_id_)[0]?.getText();
+		if (!defName || stripQuotes(defName).toLowerCase() !== key) continue;
+		const ws = directChildrenOfRule(def, P.RULE_window_specification)[0];
+		if (!ws) return undefined;
+		const parts = windowParts(ws);
+		const baseRef = directChildrenOfRule(ws, P.RULE_id_)[0]?.getText();
+		const base = baseRef ? resolveNamedWindow(def, baseRef, seen) : undefined;
+		return {
+			partitionBy: parts.partitionBy.length ? parts.partitionBy : (base?.partitionBy ?? []),
+			orderBy: parts.orderBy.length ? parts.orderBy : (base?.orderBy ?? []),
+		};
+	}
+	return undefined;
 }
 
 function lowerCase(node: ParserRuleContext): Expr {

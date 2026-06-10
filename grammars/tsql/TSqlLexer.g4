@@ -220,6 +220,7 @@ CONNECT                                     : 'CONNECT';
 CONNECTION                                  : 'CONNECTION';
 CONNECTIONPROPERTY                          : 'CONNECTIONPROPERTY';
 CONSTRAINT                                  : 'CONSTRAINT';
+CONTAINED                                   : 'CONTAINED'; // temporal FOR SYSTEM_TIME CONTAINED IN
 CONTAINMENT                                 : 'CONTAINMENT';
 CONTAINS                                    : 'CONTAINS';
 CONTAINSTABLE                               : 'CONTAINSTABLE';
@@ -1007,6 +1008,7 @@ SYMMETRIC                                   : 'SYMMETRIC';
 SYNCHRONOUS_COMMIT                          : 'SYNCHRONOUS_COMMIT';
 SYNONYM                                     : 'SYNONYM';
 SYSTEM                                      : 'SYSTEM';
+SYSTEM_TIME                                 : 'SYSTEM_TIME'; // temporal queries (from-transact-sql#system_time)
 SYSTEM_USER                                 : 'SYSTEM_USER';
 TABLE                                       : 'TABLE';
 TABLERESULTS                                : 'TABLERESULTS';
@@ -1104,6 +1106,7 @@ WELL_FORMED_XML                             : 'WELL_FORMED_XML';
 WHEN                                        : 'WHEN';
 WHERE                                       : 'WHERE';
 WHILE                                       : 'WHILE';
+WINDOW                                      : 'WINDOW'; // SQL Server 2022 named windows (select-window-transact-sql)
 WINDOWS                                     : 'WINDOWS';
 WITH                                        : 'WITH';
 WITHIN                                      : 'WITHIN';

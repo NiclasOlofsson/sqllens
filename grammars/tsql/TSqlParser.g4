@@ -3995,6 +3995,8 @@ predicate
     | expression NOT* BETWEEN expression AND expression
     | expression NOT* IN '(' (subquery | expression_list_) ')'
     | expression NOT* LIKE expression (ESCAPE expression)?
+    // SQL Server 2022+: https://learn.microsoft.com/en-us/sql/t-sql/queries/is-distinct-from-transact-sql
+    | expression IS NOT? DISTINCT FROM expression
     | expression IS null_notnull
     ;
 
@@ -4026,6 +4028,21 @@ query_specification
             )* ')'
         )
     )? (HAVING having = search_condition)?
+    // SQL Server 2022+ named windows: https://learn.microsoft.com/en-us/sql/t-sql/queries/select-window-transact-sql
+    select_window_clause?
+    ;
+
+select_window_clause
+    : WINDOW window_definition (',' window_definition)*
+    ;
+
+window_definition
+    : id_ AS '(' window_specification ')'
+    ;
+
+// A spec may start with another window's name and add the missing parts (select-window-transact-sql).
+window_specification
+    : id_? (PARTITION BY expression_list_)? order_by_clause? row_or_range_clause?
     ;
 
 // https://msdn.microsoft.com/en-us/library/ms189463.aspx
@@ -4170,12 +4187,13 @@ table_source
 
 table_source_item
     : full_table_name deprecated_table_hint as_table_alias // this is currently allowed
-    | full_table_name as_table_alias? (
+    | full_table_name temporal_clause? as_table_alias? tablesample_clause? (
         with_table_hints
         | deprecated_table_hint
         | sybase_legacy_hints
     )?
     | rowset_function as_table_alias?
+    | rowset_function_limited as_table_alias? // OPENQUERY / OPENDATASOURCE in FROM (openquery-transact-sql)
     | '(' derived_table ')' (as_table_alias column_alias_list?)?
     | change_table as_table_alias?
     | nodes_method (as_table_alias column_alias_list?)?
@@ -4186,6 +4204,23 @@ table_source_item
     | open_json
     | DOUBLE_COLON oldstyle_fcall = function_call as_table_alias? // Build-in function (old syntax)
     | '(' table_source ')'
+    ;
+
+// Temporal (system-versioned) queries: FROM t FOR SYSTEM_TIME ...
+// https://learn.microsoft.com/en-us/sql/t-sql/queries/from-transact-sql#system_time
+temporal_clause
+    : FOR SYSTEM_TIME (
+        AS OF expression
+        | FROM expression TO expression
+        | BETWEEN expression AND expression
+        | CONTAINED IN '(' expression ',' expression ')'
+        | ALL
+    )
+    ;
+
+// https://learn.microsoft.com/en-us/sql/t-sql/queries/from-transact-sql#tablesample-clause
+tablesample_clause
+    : TABLESAMPLE SYSTEM? '(' expression (PERCENT | ROWS)? ')' (REPEATABLE '(' expression ')')?
     ;
 
 // https://docs.microsoft.com/en-us/sql/t-sql/functions/openxml-transact-sql
@@ -4326,7 +4361,9 @@ freetext_predicate
         | '*'
         | PROPERTY '(' full_column_name ',' expression ')'
     ) ',' expression ')'
-    | FREETEXT '(' table_name ',' (
+    // Documented shape (freetext-transact-sql): no table argument — the column list comes first.
+    // The upstream grammars-v4 rule wrongly mirrored FREETEXTTABLE's (table, column, …) form.
+    | FREETEXT '(' (
         full_column_name
         | '(' full_column_name (',' full_column_name)* ')'
         | '*'
@@ -5036,8 +5073,13 @@ all_distinct_expression
     ;
 
 // https://msdn.microsoft.com/en-us/library/ms189461.aspx
+// `OVER window_name` and a leading window name inside the parens are SQL Server 2022+
+// (select-window-transact-sql).
 over_clause
-    : OVER '(' (PARTITION BY expression_list_)? order_by_clause? row_or_range_clause? ')'
+    : OVER (
+        window_name = id_
+        | '(' (base_window = id_)? (PARTITION BY expression_list_)? order_by_clause? row_or_range_clause? ')'
+    )
     ;
 
 row_or_range_clause
@@ -5866,7 +5908,9 @@ keyword
     | SYNCHRONOUS_COMMIT
     | SYNONYM
     | SYSTEM
+    | SYSTEM_TIME
     | TABLERESULTS
+    | TABLESAMPLE
     | TABLOCK
     | TABLOCKX
     | TAKE
@@ -5972,6 +6016,7 @@ keyword
     | CONNECTION
     | CONFIGURATION
     | CONNECTIONPROPERTY
+    | CONTAINED
     | CONTAINMENT
     | CONTEXT
     | CONTEXT_INFO
@@ -6175,6 +6220,7 @@ keyword
     | VERBOSELOGGING
     | VISIBILITY
     | WAIT_AT_LOW_PRIORITY
+    | WINDOW
     | WINDOWS
     | WITHOUT
     | WITNESS
