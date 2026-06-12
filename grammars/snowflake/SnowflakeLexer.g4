@@ -795,6 +795,9 @@ READER      : 'READER';
 // REBUILD:                                               'REBUILD';
 // RECEIVE:                                               'RECEIVE';
 RECLUSTER: 'RECLUSTER';
+// MATCH_RECOGNIZE MEASURES semantic prefixes: docs.snowflake.com/en/sql-reference/constructs/match_recognize
+RUNNING : 'RUNNING';
+FINAL   : 'FINAL';
 // RESAMPLE time-series construct: docs.snowflake.com/en/sql-reference/constructs/resample
 RESAMPLE        : 'RESAMPLE';
 SEMANTIC_VIEW   : 'SEMANTIC_VIEW'; // docs.snowflake.com/en/sql-reference/constructs/semantic_view

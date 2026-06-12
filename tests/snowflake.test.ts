@@ -520,12 +520,52 @@ describe("Snowflake parse", () => {
 	});
 
 	// SEMANTIC_VIEW(...) table function: docs.snowflake.com/en/sql-reference/constructs/semantic_view
-	it("parses SEMANTIC_VIEW(… METRICS … DIMENSIONS …)", () => {
+	it("parses SEMANTIC_VIEW(… METRICS … DIMENSIONS …) in either order", () => {
 		expect(
-			errorsOf(
-				"SELECT * FROM SEMANTIC_VIEW(tpch_analysis METRICS customer.order_count DIMENSIONS customer.name)",
-			),
+			errorsOf("SELECT * FROM SEMANTIC_VIEW(tpch_analysis METRICS customer.order_count DIMENSIONS customer.name)"),
 		).toBe(0);
+		expect(
+			errorsOf("SELECT * FROM SEMANTIC_VIEW(a DIMENSIONS customer.name METRICS customer.order_count)"),
+		).toBe(0);
+	});
+
+	// --- query-language gaps, wave 6 (docs corpus, 2026-06-12) ---
+
+	// MATCH_RECOGNIZE MEASURES nav functions with RUNNING/FINAL prefixes:
+	// docs.snowflake.com/en/sql-reference/constructs/match_recognize
+	it("parses MATCH_RECOGNIZE MEASURES with FIRST/LAST and RUNNING/FINAL", () => {
+		expect(
+			errorsOf(`SELECT * FROM t MATCH_RECOGNIZE (
+				ORDER BY ts
+				MEASURES MATCH_NUMBER() AS mn, CLASSIFIER() AS cl,
+				         FINAL FIRST(price) AS fp, RUNNING LAST(price) AS lp
+				ALL ROWS PER MATCH
+				PATTERN (a b+)
+				DEFINE b AS price > 10)`),
+		).toBe(0);
+	});
+
+	// ARRAY/MAP element types may carry NOT NULL: docs.snowflake.com/en/sql-reference/data-types-structured
+	it("parses ARRAY(<type> NOT NULL) / MAP element NOT NULL", () => {
+		expect(errorsOf("SELECT [1, 2]::ARRAY(NUMBER NOT NULL) FROM t")).toBe(0);
+		expect(errorsOf("SELECT m::MAP(VARCHAR, NUMBER NOT NULL) FROM t")).toBe(0);
+	});
+
+	// SEARCH over a parenthesized column set with EXCLUDE:
+	// docs.snowflake.com/en/sql-reference/functions/search
+	it("parses SEARCH((cols.* EXCLUDE c), …)", () => {
+		expect(errorsOf("SELECT * FROM lines WHERE SEARCH((lines.* EXCLUDE character), 'king')")).toBe(0);
+	});
+
+	// Bind-variable placeholders ? and :name: docs.snowflake.com/en/developer-guide/sql-api/submitting-requests
+	it("parses ? and :name bind variables in TABLE(…)", () => {
+		expect(errorsOf("SELECT * FROM TABLE(?)")).toBe(0);
+		expect(errorsOf("SELECT * FROM TABLE(:binding)")).toBe(0);
+	});
+
+	// More keyword-as-id: BUCKET_START as a column/alias
+	it("allows BUCKET_START as an identifier", () => {
+		expect(errorsOf("SELECT bucket_start FROM t")).toBe(0);
 	});
 });
 

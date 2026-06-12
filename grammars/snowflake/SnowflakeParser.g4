@@ -4361,12 +4361,15 @@ non_reserved_words
     | ACCOUNTS
     | ASOF
     | BASE64
+    | BUCKET_START
     | COPY
     | CREDENTIALS
     | DESCRIBE
     | ENFORCED
+    | FIRST
     | FUNCTIONS
     | GROUPING
+    | LAST
     | HEX
     | KEYS
     | LIST
@@ -4680,8 +4683,8 @@ data_type
     // structured OBJECT(field type [NOT NULL], …) / MAP(key, value):
     // docs.snowflake.com/en/sql-reference/data-types-structured
     | OBJECT ('(' object_field (COMMA object_field)* ')')?
-    | ARRAY ('(' data_type ')')?
-    | MAP '(' data_type COMMA data_type ')'
+    | ARRAY ('(' data_type (NOT NULL_)? ')')?
+    | MAP '(' data_type COMMA data_type (NOT NULL_)? ')'
     | GEOGRAPHY
     | GEOMETRY
     | FILE // docs.snowflake.com/en/sql-reference/data-types-unstructured
@@ -4790,7 +4793,7 @@ func_arg
     // SEARCH/MINHASH accept * / (*) / "* EXCLUDE|ILIKE …" as an all-columns argument:
     // docs.snowflake.com/en/sql-reference/functions/search
     | STAR star_modifier*
-    | LR_BRACKET STAR RR_BRACKET
+    | LR_BRACKET object_name_or_alias? STAR star_modifier* RR_BRACKET
     // a stage reference as an argument (BUILD_SCOPED_FILE_URL(@stage, …), GET_PRESIGNED_URL(@stage, …)):
     | named_stage
     | user_stage
@@ -5022,7 +5025,7 @@ table_source_item_joined
 object_ref
     : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
     | object_name START WITH predicate CONNECT BY prior_list?
-    | TABLE '(' (function_call | string | DBL_DOLLAR | DOLLAR id_) ')' pivot_unpivot? as_alias? sample?
+    | TABLE '(' (function_call | string | DBL_DOLLAR | DOLLAR id_ | QMARK | COLON id_) ')' pivot_unpivot? as_alias? sample?
     // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
     // docs.snowflake.com/en/sql-reference/functions/directory
     | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
@@ -5030,7 +5033,7 @@ object_ref
     | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
     // SEMANTIC_VIEW(<view> [METRICS …] [DIMENSIONS …] [WHERE …]):
     // docs.snowflake.com/en/sql-reference/constructs/semantic_view
-    | SEMANTIC_VIEW '(' object_name (METRICS expr_list)? (DIMENSIONS expr_list)? (WHERE search_condition)? ')' as_alias?
+    | SEMANTIC_VIEW '(' object_name (METRICS expr_list | DIMENSIONS expr_list | WHERE search_condition)* ')' as_alias?
     | LATERAL (flatten_table | splited_table) as_alias?
     // any table function after LATERAL (STRTOK_SPLIT_TO_TABLE, …):
     | LATERAL object_name '(' func_arg_list? ')' as_alias?
@@ -5132,8 +5135,14 @@ expr_alias_list
     : expr AS? alias (COMMA expr AS? alias)*
     ;
 
+// MEASURES: each measure is an expression (optionally RUNNING/FINAL-prefixed) with an alias.
+// FIRST/LAST/MATCH_NUMBER/CLASSIFIER nav functions parse as ordinary calls (FIRST/LAST are in id_).
 measures
-    : MEASURES expr_alias_list
+    : MEASURES measure_def (COMMA measure_def)*
+    ;
+
+measure_def
+    : (RUNNING | FINAL)? expr AS? alias
     ;
 
 match_opts
