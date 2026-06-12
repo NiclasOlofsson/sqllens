@@ -36,10 +36,21 @@ function unescapeHtml(s) {
 const STATEMENT_STARTERS =
 	/^(alter|begin|call|comment|commit|copy|create|declare|delete|desc|describe|drop|execute|explain|get|grant|insert|list|ls|merge|put|remove|revoke|rollback|select|set|show|start|truncate|undrop|unset|update|use|with|!)\b/i;
 
+// A result-table border line — only dashes/pluses/equals/pipes/spaces, with a run of dashes
+// and at least one column separator (+ or |). Snowflake renders tables both `+---+` (plus-led)
+// and `---+---+` (dash-led); requiring a +/| separator avoids cutting at a `-- ───` comment.
+function isResultBorder(line) {
+	return /^[\s\-+=|]+$/.test(line) && /-{3,}/.test(line) && /[+|]/.test(line);
+}
+
+// A leaked Snowflake error message under the statement, e.g. "100051 (22012): Division by zero".
+const ERROR_LINE = /^\s*\d{4,} \([0-9A-Z]+\):/;
+
 export function cleanSql(sql) {
 	const lines = sql.split("\n");
-	const border = lines.findIndex((l) => /^\s*\+[-+=]+\+?\s*$/.test(l));
-	const kept = (border === -1 ? lines : lines.slice(0, border)).join("\n").trim();
+	// Cut at the first result-table border or leaked error message (docs paste output under the SQL).
+	let cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || ERROR_LINE.test(l)));
+	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
 	if (/(^|[\s(,])\.\.\.([\s),;]|$)/.test(kept)) return null; // ellipsis placeholder anywhere
