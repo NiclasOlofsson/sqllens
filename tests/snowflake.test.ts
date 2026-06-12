@@ -503,6 +503,30 @@ describe("Snowflake parse", () => {
 			errorsOf("SELECT * FROM s PIVOT(SUM(amount) AS total FOR quarter IN (ANY ORDER BY quarter))"),
 		).toBe(0);
 	});
+
+	// --- query-language gaps, wave 5 (docs corpus, 2026-06-12) ---
+
+	// SAMPLE / RESAMPLE on a parenthesized subquery source, with SEED:
+	// docs.snowflake.com/en/sql-reference/constructs/sample
+	it("parses SAMPLE/RESAMPLE on a subquery source", () => {
+		expect(errorsOf("SELECT * FROM (SELECT * FROM t) SAMPLE (1) SEED (99)")).toBe(0);
+		expect(errorsOf("SELECT * FROM (SELECT * FROM t) RESAMPLE (USING ts INCREMENT BY 5)")).toBe(0);
+	});
+
+	// CAST(<expr> AS <user-defined type>): docs.snowflake.com/en/sql-reference/sql/create-type
+	it("parses CAST(expr AS <udt>)", () => {
+		expect(errorsOf("SELECT CAST(CASE WHEN TRUE THEN 'a' ELSE 'b' END AS uk_postcode) FROM t")).toBe(0);
+		expect(errorsOf("SELECT CAST(x AS VARCHAR) FROM t")).toBe(0); // regression guard
+	});
+
+	// SEMANTIC_VIEW(...) table function: docs.snowflake.com/en/sql-reference/constructs/semantic_view
+	it("parses SEMANTIC_VIEW(… METRICS … DIMENSIONS …)", () => {
+		expect(
+			errorsOf(
+				"SELECT * FROM SEMANTIC_VIEW(tpch_analysis METRICS customer.order_count DIMENSIONS customer.name)",
+			),
+		).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {

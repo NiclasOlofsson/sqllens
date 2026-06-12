@@ -4612,8 +4612,9 @@ try_cast_expr
     ;
 
 cast_expr
-    // RENAME|ADD FIELDS on a structured-type cast: docs.snowflake.com/en/sql-reference/data-types-structured
-    : CAST LR_BRACKET expr AS data_type ((RENAME | ADD) FIELDS)? RR_BRACKET
+    // CAST to a built-in or user-defined type, with optional RENAME|ADD FIELDS on structured types:
+    // docs.snowflake.com/en/sql-reference/data-types-structured + /en/sql-reference/sql/create-type
+    : CAST LR_BRACKET expr AS (data_type | object_name) ((RENAME | ADD) FIELDS)? RR_BRACKET
     | (TIMESTAMP | DATE | TIME) expr
     // INTERVAL '<n>' UNIT [TO UNIT]: docs.snowflake.com/en/sql-reference/data-types-datetime#interval-constants
     | INTERVAL expr interval_unit?
@@ -5026,7 +5027,10 @@ object_ref
     // docs.snowflake.com/en/sql-reference/functions/directory
     | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
     | values_table sample?
-    | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses?
+    | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
+    // SEMANTIC_VIEW(<view> [METRICS …] [DIMENSIONS …] [WHERE …]):
+    // docs.snowflake.com/en/sql-reference/constructs/semantic_view
+    | SEMANTIC_VIEW '(' object_name (METRICS expr_list)? (DIMENSIONS expr_list)? (WHERE search_condition)? ')' as_alias?
     | LATERAL (flatten_table | splited_table) as_alias?
     // any table function after LATERAL (STRTOK_SPLIT_TO_TABLE, …):
     | LATERAL object_name '(' func_arg_list? ')' as_alias?
