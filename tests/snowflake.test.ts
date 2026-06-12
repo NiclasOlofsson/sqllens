@@ -341,6 +341,63 @@ describe("Snowflake parse", () => {
 	it("parses 3-part-qualified system function calls", () => {
 		expect(errorsOf("SELECT SNOWFLAKE.NOTIFICATION.TEXT_HTML('a', 'b')")).toBe(0);
 	});
+
+	// --- query-language gaps, wave 2 (docs corpus, 2026-06-12) ---
+
+	// More keyword tokens used as identifiers (Snowflake reserves very little):
+	// docs.snowflake.com/en/sql-reference/reserved-keywords
+	it("allows more keyword tokens as identifiers", () => {
+		expect(errorsOf("SELECT x, y FROM simple ORDER BY x, y")).toBe(0);
+		expect(errorsOf("SELECT v, base64_encode(v) AS base64 FROM t")).toBe(0);
+		expect(errorsOf("SELECT * FROM snowflake.account_usage.credentials")).toBe(0);
+		expect(errorsOf("SELECT col AS schema, c AS location, k AS keys FROM t")).toBe(0);
+		expect(errorsOf("SELECT enforced, functions, shares, accounts, copy FROM t")).toBe(0);
+	});
+
+	// Binary/hex literals X'…': docs.snowflake.com/en/sql-reference/binary-input-output
+	it("parses X'…' / x'…' binary literals", () => {
+		expect(errorsOf("SELECT X'A1B2'")).toBe(0);
+		expect(errorsOf("SELECT CHARINDEX(X'EF', c1) FROM t")).toBe(0);
+		expect(errorsOf("SELECT x'00' || TRY_TO_BINARY(c1, 'hex') FROM t")).toBe(0);
+	});
+
+	// POSITION(<expr> IN <expr>): docs.snowflake.com/en/sql-reference/functions/position
+	it("parses POSITION(x IN y)", () => {
+		expect(errorsOf("SELECT POSITION(n IN h) FROM t")).toBe(0);
+		expect(errorsOf("SELECT POSITION('@' IN email) FROM t")).toBe(0);
+		expect(errorsOf("SELECT POSITION('a', 'abc') FROM t")).toBe(0); // comma form still works
+	});
+
+	// REGEXP operator (synonym of RLIKE): docs.snowflake.com/en/sql-reference/functions/regexp
+	it("parses the REGEXP operator", () => {
+		expect(errorsOf("SELECT v FROM t WHERE v REGEXP 'San.*'")).toBe(0);
+		expect(errorsOf("SELECT v, v REGEXP '[0-9]+' AS m FROM t")).toBe(0);
+	});
+
+	// SELECT … FOR UPDATE: docs.snowflake.com/en/sql-reference/sql/select
+	it("parses FOR UPDATE", () => {
+		expect(errorsOf("SELECT * FROM t WHERE id < 20 FOR UPDATE")).toBe(0);
+	});
+
+	// LIMIT/OFFSET accept NULL (and the row count need not be a bare integer):
+	// docs.snowflake.com/en/sql-reference/constructs/limit
+	it("parses LIMIT NULL / OFFSET NULL", () => {
+		expect(errorsOf("SELECT * FROM t ORDER BY i LIMIT NULL OFFSET NULL")).toBe(0);
+		expect(errorsOf("SELECT * FROM t LIMIT 10")).toBe(0); // regression guard
+	});
+
+	// NULLS FIRST/LAST in a window ORDER BY: docs.snowflake.com/en/sql-reference/functions-analytic
+	it("parses NULLS FIRST/LAST inside a window ORDER BY with a frame", () => {
+		expect(
+			errorsOf("SELECT SUM(c2) OVER (ORDER BY c1 NULLS LAST RANGE BETWEEN 1 PRECEDING AND 1 FOLLOWING) FROM t"),
+		).toBe(0);
+	});
+
+	// Fractional sampling probability: docs.snowflake.com/en/sql-reference/constructs/sample
+	it("parses TABLESAMPLE with a fractional probability", () => {
+		expect(errorsOf("SELECT * FROM t TABLESAMPLE BERNOULLI (20.3)")).toBe(0);
+		expect(errorsOf("SELECT * FROM t SAMPLE (10)")).toBe(0); // regression guard
+	});
 });
 
 describe("Snowflake lower -> IR", () => {

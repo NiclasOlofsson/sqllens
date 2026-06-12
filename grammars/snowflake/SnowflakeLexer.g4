@@ -738,6 +738,7 @@ POLICIES : 'POLICIES';
 POLICY   : 'POLICY';
 POOL     : 'POOL';
 PORT     : 'PORT';
+POSITION : 'POSITION'; // POSITION(x IN y): docs.snowflake.com/en/sql-reference/functions/position
 POSTGRES : 'POSTGRES'; // platform-object DDL (parsed generically)
 PERMUTE   : 'PERMUTE'; // MATCH_RECOGNIZE patterns: docs.snowflake.com/en/sql-reference/constructs/match_recognize
 PRECEDING : 'PRECEDING'; // window frames: docs.snowflake.com/en/sql-reference/functions-analytic
@@ -804,6 +805,7 @@ REFERENCE_USAGE   : 'REFERENCE_USAGE';
 REFRESH           : 'REFRESH';
 REFRESH_MODE      : 'REFRESH_MODE';
 REFRESH_ON_CREATE : 'REFRESH_ON_CREATE';
+REGEXP            : 'REGEXP'; // REGEXP operator (RLIKE synonym): docs.snowflake.com/en/sql-reference/functions/regexp
 REGION            : 'REGION';
 REGIONS           : 'REGIONS';
 REGION_GROUP      : 'REGION_GROUP';
@@ -1254,6 +1256,10 @@ AZURE_PATH : SINGLE_QUOTE 'azure://' Uri SINGLE_QUOTE;
 FILE_PATH  : 'file://' ( DIVIDE Uri | WindowsPath); //file://<path_to_file>/<filename>
 
 DBL_DOLLAR: '$$' (~'$' | '\\$' | '$' ~'$')*? '$$';
+
+// Hex binary literal X'A1B2' / x'00' (before STRING so the X isn't split off as an identifier):
+// docs.snowflake.com/en/sql-reference/binary-input-output
+BINARY_LITERAL: 'X' '\'' [0-9A-F]* '\''; // lexer is caseInsensitive, so this also matches x'…' / a-f
 
 STRING: '\'' ('\\' . | '\'\'' | ~('\'' | '\\'))* '\'';
 

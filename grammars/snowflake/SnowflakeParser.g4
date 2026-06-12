@@ -4356,6 +4356,28 @@ non_reserved_words
     | VOLUME
     | WAREHOUSE_TYPE
     | YEAR
+    // keyword tokens that are also used as ordinary identifiers (column/alias/table names) —
+    // Snowflake reserves very little: docs.snowflake.com/en/sql-reference/reserved-keywords
+    | ACCOUNTS
+    | BASE64
+    | COPY
+    | CREDENTIALS
+    | ENFORCED
+    | FUNCTIONS
+    | GROUPING
+    | HEX
+    | KEYS
+    | LOCATION
+    | LOGIN_NAME
+    | POSITION
+    | REGEXP
+    | REGION_GROUP
+    | RESUME
+    | SCHEMA
+    | SHARES
+    | SIMPLE
+    | START_TIMESTAMP
+    | WAREHOUSE_SIZE
     ;
 
 builtin_function
@@ -4515,7 +4537,12 @@ expr_list
     ;
 
 expr_list_sorted
-    : expr asc_desc? (COMMA expr asc_desc?)*
+    : expr asc_desc? nulls_first_last? (COMMA expr asc_desc? nulls_first_last?)*
+    ;
+
+// NULLS FIRST | NULLS LAST: docs.snowflake.com/en/sql-reference/constructs/order-by
+nulls_first_last
+    : NULLS (FIRST | LAST)
     ;
 
 expr
@@ -4554,6 +4581,7 @@ expr
     | expr NOT? IN LR_BRACKET (subquery | expr_list) RR_BRACKET
     | expr NOT? ( LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
+    | expr NOT? REGEXP expr // REGEXP operator (RLIKE synonym): docs.snowflake.com/en/sql-reference/functions/regexp
     // LIKE ALL alongside ANY: docs.snowflake.com/en/sql-reference/functions/like
     | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
     | primitive_expression //Should be latest rule as it's nearly a catch all
@@ -4725,6 +4753,8 @@ function_call
     // EXTRACT(<part> FROM <expr>) and EXTRACT(<part>, <expr>) — part quoted or unquoted:
     // docs.snowflake.com/en/sql-reference/functions/extract
     | EXTRACT LR_BRACKET (id_ | string) (FROM | COMMA) expr RR_BRACKET
+    // POSITION(<expr> IN <expr>) and the comma form: docs.snowflake.com/en/sql-reference/functions/position
+    | POSITION LR_BRACKET expr (IN | COMMA) expr RR_BRACKET
     // RLIKE / REGEXP in call form (RLIKE is also an operator): docs.snowflake.com/en/sql-reference/functions/rlike
     | RLIKE LR_BRACKET expr COMMA expr (COMMA expr)? RR_BRACKET
     // instance method call as a table function: TABLE(job!SPCS_GET_LOGS()) — docs.snowflake.com/en/sql-reference/classes
@@ -4775,6 +4805,7 @@ aggregate_function
 literal
     : STRING // string, date, time, timestamp
     | DBL_DOLLAR // $$-quoted string constant
+    | BINARY_LITERAL // X'A1B2' hex binary literal
     | quoted_keyword_string
     | sign? DECIMAL
     | sign? (REAL | FLOAT)
@@ -4847,7 +4878,12 @@ select_statement_in_parentheses
     ;
 
 select_optional_clauses
-    : into_clause? from_clause? where_clause? (group_by_clause having_clause? | having_clause)? qualify_clause? order_by_clause?
+    : into_clause? from_clause? where_clause? (group_by_clause having_clause? | having_clause)? qualify_clause? order_by_clause? for_update?
+    ;
+
+// SELECT … FOR UPDATE: docs.snowflake.com/en/sql-reference/sql/select
+for_update
+    : FOR UPDATE
     ;
 
 select_clause
@@ -5143,8 +5179,10 @@ repeatable_seed
     : (REPEATABLE | SEED) LR_BRACKET num RR_BRACKET
     ;
 
+// the probability may be fractional (BERNOULLI/SYSTEM (20.3)); <num> ROWS is the fixed-size form:
+// docs.snowflake.com/en/sql-reference/constructs/sample
 sample_opts
-    : LR_BRACKET num ROWS? RR_BRACKET repeatable_seed?
+    : LR_BRACKET (num | FLOAT | REAL) ROWS? RR_BRACKET repeatable_seed?
     ;
 
 sample
@@ -5186,6 +5224,7 @@ predicate
     | expr NOT? IN '(' (subquery | expr_list) ')'
     | expr NOT? (LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
+    | expr NOT? REGEXP expr
     | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
     | expr IS null_not_null
     | expr
@@ -5239,9 +5278,11 @@ first_next
     | NEXT
     ;
 
+// LIMIT / OFFSET accept NULL (= unlimited) as well as a count:
+// docs.snowflake.com/en/sql-reference/constructs/limit
 limit_clause
-    : LIMIT num (OFFSET num)?
-    | (OFFSET num)? row_rows? FETCH first_next? num row_rows? ONLY?
+    : LIMIT (num | NULL_) (OFFSET (num | NULL_))?
+    | (OFFSET (num | NULL_))? row_rows? FETCH first_next? num row_rows? ONLY?
     ;
 
 round_mode
