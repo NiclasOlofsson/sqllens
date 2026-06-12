@@ -7,6 +7,7 @@ import { TSqlParser } from "../src/generated/tsql/TSqlParser.js";
 import { lower } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
+import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 
 // grammars-v4 ships its own T-SQL example corpus. These are full T-SQL *scripts* (mostly DDL/admin,
 // GO-separated batches), so they exercise the GRAMMAR via the full-file entry rule `tsql_file` — not
@@ -21,14 +22,13 @@ import { resolveScopes } from "../src/scope/scope.js";
 const EXAMPLES = resolve("vendor/grammars-v4/sql/tsql/examples");
 const DOCS_CORPUS = resolve("harness/local/tsql-docs");
 
-// Locked 2026-06-10: the SQL examples scraped from the Microsoft T-SQL reference
-// (MicrosoftDocs/sql-docs docs/t-sql via tools/extract-tsql-docs.mjs; gitignored,
-// 3,405 files). Ratchet: the pass count must never drop below this baseline. The
-// shortfall is platform/admin DDL (CREATE EXTERNAL DATA SOURCE, GRANT/DENY/REVOKE
-// permission lists, BULK INSERT, RESTORE, ALTER DATABASE SCOPED CONFIGURATION, the
-// Azure Synapse CTAS dialect) — tracked grammar gaps, not query-layer failures.
-// Raise as fixes land.
-const DOCS_BASELINE = 2701;
+// The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
+// docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, 3,405 files). The gate RATCHETS
+// on the in-scope query bucket only and reports dml/ddl: this corpus is ~70% admin/platform
+// DDL (CREATE EXTERNAL DATA SOURCE, GRANT/DENY/REVOKE lists, BULK INSERT, RESTORE, ALTER
+// DATABASE SCOPED CONFIGURATION, Synapse CTAS), all out of scope. Query conformance is
+// 854/940 (90.9%). Raise the baseline as fixes land.
+const QUERY_BASELINE = 854;
 
 /** Parse a whole T-SQL script with the full-file entry rule; return the syntax-error count. */
 function parseFullFile(sql: string): number {
@@ -88,30 +88,8 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 	}, 120000);
 });
 
-function* sqlFilesDeep(dir: string): Generator<string> {
-	for (const e of readdirSync(dir, { withFileTypes: true })) {
-		const p = join(dir, e.name);
-		if (e.isDirectory()) yield* sqlFilesDeep(p);
-		else if (e.name.endsWith(".sql")) yield p;
-	}
-}
-
 describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs corpus", () => {
-	it(`parses at least ${DOCS_BASELINE} docs examples via tsql_file (ratchet)`, () => {
-		let pass = 0;
-		let total = 0;
-		for (const f of sqlFilesDeep(DOCS_CORPUS)) {
-			total++;
-			let errs = 1;
-			try {
-				errs = parseFullFile(readFileSync(f, "utf8"));
-			} catch {
-				errs = -1;
-			}
-			if (errs === 0) pass++;
-		}
-		expect(pass, `docs-corpus pass count dropped: ${pass}/${total} (baseline ${DOCS_BASELINE})`).toBeGreaterThanOrEqual(
-			DOCS_BASELINE,
-		);
-	}, 600000);
+	it("parses the in-scope query examples via tsql_file (ratchet); reports dml/ddl", { timeout: 600000 }, () => {
+		runDocsRatchet(DOCS_CORPUS, parseFullFile, QUERY_BASELINE);
+	});
 });
