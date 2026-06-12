@@ -4363,13 +4363,16 @@ non_reserved_words
     | BASE64
     | COPY
     | CREDENTIALS
+    | DESCRIBE
     | ENFORCED
     | FUNCTIONS
     | GROUPING
     | HEX
     | KEYS
+    | LIST
     | LOCATION
     | LOGIN_NAME
+    | MATCH_CONDITION
     | POSITION
     | REGEXP
     | REGION_GROUP
@@ -4609,7 +4612,8 @@ try_cast_expr
     ;
 
 cast_expr
-    : CAST LR_BRACKET expr AS data_type RR_BRACKET
+    // RENAME|ADD FIELDS on a structured-type cast: docs.snowflake.com/en/sql-reference/data-types-structured
+    : CAST LR_BRACKET expr AS data_type ((RENAME | ADD) FIELDS)? RR_BRACKET
     | (TIMESTAMP | DATE | TIME) expr
     // INTERVAL '<n>' UNIT [TO UNIT]: docs.snowflake.com/en/sql-reference/data-types-datetime#interval-constants
     | INTERVAL expr interval_unit?
@@ -5024,6 +5028,8 @@ object_ref
     | values_table sample?
     | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses?
     | LATERAL (flatten_table | splited_table) as_alias?
+    // any table function after LATERAL (STRTOK_SPLIT_TO_TABLE, …):
+    | LATERAL object_name '(' func_arg_list? ')' as_alias?
     // querying staged files — @stage[/path] [( FILE_FORMAT => …, PATTERN => … )] [alias]:
     // docs.snowflake.com/en/user-guide/querying-stage
     | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? as_alias?
@@ -5164,8 +5170,8 @@ match_recognize
     ;
 
 pivot_unpivot
-    : PIVOT LR_BRACKET id_ LR_BRACKET id_ RR_BRACKET FOR id_ IN LR_BRACKET pivot_in_clause RR_BRACKET default_on_null? RR_BRACKET (
-        as_alias column_alias_list_in_brackets?  
+    : PIVOT LR_BRACKET id_ LR_BRACKET id_ RR_BRACKET (AS? alias)? FOR id_ IN LR_BRACKET pivot_in_clause RR_BRACKET default_on_null? RR_BRACKET (
+        as_alias column_alias_list_in_brackets?
     )?
     | UNPIVOT (include_exclude NULLS)? LR_BRACKET id_ FOR column_name IN LR_BRACKET aliased_column_list RR_BRACKET RR_BRACKET
     ;
@@ -5267,7 +5273,9 @@ where_clause
     ;
 
 group_by_elem
-    : column_elem
+    : (CUBE | ROLLUP | GROUPING SETS) LR_BRACKET group_by_list RR_BRACKET
+    | LR_BRACKET group_by_list? RR_BRACKET // a grouping-set sublist, including the empty ()
+    | column_elem
     | num
     | expression_elem
     ;
@@ -5276,9 +5284,10 @@ group_by_list
     : group_by_elem (COMMA group_by_elem)*
     ;
 
+// group_by_elem handles CUBE/ROLLUP/GROUPING SETS, parenthesized sub-lists and empty (),
+// so they mix freely with plain keys: docs.snowflake.com/en/sql-reference/constructs/group-by-grouping-sets
 group_by_clause
     : GROUP BY group_by_list having_clause?
-    | GROUP BY (CUBE | GROUPING SETS | ROLLUP) LR_BRACKET group_by_list RR_BRACKET
     | GROUP BY ALL
     ;
 
@@ -5313,8 +5322,8 @@ first_next
 // LIMIT / OFFSET accept NULL (= unlimited) as well as a count:
 // docs.snowflake.com/en/sql-reference/constructs/limit
 limit_clause
-    : LIMIT (num | NULL_) (OFFSET (num | NULL_))?
-    | (OFFSET (num | NULL_))? row_rows? FETCH first_next? num row_rows? ONLY?
+    : LIMIT (num | NULL_ | string) (OFFSET (num | NULL_ | string))?
+    | (OFFSET (num | NULL_ | string))? row_rows? FETCH first_next? num row_rows? ONLY?
     ;
 
 round_mode

@@ -379,6 +379,7 @@ EXTERNAL_OAUTH_TYPE                     : 'EXTERNAL_OAUTH_TYPE';
 EXTERNAL_STAGE                          : 'EXTERNAL_STAGE';
 FACTS                                   : 'FACTS';
 FAILOVER                                : 'FAILOVER';
+FIELDS                                  : 'FIELDS'; // CAST(... AS OBJECT(...) RENAME|ADD FIELDS): docs.snowflake.com/en/sql-reference/data-types-structured
 // FAILOVER_MODE:                                         'FAILOVER_MODE';
 // FAIL_OPERATION:                                        'FAIL_OPERATION';
 FALSE                        : 'FALSE';

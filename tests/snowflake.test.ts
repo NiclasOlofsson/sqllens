@@ -458,6 +458,51 @@ describe("Snowflake parse", () => {
 	it("parses casts to an INTERVAL type with precision", () => {
 		expect(errorsOf("SELECT (a - b)::INTERVAL DAY(2) TO SECOND(2) FROM t")).toBe(0);
 	});
+
+	// --- query-language gaps, wave 4 (docs corpus, 2026-06-12) ---
+
+	// More keyword-as-identifier (incl. bang-method names): docs.snowflake.com/en/sql-reference/reserved-keywords
+	it("allows LIST / DESCRIBE / MATCH_CONDITION as identifiers", () => {
+		expect(errorsOf("SELECT internal_ids!LIST()")).toBe(0);
+		expect(errorsOf("SELECT model!DESCRIBE()")).toBe(0);
+		expect(errorsOf("SELECT * FROM t1 AS asof")).toBe(0);
+		expect(errorsOf("SELECT * FROM t2 match_condition")).toBe(0);
+	});
+
+	// A general table function after LATERAL: docs.snowflake.com/en/sql-reference/functions/strtok_split_to_table
+	it("parses LATERAL <table function>(…)", () => {
+		expect(errorsOf("SELECT * FROM t, LATERAL STRTOK_SPLIT_TO_TABLE(t.v, ' ')")).toBe(0);
+	});
+
+	// GROUPING SETS with nested parens, empty (), and mixed with plain keys:
+	// docs.snowflake.com/en/sql-reference/constructs/group-by-grouping-sets
+	it("parses GROUPING SETS variants", () => {
+		expect(errorsOf("SELECT a FROM t GROUP BY a, GROUPING SETS (b, ())")).toBe(0);
+		expect(errorsOf("SELECT a FROM t GROUP BY GROUPING SETS ((x), (y), ())")).toBe(0);
+		expect(errorsOf("SELECT grouping(x), grouping(x, y) FROM t GROUP BY CUBE (x, y)")).toBe(0);
+	});
+
+	// LIMIT accepts a string/'' (unlimited) as well: docs.snowflake.com/en/sql-reference/constructs/limit
+	it("parses LIMIT '' / OFFSET ''", () => {
+		expect(errorsOf("SELECT * FROM t ORDER BY i LIMIT '' OFFSET ''")).toBe(0);
+	});
+
+	// Structured-type cast field operations: docs.snowflake.com/en/sql-reference/data-types-structured
+	it("parses CAST(… AS OBJECT(…) RENAME/ADD FIELDS)", () => {
+		expect(
+			errorsOf(
+				"SELECT CAST({'city': 'X'}::OBJECT(city VARCHAR) AS OBJECT(city_name VARCHAR) RENAME FIELDS) AS o",
+			),
+		).toBe(0);
+		expect(errorsOf("SELECT CAST(o AS OBJECT(a VARCHAR, b VARCHAR) ADD FIELDS) FROM t")).toBe(0);
+	});
+
+	// PIVOT with an aggregate alias and ANY ORDER BY: docs.snowflake.com/en/sql-reference/constructs/pivot
+	it("parses PIVOT with an aggregate alias and ANY ORDER BY", () => {
+		expect(
+			errorsOf("SELECT * FROM s PIVOT(SUM(amount) AS total FOR quarter IN (ANY ORDER BY quarter))"),
+		).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {
