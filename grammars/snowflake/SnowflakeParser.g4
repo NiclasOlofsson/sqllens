@@ -4359,6 +4359,7 @@ non_reserved_words
     // keyword tokens that are also used as ordinary identifiers (column/alias/table names) —
     // Snowflake reserves very little: docs.snowflake.com/en/sql-reference/reserved-keywords
     | ACCOUNTS
+    | ASOF
     | BASE64
     | COPY
     | CREDENTIALS
@@ -4377,6 +4378,7 @@ non_reserved_words
     | SHARES
     | SIMPLE
     | START_TIMESTAMP
+    | VALIDATE
     | WAREHOUSE_SIZE
     ;
 
@@ -4550,6 +4552,8 @@ expr
     | expr LSB expr RSB //array access
     | expr COLON expr   //json access
     | expr DOT (VALUE | expr)
+    | expr LR_BRACKET PLUS RR_BRACKET // Oracle-style (+) outer-join marker: docs.snowflake.com/en/sql-reference/constructs/join
+    | STAR STAR expr // ** array spread operator: docs.snowflake.com/en/sql-reference/operators-expansion
     | expr COLLATE string
     // instance method call <instance>!<method>(args): docs.snowflake.com/en/sql-reference/classes
     | expr BANG id_ '(' (expr_list | param_assoc_list)? ')'
@@ -4615,13 +4619,16 @@ interval_unit
     : id_ (TO id_)?
     ;
 
+// Object construction {…}: key/value pairs, a (qualified) star with optional EXCLUDE/ILIKE,
+// or a mix of stars and pairs: docs.snowflake.com/en/sql-reference/functions/object_construct
 json_literal
-    : LCB kv_pair (COMMA kv_pair)* RCB
-    // {*} / {* EXCLUDE …} / {* ILIKE '…'} object construction — only EXCLUDE and ILIKE are
-    // documented for this shorthand, and they can't combine:
-    // docs.snowflake.com/en/sql-reference/functions/object_construct
-    | LCB STAR (exclude_clause | ILIKE string)? RCB
+    : LCB obj_construct_elem (COMMA obj_construct_elem)* RCB
     | LCB RCB
+    ;
+
+obj_construct_elem
+    : object_name_or_alias? STAR (exclude_clause | ILIKE string)?
+    | kv_pair
     ;
 
 kv_pair
@@ -4674,6 +4681,9 @@ data_type
     | GEOMETRY
     | FILE // docs.snowflake.com/en/sql-reference/data-types-unstructured
     | VECTOR '(' vector_element_type COMMA num ')'
+    // INTERVAL <unit>[(p)] [TO <unit>[(p)]] as a cast type:
+    // docs.snowflake.com/en/sql-reference/data-types-datetime
+    | INTERVAL id_ ('(' num ')')? (TO id_ ('(' num ')')?)?
     ;
 
 object_field
@@ -4772,6 +4782,14 @@ func_arg_list
 
 func_arg
     : param_assoc
+    // SEARCH/MINHASH accept * / (*) / "* EXCLUDE|ILIKE …" as an all-columns argument:
+    // docs.snowflake.com/en/sql-reference/functions/search
+    | STAR star_modifier*
+    | LR_BRACKET STAR RR_BRACKET
+    // a stage reference as an argument (BUILD_SCOPED_FILE_URL(@stage, …), GET_PRESIGNED_URL(@stage, …)):
+    | named_stage
+    | user_stage
+    | table_stage
     | expr
     ;
 
@@ -4997,9 +5015,9 @@ table_source_item_joined
     ;
 
 object_ref
-    : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample?
+    : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
     | object_name START WITH predicate CONNECT BY prior_list?
-    | TABLE '(' function_call ')' pivot_unpivot? as_alias? sample?
+    | TABLE '(' (function_call | string | DBL_DOLLAR | DOLLAR id_) ')' pivot_unpivot? as_alias? sample?
     // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
     // docs.snowflake.com/en/sql-reference/functions/directory
     | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
@@ -5009,6 +5027,20 @@ object_ref
     // querying staged files — @stage[/path] [( FILE_FORMAT => …, PATTERN => … )] [alias]:
     // docs.snowflake.com/en/user-guide/querying-stage
     | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? as_alias?
+    ;
+
+// RESAMPLE(USING <col> INCREMENT BY <const> [PARTITION BY …] [METADATA_COLUMNS …]):
+// docs.snowflake.com/en/sql-reference/constructs/resample
+resample
+    : RESAMPLE LR_BRACKET USING expr INCREMENT BY expr partition_by? resample_metadata? RR_BRACKET
+    ;
+
+resample_metadata
+    : METADATA_COLUMNS resample_metadata_col (COMMA resample_metadata_col)*
+    ;
+
+resample_metadata_col
+    : (IS_GENERATED | BUCKET_START) LR_BRACKET RR_BRACKET (AS? alias)?
     ;
 
 flatten_table_option

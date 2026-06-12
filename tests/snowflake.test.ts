@@ -398,6 +398,66 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("SELECT * FROM t TABLESAMPLE BERNOULLI (20.3)")).toBe(0);
 		expect(errorsOf("SELECT * FROM t SAMPLE (10)")).toBe(0); // regression guard
 	});
+
+	// --- query-language gaps, wave 3 (docs corpus, 2026-06-12) ---
+
+	// Oracle-style (+) outer-join operator: docs.snowflake.com/en/sql-reference/constructs/join
+	it("parses the (+) outer-join operator", () => {
+		expect(errorsOf("SELECT t1.c1, t2.c2 FROM t1, t2 WHERE t1.c1 = t2.c2 (+)")).toBe(0);
+		expect(errorsOf("SELECT * FROM t1, t2 WHERE t1.c1 (+) = t2.c2")).toBe(0);
+	});
+
+	// A stage reference as a function argument: docs.snowflake.com/en/sql-reference/functions/build_scoped_file_url
+	it("parses @stage as a function argument", () => {
+		expect(errorsOf("SELECT BUILD_SCOPED_FILE_URL(@images_stage, 'a/b.jpg', TRUE)")).toBe(0);
+		expect(errorsOf("SELECT GET_PRESIGNED_URL(@my_stage, 'file.csv')")).toBe(0);
+	});
+
+	// TABLE('<name>') table literal: docs.snowflake.com/en/sql-reference/literals-table
+	it("parses TABLE('<name>') table literals", () => {
+		expect(errorsOf("SELECT * FROM TABLE('mytable')")).toBe(0);
+		expect(errorsOf("SELECT * FROM TABLE($$mytable$$)")).toBe(0);
+		expect(errorsOf("SELECT * FROM TABLE(VALIDATE(t1, JOB_ID => '_last'))")).toBe(0);
+	});
+
+	// Object construction {…}: star + qualified star + mixed key/value:
+	// docs.snowflake.com/en/sql-reference/functions/object_construct
+	it("parses {…} object construction with stars and key/value pairs", () => {
+		expect(errorsOf("SELECT {t1.*, t2.*} FROM t1, t2")).toBe(0);
+		expect(errorsOf("SELECT {*, 'k': 'v'} FROM t")).toBe(0);
+		expect(errorsOf("SELECT {my_table.*} FROM my_table")).toBe(0);
+	});
+
+	// ** spread operator over an array: docs.snowflake.com/en/sql-reference/operators-expansion
+	it("parses the ** spread operator", () => {
+		expect(errorsOf("SELECT COALESCE(** [NULL, 'v'])")).toBe(0);
+		expect(errorsOf("SELECT * FROM t WHERE col1 IN (** [3, 4])")).toBe(0);
+		expect(errorsOf("SELECT GREATEST(** [1, 2, 5])")).toBe(0);
+	});
+
+	// * / (*) "all columns" as a function argument (SEARCH, MINHASH):
+	// docs.snowflake.com/en/sql-reference/functions/search
+	it("parses * / (*) as an all-columns function argument", () => {
+		expect(errorsOf("SELECT SEARCH(*, 'king') FROM t")).toBe(0);
+		expect(errorsOf("SELECT SEARCH((*), 'king') FROM lines")).toBe(0);
+		expect(errorsOf("SELECT MINHASH(5, *) FROM t")).toBe(0);
+		expect(errorsOf("SELECT SEARCH(* EXCLUDE c, 'x') FROM t")).toBe(0);
+		expect(errorsOf("SELECT SEARCH(* ILIKE 'c%', 'x') FROM t")).toBe(0);
+	});
+
+	// RESAMPLE time-series construct: docs.snowflake.com/en/sql-reference/constructs/resample
+	it("parses RESAMPLE", () => {
+		expect(
+			errorsOf("SELECT * FROM weather RESAMPLE (USING ts INCREMENT BY INTERVAL '1 hour' PARTITION BY city)"),
+		).toBe(0);
+		expect(errorsOf("SELECT bucket FROM t RESAMPLE (USING ts INCREMENT BY 5)")).toBe(0);
+	});
+
+	// INTERVAL <unit>(p) [TO <unit>(p)] as a cast target type:
+	// docs.snowflake.com/en/sql-reference/data-types-datetime
+	it("parses casts to an INTERVAL type with precision", () => {
+		expect(errorsOf("SELECT (a - b)::INTERVAL DAY(2) TO SECOND(2) FROM t")).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {

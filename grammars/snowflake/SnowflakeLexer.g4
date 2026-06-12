@@ -794,6 +794,11 @@ READER      : 'READER';
 // REBUILD:                                               'REBUILD';
 // RECEIVE:                                               'RECEIVE';
 RECLUSTER: 'RECLUSTER';
+// RESAMPLE time-series construct: docs.snowflake.com/en/sql-reference/constructs/resample
+RESAMPLE        : 'RESAMPLE';
+METADATA_COLUMNS: 'METADATA_COLUMNS';
+IS_GENERATED    : 'IS_GENERATED';
+BUCKET_START    : 'BUCKET_START';
 // RECOMPILE:                                             'RECOMPILE';
 // RECONFIGURE:                                           'RECONFIGURE';
 RECORD_DELIMITER: 'RECORD_DELIMITER';
