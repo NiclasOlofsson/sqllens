@@ -49,6 +49,9 @@ const ERROR_LINE = /^\s*\d{4,} \([0-9A-Z]+\):/;
 const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:)/;
 
 export function cleanSql(sql) {
+	// Docs HTML renders indentation/spacing with non-breaking spaces (&nbsp; → U+00A0);
+	// SQL has no such whitespace, so the lexer rejects it. Normalize to a plain space.
+	sql = sql.replace(/ /g, " ");
 	const lines = sql.split("\n");
 	// Cut at the first result-table border, leaked error message, or prose line (output under the SQL).
 	let cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || ERROR_LINE.test(l) || PROSE_LINE.test(l)));

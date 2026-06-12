@@ -11,6 +11,7 @@ import { describe, expect, it } from "vitest";
 import { SnowflakeLexer } from "../src/generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../src/generated/snowflake/SnowflakeParser.js";
 import { runDocsRatchet } from "./helpers/docs-ratchet.js";
+import { KNOWN_BAD } from "./snowflake-corpus-known-bad.js";
 
 // Two Snowflake conformance corpora, both gitignored and skipped when absent:
 //
@@ -20,14 +21,15 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 //
 // 2. harness/local/snowflake-docs — every SQL example scraped from the 2,348
 //    docs.snowflake.com sql-reference pages (tools/scrape-snowflake-docs.mjs). It spans
-//    the full surface (queries, DDL, admin, scripting); the gate RATCHETS on the in-scope
-//    query bucket only and reports dml/ddl (object/platform DDL is cleared Out of scope).
-//    Query conformance is ~2944/2976 (98.9%). Raise the baseline as fixes land.
+//    the full surface (queries, DDL, admin, scripting); the gate requires 100% of the in-scope
+//    query bucket to parse (object/platform DDL is cleared Out and only reported). The handful of
+//    examples that are invalid SQL in Snowflake's own docs are listed in KNOWN_BAD, excluded from
+//    the gate, and asserted to still fail (self-policing) — see tests/snowflake-corpus-known-bad.ts.
 
 const VENDOR_EXAMPLES = resolve("vendor/grammars-v4/sql/snowflake/examples");
 const DOCS_CORPUS = resolve("harness/local/snowflake-docs");
-// A few-file margin below the observed pass count: the two-stage SLL→LL parse shows ±1 jitter
-// on a couple of ambiguous files, and this is a floor (never-regress), not a target.
+// The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
+// the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 2942;
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
@@ -92,7 +94,7 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Snowflake grammar vs the grammars
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs corpus", () => {
-	it("parses the in-scope query examples (ratchet); reports dml/ddl", { timeout: 1_800_000 }, () => {
-		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE);
+	it("parses 100% of in-scope query examples (KNOWN_BAD excluded); reports dml/ddl", { timeout: 1_800_000 }, () => {
+		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
 	});
 });

@@ -3387,8 +3387,10 @@ use_schema
     : USE SCHEMA? ((id_ DOT)? id_ | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET)
     ;
 
+// ALL | NONE | DEFAULT | an explicit role list:
+// docs.snowflake.com/en/sql-reference/sql/use-secondary-roles
 use_secondary_roles
-    : USE SECONDARY ROLES (ALL | NONE)
+    : USE SECONDARY ROLES (ALL | NONE | DEFAULT | id_ (COMMA id_)*)
     ;
 
 use_warehouse
@@ -4242,6 +4244,7 @@ non_reserved_words
     | EXTENSION
     | EXTRACT
     | FACTS
+    | FIELDS
     | FILE
     | FILES
     | FIRST_NAME
@@ -4269,6 +4272,7 @@ non_reserved_words
     | LEAD
     | LOCAL
     | LOW
+    | MAP
     | MAX_CONCURRENCY_LEVEL
     | MEDIUM
     | METRIC
@@ -4369,6 +4373,7 @@ non_reserved_words
     | FIRST
     | FUNCTIONS
     | GROUPING
+    | IS_GENERATED
     | LAST
     | HEX
     | KEYS
@@ -4733,6 +4738,9 @@ asc_desc
 over_clause
     : OVER '(' partition_by (order_by_expr window_frame?)? ')'
     | OVER '(' order_by_expr window_frame? ')'
+    // Bare frame with no ORDER BY — AVG(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING):
+    // docs.snowflake.com/en/sql-reference/functions-analytic#window-frame-syntax-and-usage
+    | OVER '(' partition_by? window_frame ')'
     | OVER '(' ')'
     ;
 
@@ -4776,7 +4784,8 @@ function_call
     // RLIKE / REGEXP in call form (RLIKE is also an operator): docs.snowflake.com/en/sql-reference/functions/rlike
     | RLIKE LR_BRACKET expr COMMA expr (COMMA expr)? RR_BRACKET
     // instance method call as a table function: TABLE(job!SPCS_GET_LOGS()) — docs.snowflake.com/en/sql-reference/classes
-    | object_name BANG id_ LR_BRACKET (expr_list | param_assoc_list)? RR_BRACKET
+    // func_arg_list covers positional, named (incl. TABLE(...)-valued) args (model!DETECT_ANOMALIES(INPUT_DATA => TABLE('v')))
+    | object_name BANG id_ LR_BRACKET func_arg_list? RR_BRACKET
     ;
 
 param_assoc_list
@@ -4792,6 +4801,9 @@ func_arg
     // a named arg whose value is a type spec (AI_COMPLETE(response_format => TYPE OBJECT(...))):
     // docs.snowflake.com/en/sql-reference/functions/ai_complete
     : id_ ASSOC TYPE data_type
+    // a named arg whose value is a TABLE(...) reference (model!DETECT_ANOMALIES(INPUT_DATA => TABLE('v'))):
+    // docs.snowflake.com/en/sql-reference/classes-anomaly_detection
+    | id_ ASSOC TABLE LR_BRACKET (string | subquery | object_name) RR_BRACKET
     | param_assoc
     // SEARCH/MINHASH accept * / (*) / "* EXCLUDE|ILIKE …" as an all-columns argument:
     // docs.snowflake.com/en/sql-reference/functions/search
@@ -4807,7 +4819,7 @@ func_arg
 // FILE_FORMAT / PATTERN are stage-query option names (docs.snowflake.com/en/user-guide/querying-stage)
 // that lex as their own tokens.
 param_assoc
-    : (id_ | FILE_FORMAT | PATTERN) ASSOC expr
+    : (id_ | FILE_FORMAT | PATTERN | LIMIT) ASSOC expr
     ;
 
 ignore_or_repect_nulls
@@ -5026,17 +5038,26 @@ table_source_item_joined
     ;
 
 object_ref
-    : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
+    : object_name at_before? changes? match_recognize? pivot_unpivot* as_alias? column_list_in_parentheses? sample? resample?
     | object_name START WITH predicate CONNECT BY prior_list?
-    | TABLE '(' (function_call | string | DBL_DOLLAR | id_ | QMARK | COLON id_) ')' pivot_unpivot? as_alias? sample?
+    | TABLE '(' (function_call | string | DBL_DOLLAR | id_ | QMARK | COLON id_) ')' pivot_unpivot* as_alias? sample?
     // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
     // docs.snowflake.com/en/sql-reference/functions/directory
     | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
     | values_table sample?
-    | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
-    // SEMANTIC_VIEW(<view> [METRICS …] [DIMENSIONS …] [WHERE …]):
+    | LATERAL? '(' subquery ')' match_recognize? pivot_unpivot* as_alias? column_list_in_parentheses? sample? resample?
+    // a parenthesized join as a join operand: t1 LEFT JOIN (t2 RIGHT JOIN t3 ON …) ON …
+    // docs.snowflake.com/en/sql-reference/constructs/join
+    | '(' table_source_item_joined ')' as_alias?
+    // SEMANTIC_VIEW(<view> [METRICS …] [DIMENSIONS …] [WHERE …]) and the two-word SEMANTIC VIEW(…)
+    // form with parenthesized metric/dimension lists:
     // docs.snowflake.com/en/sql-reference/constructs/semantic_view
     | SEMANTIC_VIEW '(' object_name (METRICS expr_list | DIMENSIONS expr_list | WHERE search_condition)* ')' as_alias?
+    | SEMANTIC VIEW '(' object_name (
+        METRICS '(' expr_list ')'
+        | DIMENSIONS '(' expr_list ')'
+        | WHERE search_condition
+    )* ')' as_alias?
     | LATERAL (flatten_table | splited_table) as_alias?
     // any table function after LATERAL (STRTOK_SPLIT_TO_TABLE, …):
     | LATERAL object_name '(' func_arg_list? ')' as_alias?

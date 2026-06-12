@@ -595,6 +595,90 @@ describe("Snowflake parse", () => {
 	it("parses TABLE($session_variable)", () => {
 		expect(errorsOf("SELECT * FROM TABLE($my_table_name)")).toBe(0);
 	});
+
+	// Wave 8 — the exotic-but-valid constructs surfaced by the scraped docs corpus, each RTFM'd.
+
+	// A parenthesized join as a join operand: docs.snowflake.com/en/sql-reference/constructs/join
+	it("parses a parenthesized join operand with a qualified-star list", () => {
+		expect(
+			errorsOf(
+				"SELECT t1.*, t2.*, t3.* FROM t1 LEFT OUTER JOIN (t2 RIGHT OUTER JOIN t3 ON (t3.c = t2.c)) ON (t1.c = t2.c)",
+			),
+		).toBe(0);
+	});
+
+	// MATCH_RECOGNIZE on a subquery source, ALL ROWS PER MATCH with empty/unmatched options,
+	// and a window frame inside DEFINE: docs.snowflake.com/en/sql-reference/constructs/match_recognize
+	it("parses MATCH_RECOGNIZE on a subquery with ALL ROWS PER MATCH variants", () => {
+		expect(
+			errorsOf(
+				"SELECT * FROM (SELECT * FROM h) match_recognize(ORDER BY d MEASURES match_number() as mn ALL ROWS PER MATCH PATTERN(a b+) DEFINE b AS price > 10)",
+			),
+		).toBe(0);
+		expect(
+			errorsOf(
+				"SELECT * FROM h match_recognize(ORDER BY d MEASURES classifier() as cl ALL ROWS PER MATCH OMIT EMPTY MATCHES PATTERN(a*) DEFINE a AS price > avg(price) over (rows between unbounded preceding and unbounded following))",
+			),
+		).toBe(0);
+		expect(
+			errorsOf(
+				"SELECT * FROM h match_recognize(ORDER BY d MEASURES classifier() as cl ALL ROWS PER MATCH WITH UNMATCHED ROWS PATTERN(a+) DEFINE a AS TRUE)",
+			),
+		).toBe(0);
+	});
+
+	// Chained PIVOTs on a subquery: docs.snowflake.com/en/sql-reference/constructs/pivot
+	it("parses chained PIVOT operators", () => {
+		expect(
+			errorsOf(
+				"SELECT * FROM (SELECT amount, q FROM s) PIVOT(SUM(amount) FOR q IN ('a','b')) PIVOT(MAX(d) FOR q2 IN ('a','b'))",
+			),
+		).toBe(0);
+	});
+
+	// A named arg whose value is TABLE(...): docs.snowflake.com/en/sql-reference/classes-anomaly_detection
+	it("parses a !method() table function with a TABLE(...)-valued named argument", () => {
+		expect(errorsOf("SELECT ts FROM TABLE(det!DETECT_ANOMALIES(INPUT_DATA => TABLE('my_view'), TARGET => 'y'))")).toBe(
+			0,
+		);
+	});
+
+	// USE SECONDARY ROLES with an explicit role list: docs.snowflake.com/en/sql-reference/sql/use-secondary-roles
+	it("parses USE SECONDARY ROLES <role>", () => {
+		expect(errorsOf("USE SECONDARY ROLES ACCOUNTADMIN")).toBe(0);
+	});
+
+	// RESAMPLE with BUCKET_START/IS_GENERATED metadata columns, IS_GENERATED used as a column:
+	// docs.snowflake.com/en/sql-reference/constructs/resample
+	it("parses RESAMPLE metadata columns and IS_GENERATED as a column", () => {
+		expect(
+			errorsOf(
+				"SELECT bucket_start FROM t RESAMPLE(USING o INCREMENT BY INTERVAL '1 day' METADATA_COLUMNS IS_GENERATED(), BUCKET_START()) WHERE IS_GENERATED = 'False'",
+			),
+		).toBe(0);
+	});
+
+	// LIMIT as a named argument name: docs.snowflake.com/en/sql-reference/info-schema
+	it("parses LIMIT => n as a named argument", () => {
+		expect(errorsOf("SELECT * FROM TABLE(INFORMATION_SCHEMA.F(APPLICATION_NAME => 'a', LIMIT => 100))")).toBe(0);
+	});
+
+	// A correlated LATERAL (SELECT …) with no FROM, aliased FIELDS/MAP keyword identifiers:
+	// docs.snowflake.com/en/sql-reference/constructs/join-lateral
+	it("parses a correlated LATERAL subquery with FIELDS/MAP as identifiers", () => {
+		expect(
+			errorsOf(
+				"WITH d AS (SELECT PARSE_JSON('[]') x) SELECT fields.* FROM d, LATERAL FLATTEN(x) AS f, LATERAL (SELECT f.value:c AS c, ROW_NUMBER() OVER(ORDER BY f.value:c) rn) fields",
+			),
+		).toBe(0);
+		expect(errorsOf("SELECT MAP_INSERT({'k1':100}::MAP(VARCHAR,VARCHAR), 'k1', 'v', TRUE) AS map")).toBe(0);
+	});
+
+	// SEMANTIC VIEW(…) two-word form with parenthesized metric/dimension lists:
+	// docs.snowflake.com/en/sql-reference/constructs/semantic_view
+	it("parses the two-word SEMANTIC VIEW(…) source", () => {
+		expect(errorsOf("SELECT * FROM SEMANTIC VIEW(sv METRICS (t.m) DIMENSIONS (t.d1, t.d2))")).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {
