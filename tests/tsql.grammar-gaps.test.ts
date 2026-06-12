@@ -60,6 +60,11 @@ describe("query OPTION clause (hints)", () => {
 	it("OPTION (MAXDOP n) and table hints together", () => {
 		parses("SELECT a FROM t OPTION (MAXDOP 4, OPTIMIZE FOR UNKNOWN)");
 	});
+
+	it("OPTION (QUERYTRACEON n), including repeated", () => {
+		parses("SELECT a FROM t WHERE a = 1 OPTION (QUERYTRACEON 4199)");
+		parses("SELECT a FROM t WHERE a = 1 OPTION (QUERYTRACEON 4199, QUERYTRACEON 4137)");
+	});
 });
 
 describe("IS [NOT] DISTINCT FROM (SQL Server 2022)", () => {

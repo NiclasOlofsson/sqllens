@@ -784,6 +784,7 @@ PWDENCRYPT                                  : 'PWDENCRYPT';
 PYTHON                                      : 'PYTHON';
 QUERY                                       : 'QUERY';
 QUERY_SQUARE_BRACKET                        : '[QUERY]';
+QUERYTRACEON                                : 'QUERYTRACEON'; // query OPTION trace-flag hint
 QUEUE                                       : 'QUEUE';
 QUEUE_DELAY                                 : 'QUEUE_DELAY';
 QUOTED_IDENTIFIER                           : 'QUOTED_IDENTIFIER';

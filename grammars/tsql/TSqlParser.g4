@@ -4137,6 +4137,7 @@ option
     // USE HINT ('hint', …) — HINT lexes as an identifier:
     // learn.microsoft.com/sql/t-sql/queries/hints-transact-sql-query
     | USE id_ '(' STRING (',' STRING)* ')'
+    | QUERYTRACEON DECIMAL // OPTION (QUERYTRACEON n) trace-flag hint
     ;
 
 optimize_for_arg
@@ -5787,6 +5788,7 @@ keyword
     | PWDCOMPARE
     | PWDENCRYPT
     | QUERY
+    | QUERYTRACEON
     | QUERY_SQUARE_BRACKET
     | QUEUE
     | QUEUE_DELAY

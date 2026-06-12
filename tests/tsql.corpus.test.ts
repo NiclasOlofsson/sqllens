@@ -28,7 +28,7 @@ const DOCS_CORPUS = resolve("harness/local/tsql-docs");
 // permission lists, BULK INSERT, RESTORE, ALTER DATABASE SCOPED CONFIGURATION, the
 // Azure Synapse CTAS dialect) — tracked grammar gaps, not query-layer failures.
 // Raise as fixes land.
-const DOCS_BASELINE = 2698;
+const DOCS_BASELINE = 2701;
 
 /** Parse a whole T-SQL script with the full-file entry rule; return the syntax-error count. */
 function parseFullFile(sql: string): number {
