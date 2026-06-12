@@ -4215,10 +4215,12 @@ non_reserved_words
     | CA
     | CHECKSUM
     | COLLECTION
+    | COLUMNS
     | COMMENT
     | CONFIGURATION
     | CORTEX
     | DATA
+    | DATABASE
     | DAYS
     | DEFINITION
     | DELTA
@@ -4238,6 +4240,7 @@ non_reserved_words
     | EXPIRY_DATE
     | EXPR
     | EXTENSION
+    | EXTRACT
     | FACTS
     | FILE
     | FILES
@@ -4269,10 +4272,12 @@ non_reserved_words
     | MAX_CONCURRENCY_LEVEL
     | MEDIUM
     | METRIC
+    | MATCHES
     | METRICS
     | MODE
     | NAME
     | NETWORK
+    | NOTIFICATION
     | NULLIF
     | NULLS
     | NVL
@@ -4286,6 +4291,7 @@ non_reserved_words
     | OUTBOUND
     | OUTER
     | OWNER
+    | PACKAGES
     | PARTITION
     | PASSWORD
     | PASSWORD_HISTORY
@@ -4301,6 +4307,7 @@ non_reserved_words
     | PASSWORD_MIN_UPPER_CASE_CHARS
     | PATH_
     | PATTERN
+    | PIPES
     | PORT
     | PRIORITY
     | PROCEDURE_NAME
@@ -4582,8 +4589,10 @@ interval_unit
 
 json_literal
     : LCB kv_pair (COMMA kv_pair)* RCB
-    // {*} / {* EXCLUDE col} object construction: docs.snowflake.com/en/sql-reference/functions/object_construct
-    | LCB STAR exclude_clause? RCB
+    // {*} / {* EXCLUDE …} / {* ILIKE '…'} object construction — only EXCLUDE and ILIKE are
+    // documented for this shorthand, and they can't combine:
+    // docs.snowflake.com/en/sql-reference/functions/object_construct
+    | LCB STAR (exclude_clause | ILIKE string)? RCB
     | LCB RCB
     ;
 
@@ -4713,6 +4722,11 @@ function_call
     | TO_BOOLEAN LR_BRACKET expr RR_BRACKET
     // statement keywords that are also functions: docs.snowflake.com/en/sql-reference/functions/insert
     | INSERT LR_BRACKET expr_list RR_BRACKET
+    // EXTRACT(<part> FROM <expr>) and EXTRACT(<part>, <expr>) — part quoted or unquoted:
+    // docs.snowflake.com/en/sql-reference/functions/extract
+    | EXTRACT LR_BRACKET (id_ | string) (FROM | COMMA) expr RR_BRACKET
+    // RLIKE / REGEXP in call form (RLIKE is also an operator): docs.snowflake.com/en/sql-reference/functions/rlike
+    | RLIKE LR_BRACKET expr COMMA expr (COMMA expr)? RR_BRACKET
     // instance method call as a table function: TABLE(job!SPCS_GET_LOGS()) — docs.snowflake.com/en/sql-reference/classes
     | object_name BANG id_ LR_BRACKET (expr_list | param_assoc_list)? RR_BRACKET
     ;

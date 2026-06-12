@@ -305,10 +305,41 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("SELECT FILE_URL FROM DIRECTORY(@mystage) WHERE SIZE > 100000")).toBe(0);
 	});
 
-	// Semi-structured object-construct star: docs.snowflake.com/en/sql-reference/functions/object_construct
-	it("parses {* EXCLUDE …} object construction", () => {
+	// Object-construct star shorthand: docs.snowflake.com/en/sql-reference/functions/object_construct
+	// Only EXCLUDE and ILIKE are documented for {* …} (unlike SELECT *, which also takes RENAME/REPLACE).
+	it("parses {* EXCLUDE …} / {* ILIKE …} object construction", () => {
 		expect(errorsOf("SELECT {* EXCLUDE col1} FROM my_table")).toBe(0);
+		expect(errorsOf("SELECT {* ILIKE 'col1%'} FROM my_table")).toBe(0);
 		expect(errorsOf("SELECT {*} FROM t")).toBe(0);
+	});
+
+	// Keywords usable as identifiers — Snowflake reserves very little:
+	// docs.snowflake.com/en/sql-reference/reserved-keywords
+	it("allows keyword tokens as column/alias/table names", () => {
+		expect(errorsOf("SELECT REGEXP_SUBSTR_ALL('a1a2', 'a.') AS matches")).toBe(0);
+		expect(errorsOf("SELECT pipe_name FROM snowflake.account_usage.pipes")).toBe(0);
+		expect(errorsOf("SELECT * FROM information_schema.packages")).toBe(0);
+		expect(errorsOf("SELECT * FROM information_schema.columns")).toBe(0);
+		expect(errorsOf("SELECT col AS database FROM t")).toBe(0);
+	});
+
+	// EXTRACT — both the FROM and the comma form, part quoted or unquoted:
+	// docs.snowflake.com/en/sql-reference/functions/extract
+	it("parses EXTRACT(part FROM expr) and EXTRACT(part, expr)", () => {
+		expect(errorsOf("SELECT EXTRACT(year FROM ts) FROM t")).toBe(0);
+		expect(errorsOf("SELECT EXTRACT('month', ts) FROM t")).toBe(0);
+		expect(errorsOf("SELECT EXTRACT(epoch_second FROM TO_TIMESTAMP('2024-04-10')) AS s")).toBe(0);
+	});
+
+	// Pattern-matching functions in call form: docs.snowflake.com/en/sql-reference/functions/rlike
+	it("parses RLIKE / REGEXP-family as functions", () => {
+		expect(errorsOf("SELECT RLIKE('800-456-7891', '[2-9]\\\\d{2}') AS m")).toBe(0);
+		expect(errorsOf("SELECT REGEXP_SUBSTR_ALL('a1a2a3', 'a[0-9]') AS matches")).toBe(0);
+	});
+
+	// Qualified system functions: docs.snowflake.com/en/sql-reference/functions/system
+	it("parses 3-part-qualified system function calls", () => {
+		expect(errorsOf("SELECT SNOWFLAKE.NOTIFICATION.TEXT_HTML('a', 'b')")).toBe(0);
 	});
 });
 

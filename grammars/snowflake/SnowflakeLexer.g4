@@ -353,6 +353,7 @@ EXPIRY_DATE : 'EXPIRY_DATE';
 EXPLAIN     : 'EXPLAIN';
 EXPR        : 'EXPR';
 EXTENSION   : 'EXTENSION';
+EXTRACT     : 'EXTRACT'; // EXTRACT(part FROM expr): docs.snowflake.com/en/sql-reference/functions/extract
 // EXPLICIT:                                              'EXPLICIT';
 EXTERNAL                     : 'EXTERNAL';
 EXTERNAL_VOLUME              : 'EXTERNAL_VOLUME'; // Iceberg tables: docs.snowflake.com/en/sql-reference/sql/create-iceberg-table
