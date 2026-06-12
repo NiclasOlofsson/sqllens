@@ -3910,6 +3910,8 @@ expression
     | function_call
     | expression '.' (value_call | query_call | exist_call | modify_call)
     | expression '.' hierarchyid_call
+    // CLR/spatial instance methods: @g.STAsText(), point.STDistance(other), col.STBuffer(1)
+    | expression '.' method = clr_method_name '(' expression_list_? ')'
     | expression COLLATE id_
     | case_expression
     | full_column_name
@@ -4132,6 +4134,9 @@ option
     | RECOMPILE
     | ROBUST PLAN
     | USE PLAN STRING
+    // USE HINT ('hint', …) — HINT lexes as an identifier:
+    // learn.microsoft.com/sql/t-sql/queries/hints-transact-sql-query
+    | USE id_ '(' STRING (',' STRING)* ')'
     ;
 
 optimize_for_arg
@@ -4334,6 +4339,20 @@ function_call
     | freetext_function                              # FREE_TEXT
     | partition_function                             # PARTITION_FUNC
     | hierarchyid_static_method                      # HIERARCHYID_METHOD
+    // CLR/spatial static methods: geography::STGeomFromText(...), geometry::Point(...), UDT::Method(...)
+    // learn.microsoft.com/sql/t-sql/spatial-geography/spatial-types-geography
+    | static_method_call                             # STATIC_METHOD
+    ;
+
+static_method_call
+    : type_name = id_ DOUBLE_COLON method = clr_method_name '(' expression_list_? ')'
+    ;
+
+// CLR/spatial method names overlap built-in-function keywords (geography::Parse, …) that
+// id_ doesn't cover; accept those here without making them general identifiers.
+clr_method_name
+    : id_
+    | PARSE
     ;
 
 partition_function

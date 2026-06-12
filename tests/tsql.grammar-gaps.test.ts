@@ -18,6 +18,50 @@ function q(sql: string): SelectExpr {
 	return ir.body;
 }
 
+/** Parse-only (errors === 0); for constructs whose lowering isn't the point. */
+function parses(sql: string): void {
+	expect(parseTSql(sql).errors, sql).toBe(0);
+}
+
+describe("CLR type static methods (geography/geometry/hierarchyid/UDT)", () => {
+	it("static constructor method as a SELECT scalar", () => {
+		parses("SELECT geography::STGeomFromText('LINESTRING(-122 47, -122 47)', 4326)");
+		parses("SELECT geometry::Point(3, 4, 0)");
+	});
+
+	it("static method chained with an instance method", () => {
+		parses("SELECT geography::Point(47.6, -122.3, 4326).STAsText() AS wkt");
+	});
+
+	it("hierarchyid static methods still parse", () => {
+		parses("SELECT hierarchyid::GetRoot()");
+	});
+
+	it("static method whose name collides with a function keyword (Parse)", () => {
+		parses("SELECT geography::Parse('POINT(-122 47)')");
+	});
+
+	it("static method on the right of an assignment in a SELECT list", () => {
+		parses("SELECT @g = geography::STGeomFromText('POINT(0 0)', 4326)");
+	});
+});
+
+describe("query OPTION clause (hints)", () => {
+	it("OPTION (RECOMPILE)", () => {
+		parses("SELECT a FROM t WHERE a = 1 OPTION (RECOMPILE)");
+	});
+
+	it("OPTION with USE HINT string list", () => {
+		parses(
+			"SELECT a FROM t WHERE a = 1 OPTION (RECOMPILE, USE HINT ('ASSUME_MIN_SELECTIVITY_FOR_FILTER_ESTIMATES', 'DISABLE_PARAMETER_SNIFFING'))",
+		);
+	});
+
+	it("OPTION (MAXDOP n) and table hints together", () => {
+		parses("SELECT a FROM t OPTION (MAXDOP 4, OPTIMIZE FOR UNKNOWN)");
+	});
+});
+
 describe("IS [NOT] DISTINCT FROM (SQL Server 2022)", () => {
 	it("lowers to a distinct-from predicate", () => {
 		const body = q("SELECT a FROM t WHERE a IS DISTINCT FROM b");
