@@ -567,6 +567,34 @@ describe("Snowflake parse", () => {
 	it("allows BUCKET_START as an identifier", () => {
 		expect(errorsOf("SELECT bucket_start FROM t")).toBe(0);
 	});
+
+	// --- query-language gaps, wave 7 (docs corpus, 2026-06-12) ---
+
+	// PIVOT IN-list values can be aliased: docs.snowflake.com/en/sql-reference/constructs/pivot
+	it("parses PIVOT with aliased IN-list values", () => {
+		expect(
+			errorsOf("SELECT * FROM s PIVOT(SUM(amount) FOR quarter IN ('2023_Q1' AS q1, '2023_Q2' AS q2))"),
+		).toBe(0);
+	});
+
+	// A TYPE-valued argument (AI_COMPLETE response_format => TYPE OBJECT(...)):
+	// docs.snowflake.com/en/sql-reference/functions/ai_complete
+	it("parses a TYPE <data_type> argument value", () => {
+		expect(
+			errorsOf("SELECT AI_COMPLETE(model => 'm', prompt => 'p', response_format => TYPE OBJECT(a NUMBER))"),
+		).toBe(0);
+	});
+
+	// USE DATABASE/SCHEMA IDENTIFIER(...): docs.snowflake.com/en/sql-reference/sql/use-database
+	it("parses USE DATABASE/SCHEMA with IDENTIFIER(…)", () => {
+		expect(errorsOf("USE DATABASE IDENTIFIER($db)")).toBe(0);
+		expect(errorsOf("USE SCHEMA IDENTIFIER('my_schema')")).toBe(0);
+	});
+
+	// $session_variable as a TABLE() argument: docs.snowflake.com/en/sql-reference/literals-table
+	it("parses TABLE($session_variable)", () => {
+		expect(errorsOf("SELECT * FROM TABLE($my_table_name)")).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {

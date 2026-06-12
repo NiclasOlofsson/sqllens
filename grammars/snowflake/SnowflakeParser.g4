@@ -3376,7 +3376,7 @@ use_command
     ;
 
 use_database
-    : USE DATABASE id_
+    : USE DATABASE object_name // object_name covers IDENTIFIER('…') / IDENTIFIER($var)
     ;
 
 use_role
@@ -3384,7 +3384,7 @@ use_role
     ;
 
 use_schema
-    : USE SCHEMA? (id_ DOT)? id_
+    : USE SCHEMA? ((id_ DOT)? id_ | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET)
     ;
 
 use_secondary_roles
@@ -4034,7 +4034,7 @@ schema_name
     : d = id_ DOT s = id_
     | s = id_
     // IDENTIFIER(...) substitutes for any object name: docs.snowflake.com/en/sql-reference/identifier-literal
-    | IDENTIFIER LR_BRACKET (string | DOLLAR id_) RR_BRACKET
+    | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET
     ;
 
 object_type
@@ -4527,7 +4527,7 @@ object_name
     | o = id_
     // IDENTIFIER(...) substitutes for any object name; arg is a string or a $session_variable:
     // docs.snowflake.com/en/sql-reference/identifier-literal
-    | IDENTIFIER LR_BRACKET (string | DOLLAR id_) RR_BRACKET
+    | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET
     ;
 
 object_name_or_identifier
@@ -4789,7 +4789,10 @@ func_arg_list
     ;
 
 func_arg
-    : param_assoc
+    // a named arg whose value is a type spec (AI_COMPLETE(response_format => TYPE OBJECT(...))):
+    // docs.snowflake.com/en/sql-reference/functions/ai_complete
+    : id_ ASSOC TYPE data_type
+    | param_assoc
     // SEARCH/MINHASH accept * / (*) / "* EXCLUDE|ILIKE …" as an all-columns argument:
     // docs.snowflake.com/en/sql-reference/functions/search
     | STAR star_modifier*
@@ -5025,7 +5028,7 @@ table_source_item_joined
 object_ref
     : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample? resample?
     | object_name START WITH predicate CONNECT BY prior_list?
-    | TABLE '(' (function_call | string | DBL_DOLLAR | DOLLAR id_ | QMARK | COLON id_) ')' pivot_unpivot? as_alias? sample?
+    | TABLE '(' (function_call | string | DBL_DOLLAR | id_ | QMARK | COLON id_) ')' pivot_unpivot? as_alias? sample?
     // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
     // docs.snowflake.com/en/sql-reference/functions/directory
     | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
@@ -5195,7 +5198,7 @@ include_exclude
     ;
 
 pivot_in_clause
-    : literal (COMMA literal)*
+    : literal (AS? alias)? (COMMA literal (AS? alias)?)* // IN-list values may be aliased
     | ANY order_by_clause?
     | subquery
     ;
