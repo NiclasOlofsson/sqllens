@@ -45,11 +45,13 @@ function isResultBorder(line) {
 
 // A leaked Snowflake error message under the statement, e.g. "100051 (22012): Division by zero".
 const ERROR_LINE = /^\s*\d{4,} \([0-9A-Z]+\):/;
+// A leaked English prose line that docs put between the statement and its result.
+const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:)/;
 
 export function cleanSql(sql) {
 	const lines = sql.split("\n");
-	// Cut at the first result-table border or leaked error message (docs paste output under the SQL).
-	let cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || ERROR_LINE.test(l)));
+	// Cut at the first result-table border, leaked error message, or prose line (output under the SQL).
+	let cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || ERROR_LINE.test(l) || PROSE_LINE.test(l)));
 	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
@@ -57,6 +59,7 @@ export function cleanSql(sql) {
 	if (/<[a-z_][a-z0-9_]*>/i.test(kept)) return null; // <placeholder> template, not real SQL
 	if (/^\(\s*(?!select|with|\()/i.test(kept)) return null; // call-argument fragment, e.g. (mytable.*)
 	if (!/^\(/.test(kept) && !STATEMENT_STARTERS.test(kept)) return null; // clause fragment
+	if (/`/.test(kept)) return null; // backtick-wrapped content — a markdown artifact (Snowflake has no backtick syntax)
 	return kept;
 }
 
