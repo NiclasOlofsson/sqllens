@@ -1267,8 +1267,9 @@ FILE_PATH  : 'file://' ( DIVIDE Uri | WindowsPath); //file://<path_to_file>/<fil
 
 DBL_DOLLAR: '$$' (~'$' | '\\$' | '$' ~'$')*? '$$';
 
-// Hex binary literal X'A1B2' / x'00' (before STRING so the X isn't split off as an identifier):
-// docs.snowflake.com/en/sql-reference/binary-input-output
+// Hex binary literal X'A1B2' / x'00' (before STRING so the X isn't split off as an identifier).
+// Not defined on the binary-input-output syntax page, but used throughout the official examples:
+// docs.snowflake.com/en/sql-reference/binary-examples (e.g. TO_CHAR(X'41424320E29D84', 'utf-8'))
 BINARY_LITERAL: 'X' '\'' [0-9A-F]* '\''; // lexer is caseInsensitive, so this also matches x'…' / a-f
 
 STRING: '\'' ('\\' . | '\'\'' | ~('\'' | '\\'))* '\'';

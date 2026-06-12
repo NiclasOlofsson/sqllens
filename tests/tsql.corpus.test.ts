@@ -73,17 +73,18 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		expect(fails.sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
 	}, 120000);
 
-	it("lowers + scopes every example our SELECT parser accepts, without throwing", () => {
+	it("lowers + scopes every example the parser accepts, without throwing", () => {
 		let accepted = 0;
 		for (const rel of files) {
 			const sql = readFileSync(join(EXAMPLES, rel), "utf8");
 			const r = parseTSql(sql);
 			if (r.errors === 0) {
 				accepted++;
+				// Query examples lower to a modelled body; DML/DDL/admin lower to a flagged-empty body
+				// carrying their category. Either way the semantic layer must run without throwing.
 				expect(() => resolveScopes(lower(r.tree), "tsql"), rel).not.toThrow();
 			}
 		}
-		// The SELECT-bearing subset of the examples (~19 files) — proves lower() survives them.
 		expect(accepted).toBeGreaterThan(0);
 	}, 120000);
 });

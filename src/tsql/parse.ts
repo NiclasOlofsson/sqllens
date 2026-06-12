@@ -6,22 +6,23 @@ import {
 	type ParserATNSimulator,
 	type ParserRuleContext,
 	PredictionMode,
-	Token,
 } from "antlr4ng";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { TSqlParser } from "../generated/tsql/TSqlParser.js";
 
 export interface ParseResult {
-	/** The CST rooted at `select_statement_standalone` (an optional WITH + a query). */
+	/** The CST rooted at `tsql_file` (`batch* EOF` — the full statement range). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
 }
 
 /**
- * Lex + parse one T-SQL query (a `WITH? SELECT …`). Two-stage parsing: try the fast SLL
- * prediction mode first (bail on the first conflict), fall back to full LL only when SLL
- * fails — same result LL alone would give, just faster on valid input.
+ * Lex + parse a T-SQL input via the grammar's full-file rule (`tsql_file` — `batch* EOF`), the same
+ * shape as `parseDatabricks`/`parseSnowflake`: one entry that accepts any statement (query, DML, DDL,
+ * control-flow, admin) and a `;`-separated batch of them. EOF-anchored, so trailing garbage is an
+ * error rather than silently dropped. Two-stage parsing: try the fast SLL prediction mode first (bail
+ * on the first conflict), fall back to full LL only when SLL fails — same result LL alone would give.
  */
 export function parseTSql(sql: string): ParseResult {
 	const lexer = new TSqlLexer(CharStream.fromString(sql));
@@ -44,9 +45,7 @@ export function parseTSql(sql: string): ParseResult {
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		const tree = parser.select_statement_standalone();
-		if (trailingGarbage(tokens)) errors++;
-		return { tree, errors };
+		return { tree: parser.tsql_file(), errors };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -54,18 +53,8 @@ export function parseTSql(sql: string): ParseResult {
 		sim.predictionMode = PredictionMode.LL;
 		errors = 0;
 		attachErrorCounter(lexer, parser, listener);
-		const tree = parser.select_statement_standalone();
-		if (trailingGarbage(tokens)) errors++;
-		return { tree, errors };
+		return { tree: parser.tsql_file(), errors };
 	}
-}
-
-/** The grammar's `select_statement_standalone` has no EOF anchor, so a valid-SELECT *prefix*
- *  would otherwise "parse" and silently drop the tail. Reject anything left over except
- *  statement-terminating semicolons. */
-function trailingGarbage(tokens: CommonTokenStream): boolean {
-	while (tokens.LA(1) === TSqlParser.SEMI) tokens.consume();
-	return tokens.LA(1) !== Token.EOF;
 }
 
 function attachErrorCounter(lexer: Lexer, parser: TSqlParser, listener: object): void {

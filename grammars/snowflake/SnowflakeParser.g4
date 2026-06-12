@@ -3387,10 +3387,10 @@ use_schema
     : USE SCHEMA? ((id_ DOT)? id_ | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET)
     ;
 
-// ALL | NONE | DEFAULT | an explicit role list:
+// ALL | NONE | an explicit role list:
 // docs.snowflake.com/en/sql-reference/sql/use-secondary-roles
 use_secondary_roles
-    : USE SECONDARY ROLES (ALL | NONE | DEFAULT | id_ (COMMA id_)*)
+    : USE SECONDARY ROLES (ALL | NONE | id_ (COMMA id_)*)
     ;
 
 use_warehouse
@@ -4370,6 +4370,7 @@ non_reserved_words
     | CREDENTIALS
     | DESCRIBE
     | ENFORCED
+    | FINAL
     | FIRST
     | FUNCTIONS
     | GROUPING
@@ -4381,11 +4382,15 @@ non_reserved_words
     | LOCATION
     | LOGIN_NAME
     | MATCH_CONDITION
+    | METADATA_COLUMNS
     | POSITION
     | REGEXP
     | REGION_GROUP
+    | RESAMPLE
     | RESUME
+    | RUNNING
     | SCHEMA
+    | SEMANTIC_VIEW
     | SHARES
     | SIMPLE
     | START_TIMESTAMP
@@ -4564,7 +4569,6 @@ expr
     | expr COLON expr   //json access
     | expr DOT (VALUE | expr)
     | expr LR_BRACKET PLUS RR_BRACKET // Oracle-style (+) outer-join marker: docs.snowflake.com/en/sql-reference/constructs/join
-    | STAR STAR expr // ** array spread operator: docs.snowflake.com/en/sql-reference/operators-expansion
     | expr COLLATE string
     // instance method call <instance>!<method>(args): docs.snowflake.com/en/sql-reference/classes
     | expr BANG id_ '(' (expr_list | param_assoc_list)? ')'
@@ -4590,10 +4594,14 @@ expr
     | json_literal
     | lambda_params '->' expr
     | trim_expression
+    // RUNNING|FINAL semantics prefix an individual nav/window function inside a MATCH_RECOGNIZE
+    // measure expression (expr ::= [{RUNNING|FINAL}] windowFunction):
+    // docs.snowflake.com/en/sql-reference/constructs/match_recognize
+    | (RUNNING | FINAL) function_call
     | function_call
     | subquery
     | expr IS (null_not_null | not_distinct_from expr)
-    | expr NOT? IN LR_BRACKET (subquery | expr_list) RR_BRACKET
+    | expr NOT? IN LR_BRACKET (subquery | spread_or_expr_list) RR_BRACKET
     | expr NOT? ( LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
     | expr NOT? REGEXP expr // REGEXP operator (RLIKE synonym): docs.snowflake.com/en/sql-reference/functions/regexp
@@ -4605,6 +4613,17 @@ expr
 lambda_params
     : id_ data_type?
     | '(' id_ data_type? (',' id_ data_type?)* ')'
+    ;
+
+// ** spreads an array into individual values; documented only as a function argument or
+// inside an IN list, where it mixes with plain values (IN (** [1, 2], 4, 5)):
+// docs.snowflake.com/en/sql-reference/operators-expansion
+spread_expr
+    : STAR STAR expr
+    ;
+
+spread_or_expr_list
+    : (spread_expr | expr) (COMMA (spread_expr | expr))*
     ;
 
 iff_expr
@@ -4738,8 +4757,10 @@ asc_desc
 over_clause
     : OVER '(' partition_by (order_by_expr window_frame?)? ')'
     | OVER '(' order_by_expr window_frame? ')'
-    // Bare frame with no ORDER BY — AVG(x) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING):
-    // docs.snowflake.com/en/sql-reference/functions-analytic#window-frame-syntax-and-usage
+    // Bare frame with no ORDER BY — documented inside MATCH_RECOGNIZE DEFINE/MEASURES, e.g.
+    // avg(price) OVER (ROWS BETWEEN UNBOUNDED PRECEDING AND UNBOUNDED FOLLOWING):
+    // docs.snowflake.com/en/sql-reference/constructs/match_recognize (the general window syntax
+    // requires ORDER BY with a frame: docs.snowflake.com/en/sql-reference/functions-window-syntax)
     | OVER '(' partition_by? window_frame ')'
     | OVER '(' ')'
     ;
@@ -4770,7 +4791,7 @@ function_call
     // positional and/or named (name => value) arguments, in any mix:
     // docs.snowflake.com/en/sql-reference/functions-all (named-argument calls, e.g. SEARCH)
     | object_name '(' func_arg_list? ')'
-    | list_function LR_BRACKET expr_list RR_BRACKET
+    | list_function LR_BRACKET spread_or_expr_list RR_BRACKET
     | to_date = ( TO_DATE | DATE) LR_BRACKET expr RR_BRACKET
     | length = ( LENGTH | LEN) LR_BRACKET expr RR_BRACKET
     | TO_BOOLEAN LR_BRACKET expr RR_BRACKET
@@ -4779,8 +4800,9 @@ function_call
     // EXTRACT(<part> FROM <expr>) and EXTRACT(<part>, <expr>) — part quoted or unquoted:
     // docs.snowflake.com/en/sql-reference/functions/extract
     | EXTRACT LR_BRACKET (id_ | string) (FROM | COMMA) expr RR_BRACKET
-    // POSITION(<expr> IN <expr>) and the comma form: docs.snowflake.com/en/sql-reference/functions/position
-    | POSITION LR_BRACKET expr (IN | COMMA) expr RR_BRACKET
+    // POSITION(<expr> IN <expr>) and the comma form POSITION(<expr>, <expr> [, <start_pos>]):
+    // docs.snowflake.com/en/sql-reference/functions/position
+    | POSITION LR_BRACKET expr (IN expr | COMMA expr (COMMA expr)?) RR_BRACKET
     // RLIKE / REGEXP in call form (RLIKE is also an operator): docs.snowflake.com/en/sql-reference/functions/rlike
     | RLIKE LR_BRACKET expr COMMA expr (COMMA expr)? RR_BRACKET
     // instance method call as a table function: TABLE(job!SPCS_GET_LOGS()) — docs.snowflake.com/en/sql-reference/classes
@@ -4809,6 +4831,7 @@ func_arg
     // docs.snowflake.com/en/sql-reference/functions/search
     | STAR star_modifier*
     | LR_BRACKET object_name_or_alias? STAR star_modifier* RR_BRACKET
+    | spread_expr
     // a stage reference as an argument (BUILD_SCOPED_FILE_URL(@stage, …), GET_PRESIGNED_URL(@stage, …)):
     | named_stage
     | user_stage
@@ -5049,13 +5072,13 @@ object_ref
     // a parenthesized join as a join operand: t1 LEFT JOIN (t2 RIGHT JOIN t3 ON …) ON …
     // docs.snowflake.com/en/sql-reference/constructs/join
     | '(' table_source_item_joined ')' as_alias?
-    // SEMANTIC_VIEW(<view> [METRICS …] [DIMENSIONS …] [WHERE …]) and the two-word SEMANTIC VIEW(…)
-    // form with parenthesized metric/dimension lists:
-    // docs.snowflake.com/en/sql-reference/constructs/semantic_view
-    | SEMANTIC_VIEW '(' object_name (METRICS expr_list | DIMENSIONS expr_list | WHERE search_condition)* ')' as_alias?
-    | SEMANTIC VIEW '(' object_name (
-        METRICS '(' expr_list ')'
-        | DIMENSIONS '(' expr_list ')'
+    // SEMANTIC_VIEW(<name> { METRICS … | FACTS … } [DIMENSIONS …] [WHERE …]) — items take an
+    // optional [AS] alias, and METRICS/DIMENSIONS order is flexible (it controls result column
+    // order). FACTS-vs-METRICS exclusivity and at-least-one-clause are semantic rules the parser
+    // does not enforce. The two-word SEMANTIC VIEW spelling exists only in DDL (CREATE SEMANTIC
+    // VIEW), not here: docs.snowflake.com/en/sql-reference/constructs/semantic_view
+    | SEMANTIC_VIEW '(' object_name (
+        (METRICS | DIMENSIONS | FACTS) semantic_view_item_list
         | WHERE search_condition
     )* ')' as_alias?
     | LATERAL (flatten_table | splited_table) as_alias?
@@ -5064,6 +5087,10 @@ object_ref
     // querying staged files — @stage[/path] [( FILE_FORMAT => …, PATTERN => … )] [alias]:
     // docs.snowflake.com/en/user-guide/querying-stage
     | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? as_alias?
+    ;
+
+semantic_view_item_list
+    : expr (AS? alias)? (COMMA expr (AS? alias)?)*
     ;
 
 // RESAMPLE(USING <col> INCREMENT BY <const> [PARTITION BY …] [METADATA_COLUMNS …]):
@@ -5159,14 +5186,11 @@ expr_alias_list
     : expr AS? alias (COMMA expr AS? alias)*
     ;
 
-// MEASURES: each measure is an expression (optionally RUNNING/FINAL-prefixed) with an alias.
-// FIRST/LAST/MATCH_NUMBER/CLASSIFIER nav functions parse as ordinary calls (FIRST/LAST are in id_).
+// MEASURES: each measure is an expression with an alias. FIRST/LAST/MATCH_NUMBER/CLASSIFIER nav
+// functions parse as ordinary calls (FIRST/LAST are in id_); RUNNING/FINAL prefix individual
+// function calls inside the expression (see the expr rule).
 measures
-    : MEASURES measure_def (COMMA measure_def)*
-    ;
-
-measure_def
-    : (RUNNING | FINAL)? expr AS? alias
+    : MEASURES expr_alias_list
     ;
 
 match_opts
@@ -5296,7 +5320,7 @@ predicate
     : EXISTS LR_BRACKET subquery RR_BRACKET
     | expr comparison_operator (ALL | SOME | ANY) '(' subquery ')'
     | expr NOT? BETWEEN expr AND expr
-    | expr NOT? IN '(' (subquery | expr_list) ')'
+    | expr NOT? IN '(' (subquery | spread_or_expr_list) ')'
     | expr NOT? (LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
     | expr NOT? REGEXP expr

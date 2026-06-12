@@ -54,6 +54,7 @@ import type {
 	UnpivotInfo,
 	WindowSpec,
 } from "../ir/ir.js";
+import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 
 // ---------------------------------------------------------------------------
 // CST navigation helpers
@@ -115,6 +116,7 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 
 /** Lower a parsed Databricks statement (CST) into the IR. */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	const statement = statementCategory(tree);
 	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
 	// whole thing rather than modelling whichever SELECT happens to come first inside it.
 	if (firstOfRule(tree, P.RULE_singleCompoundStatement)) {
@@ -127,7 +129,7 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 			unsupported: ["compound"],
 			cst: tree,
 		};
-		return { kind: "query", ctes: [], body, cst: tree };
+		return { kind: "query", statement, ctes: [], body, cst: tree };
 	}
 	const query = firstOfRule(tree, P.RULE_query);
 	if (!query) {
@@ -142,9 +144,24 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 			unsupported: ["non-query"],
 			cst: tree,
 		};
-		return { kind: "query", ctes: [], body, cst: tree };
+		return { kind: "query", statement, ctes: [], body, cst: tree };
 	}
-	return lowerQuery(query);
+	const lowered = lowerQuery(query);
+	lowered.statement = statement;
+	return lowered;
+}
+
+/**
+ * The statement category, from the parse — not the source text. Spark's `statement` rule labels its
+ * alternatives, so the structural cases are exact: a `#dmlStatement` (`ctes? dmlStatementNoWith`) is
+ * DML even when written `WITH cte … INSERT …`, and a `BEGIN…END` compound is its own category. For
+ * the remaining keyword-led commands (object DDL, GRANT, SET/USE/SHOW, …) the leading keyword is the
+ * authoritative signal — Spark has no grouping rule above them.
+ */
+function statementCategory(tree: ParserRuleContext): StatementCategory {
+	if (firstOfRule(tree, P.RULE_singleCompoundStatement)) return "compound";
+	if (shallowFirstOfRule(tree, P.RULE_dmlStatementNoWith)) return "dml";
+	return keywordCategory(tree.start?.text ?? "");
 }
 
 function lowerQuery(query: ParserRuleContext): QueryExpr {

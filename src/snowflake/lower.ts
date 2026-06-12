@@ -14,6 +14,7 @@ import type {
 	Source,
 	UnpivotInfo,
 } from "../ir/ir.js";
+import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Snowflake (grammars-v4 sql/snowflake fork) CST -> the shared,
@@ -91,12 +92,53 @@ const SPLIT_TO_TABLE_COLUMNS = ["SEQ", "INDEX", "VALUE"];
  *  A single query statement lowers fully; anything else (DDL, DML, multi-statement
  *  batches) becomes a flagged non-query body — a valid parse never throws. */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	const statement = statementCategory(tree);
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
-	if (commands.length !== 1) return nonQuery(tree, commands.length === 0 ? "empty" : "multi-statement");
+	if (commands.length !== 1) {
+		const q = nonQuery(tree, commands.length === 0 ? "empty" : "multi-statement");
+		q.statement = statement;
+		return q;
+	}
 	const qs = shallowFirstOfRule(commands[0], P.RULE_query_statement);
-	if (!qs) return nonQuery(commands[0], "non-query");
-	return lowerQueryStatement(qs);
+	if (!qs) {
+		const q = nonQuery(commands[0], "non-query");
+		q.statement = statement;
+		return q;
+	}
+	const q = lowerQueryStatement(qs);
+	q.statement = statement;
+	return q;
+}
+
+/**
+ * The statement category, from the parse. Snowflake's `sql_command` groups its alternatives, so the
+ * structural cases are exact: `ddl_command` → ddl, `dml_command` → query (its `query_statement`
+ * alternative) or dml, and the SHOW / USE / DESCRIBE commands → utility. A `;`-separated batch of
+ * more than one command is a compound script. `other_command` (GRANT, transaction control, SET, …)
+ * carries no finer rule, so its leading keyword is the authoritative signal.
+ */
+function statementCategory(tree: ParserRuleContext): StatementCategory {
+	const batch = firstOfRule(tree, P.RULE_batch);
+	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
+	if (commands.length === 0) return "other";
+	if (commands.length > 1) return "compound";
+	return commandCategory(commands[0]);
+}
+
+function commandCategory(cmd: ParserRuleContext): StatementCategory {
+	if (directChildrenOfRule(cmd, P.RULE_ddl_command).length) return "ddl";
+	const dml = directChildrenOfRule(cmd, P.RULE_dml_command)[0];
+	if (dml) return directChildrenOfRule(dml, P.RULE_query_statement).length ? "query" : "dml";
+	if (
+		directChildrenOfRule(cmd, P.RULE_show_command).length ||
+		directChildrenOfRule(cmd, P.RULE_use_command).length ||
+		directChildrenOfRule(cmd, P.RULE_describe_command).length
+	) {
+		return "utility";
+	}
+	// A FLOW pipe or other_command — categorise by its leading keyword.
+	return keywordCategory(cmd.start?.text ?? "");
 }
 
 function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
@@ -353,9 +395,18 @@ function lowerOrderItem(item: ParserRuleContext): Expr {
 	return otherExpr(item);
 }
 
-/** group_by_clause: GROUP BY group_by_list having? | GROUP BY (CUBE|ROLLUP|GROUPING SETS) '(' list ')' | GROUP BY ALL */
+/** group_by_clause: GROUP BY group_by_list having? | GROUP BY ALL. A group_by_elem may be a
+ *  CUBE/ROLLUP/GROUPING SETS or parenthesized-sublist WRAPPER nesting further elems; only the
+ *  leaf elems are group keys, so wrappers (direct group_by_list child, or the empty `()`) are
+ *  skipped — their leaves are collected on their own. */
 function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
-	const items = collectOfRule(clause, P.RULE_group_by_elem).map((e) => {
+	const elems = collectOfRule(clause, P.RULE_group_by_elem).filter(
+		(e) =>
+			directChildrenOfRule(e, P.RULE_column_elem).length > 0 ||
+			directChildrenOfRule(e, P.RULE_num).length > 0 ||
+			directChildrenOfRule(e, P.RULE_expression_elem).length > 0,
+	);
+	const items = elems.map((e) => {
 		const col = directChildrenOfRule(e, P.RULE_column_elem)[0];
 		if (col) return lowerColumnElem(col);
 		const num = directChildrenOfRule(e, P.RULE_num)[0];
@@ -651,9 +702,10 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 			: exprListExprs(pred).map(lowerExpr);
 		return { kind: "predicate", op: "in", negated, operand, args, cst: pred };
 	}
-	const likeTok = directTokenType(pred, [P.LIKE, P.ILIKE, P.RLIKE]);
+	const likeTok = directTokenType(pred, [P.LIKE, P.ILIKE, P.RLIKE, P.REGEXP]);
 	if (likeTok !== undefined) {
-		const op = likeTok === P.RLIKE ? "rlike" : likeTok === P.ILIKE ? "ilike" : "like";
+		// REGEXP is a documented synonym of RLIKE: docs.snowflake.com/en/sql-reference/functions/regexp
+		const op = likeTok === P.RLIKE || likeTok === P.REGEXP ? "rlike" : likeTok === P.ILIKE ? "ilike" : "like";
 		return { kind: "predicate", op, negated, operand, args: exprs.slice(1, 2).map(lowerExpr), cst: pred };
 	}
 	// expr comparison_operator (ALL|SOME|ANY) ( subquery )
@@ -672,7 +724,9 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 }
 
 function exprListExprs(node: ParserRuleContext): ParserRuleContext[] {
-	const list = directChildrenOfRule(node, P.RULE_expr_list)[0];
+	// expr_list, or the spread-capable variant used by IN lists and list functions
+	// (its direct expr children are the plain values; spread_expr elements are skipped).
+	const list = directChildrenOfRule(node, P.RULE_expr_list)[0] ?? directChildrenOfRule(node, P.RULE_spread_or_expr_list)[0];
 	return list ? directChildrenOfRule(list, P.RULE_expr) : [];
 }
 
@@ -781,10 +835,10 @@ function lowerExpr(node: ParserRuleContext): Expr {
 			: exprListExprs(node).map(lowerExpr);
 		return { kind: "predicate", op: "in", negated: hasDirectToken(node, P.NOT), operand, args, cst: node };
 	}
-	// [NOT] LIKE / ILIKE / RLIKE
-	const likeTok = directTokenType(node, [P.LIKE, P.ILIKE, P.RLIKE]);
+	// [NOT] LIKE / ILIKE / RLIKE / REGEXP (an RLIKE synonym)
+	const likeTok = directTokenType(node, [P.LIKE, P.ILIKE, P.RLIKE, P.REGEXP]);
 	if (likeTok !== undefined && exprs.length >= 2) {
-		const op = likeTok === P.RLIKE ? "rlike" : likeTok === P.ILIKE ? "ilike" : "like";
+		const op = likeTok === P.RLIKE || likeTok === P.REGEXP ? "rlike" : likeTok === P.ILIKE ? "ilike" : "like";
 		return {
 			kind: "predicate",
 			op,
@@ -867,9 +921,11 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 		case P.RULE_cast_expr: {
 			const inner = directChildrenOfRule(node, P.RULE_expr)[0];
 			const dt = directChildrenOfRule(node, P.RULE_data_type)[0];
-			// CAST(e AS t) — or the literal prefix form DATE '…' / TIMESTAMP '…' / INTERVAL '…'.
+			// CAST(e AS t) where t is a built-in type or a user-defined type (an object_name) —
+			// or the literal prefix form DATE '…' / TIMESTAMP '…' / INTERVAL '…'.
+			const udt = directChildrenOfRule(node, P.RULE_object_name)[0];
 			const lead = leftmostToken(node)?.toUpperCase();
-			const typeText = dt ? dt.getText() : (lead ?? "");
+			const typeText = dt ? dt.getText() : udt ? udt.getText() : (lead ?? "");
 			return { kind: "cast", expr: inner ? lowerExpr(inner) : otherExpr(node), typeText, cst: node };
 		}
 		case P.RULE_try_cast_expr: {

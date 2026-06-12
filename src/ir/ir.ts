@@ -1,4 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
+import type { StatementCategory } from "./statement.js";
 
 // ---------------------------------------------------------------------------
 // IR — a compact, DIALECT-NEUTRAL semantic model. Each dialect's `lower()` (e.g.
@@ -14,6 +15,11 @@ import type { ParserRuleContext } from "antlr4ng";
 
 export interface QueryExpr {
 	kind: "query";
+	/** The statement category this query was lowered from, set by the dialect's lower() on the
+	 *  TOP-LEVEL statement only (nested subqueries / CTE bodies leave it undefined — they are not
+	 *  statements). Reported to the semantic layer so consumers can tell query / dml / ddl / dcl /
+	 *  tcl / utility / compound apart without re-parsing. See src/ir/statement.ts. */
+	statement?: StatementCategory;
 	ctes: CteDef[];
 	body: QueryBody;
 	/** ORDER BY sort expressions, if present. */

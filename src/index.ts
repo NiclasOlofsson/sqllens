@@ -18,6 +18,8 @@ export type {
 	TableSource,
 } from "./ir/ir.js";
 
+export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
+
 export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
 export { qualify, type Diagnostic, type Qualification } from "./qualify/qualify.js";

@@ -14,6 +14,7 @@ import type {
 	Source,
 	UnpivotInfo,
 } from "../ir/ir.js";
+import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — T-SQL (grammars-v4 sql/tsql) CST -> the shared, dialect-neutral IR
@@ -47,8 +48,89 @@ const AGGREGATES = new Set([
 
 const CAST_FUNCS = new Set(["CAST", "TRY_CAST", "CONVERT", "TRY_CONVERT", "PARSE", "TRY_PARSE"]);
 
-/** Lower a parsed T-SQL query (select_statement_standalone) into the IR. */
+/**
+ * Lower a parsed T-SQL input (`tsql_file`, from `parseTSql`) into the IR, reporting the statement
+ * category for ANY statement kind — the single entry, the same shape as the Databricks/Snowflake
+ * `lower`. A query is modelled onto the IR (its body lowered, so the semantic layer runs on it);
+ * DML / DDL / control-flow / admin statements are categorised but not modelled (no object-DDL
+ * lowering — out of scope), returning a flagged-empty body that carries the category.
+ */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	const statement = statementCategory(tree);
+	if (statement === "query") {
+		const sel = firstOfRule(tree, P.RULE_select_statement_standalone);
+		if (sel) {
+			const q = lowerStandalone(sel);
+			q.statement = "query";
+			return q;
+		}
+	}
+	const q = emptyQuery(tree);
+	q.statement = statement;
+	return q;
+}
+
+/**
+ * The statement category, from the parse — structural over the grammar's groupings, like the other
+ * dialects. A batch with more than one top-level statement is a compound; a single statement maps by
+ * its `sql_clauses` child rule (or `batch_level_statement`, the CREATE/ALTER function/proc/trigger/
+ * view forms).
+ */
+function statementCategory(tree: ParserRuleContext): StatementCategory {
+	const units: ParserRuleContext[] = [];
+	for (const b of directChildrenOfRule(tree, P.RULE_batch)) {
+		units.push(...directChildrenOfRule(b, P.RULE_sql_clauses));
+		units.push(...directChildrenOfRule(b, P.RULE_batch_level_statement));
+	}
+	if (units.length === 0) return "other";
+	if (units.length > 1) return "compound";
+	return unitCategory(units[0]);
+}
+
+/** Categorise one top-level statement node (a `sql_clauses` or a `batch_level_statement`). */
+function unitCategory(unit: ParserRuleContext): StatementCategory {
+	// CREATE/ALTER function | procedure | trigger | view — object definition.
+	if (unit.ruleIndex === P.RULE_batch_level_statement) return "ddl";
+	if (directChildrenOfRule(unit, P.RULE_ddl_clause).length) return "ddl";
+	const dml = directChildrenOfRule(unit, P.RULE_dml_clause)[0];
+	// dml_clause covers SELECT too (select_statement_standalone) — that branch is usually a query.
+	if (dml) {
+		const sel = directChildrenOfRule(dml, P.RULE_select_statement_standalone)[0];
+		return sel ? selectCategory(sel) : "dml";
+	}
+	const cfl = directChildrenOfRule(unit, P.RULE_cfl_statement)[0];
+	// A BEGIN…END block is a compound; other control flow (IF/WHILE/TRY/…) is its own thing.
+	if (cfl) return directChildrenOfRule(cfl, P.RULE_block_statement).length ? "compound" : "other";
+	const another = directChildrenOfRule(unit, P.RULE_another_statement)[0];
+	// another_statement is the admin/session grab-bag; only GRANT/REVOKE/DENY (security_statement) is DCL.
+	if (another) return directChildrenOfRule(another, P.RULE_security_statement).length ? "dcl" : "utility";
+	// dbcc_clause / backup_statement / bare semicolon.
+	return keywordCategory(unit.start?.text ?? "");
+}
+
+/**
+ * A SELECT is the read path — except the two side-effecting forms that share its syntax: `SELECT …
+ * INTO t` materialises a table (categorised `dml`), and `SELECT @v = expr` assigns a variable and
+ * returns no result set (`other`). Both are documented under SELECT but are not queries, so they
+ * must not be modelled as one.
+ */
+function selectCategory(sel: ParserRuleContext): StatementCategory {
+	const spec = firstOfRule(sel, P.RULE_query_specification);
+	if (spec) {
+		if (directTokenType(spec, [P.INTO]) !== undefined) return "dml";
+		const list = directChildrenOfRule(spec, P.RULE_select_list)[0];
+		if (list) {
+			for (const elem of directChildrenOfRule(list, P.RULE_select_list_elem)) {
+				if (directTokenType(elem, [P.LOCAL_ID]) !== undefined) return "other";
+			}
+		}
+	}
+	return "query";
+}
+
+/** Lower a `select_statement_standalone` (WITH? + a query) into the IR — the query body of a
+ *  statement whose category is `query`. Called by `lower` once the category is known. */
+function lowerStandalone(tree: ParserRuleContext): QueryExpr {
 	// select_statement_standalone: with_expression? select_statement — both direct children.
 	const selectStmt = directChildrenOfRule(tree, P.RULE_select_statement)[0];
 	if (!selectStmt) return emptyQuery(tree);

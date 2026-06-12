@@ -11,6 +11,7 @@ import type {
 	TableSource,
 	UnpivotInfo,
 } from "../ir/ir.js";
+import type { StatementCategory } from "../ir/statement.js";
 
 // ---------------------------------------------------------------------------
 // Scope — the symbol table over the IR. One Scope per query block; it records
@@ -21,6 +22,9 @@ import type {
 
 export interface ScopeTree {
 	root: Scope;
+	/** The statement category the dialect's lower() reported (query / dml / ddl / dcl / tcl /
+	 *  utility / compound / other). "other" when the lowered query carried none. */
+	statement: StatementCategory;
 }
 
 export interface Scope {
@@ -53,7 +57,7 @@ export type ResolvedSource =
 	| { kind: "lateral"; source: LateralViewSource };
 
 export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
-	return { root: buildQueryScope(query, undefined, dialect) };
+	return { root: buildQueryScope(query, undefined, dialect), statement: query.statement ?? "other" };
 }
 
 export type ColumnResolution =

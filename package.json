@@ -1,12 +1,26 @@
 {
-	"name": "sql-dialect-grammars",
+	"name": "sqllens",
 	"version": "1.0.0",
-	"description": "",
+	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across warehouse dialects (Databricks, T-SQL, Snowflake).",
 	"main": "index.js",
 	"directories": {
 		"doc": "docs",
 		"test": "tests"
 	},
+	"keywords": [
+		"sql",
+		"parser",
+		"analyzer",
+		"ast",
+		"lineage",
+		"type-inference",
+		"name-resolution",
+		"databricks",
+		"tsql",
+		"snowflake",
+		"antlr"
+	],
+	"author": "Niclas Olofsson",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
 		"typecheck": "tsgo -p tsconfig.json",
@@ -14,8 +28,6 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},
-	"keywords": [],
-	"author": "",
 	"license": "ISC",
 	"type": "module",
 	"devDependencies": {

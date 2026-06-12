@@ -354,7 +354,8 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("SELECT enforced, functions, shares, accounts, copy FROM t")).toBe(0);
 	});
 
-	// Binary/hex literals X'…': docs.snowflake.com/en/sql-reference/binary-input-output
+	// Binary/hex literals X'…' — not defined on the binary-input-output syntax page, but used
+	// throughout the official examples: docs.snowflake.com/en/sql-reference/binary-examples
 	it("parses X'…' / x'…' binary literals", () => {
 		expect(errorsOf("SELECT X'A1B2'")).toBe(0);
 		expect(errorsOf("SELECT CHARINDEX(X'EF', c1) FROM t")).toBe(0);
@@ -674,10 +675,64 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("SELECT MAP_INSERT({'k1':100}::MAP(VARCHAR,VARCHAR), 'k1', 'v', TRUE) AS map")).toBe(0);
 	});
 
-	// SEMANTIC VIEW(…) two-word form with parenthesized metric/dimension lists:
+	// --- reference-manual conformance review (2026-06-13) ---
+
+	// The keyword tokens introduced for RESAMPLE / SEMANTIC_VIEW / MATCH_RECOGNIZE must stay
+	// usable as ordinary identifiers (Snowflake reserves very little; `final` is the standard
+	// dbt CTE name): docs.snowflake.com/en/sql-reference/reserved-keywords
+	it("keeps RUNNING/FINAL/RESAMPLE/SEMANTIC_VIEW/METADATA_COLUMNS usable as identifiers", () => {
+		expect(errorsOf("WITH final AS (SELECT 1 AS x) SELECT * FROM final")).toBe(0);
+		expect(errorsOf("SELECT running, resample, semantic_view, metadata_columns FROM t")).toBe(0);
+		expect(errorsOf("SELECT a AS final FROM t")).toBe(0);
+	});
+
+	// The comma form takes an optional start position; the IN form does not:
+	// docs.snowflake.com/en/sql-reference/functions/position
+	it("parses POSITION(x, y, start)", () => {
+		expect(errorsOf("SELECT POSITION('an', 'banana', 3) FROM t")).toBe(0);
+	});
+
+	// FACTS clause and [AS] aliases on METRICS/DIMENSIONS items:
 	// docs.snowflake.com/en/sql-reference/constructs/semantic_view
-	it("parses the two-word SEMANTIC VIEW(…) source", () => {
-		expect(errorsOf("SELECT * FROM SEMANTIC VIEW(sv METRICS (t.m) DIMENSIONS (t.d1, t.d2))")).toBe(0);
+	it("parses SEMANTIC_VIEW FACTS and item aliases", () => {
+		expect(errorsOf("SELECT * FROM SEMANTIC_VIEW(sv FACTS orders.amount, orders.qty)")).toBe(0);
+		expect(
+			errorsOf("SELECT * FROM SEMANTIC_VIEW(sv METRICS m.rev AS revenue DIMENSIONS d.name AS n WHERE d.region = 'EU')"),
+		).toBe(0);
+	});
+
+	// The FROM-clause construct is the single token SEMANTIC_VIEW(…); the two-word form exists
+	// only in DDL (CREATE SEMANTIC VIEW). The one doc example using two words in FROM
+	// (sql/create-semantic-view/5.sql, in the known-bad list) is a doc typo:
+	// docs.snowflake.com/en/sql-reference/constructs/semantic_view
+	it("rejects the undocumented two-word SEMANTIC VIEW(…) source", () => {
+		expect(errorsOf("SELECT * FROM SEMANTIC VIEW(sv METRICS (t.m))")).toBeGreaterThan(0);
+	});
+
+	// RUNNING/FINAL prefix individual nav/window functions INSIDE a measure expression
+	// (expr ::= [{RUNNING|FINAL}] windowFunction), not the measure as a whole:
+	// docs.snowflake.com/en/sql-reference/constructs/match_recognize
+	it("parses RUNNING/FINAL per function inside a measure expression", () => {
+		expect(
+			errorsOf(`SELECT * FROM t MATCH_RECOGNIZE (
+				ORDER BY ts
+				MEASURES FINAL LAST(price) - FINAL FIRST(price) AS range_p, RUNNING COUNT(*) AS cnt
+				PATTERN (a+)
+				DEFINE a AS price > 10)`),
+		).toBe(0);
+	});
+
+	// USE SECONDARY ROLES is { ALL | NONE | <role> [, <role> …] } — DEFAULT is not documented:
+	// docs.snowflake.com/en/sql-reference/sql/use-secondary-roles
+	it("parses USE SECONDARY ROLES role lists and rejects DEFAULT", () => {
+		expect(errorsOf("USE SECONDARY ROLES r1, r2")).toBe(0);
+		expect(errorsOf("USE SECONDARY ROLES DEFAULT")).toBeGreaterThan(0);
+	});
+
+	// ** spread is documented only as a function argument or inside an IN list, not as a
+	// general expression: docs.snowflake.com/en/sql-reference/operators-expansion
+	it("rejects ** spread outside argument/IN positions", () => {
+		expect(errorsOf("SELECT 1 + ** [2, 3]")).toBeGreaterThan(0);
 	});
 });
 
@@ -902,5 +957,25 @@ describe("Snowflake lower -> IR", () => {
 		const { q } = ir("DELETE FROM t WHERE a = 1");
 		if (q.body.kind !== "select") throw new Error("select");
 		expect(q.body.unsupported).toContain("non-query");
+	});
+
+	// --- reference-manual conformance review (2026-06-13) ---
+
+	it("lowers the REGEXP operator like RLIKE, not to an opaque node", () => {
+		const { body } = selectBody("SELECT * FROM t WHERE a REGEXP 'x.*'");
+		expect(body.where).toMatchObject({ kind: "predicate", op: "rlike" });
+		expect(body.columns.some((c) => c.clause === "where" && c.parts.join(".") === "a")).toBe(true);
+	});
+
+	it("lowers GROUP BY ROLLUP/CUBE/GROUPING SETS to the leaf keys only", () => {
+		const { body } = selectBody("SELECT a, b, SUM(x) AS s FROM t GROUP BY ROLLUP (a, b)");
+		expect(body.groupBy?.map((e) => e.kind)).toEqual(["column", "column"]);
+		const mixed = selectBody("SELECT a, b, c FROM t GROUP BY ROLLUP (a, b), c").body;
+		expect(mixed.groupBy?.map((e) => e.kind)).toEqual(["column", "column", "column"]);
+	});
+
+	it("lowers CAST to a user-defined type with the UDT name as typeText", () => {
+		const { body } = selectBody("SELECT CAST(v AS my_db.my_udt) AS c FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "cast", typeText: "my_db.my_udt" });
 	});
 });

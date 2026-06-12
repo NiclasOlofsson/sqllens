@@ -1,7 +1,4 @@
-import { CharStream, CommonTokenStream } from "antlr4ng";
 import { describe, expect, it } from "vitest";
-import { TSqlLexer } from "../src/generated/tsql/TSqlLexer.js";
-import { TSqlParser } from "../src/generated/tsql/TSqlParser.js";
 import { lower } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
@@ -10,10 +7,10 @@ import { resolveScopes } from "../src/scope/scope.js";
 // (learn.microsoft.com/sql/t-sql, surveyed 2026-06-10). Each probe pins the CURRENT
 // level of support, so closing a gap or regressing one flips a visible flag:
 //
-//   "select"  — our SELECT pipeline handles it: parseTSql (EOF-anchored) + lower +
-//               resolveScopes, zero errors
-//   "script"  — the grammar parses it via the full-file rule (tsql_file); statements
-//               aren't lowered (the semantic layer is queries-only by design)
+//   "select"  — parses and lowers to the "query" category: our SELECT pipeline handles it
+//               (parseTSql + lower + resolveScopes, zero errors)
+//   "script"  — parses but lowers to a non-query category (DML/DDL/admin); the statement is
+//               recognised but not modelled (the semantic layer is queries-only by design)
 //   "noparse" — the grammar rejects it (known upstream grammars-v4 gaps)
 //
 // Flip a flag in the same change that closes the gap it documents.
@@ -215,42 +212,26 @@ const PROBES: Record<string, Probe[]> = {
 	],
 };
 
-/** Parse a whole script with the grammar's full-file entry rule; count syntax errors. */
-function parseFullFile(sql: string): number {
-	const lexer = new TSqlLexer(CharStream.fromString(sql));
-	const parser = new TSqlParser(new CommonTokenStream(lexer));
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
-	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
-	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
-	parser.tsql_file();
-	return errors;
-}
-
-function outcome(sql: string, expected: Expected): Expected {
-	if (expected === "select") {
-		const r = parseTSql(sql);
-		if (r.errors > 0) return parseFullFile(sql) === 0 ? "script" : "noparse";
-		resolveScopes(lower(r.tree), "tsql");
+// Classify a probe by the single full-range parser + the statement category it lowers to:
+//   parses + category "query"  → "select" (and the SELECT pipeline runs over it)
+//   parses + any other category → "script" (a statement the grammar accepts but we don't model)
+//   doesn't parse              → "noparse"
+function outcome(sql: string): Expected {
+	const r = parseTSql(sql);
+	if (r.errors > 0) return "noparse";
+	const ir = lower(r.tree);
+	if (ir.statement === "query") {
+		resolveScopes(ir, "tsql");
 		return "select";
 	}
-	return parseFullFile(sql) === 0 ? "script" : "noparse";
+	return "script";
 }
 
 for (const [category, probes] of Object.entries(PROBES)) {
 	describe(`T-SQL doc coverage: ${category}`, () => {
 		for (const [name, sql, expected] of probes) {
 			it(`${name} → ${expected}`, () => {
-				expect(outcome(sql, expected), sql).toBe(expected);
+				expect(outcome(sql), sql).toBe(expected);
 			});
 		}
 	});
