@@ -101,6 +101,20 @@ function directChildrenOfRule(node: ParseTree, ruleIndex: number): ParserRuleCon
 	return out;
 }
 
+/** One pass over a node's DIRECT children, returning the first child of each requested rule index.
+ *  Replaces N separate scans of the same node (e.g. a querySpecification's clauses) with one. */
+function directFirstByRule(node: ParseTree, ruleIndexes: readonly number[]): Map<number, ParserRuleContext> {
+	const want = new Set(ruleIndexes);
+	const found = new Map<number, ParserRuleContext>();
+	for (let i = 0; i < node.getChildCount() && found.size < want.size; i++) {
+		const child = node.getChild(i);
+		if (child instanceof ParserRuleContext && want.has(child.ruleIndex) && !found.has(child.ruleIndex)) {
+			found.set(child.ruleIndex, child);
+		}
+	}
+	return found;
+}
+
 /** The first direct child token whose type is one of `types`, if any. */
 function directTokenType(node: ParseTree, types: number[]): number | undefined {
 	for (let i = 0; i < node.getChildCount(); i++) {
@@ -343,14 +357,26 @@ function columnAliasList(node: ParserRuleContext): string[] | undefined {
 }
 
 function buildSelect(querySpec: ParserRuleContext): SelectExpr {
-	// Each clause must be THIS query's own — never one nested inside a subquery in
-	// the select/where list. The top-level projections are the direct children of
-	// the select's namedExpressionSeq (not namedExpressions nested in subqueries).
-	const selectClause = shallowFirstOfRule(querySpec, P.RULE_selectClause);
-	const seq = selectClause ? shallowFirstOfRule(selectClause, P.RULE_namedExpressionSeq) : undefined;
+	// Each clause must be THIS query's own — never one nested inside a subquery in the select/where
+	// list. They are all DIRECT children of the (regular)querySpecification (grammar: selectClause
+	// fromClause? lateralView* whereClause? aggregationClause? havingClause? … qualifyClause?), so a
+	// single pass over the direct children collects every clause — no descent into the expression
+	// subtrees, which is what the per-clause shallow walks were paying for.
+	const clauses = directFirstByRule(querySpec, [
+		P.RULE_selectClause,
+		P.RULE_fromClause,
+		P.RULE_whereClause,
+		P.RULE_aggregationClause,
+		P.RULE_havingClause,
+		P.RULE_qualifyClause,
+	]);
+
+	// The top-level projections are the direct children of the select's namedExpressionSeq.
+	const selectClause = clauses.get(P.RULE_selectClause);
+	const seq = selectClause ? directChildrenOfRule(selectClause, P.RULE_namedExpressionSeq)[0] : undefined;
 	const projections = seq ? directChildrenOfRule(seq, P.RULE_namedExpression).map(buildProjection) : [];
 
-	const fromClause = shallowFirstOfRule(querySpec, P.RULE_fromClause);
+	const fromClause = clauses.get(P.RULE_fromClause);
 	const from: Source[] = fromClause ? topRelationPrimaries(fromClause).map(buildSource) : [];
 	if (fromClause) from.push(...extractLateralViews(fromClause));
 
@@ -364,14 +390,14 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 	}
 	const subqueries = extractExpressionSubqueries(querySpec, fromSubqueryNodes);
 
-	const whereCtx = shallowFirstOfRule(querySpec, P.RULE_whereClause);
+	const whereCtx = clauses.get(P.RULE_whereClause);
 	const where = whereCtx ? lowerClausePredicate(whereCtx) : undefined;
-	const groupByCtx = shallowFirstOfRule(querySpec, P.RULE_aggregationClause);
+	const groupByCtx = clauses.get(P.RULE_aggregationClause);
 	const groupBy = groupByCtx ? extractGroupBy(groupByCtx) : undefined;
-	const havingCtx = shallowFirstOfRule(querySpec, P.RULE_havingClause);
+	const havingCtx = clauses.get(P.RULE_havingClause);
 	const having = havingCtx ? lowerClausePredicate(havingCtx) : undefined;
 	// qualifyClause: QUALIFY booleanExpression — filters on window results (Databricks SQL).
-	const qualifyCtx = shallowFirstOfRule(querySpec, P.RULE_qualifyClause);
+	const qualifyCtx = clauses.get(P.RULE_qualifyClause);
 	const qualify = qualifyCtx ? lowerClausePredicate(qualifyCtx) : undefined;
 
 	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
