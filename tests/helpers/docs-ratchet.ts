@@ -58,6 +58,16 @@ export function runDocsRatchet(
 	for (const f of sqlFiles(dir)) {
 		const sql = readFileSync(f, "utf8");
 		const kind: SqlKind = classifySql(sql);
+
+		// Only the query bucket gates, so only the query bucket is parsed. dml/ddl are cleared
+		// Out of scope — we count how many exist but do NOT parse them: parsing ~770 out-of-scope
+		// files (each one failing and triggering the slow LL re-parse) just to print a pass% we
+		// never gate on was the bulk of the corpus runtime. Count only.
+		if (kind !== "query") {
+			r[kind].total++;
+			continue;
+		}
+
 		const rel = f.slice(dir.length + 1).split("\\").join("/");
 		let errs = 1;
 		try {
@@ -67,23 +77,24 @@ export function runDocsRatchet(
 		}
 		const clean = errs === 0;
 
-		if (kind === "query" && rel in knownBad) {
+		if (rel in knownBad) {
 			knownBadSeen++;
 			if (clean) staleKnownBad.push(rel);
 			continue; // excluded from the gated query bucket
 		}
 
-		r[kind].total++;
-		if (clean) r[kind].pass++;
-		else if (kind === "query") queryFails.push(rel);
+		r.query.total++;
+		if (clean) r.query.pass++;
+		else queryFails.push(rel);
 	}
 
 	const pct = (b: { pass: number; total: number }) => (b.total ? ((100 * b.pass) / b.total).toFixed(1) : "—");
 	const excluded = knownBadSeen ? `, ${knownBadSeen} known-bad excluded` : "";
+	// dml/ddl are counted but not parsed (out of scope) — report how many exist, not a pass rate.
 	console.log(
 		`\n  query ${r.query.pass}/${r.query.total} (${pct(r.query)}%)  [gated${excluded}]` +
-			`\n  dml   ${r.dml.pass}/${r.dml.total} (${pct(r.dml)}%)  [reported, out of scope]` +
-			`\n  ddl   ${r.ddl.pass}/${r.ddl.total} (${pct(r.ddl)}%)  [reported, out of scope]`,
+			`\n  dml   ${r.dml.total} files  [out of scope, not parsed]` +
+			`\n  ddl   ${r.ddl.total} files  [out of scope, not parsed]`,
 	);
 
 	// Self-policing: a known-bad file that now parses means the docs were fixed (or our grammar
