@@ -4157,6 +4157,7 @@ keyword
     | CONDITION
     | COPY_OPTIONS_
     | DIRECTION
+    | DIRECTORY
     | EMAIL
     | FIRST_VALUE
     | FLATTEN
@@ -4533,6 +4534,9 @@ expr
     | expr over_clause
     | cast_expr
     | expr COLON_COLON data_type // Cast also
+    // cast to a user-defined type (after data_type so built-in types win):
+    // docs.snowflake.com/en/sql-reference/sql/create-type
+    | expr COLON_COLON object_name
     | try_cast_expr
     | json_literal
     | lambda_params '->' expr
@@ -4543,7 +4547,8 @@ expr
     | expr NOT? IN LR_BRACKET (subquery | expr_list) RR_BRACKET
     | expr NOT? ( LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
-    | expr NOT? (LIKE | ILIKE) ANY LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
+    // LIKE ALL alongside ANY: docs.snowflake.com/en/sql-reference/functions/like
+    | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
     | primitive_expression //Should be latest rule as it's nearly a catch all
     ;
 
@@ -4566,12 +4571,19 @@ try_cast_expr
 
 cast_expr
     : CAST LR_BRACKET expr AS data_type RR_BRACKET
-    | (TIMESTAMP | DATE | TIME | INTERVAL) expr
+    | (TIMESTAMP | DATE | TIME) expr
+    // INTERVAL '<n>' UNIT [TO UNIT]: docs.snowflake.com/en/sql-reference/data-types-datetime#interval-constants
+    | INTERVAL expr interval_unit?
+    ;
+
+interval_unit
+    : id_ (TO id_)?
     ;
 
 json_literal
     : LCB kv_pair (COMMA kv_pair)* RCB
-    | LCB STAR RCB // {*} shorthand in class-method args, e.g. model!PREDICT(INPUT_DATA => {*})
+    // {*} / {* EXCLUDE col} object construction: docs.snowflake.com/en/sql-reference/functions/object_construct
+    | LCB STAR exclude_clause? RCB
     | LCB RCB
     ;
 
@@ -4692,8 +4704,9 @@ function_call
     | ranking_windowed_function
     | aggregate_function
     //    | aggregate_windowed_function
-    | object_name '(' expr_list? ')'
-    | object_name '(' param_assoc_list ')'
+    // positional and/or named (name => value) arguments, in any mix:
+    // docs.snowflake.com/en/sql-reference/functions-all (named-argument calls, e.g. SEARCH)
+    | object_name '(' func_arg_list? ')'
     | list_function LR_BRACKET expr_list RR_BRACKET
     | to_date = ( TO_DATE | DATE) LR_BRACKET expr RR_BRACKET
     | length = ( LENGTH | LEN) LR_BRACKET expr RR_BRACKET
@@ -4706,6 +4719,16 @@ function_call
 
 param_assoc_list
     : param_assoc (',' param_assoc)*
+    ;
+
+// A function-argument list mixing positional exprs and named (name => value) args.
+func_arg_list
+    : func_arg (COMMA func_arg)*
+    ;
+
+func_arg
+    : param_assoc
+    | expr
     ;
 
 // FILE_FORMAT / PATTERN are stage-query option names (docs.snowflake.com/en/user-guide/querying-stage)
@@ -4927,6 +4950,9 @@ object_ref
     : object_name at_before? changes? match_recognize? pivot_unpivot? as_alias? column_list_in_parentheses? sample?
     | object_name START WITH predicate CONNECT BY prior_list?
     | TABLE '(' function_call ')' pivot_unpivot? as_alias? sample?
+    // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
+    // docs.snowflake.com/en/sql-reference/functions/directory
+    | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
     | values_table sample?
     | LATERAL? '(' subquery ')' pivot_unpivot? as_alias? column_list_in_parentheses?
     | LATERAL (flatten_table | splited_table) as_alias?
@@ -5146,7 +5172,7 @@ predicate
     | expr NOT? IN '(' (subquery | expr_list) ')'
     | expr NOT? (LIKE | ILIKE) expr (ESCAPE expr)?
     | expr NOT? RLIKE expr
-    | expr NOT? (LIKE | ILIKE) ANY LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
+    | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
     | expr IS null_not_null
     | expr
     ;
@@ -5184,7 +5210,9 @@ order_item
     ;
 
 order_by_clause
-    : ORDER BY order_item (COMMA order_item)*
+    // ORDER BY ALL: docs.snowflake.com/en/sql-reference/constructs/order-by
+    : ORDER BY ALL (ASC | DESC)? (NULLS (FIRST | LAST))?
+    | ORDER BY order_item (COMMA order_item)*
     ;
 
 row_rows

@@ -22,13 +22,13 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 //    docs.snowflake.com sql-reference pages (tools/scrape-snowflake-docs.mjs). It spans
 //    the full surface (queries, DDL, admin, scripting); the gate RATCHETS on the in-scope
 //    query bucket only and reports dml/ddl (object/platform DDL is cleared Out of scope).
-//    Query conformance is ~2692/2978 (90.4%). Raise the baseline as fixes land.
+//    Query conformance is ~2746/2978 (92.2%). Raise the baseline as fixes land.
 
 const VENDOR_EXAMPLES = resolve("vendor/grammars-v4/sql/snowflake/examples");
 const DOCS_CORPUS = resolve("harness/local/snowflake-docs");
 // A few-file margin below the observed pass count: the two-stage SLL→LL parse shows ±1 jitter
 // on a couple of ambiguous files, and this is a floor (never-regress), not a target.
-const QUERY_BASELINE = 2690;
+const QUERY_BASELINE = 2744;
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {

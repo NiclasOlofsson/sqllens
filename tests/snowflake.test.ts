@@ -263,6 +263,53 @@ describe("Snowflake parse", () => {
 				)`),
 		).toBe(0);
 	});
+
+	// --- query-language gaps found by the docs corpus (2026-06-12) ---
+
+	// docs.snowflake.com/en/sql-reference/functions/like — ALL alongside the existing ANY
+	it("parses LIKE ALL / LIKE ANY (…)", () => {
+		expect(errorsOf("SELECT * FROM t WHERE name LIKE ALL ('%Jo%oe%', 'J%e')")).toBe(0);
+		expect(errorsOf("SELECT * FROM t WHERE name ILIKE ALL ('%a%')")).toBe(0);
+		expect(errorsOf("SELECT * FROM t WHERE name LIKE ANY ('%a%', 'b%')")).toBe(0); // regression guard
+	});
+
+	// docs.snowflake.com/en/sql-reference/constructs/order-by — ORDER BY ALL
+	it("parses ORDER BY ALL", () => {
+		expect(errorsOf("SELECT * FROM my_sort_example ORDER BY ALL")).toBe(0);
+		expect(errorsOf("SELECT * FROM t ORDER BY ALL DESC NULLS LAST")).toBe(0);
+	});
+
+	// docs.snowflake.com/en/sql-reference/data-types-datetime — INTERVAL '…' UNIT [TO UNIT]
+	it("parses interval arithmetic with a unit", () => {
+		expect(errorsOf("SELECT TO_DATE('2024-01-01') + INTERVAL '1-1' YEAR TO MONTH AS d")).toBe(0);
+		expect(errorsOf("SELECT ts + INTERVAL '7' DAY FROM t")).toBe(0);
+	});
+
+	// Cast to a user-defined type: docs.snowflake.com/en/sql-reference/sql/create-type
+	it("parses ::<user-defined type> casts", () => {
+		expect(errorsOf("SELECT 10::age")).toBe(0);
+		expect(errorsOf("SELECT IFF(TRUE, '90210', '90211')::us_zipcode FROM t")).toBe(0);
+		expect(errorsOf("SELECT x::NUMBER(10,2) FROM t")).toBe(0); // regression guard
+	});
+
+	// Named arguments mixed with positional in a scalar call:
+	// docs.snowflake.com/en/sql-reference/functions/search
+	it("parses mixed positional + named (=>) function arguments", () => {
+		expect(errorsOf("SELECT SEARCH(line, 'Rosencrantz', SEARCH_MODE => 'AND') FROM lines")).toBe(0);
+		expect(errorsOf("SELECT my_func(a => 1, b => 2) FROM t")).toBe(0); // regression guard (all named)
+		expect(errorsOf("SELECT my_func(1, 2) FROM t")).toBe(0); // regression guard (all positional)
+	});
+
+	// Table functions in FROM: docs.snowflake.com/en/sql-reference/functions/directory
+	it("parses table functions in FROM (DIRECTORY, …)", () => {
+		expect(errorsOf("SELECT FILE_URL FROM DIRECTORY(@mystage) WHERE SIZE > 100000")).toBe(0);
+	});
+
+	// Semi-structured object-construct star: docs.snowflake.com/en/sql-reference/functions/object_construct
+	it("parses {* EXCLUDE …} object construction", () => {
+		expect(errorsOf("SELECT {* EXCLUDE col1} FROM my_table")).toBe(0);
+		expect(errorsOf("SELECT {*} FROM t")).toBe(0);
+	});
 });
 
 describe("Snowflake lower -> IR", () => {
