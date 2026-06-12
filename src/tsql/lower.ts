@@ -77,14 +77,22 @@ export function lower(tree: ParserRuleContext): QueryExpr {
  * view forms).
  */
 function statementCategory(tree: ParserRuleContext): StatementCategory {
+	const cats = statementCategories(tree);
+	if (cats.length === 0) return "other";
+	if (cats.length > 1) return "compound";
+	return cats[0];
+}
+
+/** Per-statement categories for every top-level unit of a parsed `tsql_file`, in source order —
+ *  the file-level view behind statementCategory (which folds >1 into "compound"). Lets consumers
+ *  (e.g. the corpus gates) see what a multi-statement script contains. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const units: ParserRuleContext[] = [];
 	for (const b of directChildrenOfRule(tree, P.RULE_batch)) {
 		units.push(...directChildrenOfRule(b, P.RULE_sql_clauses));
 		units.push(...directChildrenOfRule(b, P.RULE_batch_level_statement));
 	}
-	if (units.length === 0) return "other";
-	if (units.length > 1) return "compound";
-	return unitCategory(units[0]);
+	return units.map(unitCategory);
 }
 
 /** Categorise one top-level statement node (a `sql_clauses` or a `batch_level_statement`). */
@@ -102,8 +110,13 @@ function unitCategory(unit: ParserRuleContext): StatementCategory {
 	// A BEGIN…END block is a compound; other control flow (IF/WHILE/TRY/…) is its own thing.
 	if (cfl) return directChildrenOfRule(cfl, P.RULE_block_statement).length ? "compound" : "other";
 	const another = directChildrenOfRule(unit, P.RULE_another_statement)[0];
-	// another_statement is the admin/session grab-bag; only GRANT/REVOKE/DENY (security_statement) is DCL.
-	if (another) return directChildrenOfRule(another, P.RULE_security_statement).length ? "dcl" : "utility";
+	// another_statement is the admin/session grab-bag; GRANT/REVOKE/DENY (security_statement) is
+	// DCL and BEGIN/COMMIT/ROLLBACK/SAVE TRAN (transaction_statement) is TCL, like the other dialects.
+	if (another) {
+		if (directChildrenOfRule(another, P.RULE_security_statement).length) return "dcl";
+		if (directChildrenOfRule(another, P.RULE_transaction_statement).length) return "tcl";
+		return "utility";
+	}
 	// dbcc_clause / backup_statement / bare semicolon.
 	return keywordCategory(unit.start?.text ?? "");
 }
@@ -115,7 +128,16 @@ function unitCategory(unit: ParserRuleContext): StatementCategory {
  * must not be modelled as one.
  */
 function selectCategory(sel: ParserRuleContext): StatementCategory {
-	const spec = firstOfRule(sel, P.RULE_query_specification);
+	// The OUTER statement's own query spec — walked structurally (select_statement_standalone →
+	// select_statement → query_expression (→ parenthesized query_expression)* → the first
+	// query_specification), NOT a document-order DFS, which would land on a CTE body's spec
+	// when a WITH clause precedes the SELECT. INTO and @v= are only legal in that outer spec.
+	const stmt = directChildrenOfRule(sel, P.RULE_select_statement)[0];
+	let qe = stmt ? directChildrenOfRule(stmt, P.RULE_query_expression)[0] : undefined;
+	let spec: ParserRuleContext | undefined;
+	while (qe && !(spec = directChildrenOfRule(qe, P.RULE_query_specification)[0])) {
+		qe = directChildrenOfRule(qe, P.RULE_query_expression)[0];
+	}
 	if (spec) {
 		if (directTokenType(spec, [P.INTO]) !== undefined) return "dml";
 		const list = directChildrenOfRule(spec, P.RULE_select_list)[0];

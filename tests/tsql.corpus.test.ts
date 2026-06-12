@@ -1,13 +1,11 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { CharStream, CommonTokenStream } from "antlr4ng";
 import { describe, expect, it } from "vitest";
-import { TSqlLexer } from "../src/generated/tsql/TSqlLexer.js";
-import { TSqlParser } from "../src/generated/tsql/TSqlParser.js";
-import { lower } from "../src/tsql/lower.js";
+import { lower, statementCategories } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { runDocsRatchet } from "./helpers/docs-ratchet.js";
+import { KNOWN_BAD, OUT_OF_SCOPE } from "./tsql-corpus-known-bad.js";
 
 // grammars-v4 ships its own T-SQL example corpus. These are full T-SQL *scripts* (mostly DDL/admin,
 // GO-separated batches), so they exercise the GRAMMAR via the full-file entry rule `tsql_file` — not
@@ -23,32 +21,25 @@ const EXAMPLES = resolve("vendor/grammars-v4/sql/tsql/examples");
 const DOCS_CORPUS = resolve("harness/local/tsql-docs");
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
-// docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, 3,405 files). The gate RATCHETS
-// on the in-scope query bucket only and reports dml/ddl: this corpus is ~70% admin/platform
-// DDL (CREATE EXTERNAL DATA SOURCE, GRANT/DENY/REVOKE lists, BULK INSERT, RESTORE, ALTER
-// DATABASE SCOPED CONFIGURATION, Synapse CTAS), all out of scope. Query conformance is
-// 854/940 (90.9%). Raise the baseline as fixes land.
+// docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is
+// parse-derived: every file is parsed and bucketed by its statement kinds (statementCategories;
+// first substantive statement decides), with the leading-keyword regex only as the no-parse
+// fallback. The gate requires 100% of the in-scope query bucket; documented-broken examples are
+// excluded via KNOWN_BAD (asserted to still fail) and mixed scripts whose payload is out-of-scope
+// DDL/admin are reclassified via OUT_OF_SCOPE — both lists verified file-by-file against the
+// source markdown (2026-06-13). dml/ddl buckets are reported, never gated (object/platform DDL is
+// cleared Out of scope). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 854;
 
-/** Parse a whole T-SQL script with the full-file entry rule; return the syntax-error count. */
-function parseFullFile(sql: string): number {
-	const lexer = new TSqlLexer(CharStream.fromString(sql));
-	const parser = new TSqlParser(new CommonTokenStream(lexer));
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
-	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
-	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
-	parser.tsql_file();
-	return errors;
+/** Production parse (tsql_file, two-stage SLL→LL); returns the syntax-error count. */
+function parseErrors(sql: string): number {
+	return parseTSql(sql).errors;
+}
+
+/** Per-statement categories of a parseable file, for parse-derived bucketing. */
+function kindsOf(sql: string): ReturnType<typeof statementCategories> | undefined {
+	const r = parseTSql(sql);
+	return r.errors === 0 ? statementCategories(r.tree) : undefined;
 }
 
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
@@ -60,7 +51,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		for (const rel of files) {
 			let errs = 1;
 			try {
-				errs = parseFullFile(readFileSync(join(EXAMPLES, rel), "utf8"));
+				errs = parseErrors(readFileSync(join(EXAMPLES, rel), "utf8"));
 			} catch {
 				errs = -1;
 			}
@@ -75,6 +66,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 
 	it("lowers + scopes every example the parser accepts, without throwing", () => {
 		let accepted = 0;
+		let modelled = 0;
 		for (const rel of files) {
 			const sql = readFileSync(join(EXAMPLES, rel), "utf8");
 			const r = parseTSql(sql);
@@ -82,15 +74,24 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 				accepted++;
 				// Query examples lower to a modelled body; DML/DDL/admin lower to a flagged-empty body
 				// carrying their category. Either way the semantic layer must run without throwing.
-				expect(() => resolveScopes(lower(r.tree), "tsql"), rel).not.toThrow();
+				const q = lower(r.tree);
+				if (q.statement === "query" && q.body.kind === "select" && !q.body.unsupported?.length) modelled++;
+				expect(() => resolveScopes(q, "tsql"), rel).not.toThrow();
 			}
 		}
 		expect(accepted).toBeGreaterThan(0);
+		// At least some examples must take the real modelling path — guards against a
+		// statement-classification regression silently routing everything to emptyQuery.
+		expect(modelled).toBeGreaterThan(0);
 	}, 120000);
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs corpus", () => {
-	it("parses the in-scope query examples via tsql_file (ratchet); reports dml/ddl", { timeout: 600000 }, () => {
-		runDocsRatchet(DOCS_CORPUS, parseFullFile, QUERY_BASELINE);
+	it("parses 100% of in-scope query examples (parse-derived buckets; KNOWN_BAD excluded)", { timeout: 600000 }, () => {
+		runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
+			knownBad: KNOWN_BAD,
+			outOfScope: OUT_OF_SCOPE,
+			kinds: kindsOf,
+		});
 	});
 });

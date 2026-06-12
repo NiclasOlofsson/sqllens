@@ -40,7 +40,6 @@ export function keywordCategory(keyword: string): StatementCategory {
 		case "FROM":
 		case "MAP":
 		case "REDUCE":
-		case "EXPLAIN":
 		case "(":
 			return "query";
 		case "INSERT":
@@ -79,6 +78,7 @@ export function keywordCategory(keyword: string): StatementCategory {
 		case "ROLLBACK":
 		case "SAVEPOINT":
 			return "tcl";
+		case "EXPLAIN": // returns a plan, not the query's rows — utility per the contract above
 		case "SET":
 		case "RESET":
 		case "UNSET":

@@ -4,10 +4,11 @@
 // DDL"). Keeping DDL examples in the corpus is useful, but they must not drag the headline
 // conformance number, nor gate it.
 //
-// TEST-SIDE STAND-IN: this is a leading-keyword heuristic for the corpus gates only. Nicke
-// is building real statement-kind detection into each dialect + the semantic layer (so it
-// won't be a hack); once that lands, the gates should classify via that instead and this
-// file can go away.
+// PARTIALLY SUPERSEDED: real statement-kind detection lives in src/ir/statement.ts + each
+// dialect's lower(). The T-SQL docs gate buckets from the parse (statementCategories) and uses
+// this regex only as the fallback for files that do not parse. The Snowflake/Databricks gates
+// still bucket with this regex (their lowers don't expose per-statement kinds yet) — migrate
+// them the same way and shrink this file to the no-parse fallback.
 //
 //   query — the in-scope read path: SELECT / WITH / VALUES / TABLE / FROM / EXPLAIN.
 //   dml   — write/operational DML: INSERT / UPDATE / DELETE / MERGE / COPY / LOAD

@@ -1,12 +1,20 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
+import type { StatementCategory } from "../../src/ir/statement.js";
 import { classifySql, type SqlKind } from "./sql-kind.js";
 
 // Shared runner for the per-dialect docs-corpus gates. A docs corpus is mostly object/
 // platform DDL that is cleared OUT of scope; gating on the blended pass rate would measure
-// us on work we deliberately don't do. So the gate RATCHETS on the in-scope query bucket
+// us on work we deliberately don't do. So the gate applies to the in-scope query bucket
 // (SELECT/WITH/VALUES/…) and only REPORTS the dml/ddl buckets — they never fail the gate.
+//
+// Bucketing: when the dialect provides parse-based statement detection (opts.kinds — T-SQL
+// does, via statementCategories), EVERY file is parsed and a parseable file is bucketed from
+// its parsed statement kinds; the leading-keyword regex (sql-kind.ts) is only the fallback
+// for files that do not parse. Dialects without opts.kinds keep the regex bucketing and skip
+// parsing out-of-scope files (a speed optimization — parsing ~2,800 failing DDL files just to
+// print an ungated number was the bulk of the corpus runtime).
 
 export interface DocsRatchetResult {
 	query: { pass: number; total: number };
@@ -22,6 +30,18 @@ export interface DocsRatchetOptions {
 	 * When provided, the query gate tightens from "ratchet" to "100% of the remaining bucket".
 	 */
 	knownBad?: Record<string, string>;
+	/**
+	 * Valid-SQL files whose payload is out-of-scope DDL/admin although they lead with a query
+	 * keyword (mixed setup-SELECT + DDL scripts). Forced into the ddl bucket; no still-fails
+	 * assertion — whether they parse is irrelevant to the query gate.
+	 */
+	outOfScope?: Record<string, string>;
+	/**
+	 * Parse-based statement-kind detection: parse the file and return its per-statement
+	 * categories, or undefined when it does not parse. When set, bucketing is parse-derived
+	 * (the regex is only the no-parse fallback) and the dml/ddl buckets get real pass rates.
+	 */
+	kinds?: (sql: string) => StatementCategory[] | undefined;
 }
 
 function* sqlFiles(dir: string): Generator<string> {
@@ -30,6 +50,19 @@ function* sqlFiles(dir: string): Generator<string> {
 		if (e.isDirectory()) yield* sqlFiles(p);
 		else if (e.name.endsWith(".sql")) yield p;
 	}
+}
+
+/** Bucket a parsed file by its statement kinds: the first substantive statement decides —
+ *  utility/tcl/other are setup/preamble (USE, SET, DECLARE, BEGIN TRAN, …); query/dml win as
+ *  themselves; ddl/dcl and BEGIN…END compounds land in the ddl (everything-else) bucket. A file
+ *  with no substantive statement (pure setup) is ddl. */
+function bucketOfKinds(kinds: StatementCategory[]): SqlKind {
+	for (const k of kinds) {
+		if (k === "query") return "query";
+		if (k === "dml") return "dml";
+		if (k === "ddl" || k === "dcl" || k === "compound") return "ddl";
+	}
+	return "ddl";
 }
 
 /**
@@ -46,6 +79,7 @@ export function runDocsRatchet(
 	opts: DocsRatchetOptions = {},
 ): void {
 	const knownBad = opts.knownBad ?? {};
+	const outOfScope = opts.outOfScope ?? {};
 	const r: DocsRatchetResult = {
 		query: { pass: 0, total: 0 },
 		dml: { pass: 0, total: 0 },
@@ -57,44 +91,64 @@ export function runDocsRatchet(
 
 	for (const f of sqlFiles(dir)) {
 		const sql = readFileSync(f, "utf8");
-		const kind: SqlKind = classifySql(sql);
-
-		// Only the query bucket gates, so only the query bucket is parsed. dml/ddl are cleared
-		// Out of scope — we count how many exist but do NOT parse them: parsing ~770 out-of-scope
-		// files (each one failing and triggering the slow LL re-parse) just to print a pass% we
-		// never gate on was the bulk of the corpus runtime. Count only.
-		if (kind !== "query") {
-			r[kind].total++;
-			continue;
-		}
-
 		const rel = f.slice(dir.length + 1).split("\\").join("/");
-		let errs = 1;
-		try {
-			errs = parseErrors(sql);
-		} catch {
-			errs = -1;
+
+		let errs: number;
+		let kind: SqlKind;
+		if (opts.kinds) {
+			// Detection mode: parse everything; bucket from the parse, regex only on no-parse.
+			let kinds: StatementCategory[] | undefined;
+			try {
+				errs = parseErrors(sql);
+				kinds = errs === 0 ? opts.kinds(sql) : undefined;
+			} catch {
+				errs = -1;
+			}
+			kind = kinds ? bucketOfKinds(kinds) : classifySql(sql);
+		} else {
+			// Regex mode: only the query bucket is parsed; dml/ddl are counted, not parsed.
+			kind = classifySql(sql);
+			if (kind !== "query") {
+				r[kind].total++;
+				continue;
+			}
+			errs = 1;
+			try {
+				errs = parseErrors(sql);
+			} catch {
+				errs = -1;
+			}
 		}
 		const clean = errs === 0;
 
+		if (rel in outOfScope) {
+			// Out-of-scope payload (DDL/admin) behind a query-leading script — never gated.
+			r.ddl.total++;
+			if (clean) r.ddl.pass++;
+			continue;
+		}
 		if (rel in knownBad) {
 			knownBadSeen++;
 			if (clean) staleKnownBad.push(rel);
 			continue; // excluded from the gated query bucket
 		}
 
-		r.query.total++;
-		if (clean) r.query.pass++;
-		else queryFails.push(rel);
+		r[kind].total++;
+		if (clean) r[kind].pass++;
+		else if (kind === "query") queryFails.push(rel);
 	}
 
 	const pct = (b: { pass: number; total: number }) => (b.total ? ((100 * b.pass) / b.total).toFixed(1) : "—");
 	const excluded = knownBadSeen ? `, ${knownBadSeen} known-bad excluded` : "";
-	// dml/ddl are counted but not parsed (out of scope) — report how many exist, not a pass rate.
+	const offScope = Object.keys(outOfScope).length ? `, ${Object.keys(outOfScope).length} out-of-scope -> ddl` : "";
+	const side = (b: { pass: number; total: number }, name: string) =>
+		opts.kinds
+			? `\n  ${name}   ${b.pass}/${b.total} (${pct(b)}%)  [out of scope, reported only]`
+			: `\n  ${name}   ${b.total} files  [out of scope, not parsed]`;
 	console.log(
-		`\n  query ${r.query.pass}/${r.query.total} (${pct(r.query)}%)  [gated${excluded}]` +
-			`\n  dml   ${r.dml.total} files  [out of scope, not parsed]` +
-			`\n  ddl   ${r.ddl.total} files  [out of scope, not parsed]`,
+		`\n  query ${r.query.pass}/${r.query.total} (${pct(r.query)}%)  [gated${excluded}${offScope}]` +
+			side(r.dml, "dml") +
+			side(r.ddl, "ddl"),
 	);
 
 	// Self-policing: a known-bad file that now parses means the docs were fixed (or our grammar

@@ -97,6 +97,23 @@ describe("T-SQL statement category (one full-range entry, on par with the others
 		expect(tsql("SELECT a FROM t; SELECT b FROM u")).toBe("compound");
 	});
 
+	it("reports transaction control as tcl, like the other dialects", () => {
+		expect(tsql("BEGIN TRANSACTION")).toBe("tcl");
+		expect(tsql("COMMIT")).toBe("tcl");
+		expect(tsql("ROLLBACK")).toBe("tcl");
+	});
+
+	it("classifies SELECT INTO / variable-assignment SELECT through a CTE prefix", () => {
+		// The side-effecting SELECT forms must not flip to "query" just because a WITH
+		// clause precedes them — the check targets the OUTER statement's spec, not the
+		// first query_specification in document order (which is the CTE body's).
+		expect(tsql("SELECT x INTO #t FROM u")).toBe("dml");
+		expect(tsql("WITH c AS (SELECT 1 AS x) SELECT x INTO #t FROM c")).toBe("dml");
+		expect(tsql("SELECT @v = x FROM u")).toBe("other");
+		expect(tsql("WITH c AS (SELECT 1 AS x) SELECT @v = x FROM c")).toBe("other");
+		expect(tsql("WITH c AS (SELECT 1 AS x) SELECT x FROM c")).toBe("query");
+	});
+
 	it("models the query body for the query category", () => {
 		const q = lowerTSql(parseTSql("SELECT a, b FROM t").tree);
 		expect(q.statement).toBe("query");

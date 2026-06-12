@@ -785,6 +785,54 @@ PYTHON                                      : 'PYTHON';
 QUERY                                       : 'QUERY';
 QUERY_SQUARE_BRACKET                        : '[QUERY]';
 QUERYTRACEON                                : 'QUERYTRACEON'; // query OPTION trace-flag hint
+// --- fork additions (docs-corpus conformance, 2026-06-13). Every keyword-shaped token here is
+// --- also listed in the parser's `keyword` rule so it remains usable as an identifier.
+AI_GENERATE_CHUNKS                          : 'AI_GENERATE_CHUNKS';     // functions/ai-generate-chunks-transact-sql
+AI_GENERATE_EMBEDDINGS                      : 'AI_GENERATE_EMBEDDINGS'; // functions/ai-generate-embeddings-transact-sql
+APPROXIMATE                                 : 'APPROXIMATE';            // TOP (n) WITH APPROXIMATE: functions/vector-search-transact-sql
+ARRAY                                       : 'ARRAY';                  // JSON_QUERY ... WITH ARRAY WRAPPER: functions/json-query-transact-sql
+BOTH                                        : 'BOTH';                   // TRIM([LEADING|TRAILING|BOTH] ...): functions/trim-transact-sql
+CHUNK_SIZE                                  : 'CHUNK_SIZE';             // functions/ai-generate-chunks-transact-sql
+CHUNK_TYPE                                  : 'CHUNK_TYPE';             // functions/ai-generate-chunks-transact-sql
+ENABLE_CHUNK_SET_ID                         : 'ENABLE_CHUNK_SET_ID';    // functions/ai-generate-chunks-transact-sql
+EXTERNALPUSHDOWN                            : 'EXTERNALPUSHDOWN';       // OPTION ({FORCE|DISABLE} EXTERNALPUSHDOWN): queries/option-clause-transact-sql
+NODE                                        : 'NODE';                   // OPTION (FORCE SINGLE NODE PLAN): queries/hints-transact-sql-query (Fabric DW)
+SINGLE                                      : 'SINGLE';                 // OPTION (FORCE SINGLE NODE PLAN): queries/hints-transact-sql-query (Fabric DW)
+FIXED                                       : 'FIXED';                  // CHUNK_TYPE = FIXED: functions/ai-generate-chunks-transact-sql
+GRAPH                                       : 'GRAPH';                  // WITHIN GROUP (GRAPH PATH): queries/match-sql-graph
+JSON_ARRAYAGG                               : 'JSON_ARRAYAGG';          // functions/json-arrayagg-transact-sql
+JSON_OBJECTAGG                              : 'JSON_OBJECTAGG';         // functions/json-objectagg-transact-sql
+LABEL                                       : 'LABEL';                  // OPTION (LABEL = '…'): queries/option-clause-transact-sql
+LAST_NODE                                   : 'LAST_NODE';              // queries/match-sql-graph
+LEADING                                     : 'LEADING';                // functions/trim-transact-sql
+MATCH                                       : 'MATCH';                  // queries/match-sql-graph
+METRIC                                      : 'METRIC';                 // functions/vector-search-transact-sql
+MODEL                                       : 'MODEL';                  // PREDICT / AI_GENERATE_EMBEDDINGS … USE MODEL
+ONNX                                        : 'ONNX';                   // PREDICT(… RUNTIME = ONNX): queries/predict-transact-sql
+OVERLAP                                     : 'OVERLAP';                // functions/ai-generate-chunks-transact-sql
+PARAMETERS                                  : 'PARAMETERS';             // functions/ai-generate-embeddings-transact-sql
+PREDICT                                     : 'PREDICT';                // queries/predict-transact-sql
+CUBE                                        : 'CUBE';                   // GROUP BY CUBE(...) / WITH CUBE: queries/select-group-by-transact-sql
+REDISTRIBUTE                                : 'REDISTRIBUTE';           // queries/hints-transact-sql-join (Synapse/PDW/Fabric)
+REDUCE                                      : 'REDUCE';                 // queries/hints-transact-sql-join (Synapse/PDW)
+ROLLUP                                      : 'ROLLUP';                 // GROUP BY ROLLUP(...) / WITH ROLLUP: queries/select-group-by-transact-sql
+TIMESTAMP                                   : 'TIMESTAMP';              // OPTION (FOR TIMESTAMP AS OF ...): queries/hints-transact-sql-query
+REGEXP_LIKE                                 : 'REGEXP_LIKE';            // functions/regexp-like-transact-sql (2025)
+RETURNING                                   : 'RETURNING';              // JSON_VALUE/JSON_ARRAY/… RETURNING: functions/json-value-transact-sql
+RUNTIME                                     : 'RUNTIME';                // queries/predict-transact-sql (Synapse)
+SHORTEST_PATH                               : 'SHORTEST_PATH';          // queries/match-sql-graph
+SIMILAR_TO                                  : 'SIMILAR_TO';             // functions/vector-search-transact-sql
+TOP_N                                       : 'TOP_N';                  // functions/vector-search-transact-sql
+TRAILING                                    : 'TRAILING';               // functions/trim-transact-sql
+VECTOR_SEARCH                               : 'VECTOR_SEARCH';          // functions/vector-search-transact-sql
+WRAPPER                                     : 'WRAPPER';                // JSON_QUERY ... WITH ARRAY WRAPPER
+// SQL Graph pseudo-columns ($node_id/$edge_id/$from_id/$to_id), same shape as DOLLAR_ACTION:
+// learn.microsoft.com/sql/t-sql/functions/graph-id-from-node-id-transact-sql
+DOLLAR_NODE_ID                              : '$NODE_ID';
+DOLLAR_EDGE_ID                              : '$EDGE_ID';
+DOLLAR_FROM_ID                              : '$FROM_ID';
+DOLLAR_TO_ID                                : '$TO_ID';
+// --- end fork additions
 QUEUE                                       : 'QUEUE';
 QUEUE_DELAY                                 : 'QUEUE_DELAY';
 QUOTED_IDENTIFIER                           : 'QUOTED_IDENTIFIER';
@@ -1236,7 +1284,10 @@ ID                 : ( [A-Z_#] | FullWidthLetter) ( [A-Z_#$@0-9] | FullWidthLett
 STRING options {
     caseInsensitive = false;
 }      : 'N'? '\'' (~'\'' | '\'\'')* '\'';
-BINARY : '0' 'X' HEX_DIGIT*;
+// A backslash immediately before a newline continues a binary constant on the next line
+// (engine-side; string constants need no lexer change — any non-quote char is already legal
+// inside one): learn.microsoft.com/sql/t-sql/language-elements/sql-server-utilities-statements-backslash
+BINARY : '0' 'X' (HEX_DIGIT | '\\' '\r'? '\n')*;
 FLOAT  : DEC_DOT_DEC;
 REAL   : (DECIMAL | DEC_DOT_DEC) ('E' [+-]? DEC_DIGIT+);
 
@@ -1272,6 +1323,9 @@ DIVIDE       : '/';
 MODULE       : '%';
 PLUS         : '+';
 MINUS        : '-';
+// braces — used only by the SQL Graph SHORTEST_PATH {1,n} quantifier (queries/match-sql-graph)
+LCB          : '{';
+RCB          : '}';
 BIT_NOT      : '~';
 BIT_OR       : '|';
 BIT_AND      : '&';

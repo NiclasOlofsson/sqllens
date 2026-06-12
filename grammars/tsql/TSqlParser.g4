@@ -2975,10 +2975,10 @@ openquery
     ;
 
 // https://msdn.microsoft.com/en-us/library/ms179856.aspx
+// The first part of a four-part name; intermediate parts may be omitted (consecutive dots) and
+// a 2-part suffix (schema.object) is valid: functions/opendatasource-transact-sql
 opendatasource
-    : OPENDATASOURCE '(' provider = STRING ',' init = STRING ')' '.' (database = id_)? '.' (
-        scheme = id_
-    )? '.' (table = id_)
+    : OPENDATASOURCE '(' provider = STRING ',' init = STRING ')' '.' (id_? '.')* (table = id_)
     ;
 
 // Other statements.
@@ -3991,6 +3991,12 @@ search_condition
 predicate
     : EXISTS '(' subquery ')'
     | freetext_predicate
+    // boolean regex predicate (SQL Server 2025): REGEXP_LIKE(string, pattern [, flags])
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/regexp-like-transact-sql
+    | REGEXP_LIKE '(' expression ',' expression (',' expression)? ')'
+    // SQL Graph: MATCH(<graph_search_pattern>) — WHERE-only, AND-composable
+    // https://learn.microsoft.com/en-us/sql/t-sql/queries/match-sql-graph
+    | MATCH '(' graph_match_pattern ')'
     | expression comparison_operator expression
     | expression MULT_ASSIGN expression ////SQL-82 syntax for left outer joins; '*='. See https://stackoverflow.com/questions/40665/in-sybase-sql
     | expression comparison_operator (ALL | SOME | ANY) '(' subquery ')'
@@ -4000,6 +4006,45 @@ predicate
     // SQL Server 2022+: https://learn.microsoft.com/en-us/sql/t-sql/queries/is-distinct-from-transact-sql
     | expression IS NOT? DISTINCT FROM expression
     | expression IS null_notnull
+    ;
+
+// SQL Graph MATCH patterns: node-(edge)->node chains (either direction), SHORTEST_PATH with
+// + / {1,n} quantifiers, LAST_NODE: https://learn.microsoft.com/en-us/sql/t-sql/queries/match-sql-graph
+graph_match_pattern
+    : graph_simple_pattern
+    | SHORTEST_PATH '(' graph_al_pattern (AND graph_al_pattern)* ')'
+    | LAST_NODE '(' id_ ')' '=' LAST_NODE '(' id_ ')'
+    ;
+
+graph_simple_pattern
+    : graph_node graph_edge_step*
+    ;
+
+// -(edge)-> node   |   <-(edge)- node
+graph_edge_step
+    : MINUS '(' id_ ')' MINUS GREATER graph_node
+    | LESS MINUS '(' id_ ')' MINUS graph_node
+    ;
+
+graph_node
+    : LAST_NODE '(' id_ ')'
+    | id_
+    ;
+
+// node followed by a quantified parenthesized edge/node group: p1(-(fo)->p2){1,3} or (…)+ —
+// or the group first with the terminal node after.
+graph_al_pattern
+    : graph_node '(' graph_edge_step+ ')' graph_quantifier
+    | '(' graph_node_first_step+ ')' graph_quantifier graph_node
+    ;
+
+graph_node_first_step
+    : graph_node (MINUS '(' id_ ')' MINUS GREATER | LESS MINUS '(' id_ ')' MINUS)
+    ;
+
+graph_quantifier
+    : PLUS
+    | LCB DECIMAL ',' DECIMAL RCB
     ;
 
 // Changed union rule to sql_union to avoid union construct with C++ target.  Issue reported by person who generates into C++.  This individual reports change causes generated code to work
@@ -4024,7 +4069,11 @@ query_specification
     // https://msdn.microsoft.com/en-us/library/ms177673.aspx
     (
         GROUP BY (
-            (groupByAll = ALL? groupBys += group_by_item (',' groupBys += group_by_item)*)
+            // legacy WITH ROLLUP / WITH CUBE (non-ISO, backward compatibility):
+            // queries/select-group-by-transact-sql
+            (groupByAll = ALL? groupBys += group_by_item (',' groupBys += group_by_item)* (
+                WITH (ROLLUP | CUBE)
+            )?)
             | GROUPING SETS '(' groupSets += grouping_sets_item (
                 ',' groupSets += grouping_sets_item
             )* ')'
@@ -4049,7 +4098,8 @@ window_specification
 
 // https://msdn.microsoft.com/en-us/library/ms189463.aspx
 top_clause
-    : TOP (top_percent | top_count) (WITH TIES)?
+    // WITH APPROXIMATE: approximate vector search, functions/vector-search-transact-sql (preview)
+    : TOP (top_percent | top_count) (WITH (TIES | APPROXIMATE))?
     ;
 
 top_percent
@@ -4104,11 +4154,11 @@ grouping_sets_item
     ;
 
 group_by_item
+    // ROLLUP(...) / CUBE(...) items, and () as the grand total — ISO forms:
+    // queries/select-group-by-transact-sql
     : expression
-    /*| rollup_spec
-    | cube_spec
-    | grouping_sets_spec
-    | grand_total*/
+    | (ROLLUP | CUBE) '(' group_by_item (',' group_by_item)* ')'
+    | '(' ')'
     ;
 
 option_clause
@@ -4138,6 +4188,14 @@ option
     // learn.microsoft.com/sql/t-sql/queries/hints-transact-sql-query
     | USE id_ '(' STRING (',' STRING)* ')'
     | QUERYTRACEON DECIMAL // OPTION (QUERYTRACEON n) trace-flag hint
+    // OPTION (LABEL = '…') — Synapse/PDW/Fabric query label (queries/option-clause-transact-sql)
+    | LABEL '=' STRING
+    // OPTION (FOR TIMESTAMP AS OF '…') — Fabric warehouse time travel (queries/hints-transact-sql-query)
+    | FOR TIMESTAMP AS OF STRING
+    // {FORCE | DISABLE} EXTERNALPUSHDOWN (queries/option-clause-transact-sql) and the Fabric DW
+    // FORCE [SINGLE NODE | DISTRIBUTED] PLAN hints (queries/hints-transact-sql-query)
+    | (FORCE | DISABLE) EXTERNALPUSHDOWN
+    | FORCE (SINGLE NODE | DISTRIBUTED) PLAN
     ;
 
 optimize_for_arg
@@ -4193,13 +4251,17 @@ table_source
 
 table_source_item
     : full_table_name deprecated_table_hint as_table_alias // this is currently allowed
-    | full_table_name temporal_clause? as_table_alias? tablesample_clause? (
+    // FOR PATH marks a graph table used in a SHORTEST_PATH pattern (queries/match-sql-graph)
+    | full_table_name (FOR PATH)? temporal_clause? as_table_alias? tablesample_clause? (
         with_table_hints
         | deprecated_table_hint
         | sybase_legacy_hints
     )?
     | rowset_function as_table_alias?
     | rowset_function_limited as_table_alias? // OPENQUERY / OPENDATASOURCE in FROM (openquery-transact-sql)
+    | vector_search_function as_table_alias?  // functions/vector-search-transact-sql (preview)
+    | predict_function as_table_alias?        // queries/predict-transact-sql
+    | ai_generate_chunks_function as_table_alias? // CROSS APPLY target: functions/ai-generate-chunks-transact-sql
     | '(' derived_table ')' (as_table_alias column_alias_list?)?
     | change_table as_table_alias?
     | nodes_method (as_table_alias column_alias_list?)?
@@ -4210,6 +4272,35 @@ table_source_item
     | open_json
     | DOUBLE_COLON oldstyle_fcall = function_call as_table_alias? // Build-in function (old syntax)
     | '(' table_source ')'
+    ;
+
+// VECTOR_SEARCH(TABLE = obj [AS alias], COLUMN = col, SIMILAR_TO = vec, METRIC = '…' [, TOP_N = k]):
+// https://learn.microsoft.com/en-us/sql/t-sql/functions/vector-search-transact-sql (preview)
+vector_search_function
+    : VECTOR_SEARCH '(' TABLE '=' full_table_name (AS? id_)? ',' COLUMN '=' full_column_name ',' SIMILAR_TO '=' expression ',' METRIC '=' STRING (
+        ',' TOP_N '=' expression
+    )? ')'
+    ;
+
+// PREDICT(MODEL = …, DATA = obj AS alias [, RUNTIME = ONNX]) WITH (result schema):
+// https://learn.microsoft.com/en-us/sql/t-sql/queries/predict-transact-sql
+predict_function
+    : PREDICT '(' MODEL '=' (LOCAL_ID | STRING | '(' subquery ')') ',' DATA '=' full_table_name AS? id_ (
+        ',' RUNTIME '=' ONNX
+    )? ')' WITH '(' predict_result_column (',' predict_result_column)* ')'
+    ;
+
+predict_result_column
+    : id_ data_type (COLLATE id_)? (NULL_ | NOT NULL_)?
+    ;
+
+// AI_GENERATE_CHUNKS(SOURCE = expr, CHUNK_TYPE = FIXED [, CHUNK_SIZE = n] [, OVERLAP = n]
+// [, ENABLE_CHUNK_SET_ID = n]) — CHUNK_TYPE's value is the bare keyword FIXED:
+// https://learn.microsoft.com/en-us/sql/t-sql/functions/ai-generate-chunks-transact-sql
+ai_generate_chunks_function
+    : AI_GENERATE_CHUNKS '(' SOURCE '=' expression ',' CHUNK_TYPE '=' FIXED (
+        ',' CHUNK_SIZE '=' expression
+    )? (',' OVERLAP '=' expression)? (',' ENABLE_CHUNK_SET_ID '=' expression)? ')'
     ;
 
 // Temporal (system-versioned) queries: FROM t FOR SYSTEM_TIME ...
@@ -4278,8 +4369,11 @@ join_part
     ;
 
 join_on
+    // REDUCE | REPLICATE | REDISTRIBUTE [(columns count)] are the Synapse/PDW data-movement
+    // hints; the count argument is Fabric DW: queries/hints-transact-sql-join
     : (inner = INNER? | join_type = (LEFT | RIGHT | FULL) outer = OUTER?) (
-        join_hint = (LOOP | HASH | MERGE | REMOTE)
+        join_hint = (LOOP | HASH | MERGE | REMOTE | REDUCE | REPLICATE)
+        | join_hint = REDISTRIBUTE ('(' DECIMAL ')')?
     )? JOIN source = table_source ON cond = search_condition
     ;
 
@@ -4312,16 +4406,34 @@ full_column_name_list
     ;
 
 // https://msdn.microsoft.com/en-us/library/ms190312.aspx
+// https://learn.microsoft.com/en-us/sql/t-sql/functions/openrowset-transact-sql — the third
+// argument is a query string or an (up to 3-part) object; the second may be the documented
+// 'datasource';'user_id';'password' semicolon triple. The BULK form
+// (functions/openrowset-bulk-transact-sql + the Synapse serverless options) takes one path or a
+// parenthesized path list, options (incl. bare-keyword values like HEADER_ROW = TRUE and the
+// ORDER (…) [UNIQUE] hint), and an optional WITH column schema where each column may map to a
+// JSON path string or a file-column ordinal.
 rowset_function
     : (
-        OPENROWSET LR_BRACKET provider_name = STRING COMMA connectionString = STRING COMMA sql = STRING RR_BRACKET
+        OPENROWSET LR_BRACKET provider_name = STRING COMMA connectionString = STRING (
+            ';' user_id = STRING ';' password = STRING
+        )? COMMA (sql = STRING | object = full_table_name) RR_BRACKET
     )
-    | (OPENROWSET '(' BULK data_file = STRING ',' (bulk_option (',' bulk_option)* | id_) ')')
+    | (
+        OPENROWSET '(' BULK (data_file = STRING | '(' STRING (',' STRING)* ')') (
+            ',' (bulk_option | ORDER '(' column_name_list_with_order ')' UNIQUE?)
+        )* ')' (WITH '(' openrowset_column (',' openrowset_column)* ')')?
+    )
     ;
 
-// runtime check.
+// runtime check. A bare id_ is SINGLE_BLOB|SINGLE_CLOB|SINGLE_NCLOB; a bare-keyword value
+// covers HEADER_ROW = TRUE|FALSE (TRUE/FALSE lex as identifiers).
 bulk_option
-    : id_ '=' bulk_option_value = (DECIMAL | STRING)
+    : id_ ('=' bulk_option_value = (DECIMAL | STRING) | '=' id_)?
+    ;
+
+openrowset_column
+    : id_ data_type (json_path = STRING | ordinal = DECIMAL)?
     ;
 
 derived_table
@@ -4336,7 +4448,10 @@ function_call
     | aggregate_windowed_function                    # AGGREGATE_WINDOWED_FUNC
     | analytic_windowed_function                     # ANALYTIC_WINDOWED_FUNC
     | built_in_functions                             # BUILT_IN_FUNC
-    | scalar_function_name '(' expression_list_? ')' # SCALAR_FUNCTION
+    // (ALL|DISTINCT) and OVER on a generic call: CLR / system aggregates not in this lexer —
+    // e.g. PRODUCT(expr) OVER (PARTITION BY …), PRODUCT(DISTINCT expr):
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/product-aggregate-transact-sql
+    | scalar_function_name '(' (ALL | DISTINCT)? expression_list_? ')' over_clause? # SCALAR_FUNCTION
     | freetext_function                              # FREE_TEXT
     | partition_function                             # PARTITION_FUNC
     | hierarchyid_static_method                      # HIERARCHYID_METHOD
@@ -4535,8 +4650,9 @@ built_in_functions
         ',' length_expression = expression ( ',' decimal = expression)?
     )? ')' # STR
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/string-agg-transact-sql?view=sql-server-ver16
+    // WITHIN GROUP (GRAPH PATH) aggregates along a SHORTEST_PATH match (queries/match-sql-graph)
     | STRING_AGG '(' expr = expression ',' separator = expression ')' (
-        WITHIN GROUP '(' order_by_clause ')'
+        WITHIN GROUP '(' (order_by_clause | GRAPH PATH) ')'
     )? # STRINGAGG
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/string-escape-transact-sql?view=sql-server-ver16
     | STRING_ESCAPE '(' text_ = expression ',' type_ = expression ')' # STRING_ESCAPE
@@ -4547,7 +4663,9 @@ built_in_functions
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/translate-transact-sql?view=sql-server-ver16
     | TRANSLATE '(' inputString = expression ',' characters = expression ',' translations = expression ')' # TRANSLATE
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/trim-transact-sql?view=sql-server-ver16
-    | TRIM '(' (characters = expression FROM)? string_ = expression ')' # TRIM
+    // 2022+ side keywords: TRIM([LEADING|TRAILING|BOTH] [characters FROM] string)
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/trim-transact-sql
+    | TRIM '(' (LEADING | TRAILING | BOTH)? (characters = expression FROM)? string_ = expression ')' # TRIM
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/unicode-transact-sql?view=sql-server-ver16
     | UNICODE '(' ncharacter_expression = expression ')' # UNICODE
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/upper-transact-sql?view=sql-server-ver16
@@ -4646,6 +4764,8 @@ built_in_functions
     | CURRENT_DATE '(' ')' # CURRENT_DATE
     // https://msdn.microsoft.com/en-us/library/ms188751.aspx
     | CURRENT_TIMESTAMP # CURRENT_TIMESTAMP
+    // niladic, SQL Server 2025+: https://learn.microsoft.com/en-us/sql/t-sql/functions/current-date-transact-sql
+    | CURRENT_DATE # CURRENT_DATE_FUNC
     // https://learn.microsoft.com/en-us/sql/t-sql/functions/current-timezone-transact-sql?view=sql-server-ver16
     | CURRENT_TIMEZONE '(' ')' # CURRENT_TIMEZONE
     // https://learn.microsoft.com/en-us/sql/t-sql/functions/current-timezone-id-transact-sql?view=sql-server-ver16
@@ -4722,16 +4842,29 @@ built_in_functions
     // https://docs.microsoft.com/en-us/sql/t-sql/functions/logical-functions-iif-transact-sql
     | IIF '(' cond = search_condition ',' left = expression ',' right = expression ')' # IIF
     // JSON functions
+    // AI_GENERATE_EMBEDDINGS(expr USE MODEL model [PARAMETERS json]) — scalar, space-separated:
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/ai-generate-embeddings-transact-sql
+    | AI_GENERATE_EMBEDDINGS '(' source = expression USE MODEL model = id_ (
+        PARAMETERS params = expression
+    )? ')' # AI_GENERATE_EMBEDDINGS
     // https://learn.microsoft.com/en-us/sql/t-sql/functions/isjson-transact-sql?view=azure-sqldw-latest
     | ISJSON '(' json_expr = expression (',' json_type_constraint = expression)? ')' # ISJSON
-    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-object-transact-sql?view=azure-sqldw-latest
-    | JSON_OBJECT '(' (key_value = json_key_value (',' key_value = json_key_value)*)? json_null_clause? ')' # JSON_OBJECT
-    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-array-transact-sql?view=azure-sqldw-latest
-    | JSON_ARRAY '(' expression_list_? json_null_clause? ')' # JSON_ARRAY
-    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-value-transact-sql?view=azure-sqldw-latest
-    | JSON_VALUE '(' expr = expression ',' path = expression ')' # JSON_VALUE
-    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-query-transact-sql?view=azure-sqldw-latest
-    | JSON_QUERY '(' expr = expression (',' path = expression)? ')' # JSON_QUERY
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-object-transact-sql (RETURNING json: 2025)
+    | JSON_OBJECT '(' (key_value = json_key_value (',' key_value = json_key_value)*)? json_null_clause? (
+        RETURNING JSON
+    )? ')' # JSON_OBJECT
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-array-transact-sql (RETURNING json: 2025)
+    | JSON_ARRAY '(' expression_list_? json_null_clause? (RETURNING JSON)? ')' # JSON_ARRAY
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-arrayagg-transact-sql (2025):
+    // JSON_ARRAYAGG(value [ORDER BY …] [NULL|ABSENT ON NULL] [RETURNING json])
+    | JSON_ARRAYAGG '(' expr = expression order_by_clause? json_null_clause? (RETURNING JSON)? ')' # JSON_ARRAYAGG
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-objectagg-transact-sql (2025):
+    // JSON_OBJECTAGG(key : value [NULL|ABSENT ON NULL] [RETURNING json])
+    | JSON_OBJECTAGG '(' key_value = json_key_value json_null_clause? (RETURNING JSON)? ')' # JSON_OBJECTAGG
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-value-transact-sql (RETURNING <type>: 2025)
+    | JSON_VALUE '(' expr = expression ',' path = expression (RETURNING data_type)? ')' # JSON_VALUE
+    // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-query-transact-sql (WITH ARRAY WRAPPER: 2025)
+    | JSON_QUERY '(' expr = expression (',' path = expression)? (WITH ARRAY WRAPPER)? ')' # JSON_QUERY
     // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-modify-transact-sql?view=azure-sqldw-latest
     | JSON_MODIFY '(' expr = expression ',' path = expression ',' new_value = expression ')' # JSON_MODIFY
     // https://learn.microsoft.com/en-us/sql/t-sql/functions/json-path-exists-transact-sql?view=azure-sqldw-latest
@@ -5224,6 +5357,9 @@ full_column_name
     : ((DELETED | INSERTED | full_table_name) '.')? (
         column_name = id_
         | ('$' (IDENTITY | ROWGUID))
+        // SQL Graph pseudo-columns, bare or alias-qualified (P.$node_id):
+        // functions/graph-id-from-node-id-transact-sql and friends
+        | (DOLLAR_NODE_ID | DOLLAR_EDGE_ID | DOLLAR_FROM_ID | DOLLAR_TO_ID)
     )
     ;
 
@@ -5354,6 +5490,47 @@ primitive_constant
 
 keyword
     : ABORT
+    // fork additions — keyword tokens added for docs-corpus conformance stay usable as identifiers
+    | AI_GENERATE_CHUNKS
+    | AI_GENERATE_EMBEDDINGS
+    | APPROXIMATE
+    | ARRAY
+    | BOTH
+    | CHUNK_SIZE
+    | CHUNK_TYPE
+    | ENABLE_CHUNK_SET_ID
+    | EXTERNALPUSHDOWN
+    | FIXED
+    | GRAPH
+    | JSON_ARRAYAGG
+    | JSON_OBJECTAGG
+    | LABEL
+    | LAST_NODE
+    | LEADING
+    | MATCH
+    | METRIC
+    | MODEL
+    | ONNX
+    | OVERLAP
+    | PARAMETERS
+    | PREDICT
+    | CUBE
+    | REDISTRIBUTE
+    | REDUCE
+    | REGEXP_LIKE
+    | RETURNING
+    | ROLLUP
+    | RUNTIME
+    | NODE
+    | SHORTEST_PATH
+    | SIMILAR_TO
+    | SINGLE
+    | TIMESTAMP
+    | TOP_N
+    | TRAILING
+    | VECTOR_SEARCH
+    | WRAPPER
+    // end fork additions
     | ABSOLUTE
     | ACCENT_SENSITIVITY
     | ACCESS
