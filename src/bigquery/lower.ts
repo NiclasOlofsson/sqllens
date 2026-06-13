@@ -124,7 +124,12 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
 
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
-	const body = qpos ? lowerPrimaryOrSetOp(qpos) : emptyBody(qwpo, "non-query");
+	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
+	const body = qpos
+		? lowerPrimaryOrSetOp(qpos)
+		: fromQuery
+			? buildFromQuery(fromQuery)
+			: emptyBody(qwpo, "non-query");
 
 	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
 	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
@@ -154,13 +159,46 @@ function lowerPrimaryOrSetOp(qpos: ParserRuleContext): QueryBody {
 	return primary ? lowerQueryPrimary(primary) : emptyBody(qpos, "non-query");
 }
 
-/** query_primary: select | parenthesized_query opt_as_alias_with_required_as? */
+/** query_primary: select | TABLE path | parenthesized_query opt_as_alias_with_required_as? */
 function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 	const select = directChildrenOfRule(primary, P.RULE_select)[0];
 	if (select) return buildSelect(select);
 	const paren = directChildrenOfRule(primary, P.RULE_parenthesized_query)[0];
 	if (paren) return lowerParenthesizedQuery(paren).body;
+	// `TABLE name` ≡ `SELECT * FROM name`.
+	const path = directChildrenOfRule(primary, P.RULE_path_expression)[0];
+	if (path) {
+		return {
+			kind: "select",
+			projections: [],
+			from: [{ kind: "table", name: pathParts(path), cst: path }],
+			columns: [],
+			aggregated: false,
+			cst: primary,
+		};
+	}
 	return emptyBody(primary, "non-query");
+}
+
+/** from_query: from_clause — a bare FROM (no SELECT), implicitly `SELECT * FROM …`. */
+function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
+	const unsupported: string[] = [];
+	const fromClause = directChildrenOfRule(fromQuery, P.RULE_from_clause)[0];
+	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
+	const from = fromContents ? buildSources(fromContents, unsupported) : [];
+	const joinConditions = fromContents ? extractJoinConditions(fromContents) : [];
+	const columns: ColumnRef[] = [];
+	for (const j of joinConditions) columnsOf(j, columns, "join");
+	return {
+		kind: "select",
+		projections: [],
+		from,
+		columns,
+		joinConditions: joinConditions.length ? joinConditions : undefined,
+		aggregated: false,
+		unsupported: unsupported.length ? unsupported : undefined,
+		cst: fromQuery,
+	};
 }
 
 /**
@@ -207,7 +245,12 @@ function lowerInnerQuery(query: ParserRuleContext, qwpo: ParserRuleContext | und
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
 	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
-	const body = qpos ? lowerPrimaryOrSetOp(qpos) : emptyBody(qwpo, "non-query");
+	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
+	const body = qpos
+		? lowerPrimaryOrSetOp(qpos)
+		: fromQuery
+			? buildFromQuery(fromQuery)
+			: emptyBody(qwpo, "non-query");
 	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
 	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
 	if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");

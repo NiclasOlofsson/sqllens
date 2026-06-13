@@ -392,6 +392,22 @@ describe("BigQuery lowering", () => {
 		expect(q("SELECT EXISTS(SELECT 1 FROM u) FROM t").projections[0].expr.kind).toBe("exists");
 	});
 
+	it("FROM-query and TABLE-query lower to a select over their sources", () => {
+		const fq = q("FROM t");
+		expect(fq.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		const fqj = q("FROM a JOIN b USING (k)");
+		expect(fqj.from.map((s) => (s as { name?: string[] }).name?.[0])).toEqual(["a", "b"]);
+		const tq = q("TABLE ds.t");
+		expect(tq.from[0]).toMatchObject({ kind: "table", name: ["ds", "t"] });
+	});
+
+	it("a piped query still lowers its base query (pipe transforms unmodelled)", () => {
+		const r = query("FROM t |> WHERE x > 0 |> SELECT a");
+		expect(r.statement).toBe("query");
+		expect(r.body.kind).toBe("select");
+		expect((r.body as { from: { name?: string[] }[] }).from[0]?.name).toEqual(["t"]);
+	});
+
 	it("never throws and records columns for resolution", () => {
 		const b = q("SELECT t.a, f(t.b) + 1 AS e FROM t WHERE t.c IS NOT NULL");
 		const cols = b.columns.map((c) => c.parts.join("."));
