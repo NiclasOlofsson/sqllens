@@ -45,14 +45,21 @@ function blocks(text) {
 	return text.split(/^==$/m); // top-level test separator
 }
 
+// A `[options…]` directive line: `[` then a lowercase keyword then `=`, a space, or `]`
+// (`[language_features=…]`, `[default …]`, `[mode=…]`, `[reserve_graph_table]`). This deliberately
+// does NOT match a SQL array constructor on its own line (`[1,2,3]`, `[1, e]`, `[col, x]`), which
+// starts with a digit/expression — those must survive into the query (lambda/array cases).
+const DIRECTIVE_LINE = /^\s*\[[a-z][a-z0-9_]*\s*[=\] ]/;
 function cleanQuery(raw) {
-	// Drop leading `[options…]` directive lines and `#` comment lines; keep the SQL. The .test format
-	// escapes an INPUT line that itself begins with `--` or `==` (which would collide with the
-	// input/expected `--` and block `==` separators) by prefixing a backslash; unescape those so the
-	// real SQL comment line is recovered (`\--comment` → `--comment`).
+	// Drop directive lines and `#` comment lines; keep the SQL. The .test format escapes an INPUT line
+	// that itself begins with `--` or `==` (which would collide with the input/expected `--` and block
+	// `==` separators) by prefixing a backslash; unescape those so the real comment line is recovered
+	// (`\--comment` → `--comment`).
 	return raw
 		.split("\n")
-		.filter((l) => !/^\s*\[/.test(l) && !/^\s*#/.test(l))
+		// A directive line may itself carry an alternation (`[{{|no_}}qualify_reserved]`); test with the
+		// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array).
+		.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*#/.test(l))
 		.map((l) => l.replace(/^\\(--|==)/, "$1"))
 		.join("\n")
 		.trim();
