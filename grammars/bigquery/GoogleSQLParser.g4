@@ -1582,10 +1582,12 @@ subquery_or_subpipeline: subpipeline | parenthesized_query;
 pipe_where: where_clause;
 
 // SELECT reuses the full select_clause (bare `*`, star modifiers, AS aliases) + trailing WINDOW.
-pipe_select: select_clause window_clause?;
+// SELECT / EXTEND allow a trailing WINDOW clause which itself may have a trailing comma
+// (opt_window_clause_with_trailing_comma in googlesql.tm).
+pipe_select: select_clause (window_clause COMMA_SYMBOL?)?;
 
 // EXTEND / WINDOW use the restricted selection list (no bare `*`); EXTEND allows a trailing WINDOW.
-pipe_extend: EXTEND_SYMBOL pipe_selection_item_list window_clause?;
+pipe_extend: EXTEND_SYMBOL pipe_selection_item_list (window_clause COMMA_SYMBOL?)?;
 
 pipe_window: WINDOW_SYMBOL pipe_selection_item_list;
 
@@ -1620,7 +1622,8 @@ pipe_aggregate_item_list:
 
 pipe_aggregate_item: pipe_selection_item opt_selection_item_order?;
 
-pipe_order_by: order_by_clause;
+// Pipe ORDER BY allows a trailing comma (order_by_clause_with_opt_comma in googlesql.tm).
+pipe_order_by: order_by_clause COMMA_SYMBOL?;
 
 pipe_limit_offset: limit_offset_clause;
 
@@ -2858,9 +2861,11 @@ grouping_item_base:
 
 grouping_item: grouping_item_base | expression;
 
+// In a pipe GROUP BY, a grouping key may carry an implicit (AS-optional) alias and an ordering
+// suffix: `GROUP BY x y`, `x+1 alias NULLS FIRST` (googlesql.tm grouping_item_in_pipe uses as_alias?).
 grouping_item_in_pipe:
 	grouping_item_base
-	| expression opt_as_alias_with_required_as? opt_grouping_item_order?;
+	| expression as_alias? opt_grouping_item_order?;
 
 grouping_set_list:
 	GROUPING_SYMBOL SETS_SYMBOL LR_BRACKET_SYMBOL grouping_set (

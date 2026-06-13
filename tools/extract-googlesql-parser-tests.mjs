@@ -163,15 +163,19 @@ function ourComboIndex(directive) {
 
 /**
  * Classify each expanded query variant as negative (syntax error for our feature config) or positive,
- * grading by the directive combo our parser represents. Aligns the flattened expected cells to the
- * (query × directive) grid when the sizes match; otherwise zips per query variant as a fallback.
+ * grading by the directive combo our parser represents. The flattened expected cells enumerate in the
+ * same order ZetaSQL expands alternations: leftmost (the directive, on its own line before the query)
+ * varies slowest, so the grid is combo-OUTER, query-INNER — cell (combo d, query v) is at index
+ * `d * Q + v`. We pick our directive combo `ci`, so variant v's cell is `flat[ci * Q + v]`. (This only
+ * matters when BOTH the directive and the query alternate; with one dimension fixed the two index
+ * forms coincide.)
  */
 function classifyVariants(variants, expectedSection, directive) {
 	const flat = flatGroupNegatives(expectedSection);
 	const D = expand(directive).length;
 	const Q = variants.length;
 	const ci = ourComboIndex(directive);
-	if (flat.length === Q * D) return variants.map((_, v) => flat[v * D + ci]);
+	if (flat.length === Q * D) return variants.map((_, v) => flat[ci * Q + v]);
 	if (flat.length === 1) return variants.map(() => flat[0]);
 	return variants.map((_, v) => flat[v] ?? flat[0] ?? false);
 }
