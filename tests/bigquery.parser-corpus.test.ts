@@ -6,16 +6,17 @@ import { parseBigQuery } from "../src/bigquery/parse.js";
 import { keywordCategory } from "../src/ir/statement.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
-// Is this negative a DDL statement? DDL is DETECT-ONLY in this project — the parser recognizes and
-// flags object DDL (CREATE/ALTER/DROP/PROCEDURE/…) but does not VALIDATE its arity/params/parens, by
-// cleared scope. So a malformed DDL we accept is by design, not an over-acceptance bug, and is excluded
-// from the must-reject gate (tagged "DDL-validation out of scope"). Keyed off the parser's OWN
-// recognition: lower().statement === "ddl" for cases we parse; a leading-keyword fallback for cases we
-// reject (which can't be lowered). This is the same disciplined, per-case exclusion as the feature-off
-// cases — every excluded negative is individually classified, not a blanket drop of the bucket.
+// Is this case a DDL statement? DDL is DETECT-ONLY in this project — the parser recognizes and flags
+// object DDL (CREATE/ALTER/DROP/PROCEDURE/…) but does not parse or VALIDATE its structure, by cleared
+// scope. So DDL is out of BOTH gates, symmetrically: a malformed DDL we accept is not an
+// over-acceptance bug (negatives), and a valid DDL we don't fully parse is not a coverage gap
+// (positives) — both are by design. Keyed off the parser's OWN recognition: lower().statement ===
+// "ddl" for cases we parse; a leading-keyword fallback for cases that error (and can't be lowered).
+// This is the same disciplined, per-case classification as the feature-off cases — every excluded
+// case is individually identified, not a blanket drop of a bucket.
 const ddlLeadKeyword = (sql: string): string =>
 	sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*/, "").match(/^[A-Za-z_]+/)?.[0] ?? "";
-function isDdlNegative(sql: string, errors: number, tree: unknown): boolean {
+function isDdl(sql: string, errors: number, tree: unknown): boolean {
 	if (errors === 0) {
 		try {
 			return lower(tree as never).statement === "ddl";
@@ -57,44 +58,55 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // single positive — those are now graded per config, which reclassified ~70 false-positives into real
 // negatives (so the negative total rose; this is the corpus getting more honest, not a regression).
 //
-// The negative gate measures only IN-SCOPE over-acceptance — the malformed SQL we actually intend to
-// reject. Two disciplined, per-case exclusions narrow the corpus to that:
+// Both gates measure only the IN-SCOPE bucket. Two disciplined, per-case classifications narrow each
+// corpus to that:
 //   1. Feature-off (in the extractor): a case that errors only because a feature WE implement is
 //      disabled is one we correctly accept as a permissive superset — not a valid negative for us.
-//   2. DDL detect-only (here, see isDdlNegative): object DDL is recognized and flagged but not
-//      validated, by cleared scope, so malformed-DDL arity/param/paren forms are out of the gate.
-// Both are per-case, not blanket drops. What remains in the in-scope bucket is genuine over-acceptance
-// (numeric-literal method calls, set-op CORRESPONDING edges, `1 > > 2`, WITH ANONYMIZATION, …) to be
-// driven down by tightening the grammar.
+//   2. DDL detect-only (here, see isDdl): object DDL is recognized and flagged but not parsed or
+//      validated, by cleared scope, so it is out of BOTH gates — malformed-DDL forms out of the
+//      must-reject (negatives) and valid-DDL forms out of the must-parse (positives).
+// Both are per-case, not blanket drops. The in-scope POSITIVE bucket is the query/DML/script surface
+// we do parse (remaining gaps: macros, set-op edges, qualify-as-alias, group_rows, pipe-after-non-
+// query, multiline string literals, …). The in-scope NEGATIVE bucket is genuine over-acceptance
+// (numeric-literal method calls, set-op CORRESPONDING edges, `1 > > 2`, WITH ANONYMIZATION, …).
 //
-// Measured 2026-06-13: positives 3441/3603 (95.5%) after the GoogleSQL DOT_IDENTIFIER rewrite
-// (src/bigquery/dot-path.ts — numeric path components like `foo.123`, `x.1.2.3`, `t.2daysago`,
-// and dotted forms `x.y.2.0.z` decomposed in path context).
-// Negatives: 494 DDL excluded (detect-only); of the 2028 in-scope negatives we reject 1821 and still
-// wrongly accept 207. The in-scope floor ratchets up as the grammar tightens. The earlier
-// feature-aware extractor rewrite (grading each case by our IMPLEMENTED feature set; fixing the
-// plural ALTERNATION GROUPS mis-grading) set the corpus shape.
-const POSITIVE_BASELINE = 3441; // 3441/3603 (95.5%)
+// Measured 2026-06-13: of 3603 positives, 892 are DDL (excluded); in-scope positives parse at
+// 2586/2711 (95.4%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/dot-path.ts — numeric
+// path components `foo.123`, `x.1.2.3`, `t.2daysago`, and dotted `x.y.2.0.z` in path context).
+// Negatives: 494 DDL excluded; of the 2028 in-scope negatives we reject 1821 and still wrongly accept
+// 207. Both in-scope floors ratchet up as the grammar tightens.
+const IN_SCOPE_POSITIVE_BASELINE = 2586; // in-scope (non-DDL) parsed of 2711; 125 in-scope still failing
 const IN_SCOPE_NEGATIVE_BASELINE = 1821; // in-scope (non-DDL) rejected of 2028; 207 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
-	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {
-		let pass = 0;
-		const fails: string[] = [];
+	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
+		let ddlExcluded = 0; // DDL out of scope (detect-only — not parsed/validated)
+		let inScopeParsed = 0;
+		let inScopeFailed = 0; // in-scope coverage gaps still to fix
 		for (const f of positives()) {
 			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
 			let errs = 1;
+			let tree: unknown = null;
 			try {
-				errs = parseBigQuery(sql).errors;
+				const r = parseBigQuery(sql);
+				errs = r.errors;
+				tree = r.tree;
 			} catch {
 				errs = -1;
 			}
-			if (errs === 0) pass++;
-			else fails.push(f);
+			if (isDdl(sql, errs, tree)) {
+				ddlExcluded++;
+				continue;
+			}
+			if (errs === 0) inScopeParsed++;
+			else inScopeFailed++;
 		}
 		// eslint-disable-next-line no-console
-		console.log(`BigQuery parser-corpus positives: ${pass}/${positives().length}`);
-		expect(pass).toBeGreaterThanOrEqual(POSITIVE_BASELINE);
+		console.log(
+			`BigQuery parser-corpus in-scope positives parsed: ${inScopeParsed}/${inScopeParsed + inScopeFailed}` +
+				` (${ddlExcluded} DDL detect-only, excluded)`,
+		);
+		expect(inScopeParsed).toBeGreaterThanOrEqual(IN_SCOPE_POSITIVE_BASELINE);
 	});
 
 	it("rejects the in-scope syntax-error negative cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
@@ -112,7 +124,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 			} catch {
 				errs = 1;
 			}
-			if (isDdlNegative(sql, errs, tree)) {
+			if (isDdl(sql, errs, tree)) {
 				ddlExcluded++;
 				continue;
 			}
