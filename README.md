@@ -39,29 +39,54 @@ parse → lower → resolveScopes → qualify → infer / lineage / symbols
 ## Status
 
 Pre-release, and not yet published to npm. The library is consumed as TypeScript
-(no build emit yet — packaging is a later step). Today the public API
-(`src/index.ts`) exports the Databricks entry plus the shared semantic layer;
-T-SQL and Snowflake parse and lower are implemented but not yet re-exported under
-the unified public surface.
+(no build emit yet — packaging is a later step). The public API (`src/index.ts`)
+is uniform across all four dialects: `parse` and `analyze` take the dialect as a
+parameter, and every per-dialect `parse*` / `lower` plus the shared passes stay
+exported as lower-level building blocks.
 
 ## Usage
 
-```ts
-import { parseDatabricks, lower, resolveScopes } from "sqllens";
-
-const { tree, errors } = parseDatabricks("SELECT a, b FROM t WHERE a > 1");
-if (errors === 0) {
-  const ir = lower(tree);                       // dialect-neutral IR
-  const scopes = resolveScopes(ir, "databricks"); // name resolution
-  // ir.statement -> "query" | "dml" | "ddl" | …
-}
-```
-
-With a schema you also get qualification, types, and lineage:
+`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery"`. The surface is
+**layered** — each tier is a terminal value you can stop at — and **composable**:
+every semantic method takes the closest upstream result (so passing it does no
+rework) or a raw string / IR via an idempotent lift helper.
 
 ```ts
-import { Schema, qualify, inferType, lineage } from "sqllens";
+import { parse, analyze, Schema } from "sqllens";
+
+// Tier 1 — just the IR. No semantic layer pulled in.
+const { ast, errors, cst } = parse("SELECT a, b FROM t WHERE a > 1", "tsql");
+// ast = dialect-neutral IR (frozen — no pass mutates it); cst = raw antlr tree (escape hatch)
+// ast.statement -> "query" | "dml" | "ddl" | …
+
+// Whole pipeline in one call.
+const schema = new Schema({ t: { a: "int", b: "string" } });
+const a = analyze("SELECT a, b FROM t", "tsql", { schema });
+a.scopes;                                  // name resolution (ScopeTree)
+a.diagnostics;                             // unknown-table/column diagnostics
+a.qualification.columnsOf(a.scopes.root);  // * expansion
+a.types.typeOf(expr, scope);               // per-expression types
+a.lineage.originsOf("a");                  // base-table origins of an output column
+a.symbols;                                 // kind × modifier symbol model
 ```
+
+Compose tier by tier — pass any upstream result (or a string) to any later pass,
+and only the missing steps run. No exported signature takes or returns a raw
+`Map`/`Set`/`Record`:
+
+```ts
+import { parse, qualify, lineage, deriveSymbols, toScopes, Schema } from "sqllens";
+
+const { ast } = parse(sql, "snowflake");
+const scopes = toScopes(ast, { dialect: "snowflake" }); // idempotent lift; identity if already a ScopeTree
+qualify(scopes, schema);   // reuses scopes — never re-parses or re-resolves
+lineage(scopes, schema);   // safe to call on the same scopes, in any order
+deriveSymbols(scopes);     // independent results, no cross-contamination
+```
+
+The per-dialect entries (`parseDatabricks` / `parseTSql` / `parseSnowflake` /
+`parseBigQuery`, each `lower`, and the raw `resolveScopes` / `inferType`) remain
+exported for callers that want a single stage.
 
 ## Generating the parsers
 
@@ -70,7 +95,7 @@ after editing any `.g4`, generate the parsers (the lexer must generate before th
 parser, which the driver handles):
 
 ```bash
-npm run gen -- databricks   # | tsql | snowflake
+npm run gen -- databricks   # | tsql | snowflake | bigquery
 npm run typecheck
 npm test
 ```
