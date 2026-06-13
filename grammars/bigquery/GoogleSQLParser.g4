@@ -1725,9 +1725,15 @@ opt_corresponding_outer_mode:
 opt_outer: OUTER_SYMBOL;
 
 with_clause:
-	WITH_SYMBOL RECURSIVE_SYMBOL? aliased_query (
-		COMMA_SYMBOL aliased_query
+	WITH_SYMBOL RECURSIVE_SYMBOL? with_clause_entry (
+		COMMA_SYMBOL with_clause_entry
 	)*;
+
+// A WITH entry is a named subquery, or the WITH_GROUP_ROWS form `name() AS GROUP ROWS` usable inside
+// an aggregate subquery (googlesql.tm with_clause_entry).
+with_clause_entry:
+	aliased_query
+	| identifier LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL AS_SYMBOL GROUP_SYMBOL ROWS_SYMBOL;
 
 aliased_query:
 	identifier AS_SYMBOL parenthesized_query opt_aliased_query_modifiers?;
