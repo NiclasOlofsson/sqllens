@@ -22,9 +22,12 @@ options {
 
 root: stmts EOF;
 
+// A script is a sequence of SQL or procedural (scripting) statements — ZetaSQL ParseScript.
+// Top level accepts both; the script statements (DECLARE/IF/WHILE/LOOP/BREAK/RAISE/BEGIN…) were
+// previously reachable only inside a BEGIN…END block.
 stmts:
-	unterminated_sql_statement (
-		SEMI_SYMBOL unterminated_sql_statement
+	unterminated_statement (
+		SEMI_SYMBOL unterminated_statement
 	)* SEMI_SYMBOL?;
 
 unterminated_sql_statement:
@@ -114,8 +117,9 @@ graph_composite_query_prefix:
 		graph_set_operation_metadata graph_linear_query_operation
 	)*;
 
+// GQL composite query set ops carry an outer mode (LEFT/FULL/INNER/OUTER) like SQL set ops.
 graph_set_operation_metadata:
-	query_set_operation_type all_or_distinct;
+	opt_corresponding_outer_mode? query_set_operation_type all_or_distinct;
 
 graph_linear_query_operation:
 	graph_linear_operator_list? graph_return_operator;
@@ -2216,7 +2220,7 @@ expression_higher_prec_than_and:
 	// Chained call on a generalized field: base.(pkg.ext)(args).
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
-	| expression_higher_prec_than_and DOT_SYMBOL identifier
+	| expression_higher_prec_than_and DOT_SYMBOL dot_identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
@@ -2242,6 +2246,9 @@ expression_higher_prec_than_and:
 		OF_SYMBOL? expression_higher_prec_than_and
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
+	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
+	| expression_higher_prec_than_and comparative_operator any_some_all
+		parenthesized_anysomeall_list_in_rhs
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
@@ -2296,7 +2303,7 @@ expression_maybe_parenthesized_not_a_query:
 	// Chained call on a generalized field: base.(pkg.ext)(args).
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
-	| expression_higher_prec_than_and DOT_SYMBOL identifier
+	| expression_higher_prec_than_and DOT_SYMBOL dot_identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
@@ -2322,6 +2329,9 @@ expression_maybe_parenthesized_not_a_query:
 		OF_SYMBOL? expression_higher_prec_than_and
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
+	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
+	| expression_higher_prec_than_and comparative_operator any_some_all
+		parenthesized_anysomeall_list_in_rhs
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and

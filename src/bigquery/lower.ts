@@ -89,10 +89,14 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 // --- statement category ---------------------------------------------------------
 
 function statementCategory(tree: ParserRuleContext): StatementCategory {
+	// stmts → unterminated_statement → (unterminated_sql_statement | unterminated_script_statement).
+	// Script statements (DECLARE/IF/LOOP/…) carry no sql_statement_body and don't contribute here.
 	const bodies: ParserRuleContext[] = [];
 	for (const s of directChildrenOfRule(tree, P.RULE_stmts)) {
-		for (const u of directChildrenOfRule(s, P.RULE_unterminated_sql_statement)) {
-			bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+		for (const ut of directChildrenOfRule(s, P.RULE_unterminated_statement)) {
+			for (const u of directChildrenOfRule(ut, P.RULE_unterminated_sql_statement)) {
+				bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+			}
 		}
 	}
 	if (bodies.length === 0) return "other";
@@ -667,15 +671,20 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 				cst: node,
 			};
 		}
-		// dotted field access: ehpa '.' identifier  |  ehpa '.' '(' path ')'
+		// dotted field access: ehpa '.' dot_identifier  |  ehpa '.' '(' path ')'
+		// dot_identifier wraps `identifier | <reserved keyword>` (lexical DOT_IDENTIFIER).
 		if (hasDirectToken(node, P.DOT_SYMBOL)) {
 			const base = lowerHigherPrec(subs[0]);
-			const id = directChildrenOfRule(node, P.RULE_identifier)[0];
-			if (id && base.kind === "column") {
-				return { kind: "column", parts: [...base.parts, identText(id)], cst: node };
+			const dotId = directChildrenOfRule(node, P.RULE_dot_identifier)[0];
+			const id =
+				directChildrenOfRule(node, P.RULE_identifier)[0] ??
+				(dotId ? directChildrenOfRule(dotId, P.RULE_identifier)[0] : undefined);
+			const fieldName = id ? identText(id) : dotId ? stripBackticks(dotId.getText()) : undefined;
+			if (fieldName !== undefined && base.kind === "column") {
+				return { kind: "column", parts: [...base.parts, fieldName], cst: node };
 			}
 			const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
-			const idxText = id ? identText(id) : path ? path.getText() : "field";
+			const idxText = fieldName ?? (path ? path.getText() : "field");
 			return { kind: "subscript", base, index: { kind: "literal", text: idxText, cst: node }, cst: node };
 		}
 		const unary = directChildrenOfRule(node, P.RULE_unary_operator)[0];
@@ -1056,11 +1065,18 @@ function extractExpressionSubqueries(select: ParserRuleContext, fromQueries: Set
 
 // --- name helpers ----------------------------------------------------------------
 
-/** path_expression: identifier (DOT identifier)* — the dotted parts. A single backtick-quoted
- *  identifier may itself hold a dotted path (`proj.ds.t`), so each part is split on `.`. */
+/** path_expression: identifier (DOT dot_identifier)* — the dotted parts. The head is an identifier;
+ *  later parts are dot_identifier (which may be a reserved keyword after the dot). A single
+ *  backtick-quoted identifier may itself hold a dotted path (`proj.ds.t`), so split each part on `.`. */
 function pathParts(node: ParserRuleContext): string[] {
-	const ids = collectOfRule(node, P.RULE_identifier);
-	if (ids.length) return ids.flatMap((id) => stripBackticks(id.getText()).split("."));
+	const head = directChildrenOfRule(node, P.RULE_identifier)[0];
+	const tail = directChildrenOfRule(node, P.RULE_dot_identifier);
+	if (head || tail.length) {
+		const parts: string[] = [];
+		if (head) parts.push(...stripBackticks(head.getText()).split("."));
+		for (const d of tail) parts.push(...stripBackticks(d.getText()).split("."));
+		return parts;
+	}
 	return node
 		.getText()
 		.split(".")

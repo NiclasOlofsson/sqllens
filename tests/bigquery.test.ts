@@ -95,6 +95,30 @@ describe("parseBigQuery", () => {
 		expect(parseBigQuery("SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1").errors).toBe(0);
 	});
 
+	// Top-level procedural scripting (ZetaSQL ParseScript) — DECLARE/SET/LOOP/IF/BEGIN…EXCEPTION/etc.
+	it("top-level scripting statements", () => {
+		expect(parseBigQuery("DECLARE x STRING").errors).toBe(0);
+		expect(parseBigQuery("LOOP SELECT 5; END LOOP").errors).toBe(0);
+		expect(parseBigQuery("WHILE x < 10 DO SELECT 1; END WHILE").errors).toBe(0);
+		expect(parseBigQuery("BEGIN EXCEPTION WHEN ERROR THEN RAISE; END").errors).toBe(0);
+		expect(parseBigQuery("IF x THEN SELECT 1; ELSEIF y THEN SELECT 2; ELSE SELECT 3; END IF").errors).toBe(0);
+		expect(parseBigQuery("DECLARE n INT64 DEFAULT 0; WHILE n < 3 DO SET n = n + 1; END WHILE").errors).toBe(0);
+	});
+
+	// …/operators#comparison_operators — quantified comparison `op {ANY|SOME|ALL} (list|subquery)`.
+	it("quantified comparisons", () => {
+		expect(parseBigQuery("SELECT 1 = ANY (1, 2, 3)").errors).toBe(0);
+		expect(parseBigQuery("SELECT x < ALL (SELECT y FROM t)").errors).toBe(0);
+		expect(parseBigQuery("SELECT x > SOME UNNEST(arr)").errors).toBe(0);
+	});
+
+	// lexical DOT_IDENTIFIER — a reserved keyword is a valid field name after a dot.
+	it("reserved-keyword field access lowers to a column ref", () => {
+		expect(parseBigQuery("SELECT t.array, t.from, t.select FROM u").errors).toBe(0);
+		const b = q("SELECT t.array FROM u");
+		expect(b.columns.map((c) => c.parts.join("."))).toContain("t.array");
+	});
+
 	// ZetaSQL rejects these aggregate-modifier shapes (multi_level_aggregation_errors,
 	// aggregate_filtering_errors): the GROUP BY modifier takes plain expression keys only, and
 	// bare boolean HAVING is not allowed without GROUP BY.

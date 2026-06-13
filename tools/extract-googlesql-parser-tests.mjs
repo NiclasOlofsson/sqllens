@@ -54,6 +54,18 @@ function cleanQuery(raw) {
 		.trim();
 }
 
+// The parser testdata also uses analyzer-style modes: `type` (bare type names), `expression`
+// (bare expressions), `script` / `statement` (top-level statements). Our entry is `root` (a
+// script of statements), so type-mode blocks aren't statements (drop) and expression-mode blocks
+// are wrapped as `SELECT (…)`; script/statement pass through.
+const defaultModeOf = (text) => text.match(/^\[default mode=([a-z_]+)\]/m)?.[1] ?? "statement";
+const blockModeOverride = (querySection) => querySection.match(/^\s*\[mode=([a-z_]+)\]/m)?.[1];
+function applyMode(query, mode) {
+	if (mode === "type") return null;
+	if (mode === "expression") return `SELECT (${query})`;
+	return query;
+}
+
 const isSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(expected.trim());
 
 /**
@@ -85,11 +97,14 @@ let capped = 0;
 for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 	const text = readFileSync(join(SRC, file), "utf8");
 	const base = file.replace(/\.test$/, "");
+	const defaultMode = defaultModeOf(text);
 	let i = 0;
 	for (const block of blocks(text)) {
 		const sep = block.indexOf("\n--");
 		if (sep === -1) continue; // no expected section; skip prose-only blocks
-		const query = cleanQuery(block.slice(0, sep));
+		const querySection = block.slice(0, sep);
+		const mode = blockModeOverride(querySection) ?? defaultMode;
+		const query = cleanQuery(querySection);
 		if (!query) continue;
 		const expectedSection = block.slice(sep + 3);
 		const all = expand(query);
@@ -98,8 +113,10 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
+			const emitted = applyMode(variant, mode);
+			if (emitted === null) continue; // type-mode: not a statement
 			const dir = negatives[v] ? "negative" : "positive";
-			writeFileSync(join(OUT, dir, `${base}_${i++}.sql`), variant + "\n");
+			writeFileSync(join(OUT, dir, `${base}_${i++}.sql`), emitted + "\n");
 			if (negatives[v]) neg++;
 			else pos++;
 		}
