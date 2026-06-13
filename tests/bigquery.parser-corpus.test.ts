@@ -67,11 +67,13 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // (numeric-literal method calls, set-op CORRESPONDING edges, `1 > > 2`, WITH ANONYMIZATION, …) to be
 // driven down by tightening the grammar.
 //
-// Measured 2026-06-13: positives 3370/3603 (93.5%). Negatives: 494 DDL excluded (detect-only); of the
-// 2028 in-scope negatives we reject 1821 and still wrongly accept 207. The in-scope floor ratchets up
-// as the grammar tightens. The earlier feature-aware extractor rewrite (grading each case by our
-// IMPLEMENTED feature set; fixing the plural ALTERNATION GROUPS mis-grading) set the corpus shape.
-const POSITIVE_BASELINE = 3370; // 3370/3603 (93.5%)
+// Measured 2026-06-13: positives 3435/3603 (95.3%) after the GoogleSQL DOT_IDENTIFIER rewrite
+// (src/bigquery/dot-path.ts — numeric path components like `foo.123`, `x.1.2.3`, `t.2daysago`).
+// Negatives: 494 DDL excluded (detect-only); of the 2028 in-scope negatives we reject 1821 and still
+// wrongly accept 207. The in-scope floor ratchets up as the grammar tightens. The earlier
+// feature-aware extractor rewrite (grading each case by our IMPLEMENTED feature set; fixing the
+// plural ALTERNATION GROUPS mis-grading) set the corpus shape.
+const POSITIVE_BASELINE = 3435; // 3435/3603 (95.3%)
 const IN_SCOPE_NEGATIVE_BASELINE = 1821; // in-scope (non-DDL) rejected of 2028; 207 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
