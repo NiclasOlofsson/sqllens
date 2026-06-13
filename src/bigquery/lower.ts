@@ -91,11 +91,16 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 function statementCategory(tree: ParserRuleContext): StatementCategory {
 	// stmts → unterminated_statement → (unterminated_sql_statement | unterminated_script_statement).
 	// Script statements (DECLARE/IF/LOOP/…) carry no sql_statement_body and don't contribute here.
+	// stmts → top_statement → (define_macro_statement | unterminated_statement). A define_macro_statement
+	// (DEFINE MACRO, detect-only) carries no sql_statement_body, so it contributes nothing here and the
+	// statement lowers to a flagged non-query "other" body.
 	const bodies: ParserRuleContext[] = [];
 	for (const s of directChildrenOfRule(tree, P.RULE_stmts)) {
-		for (const ut of directChildrenOfRule(s, P.RULE_unterminated_statement)) {
-			for (const u of directChildrenOfRule(ut, P.RULE_unterminated_sql_statement)) {
-				bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+		for (const tp of directChildrenOfRule(s, P.RULE_top_statement)) {
+			for (const ut of directChildrenOfRule(tp, P.RULE_unterminated_statement)) {
+				for (const u of directChildrenOfRule(ut, P.RULE_unterminated_sql_statement)) {
+					bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+				}
 			}
 		}
 	}

@@ -51,18 +51,23 @@ root: stmts EOF;
 // Top level accepts both; the script statements (DECLARE/IF/WHILE/LOOP/BREAK/RAISE/BEGIN…) were
 // previously reachable only inside a BEGIN…END block.
 stmts:
-	unterminated_statement (
-		SEMI_SYMBOL unterminated_statement
-	)* SEMI_SYMBOL?;
+	top_statement (SEMI_SYMBOL top_statement)* SEMI_SYMBOL?;
 
-unterminated_sql_statement:
-	statement_level_hint? sql_statement_body
-	| DEFINE_SYMBOL MACRO_SYMBOL {
-		this.notifyErrorListeners("Syntax error: DEFINE MACRO statements cannot be composed from other expansions", null, null)
-	 }
-	| statement_level_hint DEFINE_SYMBOL MACRO_SYMBOL {
-		this.notifyErrorListeners("Hints are not allowed on DEFINE MACRO statements", null, null)
-	 };
+// DEFINE MACRO is valid only at the top level (not nested under a statement/block); a nested one is a
+// syntax error in GoogleSQL, so it is reachable only here, not from unterminated_statement.
+top_statement: define_macro_statement | unterminated_statement;
+
+unterminated_sql_statement: statement_level_hint? sql_statement_body;
+
+// DEFINE MACRO is DETECT-ONLY (like Spark's CREATE TEMPORARY MACRO and our object DDL): GoogleSQL's
+// macro body uses a dedicated preprocessor lexer mode (`$arg` substitution, bare tokens like `3m`,
+// `*/`) we don't model, so we recognize the statement and consume its name + body opaquely to the
+// terminator rather than parsing it. It lowers to a flagged non-query body. (define_macro_statement
+// in googlesql.tm.)
+define_macro_statement:
+	statement_level_hint? DEFINE_SYMBOL MACRO_SYMBOL define_macro_body?;
+
+define_macro_body: ~SEMI_SYMBOL+;
 
 sql_statement_body:
 	query_statement
