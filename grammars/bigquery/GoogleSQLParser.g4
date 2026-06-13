@@ -30,10 +30,10 @@ stmts:
 unterminated_sql_statement:
 	statement_level_hint? sql_statement_body
 	| DEFINE_SYMBOL MACRO_SYMBOL {
-		p.NotifyErrorListeners("Syntax error: DEFINE MACRO statements cannot be composed from other expansions", nil, nil)
+		this.notifyErrorListeners("Syntax error: DEFINE MACRO statements cannot be composed from other expansions", null, null)
 	 }
 	| statement_level_hint DEFINE_SYMBOL MACRO_SYMBOL {
-		p.NotifyErrorListeners("Hints are not allowed on DEFINE MACRO statements", nil, nil)
+		this.notifyErrorListeners("Hints are not allowed on DEFINE MACRO statements", null, null)
 	 };
 
 sql_statement_body:
@@ -458,8 +458,8 @@ create_table_function_statement:
 	CREATE_SYMBOL opt_or_replace? opt_create_scope? TABLE_SYMBOL FUNCTION_SYMBOL opt_if_not_exists?
 		path_expression opt_function_parameters? opt_returns? opt_sql_security_clause?
 		unordered_language_options? opt_as_query_or_string? {
-			if localctx.Opt_function_parameters() == nil {
-				p.NotifyErrorListeners("Syntax error: Expected (", nil, nil)
+			if (localContext.opt_function_parameters() === null) {
+				this.notifyErrorListeners("Syntax error: Expected (", null, null)
 			}
 		};
 
@@ -558,7 +558,7 @@ as_query: AS_SYMBOL query;
 
 create_external_table_function_statement:
 	CREATE_SYMBOL opt_or_replace? opt_create_scope? EXTERNAL_SYMBOL TABLE_SYMBOL FUNCTION_SYMBOL {
-		p.NotifyErrorListeners("Syntax error: CREATE EXTERNAL TABLE FUNCTION is not supported", nil, nil)
+		this.notifyErrorListeners("Syntax error: CREATE EXTERNAL TABLE FUNCTION is not supported", null, null)
 	};
 
 create_external_table_statement:
@@ -755,7 +755,7 @@ procedure_parameters:
 procedure_parameter:
 	opt_procedure_parameter_mode? identifier type_or_tvf_schema
 	| opt_procedure_parameter_mode? identifier procedure_parameter_termination {
-		p.NotifyErrorListeners("Syntax error: Unexpected end of parameter. Parameters should be in the format [<parameter mode>] <parameter name> <type>. If IN/OUT/INOUT is intended to be the name of a parameter, it must be escaped with backticks", nil, nil)
+		this.notifyErrorListeners("Syntax error: Unexpected end of parameter. Parameters should be in the format [<parameter mode>] <parameter name> <type>. If IN/OUT/INOUT is intended to be the name of a parameter, it must be escaped with backticks", null, null)
 	};
 
 procedure_parameter_termination:
@@ -791,7 +791,7 @@ as_sql_function_body_or_string:
 sql_function_body:
 	LR_BRACKET_SYMBOL expression RR_BRACKET_SYMBOL
 	| LR_BRACKET_SYMBOL SELECT_SYMBOL {
-		p.NotifyErrorListeners("The body of each CREATE FUNCTION statement is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", nil, nil)
+		this.notifyErrorListeners("The body of each CREATE FUNCTION statement is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", null, null)
 	};
 
 unordered_options_body:
@@ -889,7 +889,7 @@ set_statement:
 	| SET_SYMBOL system_variable_expression EQUAL_OPERATOR expression
 	| SET_SYMBOL LR_BRACKET_SYMBOL identifier_list RR_BRACKET_SYMBOL EQUAL_OPERATOR expression
 	| SET_SYMBOL identifier COMMA_SYMBOL identifier EQUAL_OPERATOR {
-		p.NotifyErrorListeners("Using SET with multiple variable required parentheses around the variable list", nil, nil)
+		this.notifyErrorListeners("Using SET with multiple variable required parentheses around the variable list", null, null)
 	};
 
 identifier_list: identifier (COMMA_SYMBOL identifier)*;
@@ -1250,13 +1250,13 @@ table_column_schema:
 
 opt_column_info:
 	generated_column_info invalid_default_column? {
-		if localctx.Invalid_default_column() != nil {
-			p.NotifyErrorListeners("Syntax error: \"DEFAULT\" and \"GENERATED ALWAYS AS\" clauses must not be both provided for the column", nil, nil)
+		if (localContext.invalid_default_column() !== null) {
+			this.notifyErrorListeners("Syntax error: \"DEFAULT\" and \"GENERATED ALWAYS AS\" clauses must not be both provided for the column", null, null)
 		}
 	}
 	| default_column_info invalid_generated_column? {
-		if localctx.Invalid_generated_column() != nil {
-			p.NotifyErrorListeners("Syntax error: \"DEFAULT\" and \"GENERATED ALWAYS AS\" clauses must not be both provided for the column", nil, nil)
+		if (localContext.invalid_generated_column() !== null) {
+			this.notifyErrorListeners("Syntax error: \"DEFAULT\" and \"GENERATED ALWAYS AS\" clauses must not be both provided for the column", null, null)
 		}
 	};
 
@@ -1400,16 +1400,16 @@ query: query_without_pipe_operators;
 
 query_without_pipe_operators:
 	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause?
-	| with_clause_with_trailing_comma select_or_from_keyword {p.NotifyErrorListeners("Syntax error: Trailing comma after the WITH clause before the main query is not allowed", nil, nil)
+	| with_clause_with_trailing_comma select_or_from_keyword {this.notifyErrorListeners("Syntax error: Trailing comma after the WITH clause before the main query is not allowed", null, null)
 		}
-	| with_clause PIPE_SYMBOL {p.NotifyErrorListeners("Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here", nil, nil)
+	| with_clause PIPE_SYMBOL {this.notifyErrorListeners("Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here", null, null)
 		}
 	| query_primary_or_set_operation order_by_clause? limit_offset_clause?
-	| with_clause? from_clause {p.NotifyErrorListeners("Syntax error: Unexpected FROM", nil, nil)}
+	| with_clause? from_clause {this.notifyErrorListeners("Syntax error: Unexpected FROM", null, null)}
 	// FIXME(zp): Inject the keyword from original input.
-	| with_clause? from_clause bad_keyword_after_from_query {p.NotifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", nil, nil)
+	| with_clause? from_clause bad_keyword_after_from_query {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
 		}
-	| with_clause? from_clause bad_keyword_after_from_query_allows_parens {p.NotifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", nil, nil)
+	| with_clause? from_clause bad_keyword_after_from_query_allows_parens {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
 		};
 
 bad_keyword_after_from_query:
@@ -1436,9 +1436,9 @@ query_set_operation: query_set_operation_prefix;
 
 query_set_operation_prefix:
 	query_primary query_set_operation_item+
-	| query_primary set_operation_metadata FROM_SYMBOL { p.NotifyErrorListeners("Syntax error: Unexpected FROM;FROM queries following a set operation must be parenthesized", nil, nil); 
+	| query_primary set_operation_metadata FROM_SYMBOL { this.notifyErrorListeners("Syntax error: Unexpected FROM;FROM queries following a set operation must be parenthesized", null, null); 
 		}
-	| query_set_operation_prefix set_operation_metadata FROM_SYMBOL { p.NotifyErrorListeners("Syntax error: Unexpected FROM;FROM queries following a set operation must be parenthesized", nil, nil); 
+	| query_set_operation_prefix set_operation_metadata FROM_SYMBOL { this.notifyErrorListeners("Syntax error: Unexpected FROM;FROM queries following a set operation must be parenthesized", null, null); 
 		};
 
 query_set_operation_item: set_operation_metadata query_primary;
@@ -1542,7 +1542,7 @@ group_by_all: group_by_preamble ALL_SYMBOL;
 
 select_clause:
 	SELECT_SYMBOL hint? opt_select_with? all_or_distinct? opt_select_as_clause? select_list
-	| SELECT_SYMBOL hint? opt_select_with? all_or_distinct? opt_select_as_clause? FROM_SYMBOL {p.NotifyErrorListeners("Syntax error: SELECT list must not be empty", nil, nil)
+	| SELECT_SYMBOL hint? opt_select_with? all_or_distinct? opt_select_as_clause? FROM_SYMBOL {this.notifyErrorListeners("Syntax error: SELECT list must not be empty", null, null)
 		};
 
 opt_select_as_clause:
@@ -1558,11 +1558,11 @@ from_clause: FROM_SYMBOL from_clause_contents;
 
 from_clause_contents:
 	table_primary from_clause_contents_suffix*
-	| AT_SYMBOL {p.NotifyErrorListeners("Query parameters cannot be used in place of table names",nil,nil)
+	| AT_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
 		}
-	| QUESTION_SYMBOL {p.NotifyErrorListeners("Query parameters cannot be used in place of table names",nil,nil)
+	| QUESTION_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
 		}
-	| ATAT_SYMBOL {p.NotifyErrorListeners("System variables cannot be used in place of table names",nil,nil)
+	| ATAT_SYMBOL {this.notifyErrorListeners("System variables cannot be used in place of table names",null,null)
 		};
 
 from_clause_contents_suffix:
@@ -1587,17 +1587,17 @@ pivot_or_unpivot_clause_and_aliases:
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
 	| AS_SYMBOL identifier qualify_clause_nonreserved {
-				 p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil); 
+				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
 		}
 	| identifier pivot_clause as_alias
 	| identifier unpivot_clause as_alias
 	| identifier qualify_clause_nonreserved {
-				 p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil); 
+				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
 		}
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
 	| qualify_clause_nonreserved {
-				 p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil); 
+				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
 		};
 
 as_alias: AS_SYMBOL? identifier;
@@ -1699,27 +1699,27 @@ opt_pivot_or_unpivot_clause_and_alias:
 	| identifier
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
-	| AS_SYMBOL identifier qualify_clause_nonreserved {p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil)
+	| AS_SYMBOL identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
 		}
 	| identifier pivot_clause as_alias?
 	| identifier unpivot_clause as_alias?
-	| identifier qualify_clause_nonreserved {p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil)
+	| identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
 		}
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
-	| qualify_clause_nonreserved {p.NotifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", nil, nil)
+	| qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
 		};
 
 table_path_expression_base:
 	unnest_expression
 	| maybe_slashed_or_dashed_path_expression
-	| path_expression LS_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Array element access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",nil,nil)
+	| path_expression LS_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Array element access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",null,null)
 		}
-	| path_expression DOT_SYMBOL LR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Generalized field access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",nil,nil)
+	| path_expression DOT_SYMBOL LR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Generalized field access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",null,null)
 		}
-	| unnest_expression LS_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Array element access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",nil,nil)
+	| unnest_expression LS_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Array element access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",null,null)
 		}
-	| unnest_expression DOT_SYMBOL LR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Generalized field access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",nil,nil)
+	| unnest_expression DOT_SYMBOL LR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Generalized field access is not allowed in the FROM clause without UNNEST; Use UNNEST(<expression>)",null,null)
 		};
 
 maybe_slashed_or_dashed_path_expression:
@@ -1761,7 +1761,7 @@ slashed_path_expression:
 
 unnest_expression:
 	unnest_expression_prefix opt_array_zip_mode? RR_BRACKET_SYMBOL
-	| UNNEST_SYMBOL LR_BRACKET_SYMBOL SELECT_SYMBOL {p.NotifyErrorListeners("The argument to UNNEST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", nil, nil)
+	| UNNEST_SYMBOL LR_BRACKET_SYMBOL SELECT_SYMBOL {this.notifyErrorListeners("The argument to UNNEST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", null, null)
 		};
 
 unnest_expression_prefix:
@@ -1784,17 +1784,17 @@ tvf_argument:
 	| model_clause
 	| connection_clause
 	| named_argument
-	| LR_BRACKET_SYMBOL table_clause RR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Table arguments for table-valued function calls written as \"TABLE path\" must not be enclosed in parentheses. To fix this, replace (TABLE path) with TABLE path",nil,nil)
+	| LR_BRACKET_SYMBOL table_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Table arguments for table-valued function calls written as \"TABLE path\" must not be enclosed in parentheses. To fix this, replace (TABLE path) with TABLE path",null,null)
 		}
-	| LR_BRACKET_SYMBOL model_clause RR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Model arguments for table-valued function calls written as \"MODEL path\" must not be enclosed in parentheses. To fix this, replace (MODEL path) with MODEL path",nil,nil)
+	| LR_BRACKET_SYMBOL model_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Model arguments for table-valued function calls written as \"MODEL path\" must not be enclosed in parentheses. To fix this, replace (MODEL path) with MODEL path",null,null)
 		}
-	| LR_BRACKET_SYMBOL connection_clause RR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Connection arguments for table-valued function calls written as \"CONNECTION path\" must not be enclosed in parentheses. To fix this, replace (CONNECTION path) with CONNECTION path",nil,nil)
+	| LR_BRACKET_SYMBOL connection_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Connection arguments for table-valued function calls written as \"CONNECTION path\" must not be enclosed in parentheses. To fix this, replace (CONNECTION path) with CONNECTION path",null,null)
 		}
-	| LR_BRACKET_SYMBOL named_argument RR_BRACKET_SYMBOL {p.NotifyErrorListeners("Syntax error: Named arguments for table-valued function calls written as \"name => value\" must not be enclosed in parentheses. To fix this, replace (name => value) with name => value",nil,nil)
+	| LR_BRACKET_SYMBOL named_argument RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Named arguments for table-valued function calls written as \"name => value\" must not be enclosed in parentheses. To fix this, replace (name => value) with name => value",null,null)
 		}
-	| SELECT_SYMBOL {p.NotifyErrorListeners("Syntax error: Each subquery argument for table-valued function calls must be enclosed in parentheses. To fix this, replace SELECT... with (SELECT...)",nil,nil)
+	| SELECT_SYMBOL {this.notifyErrorListeners("Syntax error: Each subquery argument for table-valued function calls must be enclosed in parentheses. To fix this, replace SELECT... with (SELECT...)",null,null)
 		}
-	| WITH_SYMBOL {p.NotifyErrorListeners("Syntax error: Each subquery argument for table-valued function calls must be enclosed in parentheses. To fix this, replace WITH... with (WITH...)",nil,nil)
+	| WITH_SYMBOL {this.notifyErrorListeners("Syntax error: Each subquery argument for table-valued function calls must be enclosed in parentheses. To fix this, replace WITH... with (WITH...)",null,null)
 		};
 
 connection_clause: CONNECTION_SYMBOL path_expression_or_default;
@@ -1956,15 +1956,15 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
-		if localctx.Hint() != nil {
-			p.NotifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", nil, nil)
+		if (localContext.hint() !== null) {
+			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
 		}
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
 		expression_higher_prec_than_and
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
-		p.NotifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", nil, nil)
+		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
 	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
 	| expression_higher_prec_than_and is_operator null_literal
@@ -2023,15 +2023,15 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
-		if localctx.Hint() != nil {
-			p.NotifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", nil, nil)
+		if (localContext.hint() !== null) {
+			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
 		}
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
 		expression_higher_prec_than_and
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
-		p.NotifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", nil, nil)
+		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
 	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
 	| expression_higher_prec_than_and is_operator null_literal
@@ -2222,7 +2222,7 @@ function_call_argument:
 	| named_argument
 	| lambda_argument
 	| sequence_arg
-	| SELECT_SYMBOL { p.NotifyErrorListeners("Each function argument is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", nil, nil); 
+	| SELECT_SYMBOL { this.notifyErrorListeners("Each function argument is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", null, null); 
 		};
 
 sequence_arg: SEQUENCE_SYMBOL path_expression;
@@ -2369,10 +2369,10 @@ opt_at_time_zone: AT_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression;
 
 cast_expression:
 	CAST_SYMBOL LR_BRACKET_SYMBOL expression AS_SYMBOL type opt_format? RR_BRACKET_SYMBOL
-	| CAST_SYMBOL LR_BRACKET_SYMBOL CAST_SYMBOL { p.NotifyErrorListeners("The argument to CAST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", nil, nil); 
+	| CAST_SYMBOL LR_BRACKET_SYMBOL CAST_SYMBOL { this.notifyErrorListeners("The argument to CAST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", null, null); 
 		}
 	| SAFE_CAST_SYMBOL LR_BRACKET_SYMBOL expression AS_SYMBOL type opt_format? RR_BRACKET_SYMBOL
-	| SAFE_CAST_SYMBOL LR_BRACKET_SYMBOL SAFE_CAST_SYMBOL { p.NotifyErrorListeners("The argument to CAST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", nil, nil); 
+	| SAFE_CAST_SYMBOL LR_BRACKET_SYMBOL SAFE_CAST_SYMBOL { this.notifyErrorListeners("The argument to CAST is an expression, not a query; to use a query as an expression, the query must be wrapped with additional parentheses to make it a scalar subquery expression", null, null); 
 		};
 
 case_expression:
@@ -2480,7 +2480,7 @@ named_parameter_expression: AT_SYMBOL identifier;
 // This is opt_type_parameters in zetasql yacc, but here prefer to use ? in ANTLR.
 opt_type_parameters:
 	type_parameters_prefix RR_BRACKET_SYMBOL
-	| type_parameters_prefix COMMA_SYMBOL RR_BRACKET_SYMBOL { p.NotifyErrorListeners("Syntax error: Trailing comma in type parameters list is not allowed.", nil, nil); 
+	| type_parameters_prefix COMMA_SYMBOL RR_BRACKET_SYMBOL { this.notifyErrorListeners("Syntax error: Trailing comma in type parameters list is not allowed.", null, null); 
 		};
 
 type_parameters_prefix:
@@ -2790,11 +2790,11 @@ integer_literal: INTEGER_LITERAL;
 bytes_literal:
 	bytes_literal_component
 	| bytes_literal bytes_literal_component {
-	 literalStopIndex, componentStartIndex := localctx.Bytes_literal().GetStop().GetStop(), localctx.Bytes_literal_component().GetStart().GetStart() 
-	 if literalStopIndex + 1 == componentStartIndex { p.NotifyErrorListeners("Syntax error: concatenated bytes literals must be separated by whitespace or comments.", nil, nil) } 
+	 const literalStopIndex = localContext.bytes_literal()!.stop!.stop; const componentStartIndex = localContext.bytes_literal_component()!.start!.start;
+	 if (literalStopIndex + 1 === componentStartIndex) { this.notifyErrorListeners("Syntax error: concatenated bytes literals must be separated by whitespace or comments.", null, null) } 
 		}
-	| bytes_literal string_literal_component {p.NotifyErrorListeners("Syntax error: string and bytes literals cannot be concatenated.", nil,
-	 nil); };
+	| bytes_literal string_literal_component {this.notifyErrorListeners("Syntax error: string and bytes literals cannot be concatenated.", null,
+	 null); };
 
 null_literal: NULL_SYMBOL;
 
@@ -2803,10 +2803,10 @@ boolean_literal: TRUE_SYMBOL | FALSE_SYMBOL;
 string_literal:
 	string_literal_component
 	| string_literal string_literal_component {
-	 literalStopIndex, componentStartIndex := localctx.String_literal().GetStop().GetStop(), localctx.String_literal_component().GetStart().GetStart() 
-	 if literalStopIndex + 1 == componentStartIndex { p.NotifyErrorListeners("Syntax error: concatenated string literals must be separated by whitespace or comments.", nil, nil) } 
+	 const literalStopIndex = localContext.string_literal()!.stop!.stop; const componentStartIndex = localContext.string_literal_component()!.start!.start;
+	 if (literalStopIndex + 1 === componentStartIndex) { this.notifyErrorListeners("Syntax error: concatenated string literals must be separated by whitespace or comments.", null, null) } 
 		}
-	| string_literal bytes_literal_component {p.NotifyErrorListeners("Syntax error: string and bytes literals cannot be concatenated.", nil, nil); 
+	| string_literal bytes_literal_component {this.notifyErrorListeners("Syntax error: string and bytes literals cannot be concatenated.", null, null); 
 		};
 
 string_literal_component: STRING_LITERAL;
