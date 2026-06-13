@@ -13,6 +13,7 @@ import type {
 	Source,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — BigQuery / GoogleSQL (forked bytebase/parser googlesql/) CST ->
@@ -72,6 +73,10 @@ const AGGREGATES = new Set([
 
 /** Lower a parsed GoogleSQL file (`stmts`: a `;`-separated batch) into the IR. */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	return freezeIR(lowerImpl(tree));
+}
+
+function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const statement = statementCategory(tree);
 	if (statement === "query") {
 		const qs = firstOfRule(tree, P.RULE_query_statement);

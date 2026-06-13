@@ -15,6 +15,7 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Snowflake (grammars-v4 sql/snowflake fork) CST -> the shared,
@@ -92,6 +93,10 @@ const SPLIT_TO_TABLE_COLUMNS = ["SEQ", "INDEX", "VALUE"];
  *  A single query statement lowers fully; anything else (DDL, DML, multi-statement
  *  batches) becomes a flagged non-query body — a valid parse never throws. */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	return freezeIR(lowerImpl(tree));
+}
+
+function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const statement = statementCategory(tree);
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];

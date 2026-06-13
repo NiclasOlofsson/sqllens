@@ -55,6 +55,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
 // CST navigation helpers
@@ -128,8 +129,12 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 // Lowering
 // ---------------------------------------------------------------------------
 
-/** Lower a parsed Databricks statement (CST) into the IR. */
+/** Lower a parsed Databricks statement (CST) into the IR, frozen — immutable after lower() (no pass writes back). */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	return freezeIR(lowerImpl(tree));
+}
+
+function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const statement = statementCategory(tree);
 	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
 	// whole thing rather than modelling whichever SELECT happens to come first inside it.
