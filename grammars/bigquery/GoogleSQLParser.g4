@@ -65,6 +65,7 @@ sql_statement_body:
 	| create_model_statement
 	| create_property_graph_statement
 	| create_schema_statement
+	| create_sequence_statement
 	| create_external_schema_statement
 	| create_snapshot_statement
 	| create_table_function_statement
@@ -529,6 +530,10 @@ create_external_schema_statement:
 create_schema_statement:
 	CREATE_SYMBOL opt_or_replace? SCHEMA_SYMBOL opt_if_not_exists? path_expression
 		opt_default_collate_clause? opt_options_list?;
+
+// CREATE SEQUENCE [IF NOT EXISTS] name [OPTIONS(...)]  (data-definition-language#create_sequence)
+create_sequence_statement:
+	CREATE_SYMBOL opt_or_replace? SEQUENCE_SYMBOL opt_if_not_exists? path_expression opt_options_list?;
 
 create_property_graph_statement:
 	CREATE_SYMBOL opt_or_replace? opt_create_scope? PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_not_exists?
@@ -1453,16 +1458,19 @@ query: query_without_pipe_operators pipe_operator*;
 
 // A bare FROM clause (no SELECT) is a valid query in pipe syntax — `FROM t` ≡ `SELECT * FROM t`.
 query_without_pipe_operators:
-	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause?
+	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause? lock_mode_clause?
 	| with_clause_with_trailing_comma select_or_from_keyword {this.notifyErrorListeners("Syntax error: Trailing comma after the WITH clause before the main query is not allowed", null, null)
 		}
 	| with_clause PIPE_SYMBOL {this.notifyErrorListeners("Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here", null, null)
 		}
-	| query_primary_or_set_operation order_by_clause? limit_offset_clause?
-	| with_clause? from_query;
+	| query_primary_or_set_operation order_by_clause? limit_offset_clause? lock_mode_clause?
+	| with_clause? from_query lock_mode_clause?;
 
 // FROM-query: the whole query is just a FROM clause (rows flow into the pipe operators).
 from_query: from_clause;
+
+// FOR UPDATE — the only lock mode in GoogleSQL (query-syntax). Trails ORDER BY / LIMIT.
+lock_mode_clause: FOR_SYMBOL UPDATE_SYMBOL;
 
 // --- Pipe operators (…/pipe-syntax; grammar from google/googlesql googlesql.tm) -----------------
 // Every operator is introduced by `|>`. Each delegates to the standard clause it mirrors; the
@@ -1854,23 +1862,45 @@ partition_by_clause_prefix_no_hint:
 		COMMA_SYMBOL expression
 	)*;
 
+// query-syntax MATCH_RECOGNIZE — ORDER BY / MEASURES / DEFINE mandatory; PARTITION BY, AFTER MATCH
+// SKIP, OPTIONS, alias optional. (ZetaSQL has no ONE/ALL ROWS PER MATCH, PERMUTE, CLASSIFIER, etc.)
 match_recognize_clause:
 	MATCH_RECOGNIZE_SYMBOL LR_BRACKET_SYMBOL partition_by_clause_prefix? order_by_clause
-		MEASURES_SYMBOL select_list_prefix_with_as_aliases PATTERN_SYMBOL LR_BRACKET_SYMBOL
-		row_pattern_expr RR_BRACKET_SYMBOL DEFINE_SYMBOL with_expression_variable_prefix
-		RR_BRACKET_SYMBOL as_alias?;
+		MEASURES_SYMBOL select_list_prefix_with_as_aliases after_match_skip_clause? PATTERN_SYMBOL
+		LR_BRACKET_SYMBOL row_pattern_expr RR_BRACKET_SYMBOL DEFINE_SYMBOL
+		with_expression_variable_prefix opt_options_list? RR_BRACKET_SYMBOL as_alias?;
 
+after_match_skip_clause:
+	AFTER_SYMBOL MATCH_SYMBOL SKIP_SYMBOL PAST_SYMBOL LAST_SYMBOL ROW_SYMBOL
+	| AFTER_SYMBOL MATCH_SYMBOL SKIP_SYMBOL TO_SYMBOL NEXT_SYMBOL ROW_SYMBOL;
+
+// `|` alternation (and `||` = alternate-with-empty); concatenation by juxtaposition.
 row_pattern_expr:
-	row_pattern_concatenation
-	| row_pattern_expr STROKE_SYMBOL row_pattern_concatenation;
+	row_pattern_concatenation_or_empty
+	| row_pattern_expr STROKE_SYMBOL row_pattern_concatenation_or_empty
+	| row_pattern_expr BOOL_OR_SYMBOL row_pattern_concatenation_or_empty;
+
+row_pattern_concatenation_or_empty: row_pattern_concatenation?;
 
 row_pattern_concatenation:
 	row_pattern_factor
 	| row_pattern_concatenation row_pattern_factor;
 
 row_pattern_factor:
+	row_pattern_primary row_pattern_quantifier?
+	| CIRCUMFLEX_SYMBOL // ^ start anchor
+	| DOLLAR_SYMBOL; // $ end anchor
+
+row_pattern_primary:
 	identifier
 	| LR_BRACKET_SYMBOL row_pattern_expr RR_BRACKET_SYMBOL;
+
+// *, +, ?, {n}, {m,n} with optional reluctant `?`.
+row_pattern_quantifier:
+	(MULTIPLY_OPERATOR | PLUS_OPERATOR | QUESTION_SYMBOL) QUESTION_SYMBOL?
+	| LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL int_literal_or_parameter?
+		RC_BRACKET_SYMBOL QUESTION_SYMBOL?
+	| LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL;
 
 select_list_prefix_with_as_aliases:
 	select_column_expr_with_as_alias (
@@ -1894,9 +1924,10 @@ on_or_using_clause_list: on_or_using_clause+;
 
 on_or_using_clause: on_clause | using_clause;
 
+// JOIN … USING (col, col, …) — a comma-separated column list (the port had a dotted path here).
 using_clause:
 	USING_SYMBOL LR_BRACKET_SYMBOL identifier (
-		DOT_SYMBOL identifier
+		COMMA_SYMBOL identifier
 	)* RR_BRACKET_SYMBOL;
 
 join_hint: HASH_SYMBOL | LOOKUP_SYMBOL;
@@ -2168,6 +2199,11 @@ expression_higher_prec_than_and:
 	| expression_subquery_with_keyword
 	| expression_higher_prec_than_and LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+	// Chained function call: base.method(args) — functions-reference#chained_function_calls.
+	| expression_higher_prec_than_and DOT_SYMBOL (
+		identifier
+		| function_name_from_keyword
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	| expression_higher_prec_than_and DOT_SYMBOL identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
@@ -2240,6 +2276,11 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_subquery_with_keyword
 	| expression_higher_prec_than_and LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+	// Chained function call (see expression_higher_prec_than_and).
+	| expression_higher_prec_than_and DOT_SYMBOL (
+		identifier
+		| function_name_from_keyword
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	| expression_higher_prec_than_and DOT_SYMBOL identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
@@ -2299,7 +2340,8 @@ comparative_operator:
 	| GT_OPERATOR
 	| GE_OPERATOR;
 
-shift_operator: KL_OPERATOR | KR_OPERATOR;
+// '>>' is lexed as two '>' so nested generics close (ARRAY<STRUCT<INT64>>); recombine here.
+shift_operator: KL_OPERATOR | GT_OPERATOR GT_OPERATOR;
 
 additive_operator: PLUS_OPERATOR | MINUS_OPERATOR;
 
@@ -2648,15 +2690,18 @@ struct_braced_constructor:
 	stype = struct_type ctor = braced_constructor
 	| STRUCT_SYMBOL ctor = braced_constructor;
 
-braced_new_constructor: NEW_SYMBOL type_name new_constructor;
+// NEW Type { field: value, … } — braced form (the parenthesized `NEW Type(args)` is new_constructor).
+braced_new_constructor: NEW_SYMBOL type_name braced_constructor;
 
 braced_constructor:
 	braced_constructor_start RC_BRACKET_SYMBOL
 	| braced_constructor_prefix RC_BRACKET_SYMBOL
-	// Allow trailing comma in braced constructor. | braced_constructor_prefix
-	COMMA_SYMBOL RC_BRACKET_SYMBOL;
+	// Allow a trailing comma in a braced constructor.
+	| braced_constructor_prefix COMMA_SYMBOL RC_BRACKET_SYMBOL;
 
-braced_constructor_start: RC_BRACKET_SYMBOL;
+// A braced constructor opens with `{` (the port had `}` here, which broke every braced/proto/
+// struct constructor).
+braced_constructor_start: LC_BRACKET_SYMBOL;
 
 braced_constructor_prefix:
 	braced_constructor_start braced_constructor_field
@@ -2788,6 +2833,8 @@ common_keyword_as_identifier:
 	ABORT_SYMBOL
 	| ACCESS_SYMBOL
 	| ACTION_SYMBOL
+	| AFTER_SYMBOL
+	| PAST_SYMBOL
 	| AGGREGATE_SYMBOL
 	| ADD_SYMBOL
 	| ALTER_SYMBOL

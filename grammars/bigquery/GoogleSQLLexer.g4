@@ -55,7 +55,8 @@ LE_OPERATOR: '<=';
 GT_OPERATOR: '>';
 GE_OPERATOR: '>=';
 KL_OPERATOR: '<<';
-KR_OPERATOR: '>>';
+// No '>>' token: it would swallow the closing angle brackets of nested generics
+// (ARRAY<STRUCT<INT64>>). Shift-right is parsed as two adjacent '>' (see shift_operator).
 PLUS_OPERATOR: '+';
 MINUS_OPERATOR: '-';
 MULTIPLY_OPERATOR: '*';
@@ -91,6 +92,8 @@ PIPE_SYMBOL: '|>';
 CIRCUMFLEX_SYMBOL: '^';
 BIT_AND_SYMBOL: '&';
 BOOL_OR_SYMBOL: '||';
+// '$' — MATCH_RECOGNIZE end-of-match anchor (row_pattern_anchor).
+DOLLAR_SYMBOL: '$';
 
 fragment ANY_ESCAPE:
 	'\\' .
@@ -256,6 +259,9 @@ ANALYZE_SYMBOL: 'ANALYZE';
 APPROX_SYMBOL: 'APPROX';
 ARE_SYMBOL: 'ARE';
 ASSERT_SYMBOL: 'ASSERT';
+// MATCH_RECOGNIZE AFTER MATCH SKIP PAST … (non-reserved).
+AFTER_SYMBOL: 'AFTER';
+PAST_SYMBOL: 'PAST';
 // 'AT' the keyword (AT TIME ZONE) — distinct from AT_SYMBOL '@'; the upstream port
 // used '@' in opt_at_time_zone, which made AT TIME ZONE unparseable.
 AT_KEYWORD_SYMBOL: 'AT';
