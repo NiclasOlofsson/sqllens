@@ -1,14 +1,48 @@
-// Public API: parse (Databricks) -> lower -> scope -> qualify -> infer / lineage / symbols, all
-// over the shared dialect-neutral IR (src/ir/ir.ts). Name resolution + type inference + column
-// lineage; no transpilation. (T-SQL, Snowflake and BigQuery parse/lower exist under src/<dialect>
-// but aren't exported here yet — the semantic layer runs on all four unchanged.)
+// Public API — a uniform, layered, composable, immutable analysis surface over the shared
+// dialect-neutral IR (src/ir/ir.ts). The pipeline is parse → lower → resolveScopes → qualify →
+// infer / lineage / symbols; only parse + lower are per-dialect (each dialect has its own
+// grammar/CST), everything after runs unchanged on all four.
+//
+// Three layers of entry:
+//   - Uniform:   parse(sql, dialect) / analyze(sql, dialect, opts), with `Dialect` a parameter.
+//   - Composable: qualify / lineage / deriveSymbols accept the closest upstream result OR a
+//                 string / IR via the idempotent lift helpers (toAst / toScopes).
+//   - Building blocks: the per-dialect parse*/lower and the raw shared passes, for callers who
+//                 want a specific tier or the raw CST escape hatch.
 
-export { parseDatabricks, type ParseResult } from "./databricks/parse.js";
+// --- Uniform entry, lift helpers, typed wrappers, composable passes (src/api.ts) ---
+export {
+	parse,
+	analyze,
+	toAst,
+	toScopes,
+	qualify,
+	lineage,
+	deriveSymbols,
+	TypeInfo,
+	Lineage,
+	originsOfExpr,
+	type Dialect,
+	type DialectOpts,
+	type ParseResultIR,
+	type Analysis,
+} from "./api.js";
 
+// --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---
+export { parseDatabricks } from "./databricks/parse.js";
 export { lower } from "./databricks/lower.js";
+export { parseTSql } from "./tsql/parse.js";
+export { parseSnowflake } from "./snowflake/parse.js";
+export { parseBigQuery } from "./bigquery/parse.js";
+export { lower as lowerTSql } from "./tsql/lower.js";
+export { lower as lowerSnowflake } from "./snowflake/lower.js";
+export { lower as lowerBigQuery } from "./bigquery/lower.js";
+export type { ParseResult } from "./databricks/parse.js";
 
+// --- The IR ---
 export type {
 	CteDef,
+	Expr,
 	Projection,
 	QueryBody,
 	QueryExpr,
@@ -21,22 +55,17 @@ export type {
 
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
 
+// --- Shared passes as building blocks (raw forms) + their typed result interfaces ---
 export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
-export { qualify, type Diagnostic, type Qualification } from "./qualify/qualify.js";
+export { type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
 
-export {
-	deriveSymbols,
-	MAIN_FRAME,
-	type Span,
-	type Sym,
-	type SymbolKind,
-	type SymbolModifier,
-} from "./symbols/symbols.js";
+export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 
 export { inferType } from "./infer/infer.js";
 export { parseType, type Type } from "./infer/types.js";
 
-export { lineage, originsOf, type ColumnLineage, type Origin } from "./lineage/lineage.js";
+// Raw lineage building blocks (the wrapper `Lineage` + composable `lineage` come from ./api.js).
+export { type ColumnLineage, type Origin } from "./lineage/lineage.js";

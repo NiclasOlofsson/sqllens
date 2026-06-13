@@ -100,7 +100,8 @@ Observed once (2026-06-10, Windows): a full `npm test` collapsed in ~5s with eve
 grammars/<dialect>/        split .g4 pair — the hand-maintained source
 src/generated/<dialect>/   antlr-ng output (gitignored build product; never hand-edit)
 src/<dialect>/parse.ts     parse wrapper: two-stage SLL→LL with BailErrorStrategy, returns CST + error count
-src/<dialect>/lower.ts     CST → IR; the only place that knows the dialect's parse-tree shape
+src/<dialect>/lower.ts     CST → IR; the only place that knows the dialect's parse-tree shape. Freezes the IR (freezeIR) before returning — the IR is immutable after lower(); no pass writes back
+src/ir/freeze.ts           deep-freeze of the IR (skips the foreign antlr `cst`/`aliasCst` back-refs), called at the end of every dialect's lower()
 src/ir/ir.ts               dialect-neutral IR (QueryExpr/SelectExpr/Source/Expr…); every node keeps a `cst` back-ref for source spans
 src/scope/scope.ts         resolveScopes(query, dialect) — schema-free symbol table: visible sources, CTE resolution, output columns; the dialect string rides on Scope
 src/qualify/               Schema (sqlglot-style mapping) + qualify — `*` expansion, unknown-table/column/field diagnostics, bottom-up column types
@@ -108,7 +109,8 @@ src/sema/resolve.ts        shared schema-aware column→source binder used by in
 src/infer/                 inferType — engine in infer.ts is dialect-agnostic; per-dialect knowledge in dialect.ts (Spark/T-SQL rules in functions.ts/literals.ts/types.ts, Snowflake's in snowflake.ts, coercion in coerce.ts)
 src/lineage/               lineage/originsOf — base-table origins per output column
 src/symbols/               deriveSymbols — kind×modifier symbol model over the scope tree; carries types/origins when given a schema
-src/index.ts               public API (Databricks exported; T-SQL, Snowflake and BigQuery parse/lower exist but aren't exported yet)
+src/api.ts                 uniform/layered/composable/immutable public surface: Dialect, parse(sql,dialect)→{ast,errors,cst}, analyze(sql,dialect,{schema?}), idempotent lift helpers (toAst/toScopes), composable qualify/lineage/deriveSymbols (accept string|IR|ScopeTree), typed result wrappers (TypeInfo.typeOf, Lineage.originsOf)
+src/index.ts               public barrel: re-exports src/api.ts + the per-dialect parse*/lower building blocks (all four dialects) and the raw shared passes
 tools/gen.mjs              generation driver (sorts .g4 so the lexer generates before the parser — tokenVocab)
 ```
 
