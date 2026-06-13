@@ -45,6 +45,18 @@ Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 `sql/snowflake`. Copyright (c) 2022 Michał Lorek. Licensed under the MIT License
 (full text retained in the file header).
 
+### BigQuery / GoogleSQL grammar — BSD 3-Clause
+
+`grammars/bigquery/GoogleSQLLexer.g4`, `grammars/bigquery/GoogleSQLParser.g4`
+
+Forked from [bytebase/parser](https://github.com/bytebase/parser), path
+`googlesql/` (the h3n4l / Bytebase GoogleSQL grammar — same authors as the
+grammars-v4 Snowflake grammar above). It was hand-authored from Google's BigQuery
+"Query Syntax" reference, with ZetaSQL's `bison_parser.y` as the spec for syntax
+the docs omit. Copyright (c) 2025, Bytebase. Licensed under the BSD 3-Clause
+License — full text vendored at [`grammars/bigquery/LICENSE`](grammars/bigquery/LICENSE),
+provenance in the file headers.
+
 ## Runtime and build dependencies (not redistributed in source)
 
 - **antlr4ng** — the TypeScript ANTLR runtime (BSD-3-Clause). Runtime dependency.
