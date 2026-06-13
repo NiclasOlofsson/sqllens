@@ -45,6 +45,9 @@ function cloneRetyped(src: Token, type: number, text: string, start: number, sto
 	t.setText(text);
 	t.start = start;
 	t.stop = stop;
+	// Keep the column in sync with the byte offset so error messages on a decomposed path component
+	// (`x.1.2.3`) point at the right spot; a path token never spans a newline, so the line is unchanged.
+	t.setCharPositionInLine(src.column + (start - src.start));
 	return t;
 }
 
