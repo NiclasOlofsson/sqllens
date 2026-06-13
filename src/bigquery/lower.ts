@@ -130,7 +130,12 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 	if (!qwpo) return emptyQuery(qs, "non-query");
 
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
-	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
+	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
+	const ctes = withClause
+		? directChildrenOfRule(withClause, P.RULE_with_clause_entry)
+				.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
+				.map(lowerCte)
+		: [];
 
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
 	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
@@ -252,7 +257,12 @@ function lowerParenthesizedQuery(paren: ParserRuleContext): QueryExpr {
 function lowerInnerQuery(query: ParserRuleContext, qwpo: ParserRuleContext | undefined): QueryExpr {
 	if (!qwpo) return emptyQuery(query, "non-query");
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
-	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
+	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
+	const ctes = withClause
+		? directChildrenOfRule(withClause, P.RULE_with_clause_entry)
+				.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
+				.map(lowerCte)
+		: [];
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
 	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
 	const body = qpos

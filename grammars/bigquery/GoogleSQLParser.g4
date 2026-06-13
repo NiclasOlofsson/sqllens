@@ -1892,8 +1892,11 @@ tvf_with_suffixes:
 // the upstream error actions predate that. The clause still lands here (after the table
 // alias) because opt_clauses_following_from only reaches QUALIFY via WHERE/GROUP BY/HAVING.
 pivot_or_unpivot_clause_and_aliases:
-	AS_SYMBOL identifier
+	// QUALIFY is nonreserved in GoogleSQL, so it may be a bare table alias (`FROM t QUALIFY`,
+	// `FROM t AS QUALIFY`); LL prediction still routes `QUALIFY <expr>` to the qualify clause below.
+	AS_SYMBOL (identifier | QUALIFY_SYMBOL)
 	| identifier
+	| QUALIFY_SYMBOL
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
 	| AS_SYMBOL identifier qualify_clause_nonreserved
@@ -2033,8 +2036,12 @@ table_path_alias_or_qualify:
 	AS_SYMBOL identifier qualify_clause_nonreserved
 	| identifier qualify_clause_nonreserved
 	| qualify_clause_nonreserved
-	| AS_SYMBOL identifier
-	| identifier;
+	// QUALIFY is nonreserved in GoogleSQL, so it may itself be the table alias (`FROM t QUALIFY`,
+	// `FROM t AS QUALIFY`); the `qualify_clause_nonreserved` alts above are tried first, so a real
+	// `QUALIFY <expr>` clause still wins over a bare-QUALIFY alias.
+	| AS_SYMBOL (identifier | QUALIFY_SYMBOL)
+	| identifier
+	| QUALIFY_SYMBOL;
 
 opt_at_system_time:
 	FOR_SYMBOL SYSTEM_SYMBOL TIME_SYMBOL AS_SYMBOL OF_SYMBOL expression
