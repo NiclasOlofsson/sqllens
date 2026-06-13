@@ -87,7 +87,7 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // and reserved-keyword parameter names (`@from`, `@full.1`). Negatives: of 2574, 496 DDL excluded;
 // of the 2078 in-scope negatives we reject 1864 and still wrongly accept 214. Both in-scope floors
 // ratchet up as the grammar tightens.
-const IN_SCOPE_POSITIVE_BASELINE = 2598; // in-scope (non-DDL) parsed of 2661; 63 in-scope still failing
+const IN_SCOPE_POSITIVE_BASELINE = 2607; // in-scope (non-DDL) parsed of 2661; 54 in-scope still failing
 const IN_SCOPE_NEGATIVE_BASELINE = 1864; // in-scope (non-DDL) rejected of 2078; 214 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {

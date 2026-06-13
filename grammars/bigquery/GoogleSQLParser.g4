@@ -102,8 +102,10 @@ sql_statement_body:
 	| create_entity_statement
 	// /* TODO(zp): define macro statement */ | define_macro_statement
 	| define_table_statement
-	| describe_statement
-	| execute_immediate
+	// CALL/DESCRIBE/EXECUTE IMMEDIATE/RUN/SHOW may carry a pipe-operator suffix when they return a
+	// single table (FEATURE_STATEMENT_WITH_PIPE_OPERATORS; sql_statement_body_maybe_pipe_suffix in
+	// googlesql.tm). The suffix is optional, so this also covers the bare statements.
+	| statement_maybe_pipe_suffix
 	| explain_statement
 	| export_data_statement
 	| export_model_statement
@@ -113,10 +115,8 @@ sql_statement_body:
 	| rename_statement
 	| revoke_statement
 	| rollback_statement
-	| show_statement
 	| drop_all_row_access_policies_statement
 	| drop_statement
-	| call_statement
 	| import_statement
 	| module_statement
 	| undrop_statement
@@ -124,6 +124,27 @@ sql_statement_body:
 	| subpipeline_statement;
 
 subpipeline_statement: pipe_operator+;
+
+// Statements that may return a single table and so accept a trailing pipe-operator suffix
+// (googlesql.tm sql_statement_body_maybe_pipe_suffix). The suffix is optional.
+statement_maybe_pipe_suffix: (
+		call_statement
+		| describe_statement
+		| execute_immediate
+		| run_statement
+		| show_statement
+	) pipe_operator*;
+
+// RUN '<path>' [( arg => 'v', … )] (run_statement in googlesql.tm). RUN BATCH is a separate batch
+// statement (run_batch_statement), distinguished by the BATCH keyword vs a string literal.
+run_statement:
+	RUN_SYMBOL string_literal (
+		LR_BRACKET_SYMBOL run_statement_arg_list? RR_BRACKET_SYMBOL
+	)?;
+
+run_statement_arg_list: run_statement_arg (COMMA_SYMBOL run_statement_arg)* COMMA_SYMBOL?;
+
+run_statement_arg: identifier (EQUAL_OPERATOR | EQUAL_GT_BRACKET_SYMBOL) string_literal;
 
 gql_statement:
 	GRAPH_SYMBOL path_expression graph_operation_block;
