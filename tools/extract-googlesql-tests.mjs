@@ -66,4 +66,5 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 	}
 }
 console.log(`extracted: ${pos} positive, ${neg} negative -> ${OUT}`);
-if (capped) console.log(`note: ${capped} block(s) had >${MAX_VARIANTS} {{}} variants; capped to the first ${MAX_VARIANTS}`);
+if (capped)
+	console.log(`note: ${capped} block(s) had >${MAX_VARIANTS} {{}} variants; capped to the first ${MAX_VARIANTS}`);

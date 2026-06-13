@@ -177,7 +177,9 @@ function lowerSetOperation(setop: ParserRuleContext): QueryBody {
 		const rhsPrimary = directChildrenOfRule(item, P.RULE_query_primary)[0];
 		const right = rhsPrimary ? lowerQueryPrimary(rhsPrimary) : emptyBody(item, "non-query");
 		const typeNode = meta ? directChildrenOfRule(meta, P.RULE_query_set_operation_type)[0] : undefined;
-		const t = typeNode ? directTokenType(typeNode, [P.UNION_SYMBOL, P.EXCEPT_SYMBOL, P.INTERSECT_SYMBOL]) : undefined;
+		const t = typeNode
+			? directTokenType(typeNode, [P.UNION_SYMBOL, P.EXCEPT_SYMBOL, P.INTERSECT_SYMBOL])
+			: undefined;
 		const op = t === P.INTERSECT_SYMBOL ? "intersect" : t === P.EXCEPT_SYMBOL ? "except" : "union";
 		// set_operation_metadata … all_or_distinct (ALL | DISTINCT) — ALL present => UNION ALL.
 		const all = meta !== undefined && hasTokenDeep(meta, P.ALL_SYMBOL);
@@ -237,7 +239,8 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 
 	const groupByClause = following ? firstShallow(following, P.RULE_group_by_clause) : undefined;
 	const groupBy = groupByClause ? extractGroupBy(groupByClause) : undefined;
-	const groupByAll = groupByClause !== undefined && directChildrenOfRule(groupByClause, P.RULE_group_by_all).length > 0;
+	const groupByAll =
+		groupByClause !== undefined && directChildrenOfRule(groupByClause, P.RULE_group_by_all).length > 0;
 
 	const havingClause = following ? firstShallow(following, P.RULE_having_clause) : undefined;
 	const having = havingClause ? lowerExpr(directChildrenOfRule(havingClause, P.RULE_expression)[0]) : undefined;
@@ -304,7 +307,11 @@ function buildProjection(item: ParserRuleContext): Projection {
 			? directChildrenOfRule(withAlias, P.RULE_identifier)[0]
 			: directChildrenOfRule(colExpr, P.RULE_identifier)[0];
 		const expr = exprNode ? lowerExpr(exprNode) : otherExpr(colExpr);
-		const name = aliasId ? identText(aliasId) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
+		const name = aliasId
+			? identText(aliasId)
+			: expr.kind === "column"
+				? expr.parts[expr.parts.length - 1]
+				: undefined;
 		return { name, isStar: false, expr, cst: item };
 	}
 	return { name: undefined, isStar: false, expr: otherExpr(item), cst: item };
@@ -550,7 +557,14 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 			}
 			const boolLit = directChildrenOfRule(node, P.RULE_boolean_literal)[0];
 			if (boolLit) {
-				return { kind: "predicate", op: boolLit.getText().toLowerCase(), negated, operand, args: [], cst: node };
+				return {
+					kind: "predicate",
+					op: boolLit.getText().toLowerCase(),
+					negated,
+					operand,
+					args: [],
+					cst: node,
+				};
 			}
 			return { kind: "predicate", op: "null", negated, operand, args: [], cst: node };
 		}
@@ -720,9 +734,23 @@ function lowerLeaf(node: ParserRuleContext): Expr {
 			return { kind: "function", name: "interval", args, aggregate: false, distinct: false, cst: node };
 		}
 		case P.RULE_array_constructor:
-			return { kind: "function", name: "array", args: collectArgExprs(node), aggregate: false, distinct: false, cst: node };
+			return {
+				kind: "function",
+				name: "array",
+				args: collectArgExprs(node),
+				aggregate: false,
+				distinct: false,
+				cst: node,
+			};
 		case P.RULE_struct_constructor:
-			return { kind: "function", name: "struct", args: collectArgExprs(node), aggregate: false, distinct: false, cst: node };
+			return {
+				kind: "function",
+				name: "struct",
+				args: collectArgExprs(node),
+				aggregate: false,
+				distinct: false,
+				cst: node,
+			};
 		case P.RULE_expression_subquery_with_keyword:
 			return lowerSubqueryKeyword(node);
 		case P.RULE_parenthesized_expression_not_a_query: {
@@ -748,7 +776,9 @@ function lowerSubqueryKeyword(node: ParserRuleContext): Expr {
 function lowerFunctionCall(node: ParserRuleContext): Expr {
 	const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
 	const keyword = directChildrenOfRule(node, P.RULE_function_name_from_keyword)[0];
-	const name = (path ? pathParts(path).slice(-1)[0] : keyword ? keyword.getText() : leftmostToken(node) ?? "").toLowerCase();
+	const name = (
+		path ? pathParts(path).slice(-1)[0] : keyword ? keyword.getText() : (leftmostToken(node) ?? "")
+	).toLowerCase();
 
 	const suffix = directChildrenOfRule(node, P.RULE_function_call_expression_with_clauses_suffix)[0];
 	const args = suffix ? collectCallArgs(suffix) : [];
@@ -796,10 +826,12 @@ function lowerOver(over: ParserRuleContext): { partitionBy: Expr[]; orderBy: Exp
 	const pb = firstOfRule(spec, P.RULE_partition_by_clause);
 	const partitionBy = pb ? collectOfRule(pb, P.RULE_expression).map(lowerExpr) : [];
 	const ob = directChildrenOfRule(spec, P.RULE_order_by_clause)[0];
-	const orderBy = ob ? collectOfRule(ob, P.RULE_ordering_expression).map((oe) => {
-		const e = directChildrenOfRule(oe, P.RULE_expression)[0];
-		return e ? lowerExpr(e) : otherExpr(oe);
-	}) : [];
+	const orderBy = ob
+		? collectOfRule(ob, P.RULE_ordering_expression).map((oe) => {
+				const e = directChildrenOfRule(oe, P.RULE_expression)[0];
+				return e ? lowerExpr(e) : otherExpr(oe);
+			})
+		: [];
 	return { partitionBy, orderBy, cst: over };
 }
 
@@ -818,9 +850,7 @@ function lowerCase(node: ParserRuleContext): Expr {
 	for (let i = 0; i < pairCount; i++) {
 		const whenVal = lowerExpr(remaining[i * 2]);
 		const then = lowerExpr(remaining[i * 2 + 1]);
-		const when = subject
-			? { kind: "binary" as const, op: "=", left: subject, right: whenVal, cst: node }
-			: whenVal;
+		const when = subject ? { kind: "binary" as const, op: "=", left: subject, right: whenVal, cst: node } : whenVal;
 		whens.push({ when, then });
 	}
 	const elseExpr = hasElse ? lowerExpr(remaining[remaining.length - 1]) : undefined;
@@ -998,7 +1028,10 @@ function pathParts(node: ParserRuleContext): string[] {
 /** A dashed/slashed path (BigQuery `project-id.dataset.table`) used as a table name. */
 function dashedPathParts(base: ParserRuleContext): string[] {
 	const text = stripBackticks(base.getText());
-	return text.split(".").map(stripBackticks).filter((p) => p.length > 0);
+	return text
+		.split(".")
+		.map(stripBackticks)
+		.filter((p) => p.length > 0);
 }
 
 /** The name parts of the leading ehpa of `t.*` (for the star qualifier). */
@@ -1109,7 +1142,11 @@ function hasTokenDeep(node: ParseTree, type: number): boolean {
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const child = node.getChild(i);
 		if (child instanceof TerminalNode && child.symbol.type === type) return true;
-		if (child instanceof ParserRuleContext && child.ruleIndex !== P.RULE_parenthesized_query && hasTokenDeep(child, type)) {
+		if (
+			child instanceof ParserRuleContext &&
+			child.ruleIndex !== P.RULE_parenthesized_query &&
+			hasTokenDeep(child, type)
+		) {
 			return true;
 		}
 	}
