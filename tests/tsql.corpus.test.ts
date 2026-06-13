@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { lower, statementCategories } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
@@ -45,7 +45,12 @@ function parseAndClassify(sql: string): { errors: number; kinds: ReturnType<type
 }
 
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
-	const files = readdirSync(EXAMPLES).filter((f) => f.endsWith(".sql"));
+	// Read the directory in beforeAll, not at collection time — vitest runs the describe body even
+	// when skipIf is true, so a top-level readdirSync throws ENOENT when the corpus is absent.
+	let files: string[];
+	beforeAll(() => {
+		files = readdirSync(EXAMPLES).filter((f) => f.endsWith(".sql"));
+	});
 
 	it("parses the full T-SQL example scripts via tsql_file (>= baseline)", () => {
 		let ok = 0;

@@ -1,6 +1,6 @@
 import { existsSync } from "node:fs";
 import { resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
 import { inferType } from "../src/infer/infer.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { qualify } from "../src/qualify/qualify.js";
@@ -21,8 +21,15 @@ import { parseAdventureWorks } from "./helpers/adventureworks.js";
 const FILE = resolve("vendor/adventureworks/instawdb.sql");
 
 describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (schema + views)", () => {
-	const aw = parseAdventureWorks(FILE);
-	const schema = new Schema(aw.schema);
+	// Read the corpus in beforeAll, not at suite-collection time: vitest still runs the describe
+	// body to collect tests even when skipIf is true, so a top-level read throws ENOENT when the
+	// gitignored file is absent. beforeAll runs only when the suite actually runs.
+	let aw: ReturnType<typeof parseAdventureWorks>;
+	let schema: Schema;
+	beforeAll(() => {
+		aw = parseAdventureWorks(FILE);
+		schema = new Schema(aw.schema);
+	});
 
 	it("extracts the catalog from the DDL", () => {
 		expect(aw.tableCount).toBeGreaterThanOrEqual(60);
