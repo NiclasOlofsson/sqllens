@@ -2921,7 +2921,8 @@ replace_fields_arg:
 generalized_path_expression:
 	identifier
 	| generalized_path_expression DOT_SYMBOL generalized_extension_path
-	| generalized_path_expression DOT_SYMBOL identifier
+	// After a dot, a path component may be a reserved keyword (DOT_IDENTIFIER mode): `path.to.extension`.
+	| generalized_path_expression DOT_SYMBOL dot_identifier
 	| generalized_path_expression LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL;
 
 generalized_extension_path:
