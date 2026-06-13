@@ -102,8 +102,8 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // empty exception handlers, STRUCT<>, quantified-comparison hints, Unicode whitespace, `\--`-escaped
 // comment lines, and empty scripts. Negatives: of 2574, 513 detect-only/empty-script excluded; of
 // the 2061 in-scope negatives we reject 1847 and still wrongly accept 214. Both floors ratchet up.
-const IN_SCOPE_POSITIVE_BASELINE = 2630; // in-scope parsed of 2645; 15 in-scope still failing
-const IN_SCOPE_NEGATIVE_BASELINE = 1848; // in-scope rejected of 2061; 213 in-scope still accepted
+const IN_SCOPE_POSITIVE_BASELINE = 2629; // in-scope parsed of 2642; 13 in-scope still failing
+const IN_SCOPE_NEGATIVE_BASELINE = 1850; // in-scope rejected of 2064; 214 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {

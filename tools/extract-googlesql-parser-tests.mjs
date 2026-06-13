@@ -119,65 +119,100 @@ const IMPLEMENTED = new Set([
 const featureTokens = (s) => [...s.matchAll(/\+([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]);
 
 /**
- * Flatten the expected section into an ordered list of per-(queryVariant, directiveCombo) negative
- * flags. Handles both `ALTERNATION GROUP: <label>` (one config) and `ALTERNATION GROUPS:` followed by
- * several label lines that all share the next expected (many configs, one expected). The flat order is
- * query-variant outer, directive-combo inner — the same order `expand()` produces both — so a later
- * positional index `v * D + comboIndex` selects the right cell. Returns `[neg]` for a non-alternation
- * block.
+ * Expand `{{a|b}}` like `expand`, but also record, per result, the chosen option text at each `{{}}`
+ * in source order. The label sequence lets us reconstruct ZetaSQL's per-cell ALTERNATION GROUP label.
  */
-function flatGroupNegatives(expectedSection) {
-	if (!/^ALTERNATION GROUPS?:/m.test(expectedSection)) return [isSyntaxError(expectedSection)];
-	const parts = expectedSection.split(/^ALTERNATION GROUPS?:.*$/m).slice(1);
-	const flat = [];
-	for (const p of parts) {
-		const lines = p.replace(/^[\r\n]+/, "").split("\n");
-		let i = 0;
+function expandWithLabels(query) {
+	const m = query.match(/\{\{([\s\S]*?)\}\}/);
+	if (!m) return [{ sql: query, labels: [] }];
+	const opts = m[1].split("|");
+	return opts.flatMap((o) =>
+		expandWithLabels(query.slice(0, m.index) + o + query.slice(m.index + m[0].length)).map((r) => ({
+			sql: r.sql,
+			labels: [o, ...r.labels],
+		})),
+	);
+}
+
+/**
+ * Our chosen option text at each `{{}}` in the directive — the option that enables the most IMPLEMENTED
+ * features and no unimplemented ones, i.e. the feature config our permissive superset represents.
+ */
+function directiveChoices(directive) {
+	const choices = [];
+	for (const m of directive.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
+		const opts = m[1].split("|");
+		let best = opts[0];
+		let bestScore = -1;
+		for (const o of opts) {
+			const feats = featureTokens(o);
+			if (feats.every((f) => IMPLEMENTED.has(f)) && feats.length > bestScore) {
+				bestScore = feats.length;
+				best = o;
+			}
+		}
+		choices.push(best);
+	}
+	return choices;
+}
+
+/**
+ * Map each ALTERNATION GROUP label → its negative flag. ZetaSQL labels a cell by joining the chosen
+ * alternation option texts — directive `{{}}`s then query `{{}}`s, in source order — with ",", and uses
+ * "<empty>" when every choice is empty. `ALTERNATION GROUP: <label>` (singular) carries one label on
+ * the header; `ALTERNATION GROUPS:` (plural) lists several labels (sharing one expected) on the lines
+ * before `--`. Returns null when the block has no alternations at all.
+ */
+function buildLabelMap(expectedSection) {
+	if (!/^ALTERNATION GROUPS?:/m.test(expectedSection)) return null;
+	const map = new Map();
+	const heads = [...expectedSection.matchAll(/^ALTERNATION GROUP(S)?:(.*)$/gm)];
+	for (let h = 0; h < heads.length; h++) {
+		const plural = heads[h][1] === "S";
+		const start = heads[h].index + heads[h][0].length;
+		const end = h + 1 < heads.length ? heads[h + 1].index : expectedSection.length;
+		const body = expectedSection.slice(start, end);
 		const labels = [];
-		while (i < lines.length && lines[i].trim() !== "--") labels.push(lines[i++]);
-		const neg = isSyntaxError(lines.slice(i).join("\n").replace(/^[\r\n]*--[\r\n]*/, ""));
-		const count = Math.max(1, labels.filter((l) => l.trim()).length); // GROUPS: shares one expected
-		for (let k = 0; k < count; k++) flat.push(neg);
+		let expectedText;
+		if (plural) {
+			const lines = body.replace(/^[\r\n]+/, "").split("\n");
+			let i = 0;
+			while (i < lines.length && lines[i].trim() !== "--") {
+				if (lines[i].trim()) labels.push(lines[i].trim());
+				i++;
+			}
+			expectedText = lines.slice(i).join("\n").replace(/^[\r\n]*--[\r\n]*/, "");
+		} else {
+			labels.push(heads[h][2].trim());
+			const ci = body.indexOf("--");
+			expectedText = ci === -1 ? body : body.slice(ci + 2);
+		}
+		const neg = isSyntaxError(expectedText);
+		for (const lab of labels) map.set(lab, neg);
 	}
-	return flat;
+	return map;
 }
 
 /**
- * Index, among the directive's `expand()` combos, of the combo representing OUR parser: every toggled
- * feature we implement ON, every toggled feature we don't OFF. Base features (present in all combos)
- * are always on regardless. Falls back to the max-feature (last) combo when no exact match.
+ * Classify each expanded query variant as negative (the query must not parse for our feature config)
+ * or positive. We reconstruct the ALTERNATION GROUP label of each cell — our directive feature choices
+ * plus the variant's own query choices, joined with "," (ZetaSQL's labelling) — and look it up. This is
+ * robust to multi-dimensional alternations and to ZetaSQL grouping several combos under one expected
+ * (where a positional grid is ambiguous). Falls back to the single non-alternation expected.
  */
-function ourComboIndex(directive) {
-	const combos = expand(directive);
-	if (combos.length <= 1) return 0;
-	const perCombo = combos.map(featureTokens);
-	const all = [...new Set(perCombo.flat())];
-	const toggled = all.filter((f) => !perCombo.every((c) => c.includes(f)));
-	const target = new Set(toggled.filter((f) => IMPLEMENTED.has(f)));
-	for (let i = 0; i < combos.length; i++) {
-		const on = new Set(perCombo[i].filter((f) => toggled.includes(f)));
-		if (on.size === target.size && [...target].every((f) => on.has(f))) return i;
-	}
-	return combos.length - 1;
-}
-
-/**
- * Classify each expanded query variant as negative (syntax error for our feature config) or positive,
- * grading by the directive combo our parser represents. The flattened expected cells enumerate in the
- * same order ZetaSQL expands alternations: leftmost (the directive, on its own line before the query)
- * varies slowest, so the grid is combo-OUTER, query-INNER — cell (combo d, query v) is at index
- * `d * Q + v`. We pick our directive combo `ci`, so variant v's cell is `flat[ci * Q + v]`. (This only
- * matters when BOTH the directive and the query alternate; with one dimension fixed the two index
- * forms coincide.)
- */
-function classifyVariants(variants, expectedSection, directive) {
-	const flat = flatGroupNegatives(expectedSection);
-	const D = expand(directive).length;
-	const Q = variants.length;
-	const ci = ourComboIndex(directive);
-	if (flat.length === Q * D) return variants.map((_, v) => flat[ci * Q + v]);
-	if (flat.length === 1) return variants.map(() => flat[0]);
-	return variants.map((_, v) => flat[v] ?? flat[0] ?? false);
+function classifyVariants(query, expectedSection, directive) {
+	const withLabels = expandWithLabels(query);
+	const labelMap = buildLabelMap(expectedSection);
+	if (!labelMap) return withLabels.map(() => isSyntaxError(expectedSection));
+	const dChoices = directiveChoices(directive);
+	return withLabels.map((v) => {
+		const joined = [...dChoices, ...v.labels].join(",");
+		const key = joined === "" ? "<empty>" : joined;
+		if (labelMap.has(key)) return labelMap.get(key);
+		// Unmatched (label-format edge): default to the most common verdict among the groups.
+		const negs = [...labelMap.values()];
+		return negs.filter(Boolean).length >= negs.length / 2;
+	});
 }
 
 rmSync(OUT, { recursive: true, force: true });
@@ -207,7 +242,7 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		const expectedSection = block.slice(sep + 3);
 		const all = expand(query);
 		if (all.length > MAX_VARIANTS) capped++;
-		const negatives = classifyVariants(all, expectedSection, directive);
+		const negatives = classifyVariants(query, expectedSection, directive);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
