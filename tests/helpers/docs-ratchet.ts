@@ -9,10 +9,10 @@ import { classifySql, type SqlKind } from "./sql-kind.js";
 // us on work we deliberately don't do. So the gate applies to the in-scope query bucket
 // (SELECT/WITH/VALUES/…) and only REPORTS the dml/ddl buckets — they never fail the gate.
 //
-// Bucketing: when the dialect provides parse-based statement detection (opts.kinds — T-SQL
-// does, via statementCategories), EVERY file is parsed and a parseable file is bucketed from
-// its parsed statement kinds; the leading-keyword regex (sql-kind.ts) is only the fallback
-// for files that do not parse. Dialects without opts.kinds keep the regex bucketing and skip
+// Bucketing: when the dialect provides parse-based statement detection (opts.classify — T-SQL
+// does, via statementCategories), EVERY file is parsed ONCE and a parseable file is bucketed
+// from its parsed statement kinds; the leading-keyword regex (sql-kind.ts) is only the fallback
+// for files that do not parse. Dialects without opts.classify keep the regex bucketing and skip
 // parsing out-of-scope files (a speed optimization — parsing ~2,800 failing DDL files just to
 // print an ungated number was the bulk of the corpus runtime).
 
@@ -37,11 +37,13 @@ export interface DocsRatchetOptions {
 	 */
 	outOfScope?: Record<string, string>;
 	/**
-	 * Parse-based statement-kind detection: parse the file and return its per-statement
-	 * categories, or undefined when it does not parse. When set, bucketing is parse-derived
-	 * (the regex is only the no-parse fallback) and the dml/ddl buckets get real pass rates.
+	 * Parse-based statement-kind detection: parse the file ONCE and return both its syntax-error
+	 * count and (when clean) its per-statement categories. When set, bucketing is parse-derived
+	 * (the regex is only the no-parse fallback) and the dml/ddl buckets get real pass rates. One
+	 * call does the whole job — the gate does not re-parse for the error count, so the slow LL
+	 * stage runs at most once per file.
 	 */
-	kinds?: (sql: string) => StatementCategory[] | undefined;
+	classify?: (sql: string) => { errors: number; kinds: StatementCategory[] | undefined };
 }
 
 function* sqlFiles(dir: string): Generator<string> {
@@ -95,14 +97,17 @@ export function runDocsRatchet(
 
 		let errs: number;
 		let kind: SqlKind;
-		if (opts.kinds) {
-			// Detection mode: parse everything; bucket from the parse, regex only on no-parse.
+		if (opts.classify) {
+			// Detection mode: ONE parse per file yields both the error count and the kinds; bucket
+			// from the parse, regex only as the no-parse fallback (a failed parse has no usable tree).
 			let kinds: StatementCategory[] | undefined;
 			try {
-				errs = parseErrors(sql);
-				kinds = errs === 0 ? opts.kinds(sql) : undefined;
+				const res = opts.classify(sql);
+				errs = res.errors;
+				kinds = res.kinds;
 			} catch {
 				errs = -1;
+				kinds = undefined;
 			}
 			kind = kinds ? bucketOfKinds(kinds) : classifySql(sql);
 		} else {
@@ -142,7 +147,7 @@ export function runDocsRatchet(
 	const excluded = knownBadSeen ? `, ${knownBadSeen} known-bad excluded` : "";
 	const offScope = Object.keys(outOfScope).length ? `, ${Object.keys(outOfScope).length} out-of-scope -> ddl` : "";
 	const side = (b: { pass: number; total: number }, name: string) =>
-		opts.kinds
+		opts.classify
 			? `\n  ${name}   ${b.pass}/${b.total} (${pct(b)}%)  [out of scope, reported only]`
 			: `\n  ${name}   ${b.total} files  [out of scope, not parsed]`;
 	console.log(

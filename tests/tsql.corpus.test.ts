@@ -36,10 +36,12 @@ function parseErrors(sql: string): number {
 	return parseTSql(sql).errors;
 }
 
-/** Per-statement categories of a parseable file, for parse-derived bucketing. */
-function kindsOf(sql: string): ReturnType<typeof statementCategories> | undefined {
+/** One parse per file: its error count plus, when clean, the per-statement categories for
+ *  parse-derived bucketing. Returning both from a single parse avoids re-parsing every file
+ *  (which, for the SLL-false-reject queries, meant paying the slow full-LL pass twice). */
+function parseAndClassify(sql: string): { errors: number; kinds: ReturnType<typeof statementCategories> | undefined } {
 	const r = parseTSql(sql);
-	return r.errors === 0 ? statementCategories(r.tree) : undefined;
+	return { errors: r.errors, kinds: r.errors === 0 ? statementCategories(r.tree) : undefined };
 }
 
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
@@ -91,7 +93,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 		runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
 			knownBad: KNOWN_BAD,
 			outOfScope: OUT_OF_SCOPE,
-			kinds: kindsOf,
+			classify: parseAndClassify,
 		});
 	});
 });
