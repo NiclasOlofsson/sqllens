@@ -102,9 +102,7 @@ describe("WINDOW clause + OVER window_name (SQL Server 2022)", () => {
 	});
 
 	it("a window can be based on another named window", () => {
-		const body = q(
-			"SELECT sum(x) OVER w2 AS s FROM t WINDOW w1 AS (PARTITION BY a), w2 AS (w1 ORDER BY b)",
-		);
+		const body = q("SELECT sum(x) OVER w2 AS s FROM t WINDOW w1 AS (PARTITION BY a), w2 AS (w1 ORDER BY b)");
 		const fn = body.projections[0]?.expr;
 		if (fn?.kind !== "function") throw new Error("expected function");
 		expect(fn.window?.partitionBy).toHaveLength(1);

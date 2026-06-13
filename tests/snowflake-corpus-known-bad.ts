@@ -9,8 +9,7 @@
 
 export const KNOWN_BAD: Record<string, string> = {
 	// Unbalanced parentheses / malformed literals — structurally not parseable.
-	"functions/ai_translate/3.sql":
-		"extra '(' before the text argument leaves AI_TRANSLATE's outer paren unclosed",
+	"functions/ai_translate/3.sql": "extra '(' before the text argument leaves AI_TRANSLATE's outer paren unclosed",
 	"functions/get_job_history/1.sql": "GET_JOB_HISTORY(() — unbalanced parentheses",
 	"functions/st_azimuth/3.sql": "inner TO_GEOMETRY(...) is never closed",
 	"functions/st_azimuth/4.sql": "TO_GEOMETRY(0.707 0.707') — malformed coordinate/quote",

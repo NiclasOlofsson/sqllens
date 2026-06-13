@@ -24,8 +24,7 @@ const STATEMENT_STARTERS =
 	/^(add|alter|backup|begin|break|bulk|close|commit|continue|create|deallocate|declare|delete|deny|disable|drop|else|enable|end|exec|execute|fetch|goto|grant|if|insert|kill|merge|open|print|raiserror|reconfigure|restore|return|revert|revoke|rollback|save|select|set|setuser|throw|truncate|try|update|use|waitfor|while|with|go|;with)\b/i;
 
 // Lines that mark the start of pasted result/output, not SQL.
-const RESULT_LINE =
-	/^\s*(\(\d+\s+rows?\s+affected\)|-{3,}\s*$|={3,}\s*$|\| .* \||[A-Za-z_ ]+\s+-{3,})/;
+const RESULT_LINE = /^\s*(\(\d+\s+rows?\s+affected\)|-{3,}\s*$|={3,}\s*$|\| .* \||[A-Za-z_ ]+\s+-{3,})/;
 
 export function cleanSql(raw) {
 	let lines = raw.replace(/\r/g, "").split("\n");
@@ -84,7 +83,10 @@ function main() {
 		const blocks = extractSqlBlocks(readFileSync(md, "utf8"));
 		if (!blocks.length) continue;
 		files++;
-		const slug = md.slice(SRC.length + 1).replace(/\.md$/, "").replace(/[^a-z0-9_/-]/gi, "_");
+		const slug = md
+			.slice(SRC.length + 1)
+			.replace(/\.md$/, "")
+			.replace(/[^a-z0-9_/-]/gi, "_");
 		const dir = join(OUT, slug);
 		mkdirSync(dir, { recursive: true });
 		blocks.forEach((sql, i) => writeFileSync(join(dir, `${i + 1}.sql`), sql + "\n"));

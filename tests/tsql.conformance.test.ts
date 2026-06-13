@@ -24,7 +24,11 @@ describe("T-SQL docs-corpus conformance: functions", () => {
 		expect(errorsOf("SELECT JSON_ARRAYAGG(1 RETURNING JSON)")).toBe(0);
 		expect(errorsOf("SELECT JSON_OBJECTAGG('key':NULL)")).toBe(0);
 		expect(errorsOf("SELECT JSON_OBJECTAGG(c1:c2) FROM t")).toBe(0);
-		expect(errorsOf("SELECT TOP(5) c.object_id, JSON_ARRAYAGG(c.name ORDER BY c.column_id) FROM sys.columns AS c GROUP BY c.object_id")).toBe(0);
+		expect(
+			errorsOf(
+				"SELECT TOP(5) c.object_id, JSON_ARRAYAGG(c.name ORDER BY c.column_id) FROM sys.columns AS c GROUP BY c.object_id",
+			),
+		).toBe(0);
 	});
 
 	// learn.microsoft.com/sql/t-sql/functions/json-value-transact-sql (2025 RETURNING) +
@@ -85,13 +89,17 @@ describe("T-SQL docs-corpus conformance: table sources", () => {
 				"SELECT c.chunk FROM docs_table AS t CROSS APPLY AI_GENERATE_CHUNKS (SOURCE = text_column, CHUNK_TYPE = FIXED, CHUNK_SIZE = 100) AS c",
 			),
 		).toBe(0);
-		expect(errorsOf("SELECT id, AI_GENERATE_EMBEDDINGS(large_text USE MODEL MyAzureOpenAIModel) FROM myTable")).toBe(0);
+		expect(
+			errorsOf("SELECT id, AI_GENERATE_EMBEDDINGS(large_text USE MODEL MyAzureOpenAIModel) FROM myTable"),
+		).toBe(0);
 	});
 
 	// learn.microsoft.com/sql/t-sql/queries/predict-transact-sql
 	it("parses PREDICT(MODEL = ..., DATA = ... AS d) WITH (schema)", () => {
 		expect(
-			errorsOf("SELECT d.*, p.Score FROM PREDICT(MODEL = @model, DATA = dbo.mytable AS d) WITH (Score FLOAT) AS p"),
+			errorsOf(
+				"SELECT d.*, p.Score FROM PREDICT(MODEL = @model, DATA = dbo.mytable AS d) WITH (Score FLOAT) AS p",
+			),
 		).toBe(0);
 		expect(
 			errorsOf(
@@ -105,7 +113,9 @@ describe("T-SQL docs-corpus conformance: table sources", () => {
 	// semicolon-separated.
 	it("parses the OPENROWSET provider form", () => {
 		expect(
-			errorsOf("SELECT d.* FROM OPENROWSET('MSOLEDBSQL', 'Server=Seattle1;Trusted_Connection=yes;', Department) AS d"),
+			errorsOf(
+				"SELECT d.* FROM OPENROWSET('MSOLEDBSQL', 'Server=Seattle1;Trusted_Connection=yes;', Department) AS d",
+			),
 		).toBe(0);
 		expect(
 			errorsOf(
@@ -113,9 +123,7 @@ describe("T-SQL docs-corpus conformance: table sources", () => {
 			),
 		).toBe(0);
 		expect(
-			errorsOf(
-				"SELECT * FROM OPENROWSET('Microsoft.Jet.OLEDB.4.0', 'C:\\db.mdb';'admin';'', Customers) AS c",
-			),
+			errorsOf("SELECT * FROM OPENROWSET('Microsoft.Jet.OLEDB.4.0', 'C:\\db.mdb';'admin';'', Customers) AS c"),
 		).toBe(0);
 	});
 
@@ -157,8 +165,16 @@ describe("T-SQL docs-corpus conformance: hints and clauses", () => {
 	// + hints-transact-sql-query (FOR TIMESTAMP AS OF: Fabric warehouse time travel)
 	it("parses OPTION (LABEL = ...), mixed hints, and FOR TIMESTAMP AS OF", () => {
 		expect(errorsOf("SELECT * FROM FactResellerSales OPTION (LABEL = 'q17')")).toBe(0);
-		expect(errorsOf("SELECT COUNT(*) FROM a INNER JOIN b ON (a.k = b.k) OPTION (Label = 'CustJoin', HASH JOIN, MERGE JOIN)")).toBe(0);
-		expect(errorsOf("SELECT OrderDateKey FROM f GROUP BY OrderDateKey OPTION (FOR TIMESTAMP AS OF '2024-03-13T19:39:35.28')")).toBe(0);
+		expect(
+			errorsOf(
+				"SELECT COUNT(*) FROM a INNER JOIN b ON (a.k = b.k) OPTION (Label = 'CustJoin', HASH JOIN, MERGE JOIN)",
+			),
+		).toBe(0);
+		expect(
+			errorsOf(
+				"SELECT OrderDateKey FROM f GROUP BY OrderDateKey OPTION (FOR TIMESTAMP AS OF '2024-03-13T19:39:35.28')",
+			),
+		).toBe(0);
 	});
 
 	// learn.microsoft.com/sql/t-sql/queries/option-clause-transact-sql ({FORCE|DISABLE}

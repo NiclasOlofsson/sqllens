@@ -34,7 +34,11 @@ const PROBES: Record<string, Probe[]> = {
 		["window-clause-2022", "SELECT row_number() OVER w FROM t WINDOW w AS (PARTITION BY a ORDER BY b)", "select"],
 		["is-distinct-2022", "SELECT a FROM t WHERE a IS DISTINCT FROM b", "select"],
 		["cte", "WITH c AS (SELECT 1 AS a) SELECT * FROM c", "select"],
-		["cte-recursive", "WITH r (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r", "select"],
+		[
+			"cte-recursive",
+			"WITH r (n) AS (SELECT 1 UNION ALL SELECT n + 1 FROM r WHERE n < 3) SELECT * FROM r",
+			"select",
+		],
 		["cross-apply", "SELECT * FROM t CROSS APPLY (SELECT TOP 1 * FROM u WHERE u.id = t.id) x", "select"],
 		["outer-apply", "SELECT * FROM t OUTER APPLY dbo.fn(t.id) x", "select"],
 		[
@@ -205,7 +209,11 @@ const PROBES: Record<string, Probe[]> = {
 		["ledger-table-2022", "CREATE TABLE t (id INT) WITH (LEDGER = ON)", "script"],
 	],
 	security: [
-		["create-login-user-role", "CREATE LOGIN l WITH PASSWORD = 'P@ss'; CREATE USER u FOR LOGIN l; CREATE ROLE r;", "script"],
+		[
+			"create-login-user-role",
+			"CREATE LOGIN l WITH PASSWORD = 'P@ss'; CREATE USER u FOR LOGIN l; CREATE ROLE r;",
+			"script",
+		],
 		// multi-permission lists, OBJECT:: scopes, DENY and REVOKE — upstream gaps
 		["grant-object", "GRANT SELECT, UPDATE ON OBJECT::dbo.t TO u WITH GRANT OPTION", "noparse"],
 		["deny-revoke", "DENY DELETE ON dbo.t TO u; REVOKE SELECT ON dbo.t FROM u;", "noparse"],

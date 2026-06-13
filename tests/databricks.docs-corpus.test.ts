@@ -24,9 +24,13 @@ const CORPUS = resolve("harness/local/databricks-docs");
 const QUERY_BASELINE = 3062; // unused in 100% mode; kept as a documented floor
 
 describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL language manual", () => {
-	it("parses 100% of in-scope query examples (KNOWN_BAD + issue-#4 gaps excluded); reports dml/ddl", { timeout: 600000 }, () => {
-		runDocsRatchet(CORPUS, (sql) => parseDatabricks(sql).errors, QUERY_BASELINE, {
-			knownBad: { ...KNOWN_BAD, ...DEFERRED_GRAMMAR },
-		});
-	});
+	it(
+		"parses 100% of in-scope query examples (KNOWN_BAD + issue-#4 gaps excluded); reports dml/ddl",
+		{ timeout: 600000 },
+		() => {
+			runDocsRatchet(CORPUS, (sql) => parseDatabricks(sql).errors, QUERY_BASELINE, {
+				knownBad: { ...KNOWN_BAD, ...DEFERRED_GRAMMAR },
+			});
+		},
+	);
 });

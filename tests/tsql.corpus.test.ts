@@ -89,11 +89,15 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs corpus", () => {
-	it("parses 100% of in-scope query examples (parse-derived buckets; KNOWN_BAD excluded)", { timeout: 600000 }, () => {
-		runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
-			knownBad: KNOWN_BAD,
-			outOfScope: OUT_OF_SCOPE,
-			classify: parseAndClassify,
-		});
-	});
+	it(
+		"parses 100% of in-scope query examples (parse-derived buckets; KNOWN_BAD excluded)",
+		{ timeout: 600000 },
+		() => {
+			runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
+				knownBad: KNOWN_BAD,
+				outOfScope: OUT_OF_SCOPE,
+				classify: parseAndClassify,
+			});
+		},
+	);
 });

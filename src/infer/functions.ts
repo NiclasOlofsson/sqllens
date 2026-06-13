@@ -658,7 +658,15 @@ export const FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(fixed(S), ["ip_as_string", "try_ip_as_string"]),
 	ip_cidr_contains: fixed(B),
 	...group(fixed(I), ["ip_prefix_length", "ip_version"]),
-	...group(firstArg, ["ip_cidr", "ip_host", "ip_network", "ip_network_first", "ip_network_last", "try_ip_cidr", "try_ip_host"]),
+	...group(firstArg, [
+		"ip_cidr",
+		"ip_host",
+		"ip_network",
+		"ip_network_first",
+		"ip_network_last",
+		"try_ip_cidr",
+		"try_ip_host",
+	]),
 };
 
 /** T-SQL SUM/AVG return type (per the MS reference): tinyint/smallint promote to int; int/bigint/
