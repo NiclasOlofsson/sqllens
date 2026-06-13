@@ -177,6 +177,23 @@ FLOATING_POINT_LITERAL: (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS DOT_SYM
 	| DECIMAL_DIGITS 'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS;
 
 INTEGER_LITERAL: DECIMAL_DIGITS | HEX_DIGITS;
+
+// A numeric literal immediately followed by an identifier character (no whitespace) is invalid in
+// GoogleSQL — `123abc`, `1BEGIN`, `2E10m`, `.2m`, `2.2m`. ZetaSQL's tokenizer rejects this adjacency
+// (the ATTACHED_ALIAS / lookahead-transformer note in googlesql.tm). GoogleSQL has no numeric type
+// suffixes, so a digit-run glued to a letter is always an error. We match the glued form as one token
+// with no parser rule, so it surfaces as a syntax error; maximal munch picks it over the number rules.
+INVALID_NUMERIC_LITERAL:
+	(
+		// A dotted float requires digits after the dot, so `987654321.a` stays `987654321 . a`
+		// (a dashed/dotted path component) rather than being swallowed as one invalid token.
+		DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
+			'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
+		)?
+		| DECIMAL_DIGITS ('E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS)?
+		| HEX_DIGITS
+	) [a-z_] [a-z_0-9]*;
+
 fragment DECIMAL_DIGIT: [0-9];
 fragment HEX_DIGIT: [0-9a-f];
 fragment DECIMAL_DIGITS: DECIMAL_DIGIT+;

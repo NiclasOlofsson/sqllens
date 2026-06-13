@@ -42,7 +42,7 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // graph edges) plus features we deliberately don't implement (dashed/slashed paths) — to be driven
 // down by tightening the grammar, NOT by exclusion. Only without-a-doubt feature-off cases are excluded.
 const POSITIVE_BASELINE = 3370; // 3370/3603 (93.5%)
-const NEGATIVE_BASELINE = 2225; // 2225/2522 (88.2%) — table-path/GROUP BY + comparison non-associativity
+const NEGATIVE_BASELINE = 2265; // 2265/2522 (89.8%) — + number/identifier adjacency rejection
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {
