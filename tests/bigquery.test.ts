@@ -14,6 +14,77 @@ describe("parseBigQuery", () => {
 	it("reports errors on garbage", () => {
 		expect(parseBigQuery("SELECT FROM").errors).toBeGreaterThan(0);
 	});
+
+	// docs.cloud.google.com/bigquery/docs/table-functions — TVF calls in FROM
+	// (upstream port bug: tvf_prefix_no_args lost its opening paren, so every TVF call failed).
+	it("TVF calls in FROM: zero-arg, scalar, subquery, TABLE and named args", () => {
+		expect(parseBigQuery("SELECT 1 FROM tvf_no_args()").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM ds.fn(1, 'a')").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM fn((SELECT 1), 2)").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM fn(TABLE t, 'x')").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM fn(arg => (SELECT 1))").errors).toBe(0);
+	});
+
+	// …/query-syntax#tablesample_operator — suffix (REPEATABLE/WITH WEIGHT) is optional.
+	it("TABLESAMPLE without a suffix", () => {
+		expect(parseBigQuery("SELECT * FROM t TABLESAMPLE SYSTEM (10 PERCENT)").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM t TABLESAMPLE RESERVOIR (1 ROWS)").errors).toBe(0);
+	});
+
+	// …/timestamp_functions — CAST(.. AS .. FORMAT .. AT TIME ZONE ..) / EXTRACT(.. AT TIME ZONE ..)
+	// (upstream port bug: AT_SYMBOL is '@'; the AT keyword was never lexed).
+	it("AT TIME ZONE in CAST FORMAT and EXTRACT", () => {
+		expect(parseBigQuery("SELECT CAST(s AS TIMESTAMP FORMAT 'YYYY' AT TIME ZONE 'UTC') FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT EXTRACT(DAY FROM ts AT TIME ZONE 'UTC') FROM t").errors).toBe(0);
+	});
+
+	// …/query-syntax#set_operators — BY NAME [ON (cols)] | [STRICT] CORRESPONDING [BY (cols)]
+	it("set operations with BY NAME and CORRESPONDING BY", () => {
+		expect(parseBigQuery("SELECT 1 AS a UNION ALL BY NAME SELECT 2 AS a").errors).toBe(0);
+		expect(parseBigQuery("SELECT 1 AS a UNION ALL BY NAME ON (a) SELECT 2 AS a").errors).toBe(0);
+		expect(parseBigQuery("SELECT 1 UNION ALL CORRESPONDING BY (a, b) SELECT 2").errors).toBe(0);
+		expect(parseBigQuery("SELECT 1 UNION ALL STRICT CORRESPONDING SELECT 2").errors).toBe(0);
+	});
+
+	// …/query-syntax#dp_clause — SELECT WITH DIFFERENTIAL_PRIVACY OPTIONS(...)
+	it("SELECT WITH DIFFERENTIAL_PRIVACY", () => {
+		expect(
+			parseBigQuery("SELECT WITH DIFFERENTIAL_PRIVACY OPTIONS(epsilon=1.0, delta=1e-5) COUNT(*) FROM t").errors,
+		).toBe(0);
+	});
+
+	// ZetaSQL aggregate modifiers the corpus exercises: WHERE / GROUP BY / HAVING inside an
+	// aggregate call (multi-level aggregation), and the anonymization CLAMPED BETWEEN modifier
+	// (upstream port bug: clamped_between_modifier lost its BETWEEN).
+	it("aggregate-call modifiers: WHERE, GROUP BY, HAVING, CLAMPED BETWEEN", () => {
+		expect(parseBigQuery("SELECT SUM(x WHERE y > 0) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT SUM(AVG(x) GROUP BY y) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT STRING_AGG(s GROUP BY s HAVING COUNT(*) > 1) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT anon_count(* CLAMPED BETWEEN 0 AND 100) FROM t").errors).toBe(0);
+	});
+
+	// …/query-syntax#qualify_clause — QUALIFY no longer requires WHERE/GROUP BY/HAVING.
+	it("bare QUALIFY", () => {
+		expect(parseBigQuery("SELECT * FROM t QUALIFY ROW_NUMBER() OVER (ORDER BY x) = 1").errors).toBe(0);
+	});
+
+	// ZetaSQL rejects these aggregate-modifier shapes (multi_level_aggregation_errors,
+	// aggregate_filtering_errors): the GROUP BY modifier takes plain expression keys only, and
+	// bare boolean HAVING is not allowed without GROUP BY.
+	it("rejects malformed aggregate modifiers", () => {
+		expect(parseBigQuery("SELECT SUM(int64 HAVING bool IS NOT NULL) FROM t").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP AND ORDER BY y) FROM t").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY y ASC) FROM t").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY y AS a) FROM t").errors).toBeGreaterThan(0);
+	});
+
+	// Valid multi-level-aggregation forms must still parse (GROUP BY keys, optional boolean HAVING).
+	it("multi-level aggregation GROUP BY/HAVING", () => {
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY a, b) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY a HAVING MAX(x) > 0) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT afn(key HAVING MAX value) OVER () FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT COUNT(* GROUP BY a) FROM t").errors).toBe(0);
+	});
 });
 
 import { lower } from "../src/bigquery/lower.js";

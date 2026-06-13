@@ -15,9 +15,11 @@ const CORPUS = resolve("harness/local/bigquery-zetasql");
 const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
 const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
 
-// Baselines: regression floors measured from the first green run. Raise as grammar gaps close.
-const POSITIVE_BASELINE = 10821; // first green run: 10821/17465; ratchet up as gaps close
-const NEGATIVE_BASELINE = 171; // first green run: 171/222 syntax-error cases rejected
+// Baselines: regression floors. Raise as grammar gaps close. Corpus is mode-aware (type-mode
+// blocks dropped, expression-mode wrapped as SELECT) so totals differ from the first extraction.
+const POSITIVE_BASELINE = 12998; // 12998/17315; ratchet up as gaps close
+const NEGATIVE_BASELINE = 161; // 161/214 syntax-error cases rejected (parser is intentionally
+// looser than the analyzer on a few semantic-ish "syntax errors" — mixed set-ops, edge TVF forms)
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () => {
 	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {

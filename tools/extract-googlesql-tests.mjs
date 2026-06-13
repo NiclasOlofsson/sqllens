@@ -36,6 +36,30 @@ function cleanQuery(raw) {
 		.trim();
 }
 
+// ZetaSQL analyzer tests run in a `mode`: statement (default), expression, or type, selecting the
+// ParseScript / ParseExpression / ParseType entry point. Our parser only exposes the statement
+// entry (`root`), so a bare expression or type isn't a parseable "statement". To keep the corpus a
+// statement-parse corpus while preserving expression coverage, expression-mode blocks are wrapped
+// as `SELECT (<expr>)` (faithful — routes the expression through the statement grammar) and
+// type-mode blocks are dropped (type-name syntax is already exercised by every CAST / column-def
+// in the statement-mode files; wrapping types is fragile on the negative cases).
+function defaultModeOf(text) {
+	const m = text.match(/^\[default mode=([a-z]+)\]/m);
+	return m ? m[1] : "statement";
+}
+
+function blockModeOverride(rawQuerySection) {
+	const m = rawQuerySection.match(/^\s*\[mode=([a-z]+)\]/m);
+	return m ? m[1] : undefined;
+}
+
+/** Apply the effective mode to a cleaned query. Returns the SQL to emit, or null to skip. */
+function applyMode(query, mode) {
+	if (mode === "type") return null;
+	if (mode === "expression") return `SELECT (${query})`;
+	return query;
+}
+
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "positive"), { recursive: true });
 mkdirSync(join(OUT, "negative"), { recursive: true });
@@ -43,14 +67,18 @@ mkdirSync(join(OUT, "negative"), { recursive: true });
 let pos = 0;
 let neg = 0;
 let capped = 0;
+let skippedType = 0;
 for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 	const text = readFileSync(join(SRC, file), "utf8");
 	const base = file.replace(/\.test$/, "");
+	const defaultMode = defaultModeOf(text);
 	let i = 0;
 	for (const block of blocks(text)) {
 		const sep = block.indexOf("\n--");
 		if (sep === -1) continue; // no expected section; skip prose-only blocks
-		const query = cleanQuery(block.slice(0, sep));
+		const querySection = block.slice(0, sep);
+		const mode = blockModeOverride(querySection) ?? defaultMode;
+		const query = cleanQuery(querySection);
 		if (!query) continue;
 		const expected = block.slice(sep + 3).trim();
 		const negative = /^ERROR:\s*Syntax error/i.test(expected);
@@ -58,13 +86,18 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		if (all.length > MAX_VARIANTS) capped++;
 		for (const variant of all.slice(0, MAX_VARIANTS)) {
 			if (!variant.trim()) continue;
+			const emitted = applyMode(variant, mode);
+			if (emitted === null) {
+				skippedType++;
+				continue;
+			}
 			const dir = negative ? "negative" : "positive";
-			writeFileSync(join(OUT, dir, `${base}_${i++}.sql`), variant + "\n");
+			writeFileSync(join(OUT, dir, `${base}_${i++}.sql`), emitted + "\n");
 			if (negative) neg++;
 			else pos++;
 		}
 	}
 }
-console.log(`extracted: ${pos} positive, ${neg} negative -> ${OUT}`);
+console.log(`extracted: ${pos} positive, ${neg} negative (skipped ${skippedType} type-mode) -> ${OUT}`);
 if (capped)
 	console.log(`note: ${capped} block(s) had >${MAX_VARIANTS} {{}} variants; capped to the first ${MAX_VARIANTS}`);

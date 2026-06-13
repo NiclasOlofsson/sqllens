@@ -256,6 +256,11 @@ ANALYZE_SYMBOL: 'ANALYZE';
 APPROX_SYMBOL: 'APPROX';
 ARE_SYMBOL: 'ARE';
 ASSERT_SYMBOL: 'ASSERT';
+// 'AT' the keyword (AT TIME ZONE) — distinct from AT_SYMBOL '@'; the upstream port
+// used '@' in opt_at_time_zone, which made AT TIME ZONE unparseable.
+AT_KEYWORD_SYMBOL: 'AT';
+// BY NAME set-operation column matching: …/query-syntax#set_operators
+NAME_SYMBOL: 'NAME';
 BATCH_SYMBOL: 'BATCH';
 BEGIN_SYMBOL: 'BEGIN';
 BREAK_SYMBOL: 'BREAK';

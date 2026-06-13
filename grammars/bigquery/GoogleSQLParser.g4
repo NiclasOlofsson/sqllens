@@ -1451,9 +1451,14 @@ set_operation_metadata:
 	opt_corresponding_outer_mode? query_set_operation_type hint? all_or_distinct opt_strict?
 		opt_column_match_suffix?;
 
+// …/query-syntax#set_operators: { BY NAME [ON (column_list)] | CORRESPONDING [BY (column_list)] }
 opt_column_match_suffix:
-	CORRESPONDING_SYMBOL
-	| CORRESPONDING_SYMBOL BY_SYMBOL;
+	CORRESPONDING_SYMBOL (
+		BY_SYMBOL LR_BRACKET_SYMBOL identifier_list RR_BRACKET_SYMBOL
+	)?
+	| BY_SYMBOL NAME_SYMBOL (
+		ON_SYMBOL LR_BRACKET_SYMBOL identifier_list RR_BRACKET_SYMBOL
+	)?;
 
 opt_strict: STRICT_SYMBOL;
 
@@ -1581,30 +1586,28 @@ tvf_with_suffixes:
 	tvf_prefix_no_args RR_BRACKET_SYMBOL hint? pivot_or_unpivot_clause_and_aliases?
 	| tvf_prefix RR_BRACKET_SYMBOL hint? pivot_or_unpivot_clause_and_aliases?;
 
+// Bare QUALIFY (no WHERE/GROUP BY/HAVING) is valid BigQuery — …/query-syntax#qualify_clause;
+// the upstream error actions predate that. The clause still lands here (after the table
+// alias) because opt_clauses_following_from only reaches QUALIFY via WHERE/GROUP BY/HAVING.
 pivot_or_unpivot_clause_and_aliases:
 	AS_SYMBOL identifier
 	| identifier
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
-	| AS_SYMBOL identifier qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		}
+	| AS_SYMBOL identifier qualify_clause_nonreserved
 	| identifier pivot_clause as_alias
 	| identifier unpivot_clause as_alias
-	| identifier qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		}
+	| identifier qualify_clause_nonreserved
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
-	| qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		};
+	| qualify_clause_nonreserved;
 
 as_alias: AS_SYMBOL? identifier;
 
+// …/query-syntax#tablesample_operator — REPEATABLE/WITH WEIGHT suffix is optional.
 sample_clause:
 	TABLESAMPLE_SYMBOL identifier LR_BRACKET_SYMBOL sample_size RR_BRACKET_SYMBOL
-		opt_sample_clause_suffix;
+		opt_sample_clause_suffix?;
 
 opt_sample_clause_suffix:
 	repeatable_clause
@@ -1694,21 +1697,19 @@ opt_at_system_time:
 
 opt_with_offset_and_alias: WITH_SYMBOL OFFSET_SYMBOL as_alias?;
 
+// Bare QUALIFY is valid BigQuery — see pivot_or_unpivot_clause_and_aliases above.
 opt_pivot_or_unpivot_clause_and_alias:
 	AS_SYMBOL identifier
 	| identifier
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
-	| AS_SYMBOL identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		}
+	| AS_SYMBOL identifier qualify_clause_nonreserved
 	| identifier pivot_clause as_alias?
 	| identifier unpivot_clause as_alias?
-	| identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		}
+	| identifier qualify_clause_nonreserved
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
-	| qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		};
+	| qualify_clause_nonreserved;
 
 table_path_expression_base:
 	unnest_expression
@@ -1859,8 +1860,11 @@ pivot_value_list: pivot_value (COMMA_SYMBOL pivot_value)*;
 
 pivot_value: expression as_alias?;
 
+// docs.cloud.google.com/bigquery/docs/table-functions — the TVF name is followed by '('.
+// (The upstream port dropped the paren on the path_expression alternative, which made every
+// TVF call in FROM unparseable.)
 tvf_prefix_no_args:
-	path_expression
+	path_expression LR_BRACKET_SYMBOL
 	| IF_SYMBOL LR_BRACKET_SYMBOL;
 
 join_type:
@@ -2149,13 +2153,18 @@ function_call_expression_with_clauses_suffix:
 	(
 		// Empty argument list.
 		opt_having_or_group_by_modifier? order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
-		// Non empty argument list.
+		// Non empty argument list. Modifier order per ZetaSQL aggregate-call grammar:
+		// [IGNORE|RESPECT NULLS] [WHERE …] [GROUP BY … / HAVING …] [CLAMPED BETWEEN …]
+		// [WITH REPORT …] [ORDER BY …] [LIMIT …] — WHERE (aggregate filtering) and the
+		// full GROUP BY / boolean HAVING (multi-level aggregation) are ZetaSQL surface
+		// the corpus exercises.
 		| (
 			(function_call_argument | MULTIPLY_OPERATOR) (
 				COMMA_SYMBOL function_call_argument
 			)*
-		) opt_null_handling_modifier? opt_having_or_group_by_modifier? clamped_between_modifier?
-			with_report_modifier? order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
+		) opt_null_handling_modifier? where_clause? opt_having_or_group_by_modifier?
+			clamped_between_modifier? with_report_modifier? order_by_clause? limit_offset_clause?
+			RR_BRACKET_SYMBOL
 	) hint? with_group_rows? over_clause?;
 
 over_clause: OVER_SYMBOL window_specification;
@@ -2191,8 +2200,9 @@ with_group_rows:
 with_report_modifier:
 	WITH_SYMBOL REPORT_SYMBOL with_report_format;
 
+// ZetaSQL anonymization: CLAMPED BETWEEN low AND high (the port dropped BETWEEN).
 clamped_between_modifier:
-	CLAMPED_SYMBOL expression_higher_prec_than_and AND_SYMBOL expression;
+	CLAMPED_SYMBOL BETWEEN_SYMBOL expression_higher_prec_than_and AND_SYMBOL expression;
 
 with_report_format: options_list;
 
@@ -2242,9 +2252,17 @@ limit_offset_clause:
 	LIMIT_SYMBOL expression OFFSET_SYMBOL expression
 	| LIMIT_SYMBOL expression;
 
+// Aggregate-call modifiers (ZetaSQL): the "HAVING MAX/MIN value" row-picker, and the
+// multi-level-aggregation "GROUP BY keys [HAVING <bool>]". The GROUP BY keys here are plain
+// expressions — no AND ORDER preamble, no ASC/DESC, no alias (those forms are errors inside an
+// aggregate, distinct from the top-level group_by_clause_prefix). Bare boolean HAVING is valid
+// only after GROUP BY; standalone HAVING requires MAX/MIN.
 opt_having_or_group_by_modifier:
-	HAVING_SYMBOL MAX_SYMBOL expression
-	| HAVING_SYMBOL MIN_SYMBOL expression group_by_clause_prefix;
+	HAVING_SYMBOL (MAX_SYMBOL | MIN_SYMBOL) expression aggregate_group_by_modifier?
+	| aggregate_group_by_modifier (HAVING_SYMBOL expression)?;
+
+aggregate_group_by_modifier:
+	GROUP_SYMBOL hint? BY_SYMBOL expression (COMMA_SYMBOL expression)*;
 
 group_by_clause_prefix:
 	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)*;
@@ -2358,14 +2376,14 @@ with_expression_variable: identifier AS_SYMBOL expression;
 
 extract_expression:
 	extract_expression_base RR_BRACKET_SYMBOL
-	| extract_expression_base AT_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression RR_BRACKET_SYMBOL;
+	| extract_expression_base AT_KEYWORD_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression RR_BRACKET_SYMBOL;
 
 extract_expression_base:
 	EXTRACT_SYMBOL LR_BRACKET_SYMBOL expression FROM_SYMBOL expression;
 
 opt_format: FORMAT_SYMBOL expression opt_at_time_zone?;
 
-opt_at_time_zone: AT_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression;
+opt_at_time_zone: AT_KEYWORD_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression;
 
 cast_expression:
 	CAST_SYMBOL LR_BRACKET_SYMBOL expression AS_SYMBOL type opt_format? RR_BRACKET_SYMBOL
@@ -2543,6 +2561,7 @@ common_keyword_as_identifier:
 	| APPROX_SYMBOL
 	| ARE_SYMBOL
 	| ASSERT_SYMBOL
+	| AT_KEYWORD_SYMBOL
 	| BATCH_SYMBOL
 	| BEGIN_SYMBOL
 	| BIGDECIMAL_SYMBOL
@@ -2577,10 +2596,13 @@ common_keyword_as_identifier:
 	| DEPTH_SYMBOL
 	| DESCRIBE_SYMBOL
 	| DETERMINISTIC_SYMBOL
+	| DELTA_SYMBOL
+	| DIFFERENTIAL_PRIVACY_SYMBOL
 	| DO_SYMBOL
 	| DROP_SYMBOL
 	| ELSEIF_SYMBOL
 	| ENFORCED_SYMBOL
+	| EPSILON_SYMBOL
 	| ERROR_SYMBOL
 	| EXCEPTION_SYMBOL
 	| EXECUTE_SYMBOL
@@ -2634,7 +2656,9 @@ common_keyword_as_identifier:
 	| MIN_SYMBOL
 	| MINVALUE_SYMBOL
 	| MODEL_SYMBOL
+	| MAX_GROUPS_CONTRIBUTED_SYMBOL
 	| MODULE_SYMBOL
+	| NAME_SYMBOL
 	| NUMERIC_SYMBOL
 	| OFFSET_SYMBOL
 	| ONLY_SYMBOL
@@ -2649,6 +2673,7 @@ common_keyword_as_identifier:
 	| POLICIES_SYMBOL
 	| POLICY_SYMBOL
 	| PRIMARY_SYMBOL
+	| PRIVACY_UNIT_COLUMN_SYMBOL
 	| PRIVATE_SYMBOL
 	| PRIVILEGE_SYMBOL
 	| PRIVILEGES_SYMBOL
