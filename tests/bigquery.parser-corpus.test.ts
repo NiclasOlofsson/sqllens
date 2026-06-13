@@ -91,7 +91,7 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // RUN/SHOW pipe suffixes, and DEFINE MACRO detect-only. Negatives: of 2574, 510 detect-only excluded;
 // of the 2064 in-scope negatives we reject 1850 and still wrongly accept 214. Both in-scope floors
 // ratchet up as the grammar tightens.
-const IN_SCOPE_POSITIVE_BASELINE = 2614; // in-scope parsed of 2646; 32 in-scope still failing
+const IN_SCOPE_POSITIVE_BASELINE = 2619; // in-scope parsed of 2646; 27 in-scope still failing
 const IN_SCOPE_NEGATIVE_BASELINE = 1850; // in-scope rejected of 2064; 214 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {

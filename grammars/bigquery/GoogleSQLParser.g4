@@ -772,8 +772,9 @@ begin_end_block_or_language_as_code:
 begin_end_block:
 	BEGIN_SYMBOL statement_list? opt_exception_handler? END_SYMBOL;
 
+// The handler body may be empty (`EXCEPTION WHEN ERROR THEN END`) — spec statement_list allows %empty.
 opt_exception_handler:
-	EXCEPTION_SYMBOL WHEN_SYMBOL ERROR_SYMBOL THEN_SYMBOL statement_list;
+	EXCEPTION_SYMBOL WHEN_SYMBOL ERROR_SYMBOL THEN_SYMBOL statement_list?;
 
 statement_list:
 	unterminated_non_empty_statement_list SEMI_SYMBOL;
@@ -2362,9 +2363,13 @@ expression_higher_prec_than_and:
 		OF_SYMBOL? expression_higher_prec_than_and
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
-	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
-	| expression_higher_prec_than_and comparative_operator any_some_all
-		parenthesized_anysomeall_list_in_rhs
+	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
+		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator any_some_all hint?
+		parenthesized_anysomeall_list_in_rhs {
+		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+	}
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
 		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
 			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
@@ -2518,9 +2523,13 @@ expression_maybe_parenthesized_not_a_query:
 		OF_SYMBOL? expression_higher_prec_than_and
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
-	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
-	| expression_higher_prec_than_and comparative_operator any_some_all
-		parenthesized_anysomeall_list_in_rhs
+	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
+		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator any_some_all hint?
+		parenthesized_anysomeall_list_in_rhs {
+		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+	}
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
 		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
 			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
@@ -3448,6 +3457,9 @@ token_identifier: IDENTIFIER;
 
 struct_type:
 	STRUCT_SYMBOL template_type_open template_type_close
+	// STRUCT<> empty type list: `<>` is lexed as a single token (the not-equals operator) by
+	// maximal munch, so the adjacent open/close angles arrive fused.
+	| STRUCT_SYMBOL NOT_EQUAL2_OPERATOR
 	| struct_type_prefix template_type_close;
 
 struct_type_prefix:
