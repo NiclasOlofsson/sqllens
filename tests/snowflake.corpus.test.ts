@@ -1,12 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
-import {
-	BailErrorStrategy,
-	CharStream,
-	CommonTokenStream,
-	type ParserATNSimulator,
-	PredictionMode,
-} from "antlr4ng";
+import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { SnowflakeLexer } from "../src/generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../src/generated/snowflake/SnowflakeParser.js";

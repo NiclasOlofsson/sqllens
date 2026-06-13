@@ -153,9 +153,7 @@ function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
 /** query_statement: with_expression? select_statement_in_parentheses set_operators* */
 function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 	const withNode = directChildrenOfRule(qs, P.RULE_with_expression)[0];
-	const ctes = withNode
-		? directChildrenOfRule(withNode, P.RULE_common_table_expression).map(lowerCte)
-		: [];
+	const ctes = withNode ? directChildrenOfRule(withNode, P.RULE_common_table_expression).map(lowerCte) : [];
 	const ssip = directChildrenOfRule(qs, P.RULE_select_statement_in_parentheses)[0];
 	const chain: SetChainItem[] = [];
 	if (ssip) collectSetChain(ssip, chain);
@@ -289,7 +287,10 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	const from: Source[] = sources.map((o) => buildSource(o, unsupported));
 
 	const whereSc = optional
-		? directChildrenOfRule(directChildrenOfRule(optional, P.RULE_where_clause)[0] ?? optional, P.RULE_search_condition)[0]
+		? directChildrenOfRule(
+				directChildrenOfRule(optional, P.RULE_where_clause)[0] ?? optional,
+				P.RULE_search_condition,
+			)[0]
 		: undefined;
 	const whereExpr = whereSc ? lowerSearch(whereSc) : undefined;
 
@@ -412,12 +413,10 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 		const num = directChildrenOfRule(e, P.RULE_num)[0];
 		if (num) return { kind: "literal", text: num.getText(), cst: num } satisfies Expr;
 		const ee = directChildrenOfRule(e, P.RULE_expression_elem)[0];
-		const inner = ee ? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate)[0]) : undefined;
-		return inner
-			? inner.ruleIndex === P.RULE_predicate
-				? lowerPredicate(inner)
-				: lowerExpr(inner)
-			: otherExpr(e);
+		const inner = ee
+			? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate)[0])
+			: undefined;
+		return inner ? (inner.ruleIndex === P.RULE_predicate ? lowerPredicate(inner) : lowerExpr(inner)) : otherExpr(e);
 	});
 	return items.length ? items : undefined;
 }
@@ -726,7 +725,8 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 function exprListExprs(node: ParserRuleContext): ParserRuleContext[] {
 	// expr_list, or the spread-capable variant used by IN lists and list functions
 	// (its direct expr children are the plain values; spread_expr elements are skipped).
-	const list = directChildrenOfRule(node, P.RULE_expr_list)[0] ?? directChildrenOfRule(node, P.RULE_spread_or_expr_list)[0];
+	const list =
+		directChildrenOfRule(node, P.RULE_expr_list)[0] ?? directChildrenOfRule(node, P.RULE_spread_or_expr_list)[0];
 	return list ? directChildrenOfRule(list, P.RULE_expr) : [];
 }
 
@@ -908,7 +908,14 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 				const e = directChildrenOfRule(v, P.RULE_expr)[0];
 				return e ? lowerExpr(e) : otherExpr(v);
 			});
-			return { kind: "function", name: "array_construct", args: values, aggregate: false, distinct: false, cst: node };
+			return {
+				kind: "function",
+				name: "array_construct",
+				args: values,
+				aggregate: false,
+				distinct: false,
+				cst: node,
+			};
 		}
 		case P.RULE_json_literal: {
 			const values = collectOfRule(node, P.RULE_kv_pair).map((kv) => {
@@ -916,7 +923,14 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 				const e = v ? directChildrenOfRule(v, P.RULE_expr)[0] : undefined;
 				return e ? lowerExpr(e) : otherExpr(kv);
 			});
-			return { kind: "function", name: "object_construct", args: values, aggregate: false, distinct: false, cst: node };
+			return {
+				kind: "function",
+				name: "object_construct",
+				args: values,
+				aggregate: false,
+				distinct: false,
+				cst: node,
+			};
 		}
 		case P.RULE_cast_expr: {
 			const inner = directChildrenOfRule(node, P.RULE_expr)[0];
@@ -1381,7 +1395,15 @@ function otherExpr(node: ParserRuleContext): Expr {
 }
 
 function emptyBody(cst: ParserRuleContext): SelectExpr {
-	return { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: ["unparsed"], cst };
+	return {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["unparsed"],
+		cst,
+	};
 }
 
 function emptyQuery(cst: ParserRuleContext): QueryExpr {

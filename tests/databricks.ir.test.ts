@@ -37,7 +37,9 @@ describe("lower: CST -> IR", () => {
 	});
 
 	it("models QUALIFY (Databricks SQL) with clause-tagged column refs", () => {
-		const { tree, errors } = parseDatabricks("SELECT a, row_number() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1");
+		const { tree, errors } = parseDatabricks(
+			"SELECT a, row_number() OVER (ORDER BY a) AS rn FROM t QUALIFY rn = 1",
+		);
 		expect(errors).toBe(0);
 		const sel = asSelect(lower(tree).body);
 		expect(sel.qualify).toMatchObject({ kind: "binary", op: "=" });

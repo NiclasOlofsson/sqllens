@@ -122,7 +122,10 @@ describe("Databricks registry: specialty families (docs-verified)", () => {
 		expect(dbxType("SELECT getdate() AS r FROM t", D)).toEqual(scalar("timestamp"));
 		expect(dbxType("SELECT typeof(a) AS r FROM t", D)).toEqual(scalar("string"));
 		expect(dbxType("SELECT luhn_check(s) AS r FROM t", D)).toEqual(scalar("boolean"));
-		expect(dbxType("SELECT json_object_keys(s) AS r FROM t", D)).toEqual({ kind: "array", element: scalar("string") });
+		expect(dbxType("SELECT json_object_keys(s) AS r FROM t", D)).toEqual({
+			kind: "array",
+			element: scalar("string"),
+		});
 		expect(dbxType("SELECT getbit(big, 0) AS r FROM t", D)).toEqual(scalar("int"));
 		expect(dbxType("SELECT array_join(arr, ',') AS r FROM t", D)).toEqual(scalar("string"));
 		expect(dbxType("SELECT flatten(aa) AS r FROM t", D)).toEqual({ kind: "array", element: scalar("int") });

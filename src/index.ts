@@ -1,6 +1,7 @@
 // Public API: parse (Databricks) -> lower -> scope -> qualify -> infer / lineage / symbols, all
 // over the shared dialect-neutral IR (src/ir/ir.ts). Name resolution + type inference + column
-// lineage; no transpilation. (T-SQL parse/lower exist under src/tsql but aren't exported here yet.)
+// lineage; no transpilation. (T-SQL, Snowflake and BigQuery parse/lower exist under src/<dialect>
+// but aren't exported here yet — the semantic layer runs on all four unchanged.)
 
 export { parseDatabricks, type ParseResult } from "./databricks/parse.js";
 

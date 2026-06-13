@@ -11,13 +11,19 @@
 // Snowflake / T-SQL corpora); this script rebuilds it. Resumable via manifest.json.
 //
 // Usage: node tools/scrape-databricks-docs.mjs
+//
+// Raw page HTML is cached under HTML_CACHE; a re-run re-extracts the .sql from the cache OFFLINE
+// (only genuinely-new pages are fetched). So after changing the SQL extraction (stripTrailingOutput
+// &c.), regenerate with `rm -rf harness/local/databricks-docs && node tools/scrape-databricks-docs.mjs`
+// — it rebuilds from cached HTML with no network. Delete HTML_CACHE to force a full re-fetch.
 
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const SITEMAP = "https://docs.databricks.com/aws/en/sitemap.xml";
 const OUT = join(import.meta.dirname, "..", "harness", "local", "databricks-docs");
+const HTML_CACHE = join(import.meta.dirname, "..", "harness", "local", "databricks-docs-html");
 const MANIFEST = join(OUT, "manifest.json");
 const CONCURRENCY = 4;
 
@@ -80,23 +86,92 @@ function splitPromptStatements(lines) {
 const OUTPUT_LINE =
 	/^\s*(\[|\{|[+|]-{2,}|[0-9.]+\s*$|-?[0-9.]+\s+\S|\d{4}-\d{1,2}-\d{1,2}([ T]|\s*$)|NULL\s*$|true\s*$|false\s*$|\[(binary data|obfuscated)\])/i;
 
-/** Cut a non-prompt block at the first printed-result line (docs paste the output under
- *  the statement without a `>` prompt to separate them). Quote-aware: a result-looking
- *  line inside an open single-quoted string (e.g. multi-line JSON passed to VALUES) is
- *  part of the statement, not output, so cutting only happens at the top level. */
+// Result rows the structured patterns above miss: a tabular row (≥2 spaces between two
+// non-space tokens), a bare dash/equals separator, or an error / warning / summary banner.
+// Only consulted for a line that is NOT a SQL continuation (see CONTINUATION_LINE), so a SELECT
+// list with internal alignment spacing is never mistaken for a tabular result.
+const OUTPUT_SHAPE = /\S {2,}\S|^\s*[-=—]{3,}\s*$|^\s*(ERROR\b|Error:|\[?WARN|#{2,}\s)/;
+
+// The accumulated statement is NOT complete (so the next line is still SQL) if it ends with a
+// token that demands a continuation: an operator/comma/open-bracket/dot, or a clause keyword.
+const WANTS_MORE_TAIL =
+	/([,([{.|&^~]|[-+*/%=<>:])\s*$|\b(AND|OR|NOT|SELECT|FROM|WHERE|GROUP|ORDER|BY|HAVING|JOIN|ON|USING|UNION|INTERSECT|EXCEPT|ALL|AS|WITH|RECURSIVE|VALUES|IN|LIKE|BETWEEN|CASE|WHEN|THEN|ELSE|OVER|PARTITION|QUALIFY|WINDOW|LATERAL|DISTRIBUTE|CLUSTER|SORT|LIMIT|OFFSET|INTO|SET|PIVOT|UNPIVOT|ROWS|RANGE|PRECEDING|FOLLOWING|UNBOUNDED|CURRENT)\s*$/i;
+
+// A line that continues a SQL statement rather than starting printed output: leading punctuation
+// (open/close bracket, dot, comma, pipe, operator), a comment, or ANY word that begins a SQL
+// statement or clause. Printed result rows are data values, which essentially never lead with a
+// reserved keyword — so a keyword-led line is kept, and only non-keyword data lines are cut.
+const CONTINUATION_LINE =
+	/^\s*(--|\/\*|\*\/|[([)\].,|]|[-+*/%=<>]|\|>|(SELECT|FROM|WHERE|GROUP|ORDER|HAVING|LIMIT|OFFSET|JOIN|INNER|LEFT|RIGHT|FULL|CROSS|OUTER|NATURAL|ANTI|SEMI|ON|USING|UNION|INTERSECT|EXCEPT|MINUS|QUALIFY|WINDOW|PIVOT|UNPIVOT|LATERAL|CLUSTER|DISTRIBUTE|SORT|AS|WITH|RECURSIVE|VALUES|AND|OR|NOT|WHEN|THEN|ELSE|END|CASE|TABLESAMPLE|ROWS|RANGE|BETWEEN|PRECEDING|FOLLOWING|UNBOUNDED|CURRENT|INTO|INSERT|UPDATE|DELETE|MERGE|CREATE|ALTER|DROP|TRUNCATE|REPLACE|SET|SHOW|DESCRIBE|DESC|EXPLAIN|USE|GRANT|REVOKE|DENY|CACHE|UNCACHE|REFRESH|ANALYZE|OPTIMIZE|VACUUM|COPY|LOAD|MSCK|REORG|RESTORE|COMMENT|DECLARE|FOR|IN|BY|OVER|PARTITION|FILTER|DISTINCT|ALL|MAP|REDUCE|TABLE|LIKE|IS|NULL|FETCH|FIRST|NEXT|TOP)\b)/i;
+
+/** Strip the trailing `--` line comment and trailing whitespace from a source line, ignoring a
+ *  `--` that sits inside a single-quoted string. */
+function stripLineComment(line) {
+	let inStr = false;
+	for (let j = 0; j < line.length; j++) {
+		if (inStr && line[j] === "\\")
+			j++; // backslash escape inside a string
+		else if (line[j] === "'") {
+			if (line[j + 1] === "'") j++;
+			else inStr = !inStr;
+		} else if (!inStr && line[j] === "-" && line[j + 1] === "-") {
+			return line.slice(0, j);
+		}
+	}
+	return line;
+}
+
+/** Cut a non-prompt block at the first printed-result line (docs paste the output under the
+ *  statement without a `>` prompt to separate them). A line is output only at the TOP LEVEL —
+ *  not inside a single-quoted string and not inside open brackets — and only once the statement
+ *  so far already looks complete (balanced brackets guaranteed by the top-level check, and not
+ *  ending on a token that wants more). Then it's output if it matches a result pattern
+ *  (OUTPUT_LINE / OUTPUT_SHAPE) or is simply not a SQL continuation (catches string / word /
+ *  scalar results the patterns miss). Paren- and comment-aware so multi-line SQL — `OVER (…
+ *  ORDER BY x`, `WITH RECURSIVE`, `SELECT -- note` — is never cut mid-statement. */
 function stripTrailingOutput(sql) {
 	const lines = sql.split("\n");
 	let inStr = false;
+	let depth = 0;
+	let lastTail = ""; // last non-empty accumulated line, comment-stripped
 	for (let i = 0; i < lines.length; i++) {
-		if (i > 0 && !inStr && OUTPUT_LINE.test(lines[i])) {
-			return lines.slice(0, i).join("\n").trim();
-		}
 		const line = lines[i];
-		for (let j = 0; j < line.length; j++) {
-			if (line[j] !== "'") continue;
-			if (line[j + 1] === "'") j++; // doubled '' escape
-			else inStr = !inStr;
+		if (
+			i > 0 &&
+			!inStr &&
+			depth === 0 &&
+			line.trim() !== "" &&
+			lastTail !== "" &&
+			!WANTS_MORE_TAIL.test(lastTail)
+		) {
+			// CONTINUATION_LINE is a hard gate — a keyword- or punctuation-led line is SQL and is
+			// never cut (so a SELECT list with internal alignment spacing isn't mistaken for a
+			// tabular result). A line is output only if it is a structured result (OUTPUT_LINE) or
+			// a bare separator — both of which can start with a "continuation" char — or it simply
+			// isn't a continuation at all (bare scalar / tabular data row).
+			const isOutput = OUTPUT_LINE.test(line) || /^\s*[-=—]{3,}\s*$/.test(line) || !CONTINUATION_LINE.test(line);
+			if (isOutput) return lines.slice(0, i).join("\n").trim();
 		}
+		// Advance inStr / bracket depth across this line (top level only), stopping at a `--`.
+		for (let j = 0; j < line.length; j++) {
+			const c = line[j];
+			if (inStr) {
+				if (c === "\\")
+					j++; // backslash escape inside a string
+				else if (c === "'") {
+					if (line[j + 1] === "'") j++;
+					else inStr = false;
+				}
+				continue;
+			}
+			if (c === "'") inStr = true;
+			else if (c === "-" && line[j + 1] === "-")
+				break; // rest of line is a comment
+			else if (c === "(" || c === "[" || c === "{") depth++;
+			else if (c === ")" || c === "]" || c === "}") depth = Math.max(0, depth - 1);
+		}
+		const tail = stripLineComment(line).trim();
+		if (tail !== "") lastTail = tail;
 	}
 	return sql.trim();
 }
@@ -126,6 +201,14 @@ export function extractSql(html) {
 	return [...new Set(blocks)];
 }
 
+/** Cache filename for a page URL — its language-manual slug, flattened. */
+function htmlKey(url) {
+	return `${url
+		.replace(/^https:\/\/docs\.databricks\.com\/aws\/en\/sql\/language-manual\//, "")
+		.replace(/\/$/, "")
+		.replace(/[^a-z0-9_-]/gi, "_")}.html`;
+}
+
 async function main() {
 	mkdirSync(OUT, { recursive: true });
 	let manifest = {};
@@ -133,13 +216,17 @@ async function main() {
 		manifest = JSON.parse(readFileSync(MANIFEST, "utf8"));
 	} catch {}
 
+	mkdirSync(HTML_CACHE, { recursive: true });
 	const sitemap = await (await fetch(SITEMAP)).text();
 	const urls = [...sitemap.matchAll(/<loc>([^<]+)<\/loc>/g)]
 		.map((m) => m[1])
 		.filter((u) => u.includes("/sql/language-manual/"));
-	const todo = urls.filter((u) => !(u in manifest));
-	console.log(`${urls.length} language-manual pages, ${todo.length} to fetch`);
+	// Every page is (re)processed each run; pages whose HTML is already cached extract offline,
+	// only uncached ones are fetched.
+	const toFetch = urls.filter((u) => !existsSync(join(HTML_CACHE, htmlKey(u)))).length;
+	console.log(`${urls.length} language-manual pages, ${toFetch} to fetch (rest from HTML cache)`);
 
+	let processed = 0;
 	let fetched = 0;
 	let files = 0;
 	let failures = 0;
@@ -153,37 +240,49 @@ async function main() {
 				.replace(/\/$/, "")
 				.replace(/[^a-z0-9_/-]/gi, "_");
 			try {
-				const res = await fetch(url);
-				if (!res.ok) {
-					manifest[url] = { status: res.status, blocks: 0 };
-					failures++;
+				const cacheFile = join(HTML_CACHE, htmlKey(url));
+				let html;
+				if (existsSync(cacheFile)) {
+					html = readFileSync(cacheFile, "utf8"); // offline re-extract
 				} else {
-					const blocks = extractSql(await res.text());
-					if (blocks.length) {
-						const dir = join(OUT, slug);
-						mkdirSync(dir, { recursive: true });
-						blocks.forEach((sql, i) => writeFileSync(join(dir, `${i + 1}.sql`), sql + "\n"));
-						files += blocks.length;
+					const res = await fetch(url);
+					if (!res.ok) {
+						manifest[url] = { status: res.status, blocks: 0 };
+						failures++;
+						processed++;
+						continue;
 					}
-					manifest[url] = { status: 200, blocks: blocks.length };
+					html = await res.text();
+					writeFileSync(cacheFile, html);
+					fetched++;
+					await new Promise((r) => setTimeout(r, 250)); // be polite only when fetching
 				}
+				const blocks = extractSql(html);
+				if (blocks.length) {
+					const dir = join(OUT, slug);
+					mkdirSync(dir, { recursive: true });
+					blocks.forEach((sql, i) => writeFileSync(join(dir, `${i + 1}.sql`), sql + "\n"));
+					files += blocks.length;
+				}
+				manifest[url] = { status: 200, blocks: blocks.length };
 			} catch (e) {
 				manifest[url] = { status: "error", error: String(e), blocks: 0 };
 				failures++;
 			}
-			fetched++;
-			if (fetched % 100 === 0) {
+			processed++;
+			if (processed % 200 === 0) {
 				writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
-				console.log(`${fetched}/${todo.length} pages, ${files} sql files, ${failures} failures`);
+				console.log(
+					`${processed}/${urls.length} pages, ${files} sql files, ${fetched} fetched, ${failures} failures`,
+				);
 			}
-			await new Promise((r) => setTimeout(r, 250));
 		}
 	}
 
-	const queue = [...todo]; // one shared queue — workers pop from it
+	const queue = [...urls]; // one shared queue — workers pop from it
 	await Promise.all(Array.from({ length: CONCURRENCY }, () => worker(queue)));
 	writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
-	console.log(`done: ${fetched} pages fetched, ${files} sql files written, ${failures} failures`);
+	console.log(`done: ${processed} pages, ${files} sql files written, ${fetched} fetched, ${failures} failures`);
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) await main();

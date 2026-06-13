@@ -14,7 +14,8 @@ where each column comes from. The parsers are generated TypeScript on the
 | Databricks (Spark SQL) | yes | yes | grammar forked from apache/spark |
 | T-SQL | yes | yes | grammar forked from grammars-v4 `sql/tsql` |
 | Snowflake | yes | yes | grammar forked from grammars-v4 `sql/snowflake` |
-| Redshift, BigQuery | planned | — | hand-authored (no open grammar exists) |
+| BigQuery (GoogleSQL) | yes | yes | grammar forked from `bytebase/parser` `googlesql/`; gated against ZetaSQL's `.test` corpus |
+| Redshift | planned | — | hand-authored (no open grammar exists) |
 
 The semantic layer is dialect-agnostic: it operates on the shared IR and runs
 unchanged on every dialect. Only the parse and lower stages are dialect-specific.

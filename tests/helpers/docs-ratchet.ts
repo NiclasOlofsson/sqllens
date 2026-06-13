@@ -93,7 +93,10 @@ export function runDocsRatchet(
 
 	for (const f of sqlFiles(dir)) {
 		const sql = readFileSync(f, "utf8");
-		const rel = f.slice(dir.length + 1).split("\\").join("/");
+		const rel = f
+			.slice(dir.length + 1)
+			.split("\\")
+			.join("/");
 
 		let errs: number;
 		let kind: SqlKind;

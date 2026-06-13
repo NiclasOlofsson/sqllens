@@ -185,7 +185,9 @@ describe("Snowflake parse", () => {
 		expect(errorsOf("ALTER CORTEX SEARCH SERVICE svc SET TARGET_LAG = '1 hour'")).toBe(0);
 		expect(errorsOf("ALTER ORGANIZATION ACCOUNT SET COMMENT = 'x'")).toBe(0);
 		expect(errorsOf("CREATE POSTGRES INSTANCE pg COMPUTE_FAMILY = 'CPU_X64_XS'")).toBe(0);
-		expect(errorsOf("CREATE OR REPLACE NETWORK RULE r MODE = INGRESS TYPE = IPV4 VALUE_LIST = ('1.2.3.4')")).toBe(0);
+		expect(errorsOf("CREATE OR REPLACE NETWORK RULE r MODE = INGRESS TYPE = IPV4 VALUE_LIST = ('1.2.3.4')")).toBe(
+			0,
+		);
 		expect(errorsOf("ALTER NETWORK RULE r SET COMMENT = 'x'")).toBe(0);
 	});
 
@@ -500,9 +502,7 @@ describe("Snowflake parse", () => {
 
 	// PIVOT with an aggregate alias and ANY ORDER BY: docs.snowflake.com/en/sql-reference/constructs/pivot
 	it("parses PIVOT with an aggregate alias and ANY ORDER BY", () => {
-		expect(
-			errorsOf("SELECT * FROM s PIVOT(SUM(amount) AS total FOR quarter IN (ANY ORDER BY quarter))"),
-		).toBe(0);
+		expect(errorsOf("SELECT * FROM s PIVOT(SUM(amount) AS total FOR quarter IN (ANY ORDER BY quarter))")).toBe(0);
 	});
 
 	// --- query-language gaps, wave 5 (docs corpus, 2026-06-12) ---
@@ -523,11 +523,13 @@ describe("Snowflake parse", () => {
 	// SEMANTIC_VIEW(...) table function: docs.snowflake.com/en/sql-reference/constructs/semantic_view
 	it("parses SEMANTIC_VIEW(… METRICS … DIMENSIONS …) in either order", () => {
 		expect(
-			errorsOf("SELECT * FROM SEMANTIC_VIEW(tpch_analysis METRICS customer.order_count DIMENSIONS customer.name)"),
+			errorsOf(
+				"SELECT * FROM SEMANTIC_VIEW(tpch_analysis METRICS customer.order_count DIMENSIONS customer.name)",
+			),
 		).toBe(0);
-		expect(
-			errorsOf("SELECT * FROM SEMANTIC_VIEW(a DIMENSIONS customer.name METRICS customer.order_count)"),
-		).toBe(0);
+		expect(errorsOf("SELECT * FROM SEMANTIC_VIEW(a DIMENSIONS customer.name METRICS customer.order_count)")).toBe(
+			0,
+		);
 	});
 
 	// --- query-language gaps, wave 6 (docs corpus, 2026-06-12) ---
@@ -573,9 +575,9 @@ describe("Snowflake parse", () => {
 
 	// PIVOT IN-list values can be aliased: docs.snowflake.com/en/sql-reference/constructs/pivot
 	it("parses PIVOT with aliased IN-list values", () => {
-		expect(
-			errorsOf("SELECT * FROM s PIVOT(SUM(amount) FOR quarter IN ('2023_Q1' AS q1, '2023_Q2' AS q2))"),
-		).toBe(0);
+		expect(errorsOf("SELECT * FROM s PIVOT(SUM(amount) FOR quarter IN ('2023_Q1' AS q1, '2023_Q2' AS q2))")).toBe(
+			0,
+		);
 	});
 
 	// A TYPE-valued argument (AI_COMPLETE response_format => TYPE OBJECT(...)):
@@ -639,9 +641,9 @@ describe("Snowflake parse", () => {
 
 	// A named arg whose value is TABLE(...): docs.snowflake.com/en/sql-reference/classes-anomaly_detection
 	it("parses a !method() table function with a TABLE(...)-valued named argument", () => {
-		expect(errorsOf("SELECT ts FROM TABLE(det!DETECT_ANOMALIES(INPUT_DATA => TABLE('my_view'), TARGET => 'y'))")).toBe(
-			0,
-		);
+		expect(
+			errorsOf("SELECT ts FROM TABLE(det!DETECT_ANOMALIES(INPUT_DATA => TABLE('my_view'), TARGET => 'y'))"),
+		).toBe(0);
 	});
 
 	// USE SECONDARY ROLES with an explicit role list: docs.snowflake.com/en/sql-reference/sql/use-secondary-roles
@@ -697,7 +699,9 @@ describe("Snowflake parse", () => {
 	it("parses SEMANTIC_VIEW FACTS and item aliases", () => {
 		expect(errorsOf("SELECT * FROM SEMANTIC_VIEW(sv FACTS orders.amount, orders.qty)")).toBe(0);
 		expect(
-			errorsOf("SELECT * FROM SEMANTIC_VIEW(sv METRICS m.rev AS revenue DIMENSIONS d.name AS n WHERE d.region = 'EU')"),
+			errorsOf(
+				"SELECT * FROM SEMANTIC_VIEW(sv METRICS m.rev AS revenue DIMENSIONS d.name AS n WHERE d.region = 'EU')",
+			),
 		).toBe(0);
 	});
 
@@ -791,7 +795,9 @@ describe("Snowflake lower -> IR", () => {
 	});
 
 	it("captures the ASOF JOIN match condition as a join condition", () => {
-		const { body } = selectBody("SELECT * FROM trades t ASOF JOIN quotes q MATCH_CONDITION (t.ts >= q.ts) ON t.sym = q.sym");
+		const { body } = selectBody(
+			"SELECT * FROM trades t ASOF JOIN quotes q MATCH_CONDITION (t.ts >= q.ts) ON t.sym = q.sym",
+		);
 		expect(body.joinConditions).toHaveLength(2);
 	});
 
@@ -855,7 +861,11 @@ describe("Snowflake lower -> IR", () => {
 		expect(rp.replace?.[0].expr).toMatchObject({ kind: "binary", op: "/" });
 
 		const combined = selectBody("SELECT t.* EXCLUDE (a) RENAME (c AS d) FROM t").body;
-		expect(combined.projections[0].expr).toMatchObject({ kind: "star", exclude: ["a"], rename: [{ from: "c", to: "d" }] });
+		expect(combined.projections[0].expr).toMatchObject({
+			kind: "star",
+			exclude: ["a"],
+			rename: [{ from: "c", to: "d" }],
+		});
 		expect(combined.unsupported ?? []).not.toContain("star-modifier");
 	});
 
@@ -914,9 +924,7 @@ describe("Snowflake lower -> IR", () => {
 	});
 
 	it("lowers PIVOT to PivotInfo", () => {
-		const { body } = selectBody(
-			"SELECT * FROM monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB')) p",
-		);
+		const { body } = selectBody("SELECT * FROM monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB')) p");
 		expect(body.pivot).toBeDefined();
 		expect(body.pivot?.values).toEqual(["JAN", "FEB"]);
 		expect(body.pivot?.forColumns).toEqual(["month"]);

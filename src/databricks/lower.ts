@@ -287,7 +287,9 @@ function buildInlineTable(inlineTable: ParserRuleContext): SelectExpr {
 		cur = cur.getChild(0);
 	}
 	const colExprs = ctor
-		? directChildrenOfRule(ctor, P.RULE_namedExpression).map((n) => directChildrenOfRule(n, P.RULE_expression)[0] ?? n)
+		? directChildrenOfRule(ctor, P.RULE_namedExpression).map(
+				(n) => directChildrenOfRule(n, P.RULE_expression)[0] ?? n,
+			)
 		: first
 			? [first]
 			: [];

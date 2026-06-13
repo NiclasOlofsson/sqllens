@@ -335,14 +335,19 @@ Open (tracked in `docs/snowflake-backlog.md`): the docs-corpus grammar long tail
 
 ---
 
-## Phase 5 — Dialect #3: BigQuery
+## Phase 5 — Dialect #4: BigQuery (GoogleSQL) — DONE 2026-06-13 (fork-and-clean, not hand-authored)
 
-> Bite-sized tasks written after Phase 4. Method identical. Known-hard areas:
+> **Superseded by the build.** The original framing (hand-author; "no open grammar exists") was wrong, the same miss as Snowflake: **`bytebase/parser` `googlesql/`** is a complete ANTLR4 port of GoogleSQL (BSD-3). BigQuery was **forked** from it — vendored at `grammars/bigquery/` — the only work to make it a TS parser was porting the Go-target embedded code (49 `NotifyErrorListeners` error actions + 7 `localctx`/`:=`/`GetStop()` predicate-and-declaration blocks) to the antlr4ng API. Entry rule `root` (`stmts EOF`).
 
-- `STRUCT<…>` / `ARRAY<…>` typed literals, `UNNEST`, `SELECT * EXCEPT(…) REPLACE(…)`, backtick-quoted multipart names, `SAFE.` / `SAFE_CAST`, parameterized types, `FOR SYSTEM_TIME AS OF`, scripting (`DECLARE`/`SET`/`BEGIN…END`).
-- **Ground truth:** read Google's **ZetaSQL** Bison grammar as the authoritative spec for ambiguous cases (do not port it).
+What shipped (see CLAUDE.md Current status for the live detail):
+- **Parse** — `src/bigquery/parse.ts` (two-stage SLL→LL). Generates + typechecks clean.
+- **Lower** — `src/bigquery/lower.ts` maps the ZetaSQL query CST onto the shared IR: projections (incl. `SELECT * EXCEPT/REPLACE`, `t.*`), table/subquery/UNNEST-lateral sources, join chains + ON, WHERE/GROUP BY (incl. ALL + ROLLUP/CUBE/GROUPING SETS keys)/HAVING/QUALIFY, CTEs (incl. RECURSIVE), UNION/EXCEPT/INTERSECT, ORDER BY/LIMIT, and the left-recursive expression grammar (binary/unary/CASE/CAST/EXTRACT/function+OVER/IN/BETWEEN/LIKE/IS/subscript/STRUCT/ARRAY/lambda/scalar+ARRAY+EXISTS subqueries). Statement-kind is parse-derived. A valid parse never throws; unmodelled forms become `other`.
+- **Inference** — `src/infer/bigquery.ts` (INT64/FLOAT64/NUMERIC/BOOL/BYTES/JSON aliases, typed-literal rules, INT64/INT64→FLOAT64 division, a seeded ~190-function GoogleSQL return registry).
+- **Gate** — `bigquery.corpus.test.ts` against the **ZetaSQL `.test` golden corpus** (17,465 positive / 222 negative cases from the 377 `googlesql/analyzer/testdata/*.test` files, extracted by `tools/extract-googlesql-tests.mjs`). The project's first **two-sided** conformance gate: positives parse at 10,821/17,465 (regression floor — the corpus carries semantic-error and ZetaSQL-only/pipe-`|>` cases), syntax-error negatives rejected at 171/222, plus a no-throw sweep proving `lower`+`resolveScopes` total over every parsed positive.
 
-**Phase 5 done when:** BigQuery `we-reject-they-accept` ≤ threshold on the corpus.
+**Open gaps (not descoped):** expression coverage falls back to `other` for ZetaSQL-specific forms (not yet wired into `ir-completeness`); raising the positive ratchet means closing real grammar/lower gaps (e.g. pipe syntax, typed STRUCT/ARRAY literal depth); DML/DDL/scripting lower to flagged non-query bodies (statement-kind only). `SAFE.`/`SAFE_CAST`, `FOR SYSTEM_TIME AS OF` and backtick multipart names parse; deeper modelling rides the ratchet.
+
+**Original known-hard areas (kept for reference):** `STRUCT<…>`/`ARRAY<…>` typed literals, `UNNEST`, `SELECT * EXCEPT(…) REPLACE(…)`, backtick multipart names, `SAFE.`/`SAFE_CAST`, parameterized types, `FOR SYSTEM_TIME AS OF`, scripting. **Ground truth:** Google's **ZetaSQL** — read the Bison grammar as the spec, and its `.test` files as the conformance corpus (the grammar we fork is Bytebase's ANTLR port, not ZetaSQL itself).
 
 ---
 
