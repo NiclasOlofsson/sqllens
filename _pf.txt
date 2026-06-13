@@ -1,0 +1,729 @@
+=== aggregation_52.sql
+select anon_count(WITH REPORT),
+       anon_count(WITH REPORT(format=xyz))
+from t
+
+=== aggregation_76.sql
+select sum(distinct),
+       sum(ignore nulls),
+       sum(respect nulls),
+       sum(distinct ignore nulls),
+
+=== alter_row_access_policy_28.sql
+alter    p1 on t1 filter using(true);
+
+=== analytic_functions_89.sql
+select
+  f(ignore nulls) over ()
+from T
+
+=== analytic_functions_90.sql
+select
+  f(respect nulls) over ()
+from T
+
+=== assert_22.sql
+ASSERT (ASSERT(SELECT TRUE));
+
+=== chained_function_calls_37.sql
+select (1).new()
+
+=== chained_function_calls_4.sql
+SELECT
+  true.x(),
+  null.x(),
+  "abc".x(),
+  "abc" "def".x(),       # Concatenated literals.
+  b"abc" b"def".x(),
+  DATE "2021-02-02".x(), # DATE and other prefixed literals.
+  NUMERIC "123".x(),
+  BIGNUMERIC "123".x(),
+  @param.x(),
+  ?.x(),
+  a[2].x(),
+  ARRAY<INT64>[1,2].x(),
+  (x,y).x(),
+  STRUCT<INT64>(5).x(),
+  {f: 123}.x(),
+  NEW MyStruct().x(),
+  NEW MyProto{}.x(),
+  CASE WHEN true THEN 5 END.x(),
+  CAST(5 AS int32).x(),
+  WITH(y AS 5, y).x(),
+  INTERVAL 5 YEAR.x(),
+  UPDATE(myproto) {f:10}.x(),  # UPDATE constructor
+  (1).x(),               # Ints and floats only work inside parentheses.
+  (2.).x(),
+  (3.4).x(),
+  (1 + 2).x(),
+  (1+2).x(),             # Parenthesized expression
+  (select 1).x(),        # Scalar subquery
+  ARRAY(select 1).x(),   # Scalar ARRAY subquery
+
+=== create_constant_2.sql
+create `constant` a.b.c = 'str';
+
+=== create_public_private_13.sql
+CREATE IDENTIFIER_MODIFIER function foo() returns int64 language testlang;
+
+=== create_sql_function_30.sql
+create temporary function f() returns int64 as (select 1);
+
+=== dml_insert_88.sql
+insert into project-987654321.a.b values (1)
+
+=== drop_12.sql
+drop foo.bar baz;
+
+=== drop_16.sql
+drop foo.bar if exists baz;
+
+=== drop_38.sql
+drop foo;
+
+=== drop_function_31.sql
+DROP TABLE FUNCTION foo-bar-123.baz;
+
+=== drop_row_access_policy_12.sql
+drop `row` `access` if exists `policy`
+
+=== drop_row_access_policy_13.sql
+drop `row` `access` if exists policy
+
+=== drop_row_access_policy_14.sql
+drop `row` `access`  `policy`
+
+=== drop_row_access_policy_15.sql
+drop `row` `access`  policy
+
+=== drop_row_access_policy_16.sql
+drop `row` access if exists `policy`
+
+=== drop_row_access_policy_17.sql
+drop `row` access if exists policy
+
+=== drop_row_access_policy_18.sql
+drop `row` access  `policy`
+
+=== drop_row_access_policy_19.sql
+drop `row` access  policy
+
+=== exception_handler_0.sql
+begin
+EXCEPTION WHEN ERROR THEN
+end
+
+=== exception_handler_1.sql
+BEGIN
+  SELECT 1;
+EXCEPTION WHEN ERROR THEN
+END;
+
+=== expression_subquery_11.sql
+select cast(select key from keyvalue)
+
+=== expression_subquery_12.sql
+select safe_cast(select key from keyvalue)
+
+=== generic_ddl_15.sql
+ALTER UNSUPPORTED myProject.myReservation
+
+=== generic_ddl_24.sql
+CREATE RESERVATION
+
+=== generic_ddl_25.sql
+CREATE reSERVAtion
+
+=== generic_ddl_26.sql
+CREATE SUPPORTED_ENTITY
+
+=== generic_ddl_34.sql
+ALTER SCHEMA schema_name
+ADD REPLICA replica_name
+OPTIONS (a=b)
+
+=== generic_ddl_37.sql
+ALTER SCHEMA schema_name
+ADD REPLICA IF NOT EXISTS replica_name
+OPTIONS (a=b)
+
+=== generic_ddl_38.sql
+ALTER SCHEMA schema_name
+ADD REPLICA  replica_name
+OPTIONS (a=b)
+
+=== generic_ddl_39.sql
+ALTER SCHEMA schema_name
+ADD REPLICA replica_name1 OPTIONS (a=b),
+ADD REPLICA replica_name2 OPTIONS (c=d)
+
+=== generic_ddl_46.sql
+ALTER SCHEMA schema_name
+ALTER REPLICA replica_name1 ADD CHILD_OF_REPLICA child_1 OPTIONS (a=b),
+ALTER REPLICA replica_name1 ADD CHILD_OF_REPLICA child_2 OPTIONS (c=d)
+
+=== generic_ddl_5.sql
+CREATE foo.bar myProject.myReservation
+
+=== generic_ddl_7.sql
+CREATE SOME_TYPE IF NOT EXISTS
+
+=== generic_ddl_8.sql
+CREATE SOME_TYPE
+
+=== graph_path_search_prefix_18.sql
+SELECT one FROM GRAPH_TABLE(
+  aml
+  MATCH shortest = ANY 4 -[b]->, ALL SHORTEST -[b]->, ANY -[b]->, ALL -[b]->
+  COLUMNS(1 AS one)
+)
+
+=== graph_path_search_prefix_20.sql
+SELECT one FROM GRAPH_TABLE(
+  aml
+  MATCH shortest = SHORTEST 4 -[b]->, ALL SHORTEST -[b]->, ANY -[b]->, ALL -[b]->
+  COLUMNS(1 AS one)
+)
+
+=== graph_path_search_prefix_24.sql
+GRAPH aml
+RETURN exists {shortest = shortest 100 (n2:person)}
+
+=== graph_sample_13.sql
+SELECT * FROM GRAPH_TABLE(aml
+  match (weight)
+  TABLESAMPLE bernoulli(5 PERCENT)
+  WITH weight w 
+  RETURN *
+  ) AS gt
+
+=== graph_sample_14.sql
+SELECT * FROM GRAPH_TABLE(aml
+  match (weight)
+  TABLESAMPLE bernoulli(5 PERCENT)
+  WITH weight w REPEATABLE (1234)
+  RETURN *
+  ) AS gt
+
+=== group_rows_0.sql
+SELECT (
+  WITH group_rows() AS GROUP ROWS
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== group_rows_1.sql
+SELECT (
+  WITH group_rows() AS GROUP ROWS
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== group_rows_2.sql
+SELECT ARRAY(
+  WITH group_rows() AS GROUP ROWS
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== group_rows_3.sql
+SELECT EXISTS(
+  WITH group_rows() AS GROUP ROWS
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== group_rows_4.sql
+SELECT (
+  WITH RECURSIVE group_rows() AS GROUP ROWS
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== group_rows_5.sql
+SELECT (
+  WITH group_rows() AS GROUP ROWS,
+  t1 AS (SELECT 5 as x)
+  SELECT col
+  FROM group_rows()
+)
+FROM Transactions
+GROUP BY State
+
+=== in_31.sql
+select x from T where x IN UNNEST(select 1)
+
+=== keywords_2.sql
+select if(distinct 1, 2, 3)
+
+=== lambda_12.sql
+select ARRAY_TRANSFORM(
+  e -> ARRAY_TRANSFORM(
+
+=== limit_32.sql
+SELECT 1 LIMIT ALL OFFSET 0;
+
+=== macros_0.sql
+DEFINE MACRO m1 FROM $group.tbl_$suffix a, r'b;"c'
+
+=== macros_1.sql
+DEFINE MACRO m1 FROM $group.tbl_$suffix a, r'b;"c';
+
+=== macros_10.sql
+DEFINE MACRO m1 3m
+
+=== macros_11.sql
+DEFINE MACRO m1 3.3m
+
+=== macros_12.sql
+DEFINE MACRO m1 .3m
+
+=== macros_13.sql
+DEFINE MACRO m1 3E10m
+
+=== macros_14.sql
+DEFINE MACRO m1 */
+
+=== macros_16.sql
+DEFINE macro EXCEPT $subquery;
+
+=== macros_17.sql
+DEFINE macro foo EXCEPT $subquery;
+
+=== macros_2.sql
+DEFINE MACRO m a$1$other$2, "a$3;" -- Ignore the rest of this line
+$x + /* ;intermediate comment; */ $y
+
+=== macros_22.sql
+@{key=1} DEFINE MACRO m 1;
+
+=== macros_5.sql
+DEFINE MACRO m1 3m
+
+=== macros_6.sql
+DEFINE MACRO m1 3.3m
+
+=== macros_7.sql
+DEFINE MACRO m1 .3m
+
+=== macros_8.sql
+DEFINE MACRO m1 FULL .3E10m
+
+=== macros_9.sql
+DEFINE MACRO m1 3E10m
+
+=== parameters_27.sql
+select a from @a;
+
+=== parameters_28.sql
+select a from ?;
+
+=== parameters_29.sql
+select a from @@a;
+
+=== parameters_32.sql
+select @proto
+
+=== parameters_34.sql
+select @FrOm
+
+=== parameters_38.sql
+SELECT @UNION;
+
+=== parameters_39.sql
+SELECT @INTERSECT;
+
+=== parameters_40.sql
+SELECT @EXCEPT;
+
+=== parameters_43.sql
+SELECT @FULL
+
+=== parameters_44.sql
+SELECT @FULL.LEFT
+
+=== parameters_45.sql
+SELECT @FULL.1
+
+=== parameters_55.sql
+SELECT @@FULL.1
+
+=== parameters_61.sql
+SELECT @FULL.FULL.FULL.FULL
+
+=== parser_1.sql
+select 1; # NBSP
+
+=== parser_10.sql
+select--comment
+\--comment
+1 -- comment
++--
+2--comment
+
+=== parser_3.sql
+select
+/* block
+   comment */
+\-- full line comment
+1# partial line comment
++-- partial line comment
+2/*partial line block comment*/+3;
+
+=== parser_errors_15.sql
+r"""sdfds
+
+foo
+
+bar"""
+
+=== parser_errors_16.sql
+b"""sdfds
+
+foo
+
+bar"""
+
+=== parser_errors_17.sql
+rb"""sdfds
+
+foo
+
+bar"""
+
+=== parser_errors_18.sql
+r'''sdfds
+
+foo
+
+bar'''
+
+=== parser_errors_19.sql
+b'''sdfds
+
+foo
+
+bar'''
+
+=== parser_errors_20.sql
+rb'''sdfds
+
+foo
+
+bar'''
+
+=== parser_errors_literal_cutoff_32.sql
+r"""01234567890123456789
+12345678901234567890123456789"""
+
+=== parser_errors_literal_cutoff_33.sql
+rb"""01234567890123456789
+12345678901234567890123456789"""
+
+=== pipe_aggregate_group_by_aliases_1.sql
+select 1
+|> AGGREGATE count(*) as x, count(*) z
+   GROUP BY x y, x+y xy
+
+=== pipe_aggregate_with_order_4.sql
+select 1
+|> AGGREGATE
+   GROUP BY x+1 alias NULLS FIRST
+
+=== pipe_from_query_21.sql
+from t
+except
+from t2
+
+=== pipe_group_rows_0.sql
+FROM Transactions
+|> AGGREGATE ARRAY(WITH group_rows() AS GROUP ROWS
+                   FROM group_rows()
+                   |> SELECT customer_id
+                   |> DISTINCT)
+   GROUP BY State
+
+=== pipe_group_rows_1.sql
+FROM Transactions
+|> AGGREGATE ARRAY(WITH group_rows() AS GROUP ROWS
+                   FROM group_rows()
+                   |> SELECT customer_id
+                   |> DISTINCT)
+   GROUP BY State
+
+=== pipe_named_windows_2.sql
+from t
+|> select sum(x) over (w),
+   window w AS (),
+
+=== pipe_named_windows_3.sql
+from t
+|> extend sum(x) over (w),
+   window w AS (),
+
+=== pipe_order_by_2.sql
+select 1
+|> order by x,
+|> order by x, y,
+
+=== pipe_parenthesized_query_alias_4.sql
+(FROM t1) q1
+
+=== pipe_query_37.sql
+select 1 x
+|> limit all
+|> limit all offset 22
+
+=== proto_braced_constructors_19.sql
+SELECT NEW x { path.to.extension: 1 }
+
+=== qualify_1.sql
+select f1, f2 from T QUALIFY
+  QUALIFY row_number() OVER (PARTITION BY f2 ORDER BY f3) = 1
+
+=== qualify_2.sql
+select f1, f2 from T AS QUALIFY
+  QUALIFY row_number() OVER (PARTITION BY f2 ORDER BY f3) = 1
+
+=== qualify_4.sql
+select f1, f2 from T QUALIFY
+
+=== qualify_5.sql
+select f1, f2 from T AS QUALIFY
+
+=== qualify_6.sql
+select f1, f2 from T QUALIFY WHERE true
+
+=== qualify_7.sql
+select f1, f2 from T AS QUALIFY WHERE false
+
+=== qualify_8.sql
+select f1, f2 from T QUALIFY
+
+=== quantified_comparisons_26.sql
+select val != some @123 (select x from t)
+
+=== raise_4.sql
+BEGIN EXCEPTION WHEN ERROR THEN END;
+RAISE;
+
+=== script_2.sql
+\-- Comment
+
+=== script_20.sql
+IF true THEN
+  SELECT 1;
+  /*comment*/ DEFINE MACRO m 1;
+END IF;
+
+=== script_21.sql
+IF true THEN
+  SELECT 1;
+   DEFINE MACRO m 1;
+END IF;
+
+=== script_24.sql
+FOR x IN (SELECT 0) DO
+  SELECT 1;
+  /*comment*/ DEFINE MACRO m 1;
+END FOR
+
+=== script_25.sql
+FOR x IN (SELECT 0) DO
+  SELECT 1;
+   DEFINE MACRO m 1;
+END FOR
+
+=== script_28.sql
+REPEAT
+  SELECT 1;
+  /*comment*/ DEFINE MACRO m 1;
+UNTIL TRUE
+END REPEAT;
+
+=== script_29.sql
+REPEAT
+  SELECT 1;
+   DEFINE MACRO m 1;
+UNTIL TRUE
+END REPEAT;
+
+=== script_3.sql
+\-- Comment
+BEGIN END;
+
+=== set_13.sql
+SET a,b = (4, 5);
+
+=== set_25.sql
+SET @AND="something"
+
+=== set_8.sql
+SET () = y;
+
+=== set_operation_10.sql
+SELECT * FROM Table
+EXCEPT
+FROM
+
+=== set_operation_11.sql
+SELECT * FROM Table
+EXCEPT
+;
+
+=== set_operation_12.sql
+SELECT * FROM Table
+EXCEPT
++
+
+=== set_operation_39.sql
+SELECT EXCEPT @param;
+
+=== set_operation_6.sql
+select 1
+EXCEPT
+select 2
+
+=== set_operation_7.sql
+SELECT * FROM Table
+EXCEPT
+Garbage
+
+=== set_operation_8.sql
+SELECT * FROM Table
+EXCEPT
+5
+
+=== set_operation_9.sql
+SELECT * FROM Table
+EXCEPT
+'abc'
+
+=== set_operation_corresponding_10.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
+FROM
+
+=== set_operation_corresponding_11.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
+;
+
+=== set_operation_corresponding_12.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
++
+
+=== set_operation_corresponding_6.sql
+select 1
+EXCEPT CORRESPONDING
+select 2
+
+=== set_operation_corresponding_7.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
+Garbage
+
+=== set_operation_corresponding_8.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
+5
+
+=== set_operation_corresponding_9.sql
+SELECT * FROM Table
+EXCEPT CORRESPONDING
+'abc'
+
+=== spanner_legacy_ddl_1.sql
+create table t1 (a int64) primary key (a) , interleave in parent p;
+
+=== spanner_legacy_ddl_19.sql
+alter table tbl alter column col int64 default (x+2);
+
+=== spanner_legacy_ddl_27.sql
+alter table t alter column col int64 default x+2;
+
+=== spanner_legacy_ddl_29.sql
+alter table t
+alter column col int64  default (x+2);
+
+=== spanner_legacy_ddl_32.sql
+alter table t
+alter column col int64 not null default (x+2);
+
+=== spanner_legacy_ddl_39.sql
+alter table tbl alter column col int64 not null default (x+2), drop column col;
+
+=== spanner_legacy_ddl_42.sql
+alter table t
+alter column col int64  default (x+2);
+
+=== spanner_legacy_ddl_45.sql
+alter table t
+alter column col int64 not null default (x+2);
+
+=== spanner_legacy_ddl_6.sql
+create table t1 (a int64) primary key (a) , interleave in parent p;
+
+=== statement_with_pipe_operators_1.sql
+show tables
+|> WHERE true
+
+=== statement_with_pipe_operators_10.sql
+EXPLAIN
+DESCRIBE abc
+|> WHERE true
+
+=== statement_with_pipe_operators_12.sql
+@{outer_hint=1}
+EXPLAIN
+@{inner_hint=1}
+DESCRIBE abc
+|> WHERE true
+
+=== statement_with_pipe_operators_2.sql
+show tables
+|> WHERE true
+|> LIMIT 10
+
+=== statement_with_pipe_operators_3.sql
+describe abc
+|> AGGREGATE COUNT(*)
+|> WHERE true
+
+=== statement_with_pipe_operators_4.sql
+RUN "abc.sql"
+|> SELECT x
+
+=== statement_with_pipe_operators_5.sql
+CALL proc(123)
+|> SELECT x
+
+=== statement_with_pipe_operators_6.sql
+EXECUTE IMMEDIATE "select 1"
+|> WHERE true
+
+=== statement_with_pipe_operators_8.sql
+@{hint=1}
+DESCRIBE abc
+|> WHERE true
+
+=== struct_16.sql
+select struct(), struct<>()
+
+=== unnest_3.sql
+select x from unnest(select y+z) as k with offset pos
+
+=== whitespace_0.sql
+SELECT
+              　1

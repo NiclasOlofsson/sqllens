@@ -45,6 +45,8 @@ function cloneRetyped(src: Token, type: number, text: string, start: number, sto
 	return t;
 }
 
+const NUMERIC = new Set([T_FLOAT, T_INTEGER, T_INVALID]);
+
 /** Apply the DOT_IDENTIFIER rewrite to a flat token list (default channel; EOF excluded). */
 function rewriteDotPaths(tokens: Token[]): Token[] {
 	const out: Token[] = [];
@@ -61,23 +63,31 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 		const type = tok.type;
 		const text = tok.text ?? "";
 
-		// A leading-dot numeric token (`.123`, `.1e2`, `.2daysago`, `.0x1f`) right after a path head
-		// is `.` + identifier. Split it; the identifier is everything after the dot (exact charset
-		// fidelity isn't needed — the parser accepts any IDENTIFIER token as a path component).
-		if ((type === T_FLOAT || type === T_INVALID) && text.startsWith(".") && PATH_HEAD.has(lookback)) {
-			out.push(cloneRetyped(tok, T_DOT, ".", tok.start, tok.start));
-			out.push(cloneRetyped(tok, T_IDENTIFIER, text.slice(1), tok.start + 1, tok.stop));
-			lookback = T_IDENTIFIER;
-			pathDot = false;
-			continue;
-		}
-
-		// An integer/hex literal right after a path-separator `.` becomes an identifier component
-		// (`x.1 .2 . 3`, `a.b.c . 123`).
-		if (type === T_INTEGER && pathDot) {
-			out.push(cloneRetyped(tok, T_IDENTIFIER, text, tok.start, tok.stop));
-			lookback = T_IDENTIFIER;
-			pathDot = false;
+		// In path context a numeric literal is a sequence of identifier components: our lexer fuses
+		// the digit runs and dots (`.123`, `2.0`, `1.`, `2daysago`, `0x1f`, `1.2e3`) into one
+		// FLOATING_POINT/INTEGER/INVALID token, but each embedded `.` is a path separator and each
+		// run is a component. Decompose into `IDENTIFIER (DOT IDENTIFIER)*`. Path context = right
+		// after a path-separator `.` (pathDot), or a leading-dot literal right after a path head
+		// (the literal's own leading `.` is the separator). Exact identifier charset fidelity isn't
+		// needed — the parser accepts any IDENTIFIER token as a path component.
+		const inPath = pathDot || (PATH_HEAD.has(lookback) && text.startsWith("."));
+		if (NUMERIC.has(type) && inPath) {
+			const parts = text.split(".");
+			let pos = tok.start;
+			for (let i = 0; i < parts.length; i++) {
+				if (i > 0) {
+					out.push(cloneRetyped(tok, T_DOT, ".", pos, pos));
+					pos += 1;
+					lookback = T_DOT;
+					pathDot = true;
+				}
+				if (parts[i] !== "") {
+					out.push(cloneRetyped(tok, T_IDENTIFIER, parts[i], pos, pos + parts[i].length - 1));
+					pos += parts[i].length;
+					lookback = T_IDENTIFIER;
+					pathDot = false;
+				}
+			}
 			continue;
 		}
 
