@@ -1,5 +1,32 @@
 import { describe, expect, it } from "vitest";
 import { parseBigQuery } from "../src/bigquery/parse.js";
+import { GoogleSQLLexer } from "../src/generated/bigquery/GoogleSQLLexer.js";
+
+// DOT_IDENTIFIER (lexical#identifiers): any keyword is valid as a path component after a `.`
+// (foo.all, hll_count.merge, t.array, @@FROM). `dot_identifier` governs path_expression /
+// system-variable paths; its reserved set is hand-enumerated, which would silently drift as
+// keyword tokens are added — so derive every keyword spelling from the lexer vocabulary and assert
+// each is accepted as a post-dot path component. A new keyword missing from the set fails here.
+describe("BigQuery dot-identifier covers every keyword (complete by construction)", () => {
+	const keywords = (GoogleSQLLexer.literalNames as (string | null)[])
+		.filter((l): l is string => !!l && /^'[A-Za-z][A-Za-z_]*'$/.test(l))
+		.map((l) => l.slice(1, -1));
+
+	it("has a non-trivial keyword set", () => {
+		expect(keywords.length).toBeGreaterThan(200);
+	});
+
+	it("every keyword parses as a path component after a dot", () => {
+		// `dataset.<kw>` exercises path_expression's post-dot dot_identifier; @@ paths reuse the same rule.
+		const broken = keywords.filter((kw) => parseBigQuery(`SELECT * FROM dataset.${kw}`).errors !== 0);
+		expect(broken, `keywords not accepted as a path component:\n${broken.join(", ")}`).toEqual([]);
+	});
+
+	it("a reserved keyword is valid as a system-variable path component (incl. the head)", () => {
+		expect(parseBigQuery("SELECT @@FROM").errors).toBe(0);
+		expect(parseBigQuery("SELECT @@v.ORDER.with").errors).toBe(0);
+	});
+});
 
 describe("parseBigQuery", () => {
 	it("parses a basic SELECT with zero errors", () => {

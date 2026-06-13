@@ -2906,11 +2906,13 @@ reserved_keyword_as_dot_identifier:
 	| LIKE_SYMBOL
 	| LIMIT_SYMBOL
 	| LOOKUP_SYMBOL
+	| MATCH_RECOGNIZE_SYMBOL
 	| MERGE_SYMBOL
 	| NATURAL_SYMBOL
 	| NEW_SYMBOL
 	| NO_SYMBOL
 	| NOT_SYMBOL
+	| NOTHING_SYMBOL
 	| NULL_SYMBOL
 	| NULLS_SYMBOL
 	| OF_SYMBOL
@@ -2931,6 +2933,8 @@ reserved_keyword_as_dot_identifier:
 	| ROWS_SYMBOL
 	| SELECT_SYMBOL
 	| SET_SYMBOL
+	| SHORTEST_SYMBOL
+	| SLASH_SYMBOL
 	| SOME_SYMBOL
 	| STRUCT_SYMBOL
 	| TABLESAMPLE_SYMBOL
@@ -3161,6 +3165,8 @@ common_keyword_as_identifier:
 	| DESTINATION_SYMBOL
 	| PROPERTY_SYMBOL
 	| GRAPH_SYMBOL
+	// GRAPH_TABLE is conditionally reserved (reserved only in the GRAPH_TABLE(…) operator position);
+	// ZetaSQL's parser testdata uses it as a bare identifier (alias, zero-arg TVF), so keep it here.
 	| GRAPH_TABLE_SYMBOL
 	| NODE_SYMBOL
 	| PROPERTIES_SYMBOL
