@@ -2674,12 +2674,16 @@ function_call_expression_with_clauses:
 	// NOTE: zetasql bison.y is LALR(1) parser, it checks the first rule should be path_expression
 	// in action code instead of use expression directly to avoid parser ambiguous.
 	path_expression LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
-	| function_name_from_keyword LR_BRACKET_SYMBOL function_call_expression_with_clauses_suffix;
+	// function_name_from_keyword "(" opt_distinct (IF/GROUPING etc. as aggregate calls — googlesql.tm).
+	| function_name_from_keyword LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix;
 
 function_call_expression_with_clauses_suffix:
 	(
-		// Empty argument list.
-		opt_having_or_group_by_modifier? order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
+		// Empty argument list — same modifier set as the non-empty form minus clamped_between (which
+		// requires at least one argument): [IGNORE|RESPECT NULLS] [WHERE] [GROUP BY/HAVING] [WITH
+		// REPORT] [ORDER BY] [LIMIT] (googlesql.tm function_call_expression, empty-arg-list rule).
+		opt_null_handling_modifier? where_clause? opt_having_or_group_by_modifier? with_report_modifier?
+			order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
 		// Non empty argument list. Modifier order per ZetaSQL aggregate-call grammar:
 		// [IGNORE|RESPECT NULLS] [WHERE …] [GROUP BY … / HAVING …] [CLAMPED BETWEEN …]
 		// [WITH REPORT …] [ORDER BY …] [LIMIT …] — WHERE (aggregate filtering) and the
@@ -2781,9 +2785,12 @@ lambda_argument_list:
 	| LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
 
 // GoogleSQL allows `LIMIT ALL` (no row cap) as well as `LIMIT n [OFFSET m]`.
+// LIMIT <expr> [OFFSET <expr>] or LIMIT ALL [OFFSET <expr>] (limit_offset_clause in googlesql.tm;
+// LIMIT ALL means no row cap but an OFFSET may still apply).
 limit_offset_clause:
 	LIMIT_SYMBOL expression OFFSET_SYMBOL expression
 	| LIMIT_SYMBOL expression
+	| LIMIT_SYMBOL ALL_SYMBOL OFFSET_SYMBOL expression
 	| LIMIT_SYMBOL ALL_SYMBOL;
 
 // Aggregate-call modifiers (ZetaSQL): the "HAVING MAX/MIN value" row-picker, and the
