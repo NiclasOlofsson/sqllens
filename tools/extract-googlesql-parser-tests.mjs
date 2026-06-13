@@ -74,8 +74,12 @@ function applyMode(query, mode) {
 // with custom messages — "EXCEPT must be followed by ALL, DISTINCT, or (", "Expected keyword X but
 // got Y", "The argument to UNNEST is an expression, not a query", "DEFINE MACRO … cannot be nested" —
 // are real syntax errors and stay negatives even though they don't start with "Syntax error".
-const startsWithSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(expected.trim());
-const isError = (expected) => /^ERROR:/i.test(expected.trim());
+// An expected block may begin with bracketed directive lines (e.g. `[NEWLINE \n]`) before the ERROR
+// or parse tree; strip them so the error check sees the real first content line.
+const stripExpectedDirectives = (expected) =>
+	expected.replace(/^(?:\s*\[[^\]]*\]\s*\r?\n)+/, "").trim();
+const startsWithSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(stripExpectedDirectives(expected));
+const isError = (expected) => /^ERROR:/i.test(stripExpectedDirectives(expected));
 // A feature/support rejection only when the message is ABOUT support — and only if it is not already
 // flagged as a "Syntax error" (those, e.g. "Syntax error: WHERE not supported after FROM query", are
 // genuine parse errors that merely happen to contain the word "supported").

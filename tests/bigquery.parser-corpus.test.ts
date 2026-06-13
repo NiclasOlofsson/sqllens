@@ -77,13 +77,18 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // accepted (permissive superset / DDL). This moved a batch of mis-bucketed error cases out of the
 // positive bucket and into negatives we already reject.
 //
-// Measured 2026-06-13: of 3550 positives, 881 are DDL (excluded); in-scope positives parse at
-// 2579/2669 (96.6%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/dot-path.ts — numeric
-// path components `foo.123`, `x.1.2.3`, `t.2daysago`, and dotted `x.y.2.0.z` in path context).
-// Negatives: of 2566, 496 DDL excluded; of the 2070 in-scope negatives we reject 1856 and still
-// wrongly accept 214. Both in-scope floors ratchet up as the grammar tightens.
-const IN_SCOPE_POSITIVE_BASELINE = 2598; // in-scope (non-DDL) parsed of 2669; 71 in-scope still failing
-const IN_SCOPE_NEGATIVE_BASELINE = 1856; // in-scope (non-DDL) rejected of 2070; 214 in-scope still accepted
+// The extractor also strips leading bracketed directive lines (`[NEWLINE \n]`, …) from an expected
+// block before the error check, so error cases prefixed by such a directive (e.g. the multiline
+// triple-quoted "Unexpected string literal" cases) classify as negatives, not positives.
+//
+// Measured 2026-06-13: of 3542 positives, 881 are DDL (excluded); in-scope positives parse at
+// 2598/2661 (97.6%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/dot-path.ts — numeric
+// path components `foo.123`, `x.1.2.3`, `t.2daysago`, dotted `x.y.2.0.z`), WITH GROUP ROWS entries,
+// and reserved-keyword parameter names (`@from`, `@full.1`). Negatives: of 2574, 496 DDL excluded;
+// of the 2078 in-scope negatives we reject 1864 and still wrongly accept 214. Both in-scope floors
+// ratchet up as the grammar tightens.
+const IN_SCOPE_POSITIVE_BASELINE = 2598; // in-scope (non-DDL) parsed of 2661; 63 in-scope still failing
+const IN_SCOPE_NEGATIVE_BASELINE = 1864; // in-scope (non-DDL) rejected of 2078; 214 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
