@@ -1,3 +1,4 @@
+import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType } from "./bigquery.js";
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
@@ -41,7 +42,14 @@ const snowflake: InferDialect = {
 	division: "decimal",
 };
 
-const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake };
+const bigquery: InferDialect = {
+	functions: BIGQUERY_FUNCTION_RETURNS,
+	literal: bigqueryLiteral,
+	parseType: bigqueryParseType,
+	division: "float", // BigQuery: INT64 / INT64 → FLOAT64
+};
+
+const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery };
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */
 export function inferDialect(name: string | undefined): InferDialect {
