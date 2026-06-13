@@ -2283,6 +2283,9 @@ expression_higher_prec_than_and:
 	| new_constructor
 	| braced_constructor
 	| braced_new_constructor
+	// UPDATE constructor: a function call followed by a braced field block — `UPDATE(p) {f:10}`
+	// (googlesql.tm: function_call_expression braced_constructor → ASTUpdateConstructor).
+	| function_call_expression_with_clauses braced_constructor
 	| struct_braced_constructor
 	| case_expression
 	| cast_expression
@@ -2298,7 +2301,7 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 	// Chained function call: base.method(args) — functions-reference#chained_function_calls.
 	| expression_higher_prec_than_and DOT_SYMBOL (
-		identifier
+		dot_identifier
 		| function_name_from_keyword
 	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	// Chained call on a generalized field: base.(pkg.ext)(args).
@@ -2443,6 +2446,9 @@ expression_maybe_parenthesized_not_a_query:
 	| new_constructor
 	| braced_constructor
 	| braced_new_constructor
+	// UPDATE constructor: a function call followed by a braced field block — `UPDATE(p) {f:10}`
+	// (googlesql.tm: function_call_expression braced_constructor → ASTUpdateConstructor).
+	| function_call_expression_with_clauses braced_constructor
 	| struct_braced_constructor
 	| case_expression
 	| cast_expression
@@ -2458,7 +2464,7 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 	// Chained function call (see expression_higher_prec_than_and).
 	| expression_higher_prec_than_and DOT_SYMBOL (
-		identifier
+		dot_identifier
 		| function_name_from_keyword
 	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	// Chained call on a generalized field: base.(pkg.ext)(args).
