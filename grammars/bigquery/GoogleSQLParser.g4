@@ -1556,9 +1556,11 @@ pipe_drop: DROP_SYMBOL identifier (COMMA_SYMBOL identifier)* COMMA_SYMBOL?;
 pipe_aggregate:
 	AGGREGATE_SYMBOL pipe_aggregate_item_list? pipe_group_by_clause?;
 
-// Pipe GROUP BY: like group_by_clause_prefix but with a trailing comma (the pipe variant).
+// Pipe GROUP BY: the pipe variant — `GROUP [AND ORDER] BY` and per-item alias/ordering suffixes,
+// which the standard GROUP BY (group_by_clause_prefix) does NOT allow (googlesql.tm grouping_item vs
+// grouping_item_in_pipe, group_by_preamble vs group_by_preamble_in_pipe).
 pipe_group_by_clause:
-	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)* COMMA_SYMBOL?;
+	group_by_preamble_in_pipe grouping_item_in_pipe (COMMA_SYMBOL grouping_item_in_pipe)* COMMA_SYMBOL?;
 
 pipe_aggregate_item_list:
 	pipe_aggregate_item (COMMA_SYMBOL pipe_aggregate_item)* COMMA_SYMBOL?;
@@ -1945,9 +1947,29 @@ using_clause:
 
 join_hint: HASH_SYMBOL | LOOKUP_SYMBOL;
 
+// googlesql.tm table_path_expression: WITH OFFSET precedes PIVOT/UNPIVOT, and PIVOT/UNPIVOT may not
+// be followed by WITH OFFSET or FOR SYSTEM TIME (the spec errors on pivot + at_system_time, and offset
+// has no slot after pivot). We model the mutual exclusion structurally by splitting on pivot presence:
+// the pivot-bearing alternative offers no trailing offset/time, the non-pivot one keeps both.
 table_path_expression:
-	table_path_expression_base hint? opt_pivot_or_unpivot_clause_and_alias?
-		opt_with_offset_and_alias? opt_at_system_time?;
+	table_path_expression_base hint? opt_with_offset_and_alias? table_path_pivot_suffix
+	| table_path_expression_base hint? table_path_alias_or_qualify? opt_with_offset_and_alias?
+		opt_at_system_time?;
+
+table_path_pivot_suffix:
+	AS_SYMBOL identifier pivot_clause as_alias?
+	| AS_SYMBOL identifier unpivot_clause as_alias?
+	| identifier pivot_clause as_alias?
+	| identifier unpivot_clause as_alias?
+	| pivot_clause as_alias?
+	| unpivot_clause as_alias?;
+
+table_path_alias_or_qualify:
+	AS_SYMBOL identifier qualify_clause_nonreserved
+	| identifier qualify_clause_nonreserved
+	| qualify_clause_nonreserved
+	| AS_SYMBOL identifier
+	| identifier;
 
 opt_at_system_time:
 	FOR_SYMBOL SYSTEM_SYMBOL TIME_SYMBOL AS_SYMBOL OF_SYMBOL expression
@@ -2576,7 +2598,10 @@ aggregate_group_by_modifier:
 group_by_clause_prefix:
 	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)*;
 
-group_by_preamble: GROUP_SYMBOL hint? opt_and_order? BY_SYMBOL;
+// Standard GROUP BY has no `AND ORDER` — that is pipe-AGGREGATE-only (group_by_preamble_in_pipe).
+group_by_preamble: GROUP_SYMBOL hint? BY_SYMBOL;
+
+group_by_preamble_in_pipe: GROUP_SYMBOL hint? opt_and_order? BY_SYMBOL;
 
 opt_and_order: AND_SYMBOL ORDER_SYMBOL;
 
@@ -2603,12 +2628,19 @@ extra_identifier_in_hints_name:
 	| PROTO_SYMBOL
 	| PARTITION_SYMBOL;
 
-grouping_item:
+// Standard GROUP BY item: a bare expression or a grouping construct — NO alias, NO ordering suffix
+// (those are pipe-AGGREGATE-only — grouping_item_in_pipe). googlesql.tm grouping_item/grouping_item_base.
+grouping_item_base:
 	LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL
-	| expression opt_as_alias_with_required_as? opt_grouping_item_order?
 	| rollup_list RR_BRACKET_SYMBOL
 	| cube_list RR_BRACKET_SYMBOL
 	| grouping_set_list RR_BRACKET_SYMBOL;
+
+grouping_item: grouping_item_base | expression;
+
+grouping_item_in_pipe:
+	grouping_item_base
+	| expression opt_as_alias_with_required_as? opt_grouping_item_order?;
 
 grouping_set_list:
 	GROUPING_SYMBOL SETS_SYMBOL LR_BRACKET_SYMBOL grouping_set (

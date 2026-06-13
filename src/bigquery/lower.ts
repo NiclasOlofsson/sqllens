@@ -458,7 +458,8 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 function buildPathSource(pathExpr: ParserRuleContext): Source {
 	const base = directChildrenOfRule(pathExpr, P.RULE_table_path_expression_base)[0];
 	const aliasInfo =
-		aliasOf(directChildrenOfRule(pathExpr, P.RULE_opt_pivot_or_unpivot_clause_and_alias)[0]) ??
+		aliasOf(directChildrenOfRule(pathExpr, P.RULE_table_path_alias_or_qualify)[0]) ??
+		aliasOf(directChildrenOfRule(pathExpr, P.RULE_table_path_pivot_suffix)[0]) ??
 		offsetAliasOf(pathExpr);
 
 	const unnest = base ? firstOfRule(base, P.RULE_unnest_expression) : undefined;
@@ -477,7 +478,7 @@ function buildPathSource(pathExpr: ParserRuleContext): Source {
 	return { kind: "table", name, alias: aliasInfo?.alias, aliasCst: aliasInfo?.cst, cst: pathExpr };
 }
 
-/** opt_pivot_or_unpivot_clause_and_alias / pivot_or_unpivot_clause_and_aliases → its leading identifier. */
+/** table_path_alias_or_qualify / table_path_pivot_suffix / pivot_or_unpivot_clause_and_aliases → its leading identifier. */
 function aliasOf(node: ParserRuleContext | undefined): { alias: string; cst: ParserRuleContext } | undefined {
 	if (!node) return undefined;
 	const id = directChildrenOfRule(node, P.RULE_identifier)[0];

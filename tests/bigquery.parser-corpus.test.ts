@@ -41,8 +41,8 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // loose: incomplete statements, method-call on a numeric literal, FOR UPDATE inside a view, malformed
 // graph edges) plus features we deliberately don't implement (dashed/slashed paths) — to be driven
 // down by tightening the grammar, NOT by exclusion. Only without-a-doubt feature-off cases are excluded.
-const POSITIVE_BASELINE = 3364; // 3364/3603 (93.4%)
-const NEGATIVE_BASELINE = 2153; // 2153/2522 (85.4%)
+const POSITIVE_BASELINE = 3370; // 3370/3603 (93.5%)
+const NEGATIVE_BASELINE = 2180; // 2180/2522 (86.4%) — raised by table-path postfix + GROUP BY tightening
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {
