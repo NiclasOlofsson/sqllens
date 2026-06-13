@@ -70,13 +70,20 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // query, multiline string literals, …). The in-scope NEGATIVE bucket is genuine over-acceptance
 // (numeric-literal method calls, set-op CORRESPONDING edges, `1 > > 2`, WITH ANONYMIZATION, …).
 //
-// Measured 2026-06-13: of 3603 positives, 892 are DDL (excluded); in-scope positives parse at
-// 2586/2711 (95.4%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/dot-path.ts — numeric
+// The extractor now classifies a custom parser ERROR (not just "Syntax error: …") as a negative —
+// "EXCEPT must be followed by ALL, DISTINCT, or (", "… is an expression, not a query", "DEFINE MACRO
+// … cannot be nested", "Syntax error: WHERE not supported after FROM query" — while still treating a
+// post-parse feature/support rejection ("… is not supported", "… is not a supported object type") as
+// accepted (permissive superset / DDL). This moved a batch of mis-bucketed error cases out of the
+// positive bucket and into negatives we already reject.
+//
+// Measured 2026-06-13: of 3550 positives, 881 are DDL (excluded); in-scope positives parse at
+// 2579/2669 (96.6%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/dot-path.ts — numeric
 // path components `foo.123`, `x.1.2.3`, `t.2daysago`, and dotted `x.y.2.0.z` in path context).
-// Negatives: 494 DDL excluded; of the 2028 in-scope negatives we reject 1821 and still wrongly accept
-// 207. Both in-scope floors ratchet up as the grammar tightens.
-const IN_SCOPE_POSITIVE_BASELINE = 2586; // in-scope (non-DDL) parsed of 2711; 125 in-scope still failing
-const IN_SCOPE_NEGATIVE_BASELINE = 1821; // in-scope (non-DDL) rejected of 2028; 207 in-scope still accepted
+// Negatives: of 2566, 496 DDL excluded; of the 2070 in-scope negatives we reject 1856 and still
+// wrongly accept 214. Both in-scope floors ratchet up as the grammar tightens.
+const IN_SCOPE_POSITIVE_BASELINE = 2579; // in-scope (non-DDL) parsed of 2669; 90 in-scope still failing
+const IN_SCOPE_NEGATIVE_BASELINE = 1856; // in-scope (non-DDL) rejected of 2070; 214 in-scope still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {

@@ -66,7 +66,22 @@ function applyMode(query, mode) {
 	return query;
 }
 
-const isSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(expected.trim());
+// An expected `ERROR:` means the query did not parse — a NEGATIVE — EXCEPT a post-parse feature/
+// support rejection ("… is not supported", "… is not implemented", "… is not a supported object
+// type"). Those we accept: our parser is a permissive superset (every GoogleSQL feature ON), and a
+// feature-OFF rejection for a feature WE implement reads exactly that way; DDL object-type rejections
+// are post-parse too and are excluded from the gate as detect-only. Genuine structural parser errors
+// with custom messages — "EXCEPT must be followed by ALL, DISTINCT, or (", "Expected keyword X but
+// got Y", "The argument to UNNEST is an expression, not a query", "DEFINE MACRO … cannot be nested" —
+// are real syntax errors and stay negatives even though they don't start with "Syntax error".
+const startsWithSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(expected.trim());
+const isError = (expected) => /^ERROR:/i.test(expected.trim());
+// A feature/support rejection only when the message is ABOUT support — and only if it is not already
+// flagged as a "Syntax error" (those, e.g. "Syntax error: WHERE not supported after FROM query", are
+// genuine parse errors that merely happen to contain the word "supported").
+const isFeatureRejection = (expected) => /\bnot\s+(a\s+)?support|\bnot\s+implemented\b/i.test(expected);
+const isSyntaxError = (expected) =>
+	startsWithSyntaxError(expected) || (isError(expected) && !isFeatureRejection(expected));
 
 // Feature-aware grading. ZetaSQL's parser is feature-gated: a `[language_features=…]` directive turns
 // LanguageFeatures on/off, and a syntax that needs a disabled feature reports a *Syntax error*. Our
