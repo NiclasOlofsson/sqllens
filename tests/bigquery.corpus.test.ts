@@ -17,9 +17,12 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 
 // Baselines: regression floors. Raise as grammar gaps close. Corpus is mode-aware (type-mode
 // blocks dropped, expression-mode wrapped as SELECT) so totals differ from the first extraction.
-const POSITIVE_BASELINE = 12998; // 12998/17315; ratchet up as gaps close
-const NEGATIVE_BASELINE = 161; // 161/214 syntax-error cases rejected (parser is intentionally
-// looser than the analyzer on a few semantic-ish "syntax errors" — mixed set-ops, edge TVF forms)
+const POSITIVE_BASELINE = 14969; // 14969/17315; ratchet up as gaps close
+// The parser implements the full GoogleSQL feature superset (all language_features on), so it
+// legitimately accepts the corpus's feature-OFF negatives — SQL that is a "syntax error" only
+// because a feature (PIPES, …) is disabled — plus a few parser-vs-analyzer cases (mixed set-ops,
+// edge TVF forms). The floor below is the achievable rejection count, not 214.
+const NEGATIVE_BASELINE = 157; // 157/214 true syntax-error cases rejected
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () => {
 	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {

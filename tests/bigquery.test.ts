@@ -87,6 +87,111 @@ describe("parseBigQuery", () => {
 	});
 });
 
+// docs.cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax — pipe query syntax,
+// GA in BigQuery. The base query may be a bare FROM clause; pipe operators chain with `|>`.
+describe("BigQuery pipe syntax", () => {
+	const ok = (sql: string) => expect(parseBigQuery(sql).errors, sql).toBe(0);
+
+	it("bare FROM query (no SELECT)", () => {
+		ok("FROM t");
+		ok("FROM a JOIN b USING (k)");
+	});
+
+	it("row-producing operators: WHERE/SELECT/EXTEND/SET/DROP/RENAME/DISTINCT/ORDER BY/LIMIT", () => {
+		ok("FROM t |> WHERE key > 10");
+		ok("SELECT 1 x, 2 y |> SELECT *, x + y AS z |> SELECT x, z");
+		ok("SELECT 1 x |> EXTEND 2 y |> EXTEND y*2 z |> EXTEND y+z yz, x+1 x1");
+		ok("FROM t |> SET key = 'abc'");
+		ok("FROM t |> DROP key");
+		ok("FROM t |> RENAME key AS k |> RENAME k AS k2");
+		ok("SELECT 1 |> DISTINCT");
+		ok("SELECT 1 x, 2 y |> ORDER BY x, y DESC, x*2 |> ORDER @{hint=1} BY x");
+		ok("SELECT 1 |> LIMIT 10 |> LIMIT 5 OFFSET 2");
+	});
+
+	it("AGGREGATE with and without GROUP BY, grouping items", () => {
+		ok("SELECT 1 x, 2 y |> AGGREGATE GROUP BY x, y");
+		ok("SELECT 1 x, 2 y |> AGGREGATE SUM(y), SUM(x) GROUP BY x");
+		ok("FROM t |> AGGREGATE COUNT(*) GROUP BY GROUPING SETS(a, b)");
+		ok("FROM t |> AGGREGATE count(*), sum(y) GROUP BY ()");
+		ok("SELECT 1 x |> AGGREGATE x GROUP BY x");
+	});
+
+	it("WINDOW / CALL / AS / TABLESAMPLE / PIVOT / UNPIVOT", () => {
+		ok("SELECT 1 x |> WINDOW sum(x) OVER (), count(*) OVER () AS c");
+		ok("SELECT 1 x |> CALL tvf() |> CALL fn(x)");
+		ok("SELECT 1 x, 2 y |> AS t |> SELECT t.x, t.y, *, t.*");
+		ok("FROM t |> TABLESAMPLE BERNOULLI (10 PERCENT)");
+		ok("FROM t |> PIVOT(COUNT(v) FOR k IN (0 AS zero, 1 AS one))");
+		ok("FROM t |> UNPIVOT(a FOR b IN (k))");
+	});
+
+	it("JOIN operators with types and ON/USING", () => {
+		ok("FROM t |> JOIN u USING (key)");
+		ok("FROM t |> CROSS JOIN u kv2");
+		ok("FROM t |> FULL JOIN u t2 USING (c)");
+		ok("FROM t |> JOIN UNNEST(t.arr) d2 ON d1 = d2");
+	});
+
+	it("pipe set operations (UNION/INTERSECT/EXCEPT with modifiers and operands)", () => {
+		ok("SELECT 1 |> UNION ALL (SELECT 2)");
+		ok("FROM t |> INNER INTERSECT DISTINCT BY NAME (SELECT 1 AS a)");
+		ok("FROM t |> LEFT EXCEPT ALL BY NAME (SELECT 1 AS a)");
+	});
+
+	it("inspection/assertion operators: STATIC_DESCRIBE/DESCRIBE/LOG/ASSERT", () => {
+		ok("FROM t |> STATIC_DESCRIBE |> WHERE value IS NULL");
+		ok("SELECT 123 |> DESCRIBE");
+		ok("FROM t |> LOG");
+		ok("SELECT * FROM t |> ASSERT true |> ASSERT key > 0, 'bad key', key");
+	});
+
+	it("control-flow / subpipeline operators: IF/TEE/FORK/RECURSIVE UNION", () => {
+		ok("FROM t |> IF true THEN ()");
+		ok("FROM t |> TEE ()");
+		ok("FROM t |> FORK ()");
+		ok("FROM t |> RECURSIVE UNION ALL (|> EXTEND 1)");
+	});
+
+	it("DML/DDL pipe operators: CREATE TABLE / INSERT / EXPORT DATA", () => {
+		ok("FROM t |> CREATE TABLE t2");
+		ok("SELECT 123 input_name |> CREATE TABLE t1 (output_name STRING)");
+		ok("SELECT 'abc' value, 5 key |> INSERT INTO KeyValue");
+		ok("FROM t |> EXPORT DATA");
+	});
+
+	it("pipes nest in subqueries and parenthesized set-op operands", () => {
+		ok("SELECT * FROM (FROM t |> WHERE x > 0)");
+		ok("(FROM a) UNION ALL (FROM b) |> WHERE str IS NULL |> SELECT *");
+	});
+
+	it("pipe AGGREGATE GROUP BY allows ordered keys and a trailing comma", () => {
+		ok("FROM t |> AGGREGATE count(*) GROUP BY key, value ASC, value DESC,");
+		ok("FROM t |> AGGREGATE sum(x) GROUP BY key DESC NULLS LAST");
+	});
+
+	it("standalone subpipeline statement (implicit input table)", () => {
+		ok("|> WHERE true");
+		ok("|> WHERE x > 0 |> SELECT a, b");
+	});
+
+	it("pipe CALL with INPUT TABLE argument", () => {
+		ok("SELECT * FROM tvf(TABLE KeyValue, INPUT TABLE)");
+		ok("SELECT 1 x |> CALL tvf(INPUT TABLE, 2)");
+	});
+});
+
+// LATERAL joins (correlated subquery / TVF on the join RHS) — query-syntax LATERAL.
+describe("BigQuery LATERAL join", () => {
+	const ok = (sql: string) => expect(parseBigQuery(sql).errors, sql).toBe(0);
+	it("LATERAL subquery and TVF, classic and pipe", () => {
+		ok("SELECT * FROM a JOIN LATERAL (SELECT * FROM b WHERE b.k < a.k) AS t2");
+		ok("SELECT * FROM a LEFT JOIN LATERAL tvf(a.k, TABLE b) AS t2");
+		ok("SELECT * FROM a JOIN LATERAL (SELECT 1) AS t TABLESAMPLE BERNOULLI (10 PERCENT)");
+		ok("FROM a |> JOIN LATERAL (SELECT * FROM b) AS t2");
+	});
+});
+
 import { lower } from "../src/bigquery/lower.js";
 
 function kind(sql: string) {

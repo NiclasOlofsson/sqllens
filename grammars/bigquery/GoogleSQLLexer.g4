@@ -326,9 +326,16 @@ ITERATE_SYMBOL: 'ITERATE';
 KEY_SYMBOL: 'KEY';
 LANGUAGE_SYMBOL: 'LANGUAGE';
 LAST_SYMBOL: 'LAST';
+// LATERAL join (reserved keyword): query-syntax LATERAL — RHS subquery/TVF may reference the LHS.
+LATERAL_SYMBOL: 'LATERAL';
 LEAVE_SYMBOL: 'LEAVE';
 LEVEL_SYMBOL: 'LEVEL';
 LOAD_SYMBOL: 'LOAD';
+// Pipe-operator keywords (…/pipe-syntax). Non-reserved — also added to the identifier set so
+// LOG(x), TEE, FORK remain usable as function names / identifiers outside a pipe.
+LOG_SYMBOL: 'LOG';
+TEE_SYMBOL: 'TEE';
+FORK_SYMBOL: 'FORK';
 LOOP_SYMBOL: 'LOOP';
 MACRO_SYMBOL: 'MACRO';
 MAP_SYMBOL: 'MAP';

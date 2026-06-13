@@ -90,7 +90,11 @@ sql_statement_body:
 	| call_statement
 	| import_statement
 	| module_statement
-	| undrop_statement;
+	| undrop_statement
+	// A bare subpipeline (`|> op …`) is a valid statement with an implicit input table.
+	| subpipeline_statement;
+
+subpipeline_statement: pipe_operator+;
 
 gql_statement:
 	GRAPH_SYMBOL path_expression graph_operation_block;
@@ -1396,8 +1400,11 @@ opt_if_exists: IF_SYMBOL EXISTS_SYMBOL;
 
 table_or_table_function: TABLE_SYMBOL FUNCTION_SYMBOL?;
 
-query: query_without_pipe_operators;
+// …/pipe-syntax — a query is a base query followed by zero or more `|>` pipe operators.
+// Pipes propagate through `query` everywhere it is used (subqueries, set-op operands, CTEs).
+query: query_without_pipe_operators pipe_operator*;
 
+// A bare FROM clause (no SELECT) is a valid query in pipe syntax — `FROM t` ≡ `SELECT * FROM t`.
 query_without_pipe_operators:
 	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause?
 	| with_clause_with_trailing_comma select_or_from_keyword {this.notifyErrorListeners("Syntax error: Trailing comma after the WITH clause before the main query is not allowed", null, null)
@@ -1405,12 +1412,155 @@ query_without_pipe_operators:
 	| with_clause PIPE_SYMBOL {this.notifyErrorListeners("Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here", null, null)
 		}
 	| query_primary_or_set_operation order_by_clause? limit_offset_clause?
-	| with_clause? from_clause {this.notifyErrorListeners("Syntax error: Unexpected FROM", null, null)}
-	// FIXME(zp): Inject the keyword from original input.
-	| with_clause? from_clause bad_keyword_after_from_query {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
-		}
-	| with_clause? from_clause bad_keyword_after_from_query_allows_parens {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
-		};
+	| with_clause? from_query;
+
+// FROM-query: the whole query is just a FROM clause (rows flow into the pipe operators).
+from_query: from_clause;
+
+// --- Pipe operators (…/pipe-syntax; grammar from google/googlesql googlesql.tm) -----------------
+// Every operator is introduced by `|>`. Each delegates to the standard clause it mirrors; the
+// EXTEND/WINDOW/AGGREGATE selection list is the restricted form (no bare `*`).
+pipe_operator:
+	PIPE_SYMBOL (
+		pipe_where
+		| pipe_select
+		| pipe_extend
+		| pipe_rename
+		| pipe_set
+		| pipe_drop
+		| pipe_aggregate
+		| pipe_order_by
+		| pipe_limit_offset
+		| pipe_distinct
+		| pipe_window
+		| pipe_join
+		| pipe_call
+		| pipe_as
+		| pipe_set_operation
+		| pipe_recursive_union
+		| pipe_pivot
+		| pipe_unpivot
+		| pipe_tablesample
+		| pipe_match_recognize
+		| pipe_assert
+		| pipe_log
+		| pipe_static_describe
+		| pipe_describe
+		| pipe_if
+		| pipe_fork
+		| pipe_tee
+		| pipe_with
+		| pipe_export_data
+		| pipe_create_table
+		| pipe_insert
+	);
+
+// A subpipeline is a parenthesized run of `|>` operators with an implicit input (may be empty).
+subpipeline: LR_BRACKET_SYMBOL pipe_operator* RR_BRACKET_SYMBOL;
+
+subquery_or_subpipeline: subpipeline | parenthesized_query;
+
+pipe_where: where_clause;
+
+// SELECT reuses the full select_clause (bare `*`, star modifiers, AS aliases) + trailing WINDOW.
+pipe_select: select_clause window_clause?;
+
+// EXTEND / WINDOW use the restricted selection list (no bare `*`); EXTEND allows a trailing WINDOW.
+pipe_extend: EXTEND_SYMBOL pipe_selection_item_list window_clause?;
+
+pipe_window: WINDOW_SYMBOL pipe_selection_item_list;
+
+pipe_selection_item: select_column_expr | select_column_dot_star;
+
+pipe_selection_item_list:
+	pipe_selection_item (COMMA_SYMBOL pipe_selection_item)* COMMA_SYMBOL?;
+
+pipe_rename: RENAME_SYMBOL pipe_rename_item (COMMA_SYMBOL pipe_rename_item)* COMMA_SYMBOL?;
+
+pipe_rename_item: identifier AS_SYMBOL? identifier;
+
+pipe_set: SET_SYMBOL pipe_set_item (COMMA_SYMBOL pipe_set_item)* COMMA_SYMBOL?;
+
+pipe_set_item: identifier EQUAL_OPERATOR expression;
+
+pipe_drop: DROP_SYMBOL identifier (COMMA_SYMBOL identifier)* COMMA_SYMBOL?;
+
+// AGGREGATE: agg list may be empty; GROUP BY is the pipe variant (no GROUP BY ALL) but otherwise
+// the full grouping-item set (ROLLUP/CUBE/GROUPING SETS/(), AS alias, order suffix, GROUP AND ORDER).
+pipe_aggregate:
+	AGGREGATE_SYMBOL pipe_aggregate_item_list? pipe_group_by_clause?;
+
+// Pipe GROUP BY: like group_by_clause_prefix but with a trailing comma (the pipe variant).
+pipe_group_by_clause:
+	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)* COMMA_SYMBOL?;
+
+pipe_aggregate_item_list:
+	pipe_aggregate_item (COMMA_SYMBOL pipe_aggregate_item)* COMMA_SYMBOL?;
+
+pipe_aggregate_item: pipe_selection_item opt_selection_item_order?;
+
+pipe_order_by: order_by_clause;
+
+pipe_limit_offset: limit_offset_clause;
+
+pipe_distinct: DISTINCT_SYMBOL;
+
+// JOIN with no LHS (the pipe input is the LHS).
+pipe_join:
+	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
+
+pipe_call: CALL_SYMBOL tvf_with_suffixes;
+
+pipe_as: AS_SYMBOL identifier;
+
+// Set operations: {ALL|DISTINCT} mandatory; operands are parenthesized queries or `TABLE name`.
+pipe_set_operation:
+	set_operation_metadata pipe_set_operation_operand (
+		COMMA_SYMBOL pipe_set_operation_operand
+	)* COMMA_SYMBOL?;
+
+pipe_set_operation_operand: parenthesized_query | table_clause;
+
+pipe_recursive_union:
+	RECURSIVE_SYMBOL set_operation_metadata recursion_depth_modifier? subquery_or_subpipeline
+		opt_as_alias_with_required_as?;
+
+pipe_pivot: pivot_clause as_alias?;
+
+pipe_unpivot: unpivot_clause as_alias?;
+
+pipe_tablesample: sample_clause;
+
+pipe_match_recognize: match_recognize_clause;
+
+pipe_assert: ASSERT_SYMBOL expression (COMMA_SYMBOL expression)* COMMA_SYMBOL?;
+
+pipe_log: LOG_SYMBOL hint? subpipeline?;
+
+pipe_static_describe: STATIC_DESCRIBE_SYMBOL;
+
+pipe_describe: DESCRIBE_SYMBOL;
+
+pipe_if:
+	IF_SYMBOL hint? expression THEN_SYMBOL subpipeline pipe_if_elseif* (
+		ELSE_SYMBOL subpipeline
+	)?;
+
+pipe_if_elseif: ELSEIF_SYMBOL expression THEN_SYMBOL subpipeline;
+
+pipe_fork: FORK_SYMBOL hint? subpipeline (COMMA_SYMBOL subpipeline)* COMMA_SYMBOL?;
+
+pipe_tee: TEE_SYMBOL hint? (subpipeline (COMMA_SYMBOL subpipeline)* COMMA_SYMBOL?)?;
+
+pipe_with: with_clause COMMA_SYMBOL?;
+
+pipe_export_data: export_data_no_query;
+
+pipe_create_table: create_table_statement;
+
+pipe_insert:
+	insert_statement_prefix column_list? on_conflict_clause? opt_assert_rows_modified?
+		opt_returning_clause?;
 
 bad_keyword_after_from_query:
 	WHERE_SYMBOL
@@ -1469,9 +1619,12 @@ query_set_operation_type:
 	| EXCEPT_SYMBOL
 	| INTERSECT_SYMBOL;
 
+// …/pipe-syntax + query-syntax#set_operators — set-op outer mode (also pipe set ops): the bytebase
+// port had FULL/OUTER/LEFT; ZetaSQL also allows INNER.
 opt_corresponding_outer_mode:
 	FULL_SYMBOL opt_outer?
 	| OUTER_SYMBOL
+	| INNER_SYMBOL
 	| LEFT_SYMBOL opt_outer?;
 
 opt_outer: OUTER_SYMBOL;
@@ -1574,11 +1727,14 @@ from_clause_contents_suffix:
 	COMMA_SYMBOL table_primary
 	| opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
 
+// LATERAL allows the RHS subquery/TVF to reference earlier sources (query-syntax LATERAL).
 table_primary:
 	tvf_with_suffixes
+	| LATERAL_SYMBOL tvf_with_suffixes
 	| table_path_expression
 	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
 	| table_subquery
+	| LATERAL_SYMBOL table_subquery
 	| table_primary match_recognize_clause
 	| table_primary sample_clause;
 
@@ -1785,6 +1941,8 @@ tvf_argument:
 	| model_clause
 	| connection_clause
 	| named_argument
+	// INPUT TABLE: the pipe input passed as a TVF table arg (PIPE_CALL_INPUT_TABLE).
+	| INPUT_SYMBOL TABLE_SYMBOL
 	| LR_BRACKET_SYMBOL table_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Table arguments for table-valued function calls written as \"TABLE path\" must not be enclosed in parentheses. To fix this, replace (TABLE path) with TABLE path",null,null)
 		}
 	| LR_BRACKET_SYMBOL model_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Model arguments for table-valued function calls written as \"MODEL path\" must not be enclosed in parentheses. To fix this, replace (MODEL path) with MODEL path",null,null)
@@ -2615,6 +2773,7 @@ common_keyword_as_identifier:
 	| FILL_SYMBOL
 	| FIRST_SYMBOL
 	| FOREIGN_SYMBOL
+	| FORK_SYMBOL
 	| FORMAT_SYMBOL
 	| FUNCTION_SYMBOL
 	| GENERATED_SYMBOL
@@ -2641,8 +2800,10 @@ common_keyword_as_identifier:
 	| LEAVE_SYMBOL
 	| LEVEL_SYMBOL
 	| LOAD_SYMBOL
+	| LOG_SYMBOL
 	| LOOP_SYMBOL
 	| MACRO_SYMBOL
+	| TEE_SYMBOL
 	| MAP_SYMBOL
 	| MATCH_SYMBOL
 	| KW_MATCH_RECOGNIZE_NONRESERVED_SYMBOL
