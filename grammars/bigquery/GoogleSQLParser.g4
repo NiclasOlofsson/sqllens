@@ -43,6 +43,28 @@ options {
 		const c0 = ctx?.getChild?.(0);
 		return !!c0 && c0.getText?.().toUpperCase?.() === "NOT" && !!ctx.NOT_SYMBOL?.();
 	}
+	// Two tokens are adjacent when no character (whitespace/comment) sits between them. GoogleSQL
+	// requires a graph edge pattern's punctuation to be written without spaces (`-[…]->`, `<-[…]-`);
+	// the filler inside `[…]` may contain spaces (ZetaSQL graph_edge_pattern adjacency checks).
+	private adj(a: any, b: any): boolean {
+		return !!a && !!b && a.stop + 1 === b.start;
+	}
+	private checkGraphEdgeAdjacency(ctx: any): void {
+		const lt = ctx.LT_OPERATOR?.()?.symbol;
+		const m0 = ctx.MINUS_OPERATOR?.(0)?.symbol;
+		const m1 = ctx.MINUS_OPERATOR?.(1)?.symbol;
+		const ls = ctx.LS_BRACKET_SYMBOL?.()?.symbol;
+		const rs = ctx.RS_BRACKET_SYMBOL?.()?.symbol;
+		const arrow = ctx.SUB_GT_BRACKET_SYMBOL?.()?.symbol;
+		const tail = m1 ?? arrow; // trailing `-` or `->`
+		const bad =
+			(lt && m0 && !this.adj(lt, m0)) ||
+			(m0 && ls && !this.adj(m0, ls)) ||
+			(rs && tail && !this.adj(rs, tail));
+		if (bad) {
+			this.notifyErrorListeners("Syntax error: graph edge pattern punctuation must be adjacent", null, null);
+		}
+	}
 }
 
 // An input of only comments/whitespace is a valid (empty) script in GoogleSQL (ParseScript).
@@ -293,11 +315,13 @@ graph_element_pattern: graph_node_pattern | graph_edge_pattern;
 
 graph_edge_pattern:
 	LT_OPERATOR? MINUS_OPERATOR LS_BRACKET_SYMBOL graph_element_pattern_filler RS_BRACKET_SYMBOL
-		MINUS_OPERATOR
+		MINUS_OPERATOR { this.checkGraphEdgeAdjacency(localContext); }
 	| MINUS_OPERATOR LS_BRACKET_SYMBOL graph_element_pattern_filler RS_BRACKET_SYMBOL
-		SUB_GT_BRACKET_SYMBOL
+		SUB_GT_BRACKET_SYMBOL { this.checkGraphEdgeAdjacency(localContext); }
 	| MINUS_OPERATOR
-	| LT_OPERATOR MINUS_OPERATOR
+	| LT_OPERATOR MINUS_OPERATOR {
+		if (!this.adj(localContext.LT_OPERATOR()?.symbol, localContext.MINUS_OPERATOR(0)?.symbol)) this.notifyErrorListeners("Syntax error: graph edge pattern punctuation must be adjacent", null, null);
+	}
 	| SUB_GT_BRACKET_SYMBOL;
 
 graph_node_pattern:
