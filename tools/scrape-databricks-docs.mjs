@@ -109,7 +109,8 @@ const CONTINUATION_LINE =
 function stripLineComment(line) {
 	let inStr = false;
 	for (let j = 0; j < line.length; j++) {
-		if (inStr && line[j] === "\\") j++; // backslash escape inside a string
+		if (inStr && line[j] === "\\")
+			j++; // backslash escape inside a string
 		else if (line[j] === "'") {
 			if (line[j + 1] === "'") j++;
 			else inStr = !inStr;
@@ -135,21 +136,28 @@ function stripTrailingOutput(sql) {
 	let lastTail = ""; // last non-empty accumulated line, comment-stripped
 	for (let i = 0; i < lines.length; i++) {
 		const line = lines[i];
-		if (i > 0 && !inStr && depth === 0 && line.trim() !== "" && lastTail !== "" && !WANTS_MORE_TAIL.test(lastTail)) {
+		if (
+			i > 0 &&
+			!inStr &&
+			depth === 0 &&
+			line.trim() !== "" &&
+			lastTail !== "" &&
+			!WANTS_MORE_TAIL.test(lastTail)
+		) {
 			// CONTINUATION_LINE is a hard gate — a keyword- or punctuation-led line is SQL and is
 			// never cut (so a SELECT list with internal alignment spacing isn't mistaken for a
 			// tabular result). A line is output only if it is a structured result (OUTPUT_LINE) or
 			// a bare separator — both of which can start with a "continuation" char — or it simply
 			// isn't a continuation at all (bare scalar / tabular data row).
-			const isOutput =
-				OUTPUT_LINE.test(line) || /^\s*[-=—]{3,}\s*$/.test(line) || !CONTINUATION_LINE.test(line);
+			const isOutput = OUTPUT_LINE.test(line) || /^\s*[-=—]{3,}\s*$/.test(line) || !CONTINUATION_LINE.test(line);
 			if (isOutput) return lines.slice(0, i).join("\n").trim();
 		}
 		// Advance inStr / bracket depth across this line (top level only), stopping at a `--`.
 		for (let j = 0; j < line.length; j++) {
 			const c = line[j];
 			if (inStr) {
-				if (c === "\\") j++; // backslash escape inside a string
+				if (c === "\\")
+					j++; // backslash escape inside a string
 				else if (c === "'") {
 					if (line[j + 1] === "'") j++;
 					else inStr = false;
@@ -157,7 +165,8 @@ function stripTrailingOutput(sql) {
 				continue;
 			}
 			if (c === "'") inStr = true;
-			else if (c === "-" && line[j + 1] === "-") break; // rest of line is a comment
+			else if (c === "-" && line[j + 1] === "-")
+				break; // rest of line is a comment
 			else if (c === "(" || c === "[" || c === "{") depth++;
 			else if (c === ")" || c === "]" || c === "}") depth = Math.max(0, depth - 1);
 		}
@@ -263,7 +272,9 @@ async function main() {
 			processed++;
 			if (processed % 200 === 0) {
 				writeFileSync(MANIFEST, JSON.stringify(manifest, null, 1));
-				console.log(`${processed}/${urls.length} pages, ${files} sql files, ${fetched} fetched, ${failures} failures`);
+				console.log(
+					`${processed}/${urls.length} pages, ${files} sql files, ${fetched} fetched, ${failures} failures`,
+				);
 			}
 		}
 	}
