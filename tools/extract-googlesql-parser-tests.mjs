@@ -46,10 +46,14 @@ function blocks(text) {
 }
 
 function cleanQuery(raw) {
-	// Drop leading `[options…]` directive lines and `#` comment lines; keep the SQL.
+	// Drop leading `[options…]` directive lines and `#` comment lines; keep the SQL. The .test format
+	// escapes an INPUT line that itself begins with `--` or `==` (which would collide with the
+	// input/expected `--` and block `==` separators) by prefixing a backslash; unescape those so the
+	// real SQL comment line is recovered (`\--comment` → `--comment`).
 	return raw
 		.split("\n")
 		.filter((l) => !/^\s*\[/.test(l) && !/^\s*#/.test(l))
+		.map((l) => l.replace(/^\\(--|==)/, "$1"))
 		.join("\n")
 		.trim();
 }

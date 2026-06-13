@@ -45,7 +45,8 @@ options {
 	}
 }
 
-root: stmts EOF;
+// An input of only comments/whitespace is a valid (empty) script in GoogleSQL (ParseScript).
+root: stmts? EOF;
 
 // A script is a sequence of SQL or procedural (scripting) statements — ZetaSQL ParseScript.
 // Top level accepts both; the script statements (DECLARE/IF/WHILE/LOOP/BREAK/RAISE/BEGIN…) were

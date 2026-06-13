@@ -543,9 +543,13 @@ fragment BQTEXT: BQTEXT_0 BACKQUOTE_SYMBOL;
 IDENTIFIER: UNQUOTED_IDENTIFIER | BQTEXT;
 UNCLOSED_ESCAPED_IDENTIFIER: BQTEXT_0;
 
-// White space handling
+// White space handling. GoogleSQL whitespace is ASCII [ \n\r\t\b\f\v] plus the Unicode space
+// separators ZetaSQL recognizes (googlesql.tm whitespace_character): no-break U+00A0, en/em/…
+// U+2000–U+200A, narrow-no-break U+202F, medium-mathematical U+205F, ideographic U+3000. Zero-width
+// spaces (U+200B/U+FEFF), OGHAM (U+1680) and MONGOLIAN VOWEL SEPARATOR (U+180E) are deliberately out.
 WHITESPACE:
-	[ \t\f\r\n] -> channel(HIDDEN); // Ignore whitespaces.
+	[ 	
+  -   　] -> channel(HIDDEN);
 
 // Comments
 fragment BLOCK_COMMENT: ('/**/' | '/*' ~[!] .*? '*/');
