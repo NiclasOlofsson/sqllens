@@ -610,7 +610,8 @@ opt_as_query_or_aliased_query_list:
 
 aliased_query_list: aliased_query (COMMA_SYMBOL aliased_query)*;
 
-as_query: AS_SYMBOL query;
+// CREATE … AS <query> — the body may also be a GQL graph query (CREATE VIEW v AS GRAPH g …).
+as_query: AS_SYMBOL (query | gql_statement);
 
 create_external_table_function_statement:
 	CREATE_SYMBOL opt_or_replace? opt_create_scope? EXTERNAL_SYMBOL TABLE_SYMBOL FUNCTION_SYMBOL {
@@ -1218,6 +1219,7 @@ schema_object_kind:
 	| INDEX_SYMBOL
 	| MATERIALIZED_SYMBOL VIEW_SYMBOL
 	| MODEL_SYMBOL
+	| SEQUENCE_SYMBOL
 	| PROCEDURE_SYMBOL
 	| SCHEMA_SYMBOL
 	| VIEW_SYMBOL;
@@ -1246,6 +1248,7 @@ alter_action:
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier SET_SYMBOL DEFAULT_SYMBOL expression
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL DEFAULT_SYMBOL
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL NOT_SYMBOL NULL_SYMBOL
+	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier SET_SYMBOL generated_column_info
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL GENERATED_SYMBOL
 	| RENAME_SYMBOL TO_SYMBOL path_expression
 	| SET_SYMBOL DEFAULT_SYMBOL collate_clause
@@ -1365,7 +1368,11 @@ raw_column_schema_inner:
 	simple_column_schema_inner
 	| array_column_schema_inner
 	| struct_column_schema_inner
-	| range_column_schema_inner;
+	| range_column_schema_inner
+	| map_column_schema_inner;
+
+map_column_schema_inner:
+	MAP_SYMBOL template_type_open field_schema COMMA_SYMBOL field_schema template_type_close;
 
 range_column_schema_inner:
 	RANGE_SYMBOL template_type_open field_schema template_type_close;
@@ -1648,8 +1655,10 @@ query_set_operation_prefix:
 
 query_set_operation_item: set_operation_metadata query_primary;
 
+// `TABLE name` is shorthand for `SELECT * FROM name` (query-syntax).
 query_primary:
 	select
+	| TABLE_SYMBOL path_expression
 	| parenthesized_query opt_as_alias_with_required_as?;
 
 set_operation_metadata:
@@ -2204,6 +2213,9 @@ expression_higher_prec_than_and:
 		identifier
 		| function_name_from_keyword
 	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	// Chained call on a generalized field: base.(pkg.ext)(args).
+	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	| expression_higher_prec_than_and DOT_SYMBOL identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
@@ -2281,6 +2293,9 @@ expression_maybe_parenthesized_not_a_query:
 		identifier
 		| function_name_from_keyword
 	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	// Chained call on a generalized field: base.(pkg.ext)(args).
+	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
 	| expression_higher_prec_than_and DOT_SYMBOL identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
@@ -2474,8 +2489,9 @@ partition_by_clause_prefix:
 with_group_rows:
 	WITH_SYMBOL GROUP_SYMBOL ROWS_SYMBOL /* XXX(zp): query = parenthesized_query*/;
 
+// Anonymization WITH REPORT — the OPTIONS(...) format is optional (e.g. anon_avg(* WITH REPORT)).
 with_report_modifier:
-	WITH_SYMBOL REPORT_SYMBOL with_report_format;
+	WITH_SYMBOL REPORT_SYMBOL with_report_format?;
 
 // ZetaSQL anonymization: CLAMPED BETWEEN low AND high (the port dropped BETWEEN).
 clamped_between_modifier:
@@ -2516,7 +2532,11 @@ sequence_arg: SEQUENCE_SYMBOL path_expression;
 
 named_argument:
 	identifier EQUAL_GT_BRACKET_SYMBOL expression
-	| identifier EQUAL_GT_BRACKET_SYMBOL lambda_argument;
+	| identifier EQUAL_GT_BRACKET_SYMBOL lambda_argument
+	// Named relation arg: name => TABLE t  /  name => TABLE  /  name => INPUT TABLE.
+	| identifier EQUAL_GT_BRACKET_SYMBOL table_clause
+	| identifier EQUAL_GT_BRACKET_SYMBOL TABLE_SYMBOL
+	| identifier EQUAL_GT_BRACKET_SYMBOL INPUT_SYMBOL TABLE_SYMBOL;
 
 lambda_argument:
 	lambda_argument_list SUB_GT_BRACKET_SYMBOL expression;
@@ -2525,9 +2545,11 @@ lambda_argument_list:
 	/* XXX(zp): expr kind check expression*/ expression
 	| LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
 
+// GoogleSQL allows `LIMIT ALL` (no row cap) as well as `LIMIT n [OFFSET m]`.
 limit_offset_clause:
 	LIMIT_SYMBOL expression OFFSET_SYMBOL expression
-	| LIMIT_SYMBOL expression;
+	| LIMIT_SYMBOL expression
+	| LIMIT_SYMBOL ALL_SYMBOL;
 
 // Aggregate-call modifiers (ZetaSQL): the "HAVING MAX/MIN value" row-picker, and the
 // multi-level-aggregation "GROUP BY keys [HAVING <bool>]". The GROUP BY keys here are plain
@@ -2590,7 +2612,7 @@ grouping_set:
 	| cube_list RR_BRACKET_SYMBOL;
 
 cube_list:
-	CUBE_SYMBOL LR_BRACKET_SYMBOL (COMMA_SYMBOL expression)*;
+	CUBE_SYMBOL LR_BRACKET_SYMBOL expression (COMMA_SYMBOL expression)*;
 
 rollup_list:
 	ROLLUP_SYMBOL LR_BRACKET_SYMBOL expression (
@@ -2713,7 +2735,10 @@ braced_constructor_prefix:
 braced_constructor_field:
 	braced_constructor_lhs braced_constructor_field_value;
 
-braced_constructor_lhs: generalized_path_expression;
+// A field key is a path or a parenthesized proto-extension path `(pkg.Ext)` (with value or nested brace).
+braced_constructor_lhs:
+	generalized_path_expression
+	| braced_constructor_extension;
 
 braced_constructor_field_value:
 	COLON_SYMBOL expression
@@ -2767,7 +2792,8 @@ string_literal_or_parameter:
 	| parameter_expression
 	| system_variable_expression;
 
-system_variable_expression: ATAT_SYMBOL path_expression;
+// @@name.path — every component (incl. the head) may be a reserved keyword (@@FROM, @@ORDER.with).
+system_variable_expression: ATAT_SYMBOL dot_identifier (DOT_SYMBOL dot_identifier)*;
 
 parameter_expression:
 	named_parameter_expression
@@ -2821,7 +2847,104 @@ function_type_prefix:
 
 type_name: path_expression | INTERVAL_SYMBOL;
 
-path_expression: identifier (DOT_SYMBOL identifier)*;
+// After a `.`, GoogleSQL's tokenizer enters DOT_IDENTIFIER mode, so a path component may be a
+// reserved keyword (foo.all, hll_count.merge, t.array). We model that as dot_identifier; the head
+// must still be a regular identifier.
+path_expression: identifier (DOT_SYMBOL dot_identifier)*;
+
+dot_identifier: identifier | reserved_keyword_as_dot_identifier;
+
+// Reserved keywords usable as a path component after a dot (the DOT_IDENTIFIER set).
+reserved_keyword_as_dot_identifier:
+	ALL_SYMBOL
+	| AND_SYMBOL
+	| ANY_SYMBOL
+	| ARRAY_SYMBOL
+	| AS_SYMBOL
+	| ASC_SYMBOL
+	| ASSERT_ROWS_MODIFIED_SYMBOL
+	| BETWEEN_SYMBOL
+	| BY_SYMBOL
+	| CASE_SYMBOL
+	| CAST_SYMBOL
+	| COLLATE_SYMBOL
+	| CREATE_SYMBOL
+	| CROSS_SYMBOL
+	| CUBE_SYMBOL
+	| CURRENT_SYMBOL
+	| DEFAULT_SYMBOL
+	| DEFINE_SYMBOL
+	| DESC_SYMBOL
+	| DISTINCT_SYMBOL
+	| ELSE_SYMBOL
+	| END_SYMBOL
+	| ENUM_SYMBOL
+	| EXCEPT_SYMBOL
+	| EXCLUDE_SYMBOL
+	| EXISTS_SYMBOL
+	| EXTRACT_SYMBOL
+	| FALSE_SYMBOL
+	| FOLLOWING_SYMBOL
+	| FOR_SYMBOL
+	| FROM_SYMBOL
+	| FULL_SYMBOL
+	| GROUP_SYMBOL
+	| GROUPING_SYMBOL
+	| HASH_SYMBOL
+	| HAVING_SYMBOL
+	| IF_SYMBOL
+	| IGNORE_SYMBOL
+	| IN_SYMBOL
+	| INNER_SYMBOL
+	| INTERSECT_SYMBOL
+	| INTERVAL_SYMBOL
+	| INTO_SYMBOL
+	| IS_SYMBOL
+	| JOIN_SYMBOL
+	| LATERAL_SYMBOL
+	| LEFT_SYMBOL
+	| LIKE_SYMBOL
+	| LIMIT_SYMBOL
+	| LOOKUP_SYMBOL
+	| MERGE_SYMBOL
+	| NATURAL_SYMBOL
+	| NEW_SYMBOL
+	| NO_SYMBOL
+	| NOT_SYMBOL
+	| NULL_SYMBOL
+	| NULLS_SYMBOL
+	| OF_SYMBOL
+	| ON_SYMBOL
+	| OR_SYMBOL
+	| ORDER_SYMBOL
+	| OUTER_SYMBOL
+	| OVER_SYMBOL
+	| PARTITION_SYMBOL
+	| PRECEDING_SYMBOL
+	| PROTO_SYMBOL
+	| QUALIFY_SYMBOL
+	| RANGE_SYMBOL
+	| RECURSIVE_SYMBOL
+	| RESPECT_SYMBOL
+	| RIGHT_SYMBOL
+	| ROLLUP_SYMBOL
+	| ROWS_SYMBOL
+	| SELECT_SYMBOL
+	| SET_SYMBOL
+	| SOME_SYMBOL
+	| STRUCT_SYMBOL
+	| TABLESAMPLE_SYMBOL
+	| THEN_SYMBOL
+	| TO_SYMBOL
+	| TRUE_SYMBOL
+	| UNBOUNDED_SYMBOL
+	| UNION_SYMBOL
+	| UNNEST_SYMBOL
+	| USING_SYMBOL
+	| WHEN_SYMBOL
+	| WHERE_SYMBOL
+	| WINDOW_SYMBOL
+	| WITH_SYMBOL;
 
 identifier: token_identifier | keyword_as_identifier;
 

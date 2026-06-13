@@ -49,19 +49,20 @@ function cleanQuery(raw) {
 // type-mode blocks are dropped (type-name syntax is already exercised by every CAST / column-def
 // in the statement-mode files; wrapping types is fragile on the negative cases).
 function defaultModeOf(text) {
-	const m = text.match(/^\[default mode=([a-z]+)\]/m);
+	const m = text.match(/^\[default mode=([a-z_]+)\]/m);
 	return m ? m[1] : "statement";
 }
 
 function blockModeOverride(rawQuerySection) {
-	const m = rawQuerySection.match(/^\s*\[mode=([a-z]+)\]/m);
+	const m = rawQuerySection.match(/^\s*\[mode=([a-z_]+)\]/m);
 	return m ? m[1] : undefined;
 }
 
 /** Apply the effective mode to a cleaned query. Returns the SQL to emit, or null to skip. */
 function applyMode(query, mode) {
 	if (mode === "type") return null;
-	if (mode === "expression") return `SELECT (${query})`;
+	// expression / measure_expression — a bare expression, not a statement; route through SELECT.
+	if (mode === "expression" || mode === "measure_expression") return `SELECT (${query})`;
 	return query;
 }
 
