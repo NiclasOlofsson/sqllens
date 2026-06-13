@@ -3018,7 +3018,10 @@ parameter_expression:
 	named_parameter_expression
 	| QUESTION_SYMBOL;
 
-named_parameter_expression: AT_SYMBOL identifier;
+// After `@`, GoogleSQL's tokenizer lexes the name in DOT_IDENTIFIER mode, so a query parameter may be
+// named with a reserved keyword (`@from`, `@union`, `@full`, `@proto`) — same set as a path component
+// after a dot. (named_parameter_expression in googlesql.tm; the reserved names re-lex as identifiers.)
+named_parameter_expression: AT_SYMBOL dot_identifier;
 
 // This is opt_type_parameters in zetasql yacc, but here prefer to use ? in ANTLR.
 opt_type_parameters:

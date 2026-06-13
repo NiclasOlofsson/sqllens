@@ -18,6 +18,8 @@ const T_DOT = GoogleSQLLexer.DOT_SYMBOL;
 const T_FLOAT = GoogleSQLLexer.FLOATING_POINT_LITERAL;
 const T_INTEGER = GoogleSQLLexer.INTEGER_LITERAL; // hex literals lex to INTEGER_LITERAL too
 const T_INVALID = GoogleSQLLexer.INVALID_NUMERIC_LITERAL;
+const T_AT = GoogleSQLLexer.AT_SYMBOL;
+const T_ATAT = GoogleSQLLexer.ATAT_SYMBOL;
 
 // Tokens after which a `.` opens a path component. Identifier-capable tokens = token_identifier
 // (IDENTIFIER) plus keyword_as_identifier (the nonreserved keyword set + SIMPLE_SYMBOL), per the
@@ -51,7 +53,13 @@ const NUMERIC = new Set([T_FLOAT, T_INTEGER, T_INVALID]);
 function rewriteDotPaths(tokens: Token[]): Token[] {
 	const out: Token[] = [];
 	let lookback = -1; // type of the last emitted default-channel token
+	let lookback2 = -1; // type of the token before lookback
 	let pathDot = false; // the last emitted token was a path-separator `.`
+
+	// A `.` opens a path component when the previous token can head a path — an identifier-capable
+	// token / `)` / `]` / `?`, OR a parameter name right after `@`/`@@` (`@full.1`, `@@sysvar.1`),
+	// where the name may be a reserved keyword and so isn't itself in PATH_HEAD.
+	const pathHead = () => PATH_HEAD.has(lookback) || lookback2 === T_AT || lookback2 === T_ATAT;
 
 	for (const tok of tokens) {
 		// Hidden-channel tokens (whitespace, comments) pass through and don't affect the lookback;
@@ -70,7 +78,7 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 		// after a path-separator `.` (pathDot), or a leading-dot literal right after a path head
 		// (the literal's own leading `.` is the separator). Exact identifier charset fidelity isn't
 		// needed — the parser accepts any IDENTIFIER token as a path component.
-		const inPath = pathDot || (PATH_HEAD.has(lookback) && text.startsWith("."));
+		const inPath = pathDot || (pathHead() && text.startsWith("."));
 		if (NUMERIC.has(type) && inPath) {
 			const parts = text.split(".");
 			let pos = tok.start;
@@ -78,12 +86,14 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 				if (i > 0) {
 					out.push(cloneRetyped(tok, T_DOT, ".", pos, pos));
 					pos += 1;
+					lookback2 = lookback;
 					lookback = T_DOT;
 					pathDot = true;
 				}
 				if (parts[i] !== "") {
 					out.push(cloneRetyped(tok, T_IDENTIFIER, parts[i], pos, pos + parts[i].length - 1));
 					pos += parts[i].length;
+					lookback2 = lookback;
 					lookback = T_IDENTIFIER;
 					pathDot = false;
 				}
@@ -93,12 +103,14 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 
 		if (type === T_DOT) {
 			out.push(tok);
-			pathDot = PATH_HEAD.has(lookback);
+			pathDot = pathHead();
+			lookback2 = lookback;
 			lookback = T_DOT;
 			continue;
 		}
 
 		out.push(tok);
+		lookback2 = lookback;
 		lookback = type;
 		pathDot = false;
 	}
