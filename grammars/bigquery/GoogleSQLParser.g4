@@ -20,6 +20,31 @@ options {
 	tokenVocab = GoogleSQLLexer;
 }
 
+@parser::members {
+	// ZetaSQL enforces non-associativity of the comparison family (=, <, >, …, LIKE, IN, BETWEEN, IS,
+	// IS DISTINCT) via bison %nonassoc plus IsAllowedInComparison()/ErrorIfUnparenthesizedNotExpression()
+	// actions (googlesql.tm). ANTLR left-recursion has neither, so we reproduce the actions: an operand
+	// of a comparison-family or arithmetic operator may not itself be an unparenthesized comparison-family
+	// node, and a binary operand may not be a bare `NOT expr`.
+	private exprIsComparisonFamily(ctx: any): boolean {
+		return (
+			!!ctx &&
+			!!(
+				ctx.comparative_operator?.() ||
+				ctx.between_operator?.() ||
+				ctx.in_operator?.() ||
+				ctx.like_operator?.() ||
+				ctx.distinct_operator?.() ||
+				ctx.is_operator?.()
+			)
+		);
+	}
+	private exprIsBareNot(ctx: any): boolean {
+		const c0 = ctx?.getChild?.(0);
+		return !!c0 && c0.getText?.().toUpperCase?.() === "NOT" && !!ctx.NOT_SYMBOL?.();
+	}
+}
+
 root: stmts EOF;
 
 // A script is a sequence of SQL or procedural (scripting) statements — ZetaSQL ParseScript.
@@ -2247,8 +2272,21 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of LIKE must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
 		if (localContext.hint() !== null) {
 			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
@@ -2256,13 +2294,37 @@ expression_higher_prec_than_and:
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
-		expression_higher_prec_than_and
+		expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsBareNot(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
 		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
-	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
-	| expression_higher_prec_than_and is_operator null_literal
-	| expression_higher_prec_than_and is_operator boolean_literal
+	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator null_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator boolean_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	// Graph predicates (graph-sql-functions): IS [NOT] SOURCE/DESTINATION [OF], IS [NOT] LABELED.
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
 		OF_SYMBOL? expression_higher_prec_than_and
@@ -2271,14 +2333,50 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
 	| expression_higher_prec_than_and comparative_operator any_some_all
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of comparison must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| unary_operator expression_higher_prec_than_and
 	// unparenthesized_expression_higher_prec_than_and scope end
 	| parenthesized_expression_not_a_query
@@ -2330,8 +2428,21 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of LIKE must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
 		if (localContext.hint() !== null) {
 			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
@@ -2339,13 +2450,37 @@ expression_maybe_parenthesized_not_a_query:
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
-		expression_higher_prec_than_and
+		expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsBareNot(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
 		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
-	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
-	| expression_higher_prec_than_and is_operator null_literal
-	| expression_higher_prec_than_and is_operator boolean_literal
+	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator null_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator boolean_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	// Graph predicates (also valid inside parentheses, e.g. GRAPH_TABLE COLUMNS((a IS SOURCE OF b))).
 	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
 		OF_SYMBOL? expression_higher_prec_than_and
@@ -2354,14 +2489,50 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and comparative_operator any_some_all unnest_expression
 	| expression_higher_prec_than_and comparative_operator any_some_all
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of comparison must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| unary_operator expression_higher_prec_than_and
 	// unparenthesized_expression_higher_prec_than_and scope end
 	| and_expression
