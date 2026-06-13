@@ -206,7 +206,12 @@ function classifyVariants(query, expectedSection, directive) {
 	if (!labelMap) return withLabels.map(() => isSyntaxError(expectedSection));
 	const dChoices = directiveChoices(directive);
 	return withLabels.map((v) => {
-		const joined = [...dChoices, ...v.labels].join(",");
+		// ZetaSQL joins the chosen option texts (directive then query, source order) with "," to label
+		// a cell, but drops LEADING empty choices (their separator too) while keeping empty middle/
+		// trailing ones (`,+PIPES,,commit`, `,+PIPES,`); all-empty is "<empty>".
+		const parts = [...dChoices, ...v.labels];
+		while (parts.length && parts[0] === "") parts.shift();
+		const joined = parts.join(",");
 		const key = joined === "" ? "<empty>" : joined;
 		if (labelMap.has(key)) return labelMap.get(key);
 		// Unmatched (label-format edge): default to the most common verdict among the groups.
