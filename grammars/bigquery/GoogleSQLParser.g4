@@ -361,7 +361,10 @@ opt_path_variable_assignment: graph_identifier EQUAL_OPERATOR;
 
 graph_identifier:
 	token_identifier
-	| common_keyword_as_identifier;
+	| common_keyword_as_identifier
+	// SHORTEST is nonreserved in GoogleSQL (common_keyword_as_identifier), so it may name a graph path
+	// variable (`MATCH shortest = …`) even though we also use it as a search-prefix keyword.
+	| SHORTEST_SYMBOL;
 
 graph_return_operator:
 	RETURN_SYMBOL hint? all_or_distinct? graph_return_item_list group_by_clause?
