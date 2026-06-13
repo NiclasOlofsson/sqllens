@@ -1,5 +1,6 @@
 import { CharStream, CommonToken, type Lexer, ListTokenSource, type Token } from "antlr4ng";
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
+import { countBadLiteralEscapes } from "./literal-escapes.js";
 
 // GoogleSQL's DOT_IDENTIFIER mode, ported from ZetaSQL's lookahead_transformer.cc
 // (TransformDotSymbol / TransformIntegerLiteral). After a `.` whose preceding token can head a
@@ -118,12 +119,16 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 }
 
 /**
- * Lex `sql` and return a token source with the DOT_IDENTIFIER rewrite applied. The lexer's error
- * listeners (attached by the caller) fire during the full lex here.
+ * Lex `sql` and return a token source with the DOT_IDENTIFIER rewrite applied, plus the count of
+ * string/bytes/identifier literals with invalid escapes (ZetaSQL validates these in the parser as
+ * syntax errors). The lexer's error listeners (attached by the caller) fire during the full lex here.
  */
-export function dotPathTokenSource(sql: string, lexer: Lexer): ListTokenSource {
+export function dotPathTokenSource(sql: string, lexer: Lexer): {
+	source: ListTokenSource;
+	escapeErrors: number;
+} {
 	const tokens = lexer.getAllTokens(); // full lex (drives lexer error listeners); EOF excluded
-	return new ListTokenSource(rewriteDotPaths(tokens));
+	return { source: new ListTokenSource(rewriteDotPaths(tokens)), escapeErrors: countBadLiteralEscapes(tokens) };
 }
 
 export { GoogleSQLLexer };

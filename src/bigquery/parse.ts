@@ -39,7 +39,11 @@ export function parseBigQuery(sql: string): ParseResult {
 	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
 	lexer.removeErrorListeners();
 	lexer.addErrorListener(listener as never);
-	const tokens = new CommonTokenStream(dotPathTokenSource(sql, lexer));
+	const { source, escapeErrors } = dotPathTokenSource(sql, lexer);
+	const tokens = new CommonTokenStream(source);
+	// Invalid string/bytes/identifier escapes are parse-time syntax errors in GoogleSQL (validated in
+	// the parser, not the lexer). Fold them into the baseline so both parse attempts report them.
+	errors += escapeErrors;
 	const lexErrors = errors;
 
 	const parser = new GoogleSQLParser(tokens);

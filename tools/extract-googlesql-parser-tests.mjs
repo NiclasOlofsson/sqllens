@@ -94,7 +94,8 @@ const isError = (expected) => /^ERROR:/i.test(stripExpectedDirectives(expected))
 // A feature/support rejection only when the message is ABOUT support — and only if it is not already
 // flagged as a "Syntax error" (those, e.g. "Syntax error: WHERE not supported after FROM query", are
 // genuine parse errors that merely happen to contain the word "supported").
-const isFeatureRejection = (expected) => /\bnot\s+(a\s+)?support|\bnot\s+implemented\b/i.test(expected);
+const isFeatureRejection = (expected) =>
+	/\bnot\s+(a\s+)?supported\b|\bnot\s+implemented\b/i.test(expected);
 const isSyntaxError = (expected) =>
 	startsWithSyntaxError(expected) || (isError(expected) && !isFeatureRejection(expected));
 
@@ -214,9 +215,12 @@ function classifyVariants(query, expectedSection, directive) {
 	const dChoices = directiveChoices(directive);
 	return withLabels.map((v) => {
 		// ZetaSQL joins the chosen option texts (directive then query, source order) with "," to label
-		// a cell, but drops LEADING empty choices (their separator too) while keeping empty middle/
-		// trailing ones (`,+PIPES,,commit`, `,+PIPES,`); all-empty is "<empty>".
-		const parts = [...dChoices, ...v.labels];
+		// a cell, TRIMMING each choice (the ALTERNATION GROUP labels in the expected are trimmed), then
+		// drops LEADING empty choices (their separator too) while keeping empty middle/trailing ones
+		// (`,+PIPES,,commit`, `,+PIPES,`); all-empty is "<empty>". Without the per-choice trim, options
+		// written with surrounding whitespace (`{{ a | b }}`) never match the trimmed labels and fall to
+		// the majority-vote fallback — silently mis-bucketing ~220 corpus cases.
+		const parts = [...dChoices, ...v.labels].map((p) => p.trim());
 		while (parts.length && parts[0] === "") parts.shift();
 		const joined = parts.join(",");
 		const key = joined === "" ? "<empty>" : joined;

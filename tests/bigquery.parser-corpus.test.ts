@@ -3,19 +3,23 @@ import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
-import { keywordCategory } from "../src/ir/statement.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
 // Is this case DETECT-ONLY — recognized and flagged but not parsed/validated, by cleared scope?
-// Two families: object DDL (CREATE/ALTER/DROP/PROCEDURE/…) and DEFINE MACRO (GoogleSQL's preprocessor,
-// whose body uses a lexer mode we don't model — handled like Spark's CREATE TEMPORARY MACRO). Both
-// are out of BOTH gates, symmetrically: a malformed one we accept is not an over-acceptance bug
-// (negatives), and a valid one we don't fully parse is not a coverage gap (positives). DDL keys off
-// the parser's OWN recognition (lower().statement === "ddl", with a leading-keyword fallback for
-// cases that error); macros key off the leading DEFINE MACRO (after an optional hint). Same
-// disciplined, per-case classification as the feature-off cases — never a blanket bucket drop.
-const ddlLeadKeyword = (sql: string): string =>
-	sql.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*/, "").match(/^[A-Za-z_]+/)?.[0] ?? "";
+// Two families: object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO
+// (GoogleSQL's preprocessor, whose body uses a lexer mode we don't model — like Spark's CREATE
+// TEMPORARY MACRO). Both are out of BOTH gates, symmetrically: a malformed one we accept is not an
+// over-acceptance bug (negatives), and a valid one we don't fully parse is not a coverage gap
+// (positives). It is keyed on the LEADING KEYWORD only — deliberately NOT the broad keywordCategory,
+// which also tags ANALYZE/TRUNCATE/RENAME/REFRESH/… as "ddl"; those are operational statements that
+// are in scope and must not be hidden from either gate (that would inflate the in-scope rates and
+// shrink the negative pool). Same disciplined, per-case classification as the feature-off cases.
+const leadKeyword = (sql: string): string =>
+	sql
+		.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*/, "")
+		.replace(/^@\{[^}]*\}\s*/, "") // skip an optional statement hint
+		.match(/^[A-Za-z_]+/)?.[0]
+		?.toLowerCase() ?? "";
 const isMacro = (sql: string): boolean =>
 	/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*(?:@\{[^}]*\}\s*)?DEFINE\s+MACRO\b/i.test(sql);
 // A comment/whitespace-only input is a valid EMPTY SCRIPT under our entry (ParseScript / `root`), but
@@ -28,16 +32,9 @@ const isEmptyScript = (sql: string): boolean =>
 		.replace(/#[^\n]*/g, "")
 		.replace(/\/\*[\s\S]*?\*\//g, "")
 		.trim() === "";
-function isDetectOnly(sql: string, errors: number, tree: unknown): boolean {
-	if (isMacro(sql) || isEmptyScript(sql)) return true;
-	if (errors === 0) {
-		try {
-			return lower(tree as never).statement === "ddl";
-		} catch {
-			return false;
-		}
-	}
-	return keywordCategory(ddlLeadKeyword(sql)) === "ddl";
+const DETECT_ONLY_LEAD = new Set(["create", "alter", "drop"]); // object DDL — cleared Out
+function isDetectOnly(sql: string): boolean {
+	return isMacro(sql) || isEmptyScript(sql) || DETECT_ONLY_LEAD.has(leadKeyword(sql));
 }
 
 // The ZetaSQL PARSER .test corpus (gitignored; rebuild with tools/extract-googlesql-parser-tests.mjs,
@@ -94,16 +91,21 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // block before the error check, so error cases prefixed by such a directive (e.g. the multiline
 // triple-quoted "Unexpected string literal" cases) classify as negatives, not positives.
 //
-// Measured 2026-06-13: of 3542 positives, 897 are detect-only/empty-script (excluded); in-scope
-// positives parse at 2624/2645 (99.2%) after the GoogleSQL DOT_IDENTIFIER rewrite (src/bigquery/
-// dot-path.ts — numeric path components `foo.123`, `x.1.2.3`, dotted `x.y.2.0.z`), WITH GROUP ROWS
-// entries, reserved-keyword parameter names (`@from`, `@full.1`), CALL/DESCRIBE/EXECUTE IMMEDIATE/
-// RUN/SHOW pipe suffixes, DEFINE MACRO detect-only, empty-arg aggregate modifiers, LIMIT ALL OFFSET,
-// empty exception handlers, STRUCT<>, quantified-comparison hints, Unicode whitespace, `\--`-escaped
-// comment lines, and empty scripts. Negatives: of 2574, 513 detect-only/empty-script excluded; of
-// the 2061 in-scope negatives we reject 1847 and still wrongly accept 214. Both floors ratchet up.
-const IN_SCOPE_POSITIVE_BASELINE = 2641; // in-scope parsed of 2641 — 100% of the in-scope query/DML/script surface
-const IN_SCOPE_NEGATIVE_BASELINE = 1857; // in-scope rejected of 2065; 208 still accepted (mostly string-escape validation)
+// The extractor reconstructs each cell's ALTERNATION GROUP label (our directive feature choices +
+// the variant's query choices, each TRIMMED, joined with "," — matching ZetaSQL's trimmed labels) to
+// grade multi-dimensional/grouped alternations; and string/bytes/identifier escapes are validated in
+// parseBigQuery as syntax errors (ZetaSQL's ParseStringLiteral/CUnescapeInternal, src/bigquery/
+// literal-escapes.ts) — both corpora reject invalid escapes now.
+//
+// Measured 2026-06-14: of 3539 positives, 881 are detect-only/empty-script (excluded); in-scope
+// positives parse at 2658/2658 (100%) — GoogleSQL DOT_IDENTIFIER rewrite, WITH GROUP ROWS,
+// reserved-keyword params, pipe statement suffixes, DEFINE MACRO detect-only, aggregate modifiers,
+// LIMIT ALL OFFSET, empty exception handlers, STRUCT<>, quantified hints, Unicode whitespace, escaped
+// comments, empty scripts, QUALIFY-as-alias, UPDATE constructor, graph SHORTEST, …. Negatives: of
+// 2577, 497 detect-only/empty-script excluded; of the 2080 in-scope negatives we reject 1955 and
+// still accept 125 (mostly join ON-cardinality + a few niche keyword/validation rules).
+const IN_SCOPE_POSITIVE_BASELINE = 2658; // in-scope parsed of 2658 — 100% of the in-scope query/DML/script surface
+const IN_SCOPE_NEGATIVE_BASELINE = 1955; // in-scope rejected of 2080; 125 still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
@@ -121,7 +123,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 			} catch {
 				errs = -1;
 			}
-			if (isDetectOnly(sql, errs, tree)) {
+			if (isDetectOnly(sql)) {
 				ddlExcluded++;
 				continue;
 			}
@@ -151,7 +153,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 			} catch {
 				errs = 1;
 			}
-			if (isDetectOnly(sql, errs, tree)) {
+			if (isDetectOnly(sql)) {
 				ddlExcluded++;
 				continue;
 			}
