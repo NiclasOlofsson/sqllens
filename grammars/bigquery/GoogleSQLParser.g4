@@ -130,7 +130,31 @@ graph_linear_operator:
 	| graph_page_operator
 	| graph_with_operator
 	| graph_for_operator
-	| graph_sample_clause;
+	| graph_sample_clause
+	| graph_call_operator;
+
+// CALL operator: named/TVF call (with optional PER and YIELD), or an inline braced subquery.
+graph_call_operator:
+	OPTIONAL_SYMBOL? graph_call_operator_core;
+
+graph_call_operator_core:
+	CALL_SYMBOL graph_per_clause? tvf_with_suffixes graph_yield_clause?
+	| CALL_SYMBOL graph_per_clause? braced_graph_subquery
+	| CALL_SYMBOL parenthesized_identifier_list braced_graph_subquery;
+
+graph_per_clause: PER_SYMBOL parenthesized_identifier_list;
+
+parenthesized_identifier_list:
+	LR_BRACKET_SYMBOL identifier_list? RR_BRACKET_SYMBOL;
+
+graph_yield_clause: YIELD_SYMBOL graph_yield_item (COMMA_SYMBOL graph_yield_item)*;
+
+graph_yield_item: identifier opt_as_alias_with_required_as?;
+
+// Braced graph subquery: { ops } or { GRAPH g ops }
+braced_graph_subquery:
+	LC_BRACKET_SYMBOL graph_operation_block RC_BRACKET_SYMBOL
+	| LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_operation_block RC_BRACKET_SYMBOL;
 
 graph_sample_clause:
 	TABLESAMPLE_SYMBOL identifier LR_BRACKET_SYMBOL sample_size RR_BRACKET_SYMBOL
@@ -191,9 +215,15 @@ graph_path_factor:
 	| graph_quantified_path_primary;
 
 graph_quantified_path_primary:
-	graph_path_primary LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL
-		int_literal_or_parameter RC_BRACKET_SYMBOL
-	| graph_path_primary LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL;
+	graph_path_primary graph_quantifier;
+
+// {m,n} (bounds optional), {n}, +, *  (graph-patterns quantifier)
+graph_quantifier:
+	LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL int_literal_or_parameter?
+		RC_BRACKET_SYMBOL
+	| LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL
+	| MULTIPLY_OPERATOR
+	| PLUS_OPERATOR;
 
 graph_path_primary:
 	graph_element_pattern
@@ -216,12 +246,13 @@ graph_edge_pattern:
 graph_node_pattern:
 	LR_BRACKET_SYMBOL graph_element_pattern_filler RR_BRACKET_SYMBOL;
 
+// graph-patterns element filler: name, label filter, property spec, WHERE, COST (all optional;
+// WHERE and the {prop:…} spec are mutually exclusive semantically, allowed together grammatically).
 graph_element_pattern_filler:
-	// TODO(zp): It is better to avoid using empty production because it confused listener user.
 	hint? opt_graph_element_identifier? opt_is_label_expression? graph_property_specification?
-	| hint? opt_graph_element_identifier opt_is_label_expression? where_clause
-	| hint? opt_graph_element_identifier opt_is_label_expression? graph_property_specification
-		where_clause;
+		where_clause? opt_graph_cost?;
+
+opt_graph_cost: COST_SYMBOL expression;
 
 graph_property_specification:
 	LC_BRACKET_SYMBOL graph_property_name_and_value (
@@ -261,8 +292,13 @@ opt_graph_path_mode:
 	| SIMPLE_SYMBOL
 	| ACYCLIC_SYMBOL;
 
+// graph-patterns search prefix: ANY / ANY SHORTEST / ANY CHEAPEST / ANY k / SHORTEST k /
+// CHEAPEST k / ALL / ALL SHORTEST / ALL CHEAPEST.
 opt_graph_search_prefix:
-	(ANY_SYMBOL | ALL_SYMBOL) SHORTEST_SYMBOL?;
+	ANY_SYMBOL (SHORTEST_SYMBOL | CHEAPEST_SYMBOL | int_literal_or_parameter)?
+	| SHORTEST_SYMBOL int_literal_or_parameter
+	| CHEAPEST_SYMBOL int_literal_or_parameter
+	| ALL_SYMBOL (SHORTEST_SYMBOL | CHEAPEST_SYMBOL)?;
 
 opt_path_variable_assignment: graph_identifier EQUAL_OPERATOR;
 
@@ -333,6 +369,7 @@ drop_statement:
 	| /* TODO(zp): Refine syntax error */ DROP_SYMBOL table_or_table_function opt_if_exists?
 		maybe_dashed_path_expression opt_function_parameters?
 	| DROP_SYMBOL SNAPSHOT_SYMBOL TABLE_SYMBOL opt_if_exists? maybe_dashed_path_expression
+	| DROP_SYMBOL PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_exists? path_expression
 	| DROP_SYMBOL generic_entity_type opt_if_exists? path_expression
 	| DROP_SYMBOL schema_object_kind opt_if_exists? path_expression opt_function_parameters?
 		opt_drop_mode?;
@@ -494,8 +531,9 @@ create_schema_statement:
 		opt_default_collate_clause? opt_options_list?;
 
 create_property_graph_statement:
-	CREATE_SYMBOL opt_or_replace? PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_not_exists path_expression
-		opt_options_list? NODE_SYMBOL TABLES_SYMBOL element_table_list opt_edge_table_clause?;
+	CREATE_SYMBOL opt_or_replace? opt_create_scope? PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_not_exists?
+		path_expression NODE_SYMBOL TABLES_SYMBOL element_table_list opt_edge_table_clause?
+		opt_options_list?;
 
 opt_edge_table_clause:
 	EDGE_SYMBOL TABLES_SYMBOL element_table_list;
@@ -507,7 +545,8 @@ element_table_list:
 
 element_table_definition:
 	path_expression opt_as_alias_with_required_as? opt_key_clause? opt_source_node_table_clause?
-		opt_dest_node_table_clause? opt_label_and_properties_clause?;
+		opt_dest_node_table_clause? opt_options_list? opt_label_and_properties_clause?
+		dynamic_label_and_properties?;
 
 opt_label_and_properties_clause:
 	properties_clause
@@ -515,8 +554,16 @@ opt_label_and_properties_clause:
 
 label_and_properties_list: label_and_properties+;
 
+// graph-schema-statements: DEFAULT LABEL [OPTIONS …] | LABEL <name>, each with optional PROPERTIES.
 label_and_properties:
-	DEFAULT_SYMBOL? LABEL_SYMBOL identifier properties_clause?;
+	DEFAULT_SYMBOL LABEL_SYMBOL opt_options_list? properties_clause?
+	| LABEL_SYMBOL identifier properties_clause?;
+
+dynamic_label_and_properties: dynamic_label_or_properties+;
+
+dynamic_label_or_properties:
+	DYNAMIC_SYMBOL LABEL_SYMBOL LR_BRACKET_SYMBOL expression RR_BRACKET_SYMBOL
+	| DYNAMIC_SYMBOL PROPERTIES_SYMBOL LR_BRACKET_SYMBOL expression RR_BRACKET_SYMBOL;
 
 properties_clause:
 	NO_SYMBOL PROPERTIES_SYMBOL
@@ -526,7 +573,7 @@ properties_clause:
 derived_property_list:
 	derived_property (COMMA_SYMBOL derived_property)*;
 
-derived_property: expression opt_as_alias_with_required_as?;
+derived_property: expression opt_as_alias_with_required_as? opt_options_list?;
 
 opt_except_column_list: EXCEPT_SYMBOL column_list;
 
@@ -1735,8 +1782,19 @@ table_primary:
 	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
 	| table_subquery
 	| LATERAL_SYMBOL table_subquery
+	| graph_table_query
 	| table_primary match_recognize_clause
 	| table_primary sample_clause;
+
+// GRAPH_TABLE(...) operator (graph-sql-queries#graph_table_operator): a graph + a single MATCH
+// with a COLUMNS shape, or a full GQL operation block (ending in RETURN).
+graph_table_query:
+	GRAPH_TABLE_SYMBOL LR_BRACKET_SYMBOL path_expression graph_match_operator graph_shape_clause?
+		RR_BRACKET_SYMBOL as_alias?
+	| GRAPH_TABLE_SYMBOL LR_BRACKET_SYMBOL path_expression graph_operation_block RR_BRACKET_SYMBOL
+		as_alias?;
+
+graph_shape_clause: COLUMNS_SYMBOL LR_BRACKET_SYMBOL select_list RR_BRACKET_SYMBOL;
 
 tvf_with_suffixes:
 	tvf_prefix_no_args RR_BRACKET_SYMBOL hint? pivot_or_unpivot_clause_and_aliases?
@@ -2131,6 +2189,11 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
 	| expression_higher_prec_than_and is_operator null_literal
 	| expression_higher_prec_than_and is_operator boolean_literal
+	// Graph predicates (graph-sql-functions): IS [NOT] SOURCE/DESTINATION [OF], IS [NOT] LABELED.
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
+		OF_SYMBOL? expression_higher_prec_than_and
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
+	| expression_higher_prec_than_and in_operator braced_graph_subquery
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
@@ -2198,6 +2261,11 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
 	| expression_higher_prec_than_and is_operator null_literal
 	| expression_higher_prec_than_and is_operator boolean_literal
+	// Graph predicates (also valid inside parentheses, e.g. GRAPH_TABLE COLUMNS((a IS SOURCE OF b))).
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
+		OF_SYMBOL? expression_higher_prec_than_and
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
+	| expression_higher_prec_than_and in_operator braced_graph_subquery
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
 	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
@@ -2274,7 +2342,16 @@ like_operator: LIKE_SYMBOL | NOT_SYMBOL LIKE_SYMBOL;
 
 expression_subquery_with_keyword:
 	ARRAY_SYMBOL parenthesized_query
-	| EXISTS_SYMBOL hint? parenthesized_query;
+	| ARRAY_SYMBOL braced_graph_subquery
+	| VALUE_SYMBOL hint? braced_graph_subquery
+	| EXISTS_SYMBOL hint? parenthesized_query
+	| EXISTS_SYMBOL hint? braced_graph_subquery
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL graph_pattern RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL graph_linear_operator_list RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_pattern
+		RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_linear_operator_list
+		RC_BRACKET_SYMBOL;
 
 struct_constructor:
 	struct_constructor_prefix_with_keyword RR_BRACKET_SYMBOL
@@ -2757,6 +2834,7 @@ common_keyword_as_identifier:
 	| DELTA_SYMBOL
 	| DIFFERENTIAL_PRIVACY_SYMBOL
 	| DO_SYMBOL
+	| DYNAMIC_SYMBOL
 	| DROP_SYMBOL
 	| ELSEIF_SYMBOL
 	| ENFORCED_SYMBOL
@@ -2913,9 +2991,15 @@ common_keyword_as_identifier:
 	| DESTINATION_SYMBOL
 	| PROPERTY_SYMBOL
 	| GRAPH_SYMBOL
+	| GRAPH_TABLE_SYMBOL
 	| NODE_SYMBOL
 	| PROPERTIES_SYMBOL
 	| LABEL_SYMBOL
+	| LABELED_SYMBOL
+	| CHEAPEST_SYMBOL
+	| PER_SYMBOL
+	| YIELD_SYMBOL
+	| COST_SYMBOL
 	| EDGE_SYMBOL
 	| NEXT_SYMBOL
 	| ASCENDING_SYMBOL

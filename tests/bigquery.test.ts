@@ -181,6 +181,61 @@ describe("BigQuery pipe syntax", () => {
 	});
 });
 
+// GoogleSQL graph queries (GQL): GRAPH_TABLE(...) in FROM, the GRAPH statement, patterns,
+// CALL, search prefixes/quantifiers, graph subqueries, CREATE PROPERTY GRAPH.
+describe("BigQuery graph / GQL", () => {
+	const ok = (sql: string) => expect(parseBigQuery(sql).errors, sql).toBe(0);
+
+	it("GRAPH_TABLE in FROM: MATCH + COLUMNS, and the GQL operation-block form", () => {
+		ok("SELECT gt.* FROM graph_table(aml MATCH (n) COLUMNS(n.name, 1 AS num)) gt");
+		ok("SELECT gt.* FROM graph_table(aml MATCH (n) RETURN n.name, 1 AS num) gt");
+		ok("SELECT * FROM graph_table(g MATCH (a IS Person)-[e]->(b) COLUMNS(a.name))");
+	});
+
+	it("standalone GRAPH statement with linear ops and NEXT", () => {
+		ok("GRAPH aml MATCH (n) RETURN n.name");
+		ok("GRAPH aml MATCH (n) LET x = 1 FILTER x > 0 RETURN count(*)");
+		ok("GRAPH aml MATCH (n) RETURN n.id AS id NEXT MATCH (m) RETURN m.id");
+	});
+
+	it("CALL operator: inline subquery, named TVF, PER and YIELD", () => {
+		ok("GRAPH g LET x = 1 CALL () { RETURN 1 AS one } RETURN count(*)");
+		ok("GRAPH g MATCH (n) CALL tvf_graph() RETURN 1");
+		ok("GRAPH g MATCH (n) CALL PER (n) tvf(n.id) YIELD a, b AS c RETURN a");
+	});
+
+	it("path search prefixes, modes, quantifiers", () => {
+		ok("GRAPH g MATCH ANY SHORTEST (a)-[e]->(b) RETURN 1");
+		ok("GRAPH g MATCH ALL CHEAPEST (a)-[e COST e.w]->(b) RETURN 1");
+		ok("GRAPH g MATCH SHORTEST 3 (a)-[e]->(b) RETURN 1");
+		ok("GRAPH g MATCH TRAIL (a)-[e]->{1,3}(b) RETURN 1");
+		ok("GRAPH g MATCH p = ACYCLIC (a)-[e]->+(b) RETURN 1");
+		ok("GRAPH g MATCH ((a)-[e]->(b)){2,} RETURN 1");
+	});
+
+	it("graph predicates and subqueries", () => {
+		ok("GRAPH g MATCH (a)-[e]->(b) FILTER a IS SOURCE OF e RETURN 1");
+		ok("GRAPH g MATCH (n) FILTER n IS LABELED Person RETURN 1");
+		ok("SELECT VALUE { GRAPH g MATCH (n) RETURN n.id }");
+		ok("SELECT EXISTS { MATCH (n) }");
+		ok("SELECT ARRAY { GRAPH g MATCH (n) RETURN n.id }");
+	});
+
+	it("label expressions in patterns", () => {
+		ok("GRAPH g MATCH (n:Person|Company) RETURN 1");
+		ok("GRAPH g MATCH (n IS Person & !Internal) RETURN 1");
+		ok("GRAPH g MATCH (n {age: 30, name: 'x'}) RETURN 1");
+	});
+
+	it("CREATE PROPERTY GRAPH", () => {
+		ok("CREATE PROPERTY GRAPH g NODE TABLES (Person KEY (id))");
+		ok(
+			"CREATE PROPERTY GRAPH g NODE TABLES (Person) EDGE TABLES (Knows SOURCE KEY (a) REFERENCES Person DESTINATION KEY (b) REFERENCES Person)",
+		);
+		ok("CREATE PROPERTY GRAPH g NODE TABLES (Person LABEL P PROPERTIES ALL COLUMNS)");
+	});
+});
+
 // LATERAL joins (correlated subquery / TVF on the join RHS) — query-syntax LATERAL.
 describe("BigQuery LATERAL join", () => {
 	const ok = (sql: string) => expect(parseBigQuery(sql).errors, sql).toBe(0);
