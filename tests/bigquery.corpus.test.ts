@@ -1,7 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
+import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
+import { resolveScopes } from "../src/scope/scope.js";
 
 // The ZetaSQL .test corpus (gitignored; rebuild with tools/extract-googlesql-tests.mjs).
 // Two-sided gate — the project's first: positives must parse (ratchet floor), negatives whose
@@ -52,5 +54,25 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 		// eslint-disable-next-line no-console
 		console.log(`BigQuery negatives rejected: ${rejected}/${negatives().length}`);
 		expect(rejected).toBeGreaterThanOrEqual(NEGATIVE_BASELINE);
+	});
+
+	it("lower + resolveScopes never throw on a parsed positive case", { timeout: 600000 }, () => {
+		const throws: string[] = [];
+		for (const f of positives()) {
+			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			let res;
+			try {
+				res = parseBigQuery(sql);
+			} catch {
+				continue; // parse-stage failures are counted by the ratchet, not here
+			}
+			if (res.errors !== 0) continue; // only fully-parsed cases must lower cleanly
+			try {
+				resolveScopes(lower(res.tree), "bigquery");
+			} catch (e) {
+				throws.push(`${f}: ${(e as Error).message}`);
+			}
+		}
+		expect(throws, `lower/resolveScopes threw on:\n${throws.slice(0, 20).join("\n")}`).toEqual([]);
 	});
 });
