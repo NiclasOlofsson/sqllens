@@ -24,7 +24,7 @@ const POSITIVE_BASELINE = 17212; // 17212/17272 (99.7%); the ~60 remaining are Z
 // legitimately accepts the corpus's feature-OFF negatives — SQL that is a "syntax error" only
 // because a feature (PIPES, …) is disabled — plus a few parser-vs-analyzer cases (mixed set-ops,
 // edge TVF forms). The floor below is the achievable rejection count, not the total.
-const NEGATIVE_BASELINE = 215; // 215/274 true syntax-error cases rejected (incl. invalid string escapes)
+const NEGATIVE_BASELINE = 235; // 235/274 true syntax-error cases rejected
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () => {
 	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {

@@ -61,19 +61,20 @@ options {
 	// number of qualified joins (not CROSS / not NATURAL — those take no ON/USING) must equal the
 	// number of ON/USING clauses. Too few → "JOIN must have an ON or USING clause"; too many / a CROSS
 	// with an ON → likewise rejected. A comma starts a new segment.
-	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; bad: boolean } {
-		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, bad: false };
-		const jt = s.join_type?.();
-		const isCross = !!jt && /CROSS/i.test(jt.getText?.() ?? "");
+	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; bad: boolean; outer: boolean } {
+		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, bad: false, outer: false };
+		const jtText = s.join_type?.()?.getText?.() ?? "";
+		const isCross = /CROSS/i.test(jtText);
+		const isOuter = /FULL|RIGHT/i.test(jtText); // only RIGHT/FULL may not follow a comma join
 		const isNatural = !!s.opt_natural?.();
 		const list = s.on_or_using_clause_list?.();
 		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : 0;
 		// CROSS / NATURAL joins combine without a condition (join_processor GetCrossCommaOrNaturalJoin):
-		// they contribute neither a qualified-join nor an ON to the balance. A CROSS join may NOT carry
-		// an ON/USING (error); a NATURAL join syntactically may (its ON is just ignored here).
-		if (isCross) return { comma: false, qualified: false, ons: 0, bad: ons > 0 };
-		if (isNatural) return { comma: false, qualified: false, ons: 0, bad: false };
-		return { comma: false, qualified: true, ons, bad: false };
+		// they contribute neither a qualified-join nor an ON to the balance. A CROSS/NATURAL join may
+		// syntactically still carry an ON/USING (it parses; the contradiction is a resolver concern), so
+		// its condition is simply ignored here rather than rejected.
+		if (isCross || isNatural) return { comma: false, qualified: false, ons: 0, bad: false, outer: false };
+		return { comma: false, qualified: true, ons, bad: false, outer: isOuter };
 	}
 	private joinBalanced(steps: any[]): boolean {
 		// A single ON/USING per join binds to its own join, so a chain may freely mix joins with and
@@ -85,11 +86,17 @@ options {
 		let q = 0;
 		let c = 0;
 		let consec = false; // this segment used a >1 ON/USING list
+		let sawComma = false; // a comma join appeared earlier in the FROM clause
 		for (const s of steps ?? []) {
 			const st = this.joinStep(s);
 			if (st.bad) return false; // CROSS/NATURAL join carrying an ON/USING
+			// A RIGHT/FULL join after a comma join must be parenthesized (join_processor: "RIGHT JOIN
+			// must be parenthesized when following a comma join"): reject `FROM a, b RIGHT JOIN c`,
+			// `FROM a, b JOIN c FULL JOIN d`. LEFT JOIN after a comma is fine.
+			if (st.outer && sawComma) return false;
 			if (st.comma) {
 				if (consec) return false; // comma after consecutive ON/USING
+				sawComma = true;
 				q = 0;
 				c = 0;
 				consec = false;
@@ -1947,9 +1954,12 @@ table_primary:
 	tvf_with_suffixes
 	| LATERAL_SYMBOL tvf_with_suffixes
 	| table_path_expression
-	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
+	// table_subquery (a parenthesized query, incl. nested `((query))`) is tried before the
+	// parenthesized join so `(((select 1)))` / `(table t)` parse as subqueries; only non-query
+	// parenthesized content (`(a join b)`, and the invalid `(t1)`) reaches the join alt.
 	| table_subquery
 	| LATERAL_SYMBOL table_subquery
+	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
 	| graph_table_query
 	| table_primary match_recognize_clause
 	| table_primary sample_clause;
@@ -2076,8 +2086,11 @@ select_column_expr_with_as_alias:
 table_subquery:
 	parenthesized_query opt_pivot_or_unpivot_clause_and_alias?;
 
+// `join` only appears parenthesized — `( a JOIN b … )`. A parenthesized single table or a
+// double-parenthesized join is invalid (`(t1)`, `((a join b))`), so require at least one join_item.
 join: table_primary join_item* {
-		if (!this.joinBalanced(localContext.join_item())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+		if (localContext.join_item().length === 0) this.notifyErrorListeners("Syntax error: Expected keyword JOIN", null, null);
+		else if (!this.joinBalanced(localContext.join_item())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
 	};
 
 // join_item resolves the mutually left-recursive for [join, join_input]. join_input: join |
