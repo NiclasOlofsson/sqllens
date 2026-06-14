@@ -78,6 +78,12 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		// BY or HAVING clause"). This repo deliberately follows BigQuery (see CLAUDE.md), so we accept it
 		// — not a valid negative for us.
 		if (/QUALIFY clause must be used in conjunction with WHERE/.test(expectedSection)) featureOff = true;
+		// "Unexpected FROM [at …]" is the signature ZetaSQL emits for a FROM-query (bare `FROM t`, or a
+		// from-query as a subquery) when FEATURE_PIPES is off — the from_query production is pipe-gated. We
+		// implement PIPES (permanently on), so a from-query is valid for us; such a case is feature-off,
+		// not a real negative. (Tighten to the location-suffixed form so the genuine, PIPES-independent
+		// "Unexpected FROM; FROM queries following a set operation must be parenthesized" stays a negative.)
+		if (/Syntax error: Unexpected FROM \[at/.test(expectedSection)) featureOff = true;
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
