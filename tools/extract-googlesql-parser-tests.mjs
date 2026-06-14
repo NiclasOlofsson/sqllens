@@ -88,6 +88,13 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		// off ZetaSQL reports "Alias not allowed on parenthesized outer query". We implement PIPES, so the
 		// same SQL is a positive (pipe_parenthesized_query_alias's +PIPES variants) — feature-off for us.
 		if (/Alias not allowed on parenthesized outer query/.test(expectedSection)) featureOff = true;
+		// Consecutive ON/USING inside a PARENTHESIZED (regular) join is the ALLOW_CONSECUTIVE_ON feature,
+		// which we implement — `|> JOIN (t1 JOIN t2 JOIN t3 ON c1 ON c2)`. ZetaSQL with the feature off
+		// reports "Expected end of input but got ON/USING". The `JOIN (` guard keeps the genuine,
+		// feature-independent pipe-direct form (`|> JOIN t ON a ON b`, single-clause only) a negative.
+		if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query)) {
+			featureOff = true;
+		}
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
