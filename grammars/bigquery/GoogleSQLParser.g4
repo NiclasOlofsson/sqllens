@@ -49,6 +49,50 @@ options {
 	private adj(a: any, b: any): boolean {
 		return !!a && !!b && a.stop + 1 === b.start;
 	}
+	// JOIN condition balance (ZetaSQL join_processor.cc). Within a comma-separated FROM segment the
+	// number of qualified joins (not CROSS / not NATURAL — those take no ON/USING) must equal the
+	// number of ON/USING clauses. Too few → "JOIN must have an ON or USING clause"; too many / a CROSS
+	// with an ON → likewise rejected. A comma starts a new segment.
+	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; bad: boolean } {
+		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, bad: false };
+		const jt = s.join_type?.();
+		const isCross = !!jt && /CROSS/i.test(jt.getText?.() ?? "");
+		const isNatural = !!s.opt_natural?.();
+		const list = s.on_or_using_clause_list?.();
+		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : 0;
+		// CROSS / NATURAL joins combine without a condition (join_processor GetCrossCommaOrNaturalJoin):
+		// they contribute neither a qualified-join nor an ON to the balance. A CROSS join may NOT carry
+		// an ON/USING (error); a NATURAL join syntactically may (its ON is just ignored here).
+		if (isCross) return { comma: false, qualified: false, ons: 0, bad: ons > 0 };
+		if (isNatural) return { comma: false, qualified: false, ons: 0, bad: false };
+		return { comma: false, qualified: true, ons, bad: false };
+	}
+	private joinBalanced(steps: any[]): boolean {
+		// A single ON/USING per join binds to its own join, so a chain may freely mix joins with and
+		// without a condition. Only CONSECUTIVE ON/USING (a single suffix carrying >1 condition — the
+		// "join rewrite") forces a count match: those conditions bind across the preceding joins, so the
+		// segment's total ON/USING count must equal its qualified-join count. A comma may not follow a
+		// segment that used consecutive ON/USING (join_processor: "Comma join is not allowed after
+		// consecutive ON/USING clauses"). Commas start a new segment.
+		let q = 0;
+		let c = 0;
+		let consec = false; // this segment used a >1 ON/USING list
+		for (const s of steps ?? []) {
+			const st = this.joinStep(s);
+			if (st.bad) return false; // CROSS/NATURAL join carrying an ON/USING
+			if (st.comma) {
+				if (consec) return false; // comma after consecutive ON/USING
+				q = 0;
+				c = 0;
+				consec = false;
+				continue;
+			}
+			if (st.qualified) q++;
+			c += st.ons;
+			if (st.ons > 1) consec = true;
+		}
+		return !consec || c === q;
+	}
 	private checkGraphEdgeAdjacency(ctx: any): void {
 		const lt = ctx.LT_OPERATOR?.()?.symbol;
 		const m0 = ctx.MINUS_OPERATOR?.(0)?.symbol;
@@ -1658,7 +1702,9 @@ pipe_distinct: DISTINCT_SYMBOL;
 
 // JOIN with no LHS (the pipe input is the LHS).
 pipe_join:
-	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
+	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list? {
+		if (!this.joinBalanced([localContext])) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	};
 
 pipe_call: CALL_SYMBOL tvf_with_suffixes;
 
@@ -1874,7 +1920,9 @@ opt_select_with:
 from_clause: FROM_SYMBOL from_clause_contents;
 
 from_clause_contents:
-	table_primary from_clause_contents_suffix*
+	table_primary from_clause_contents_suffix* {
+		if (!this.joinBalanced(localContext.from_clause_contents_suffix())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	}
 	| AT_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
 		}
 	| QUESTION_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
@@ -2020,12 +2068,15 @@ select_column_expr_with_as_alias:
 table_subquery:
 	parenthesized_query opt_pivot_or_unpivot_clause_and_alias?;
 
-join: table_primary join_item*;
+join: table_primary join_item* {
+		if (!this.joinBalanced(localContext.join_item())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	};
 
 // join_item resolves the mutually left-recursive for [join, join_input]. join_input: join |
 // table_primary;
 join_item:
 	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
+
 
 on_or_using_clause_list: on_or_using_clause+;
 
