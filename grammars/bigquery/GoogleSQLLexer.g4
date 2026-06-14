@@ -190,6 +190,10 @@ INVALID_NUMERIC_LITERAL:
 		DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
 			'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
 		)?
+		// `digit . E±digits` (SIGNED exponent, no fraction digits) glued to a letter — `1.E-0x1`. The sign
+		// is required: `987654321.a` (no E) and `1.E0x1` (no sign — ZetaSQL lexes it `1.` + ident `E0x1`)
+		// are both unaffected; only the signed-exponent form is the unambiguous malformed token.
+		| DECIMAL_DIGITS DOT_SYMBOL 'E' (PLUS_OPERATOR | MINUS_OPERATOR) DECIMAL_DIGITS
 		| DECIMAL_DIGITS ('E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS)?
 		| HEX_DIGITS
 	) [a-z_] [a-z_0-9]*;
