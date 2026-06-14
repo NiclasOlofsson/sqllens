@@ -352,8 +352,12 @@ graph_path_factor:
 	graph_path_primary
 	| graph_quantified_path_primary;
 
+// A quantifier (`{m,n}`, `+`, `*`) may follow an edge pattern or a parenthesized path, but NOT a bare
+// node pattern (`(a){1,3}`) — ZetaSQL "Quantifier cannot be used on a node pattern".
 graph_quantified_path_primary:
-	graph_path_primary graph_quantifier;
+	graph_path_primary graph_quantifier {
+		if (localContext.graph_path_primary()?.graph_element_pattern()?.graph_node_pattern()) this.notifyErrorListeners("Syntax error: Quantifier cannot be used on a node pattern", null, null);
+	};
 
 // {m,n} (bounds optional), {n}, +, *  (graph-patterns quantifier)
 graph_quantifier:
