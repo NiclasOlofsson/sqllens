@@ -43,6 +43,14 @@ options {
 		const c0 = ctx?.getChild?.(0);
 		return !!c0 && c0.getText?.().toUpperCase?.() === "NOT" && !!ctx.NOT_SYMBOL?.();
 	}
+	// A chained function call / field access cannot be applied to a bare (unparenthesized) numeric
+	// literal — `123.0.x()`, `-5.0.f()`, `123 .f()` — only to a path or parenthesized expression
+	// (googlesql.tm function_call_expression_base: INT/FLOAT base → "Unexpected ("). Parenthesized
+	// forms have a `(` in their text and don't match.
+	private exprIsBareNumeric(ctx: any): boolean {
+		const t = ctx?.getText?.() ?? "";
+		return /^[+-]?(\d[\d.]*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)$/.test(t);
+	}
 	// Two tokens are adjacent when no character (whitespace/comment) sits between them. GoogleSQL
 	// requires a graph edge pattern's punctuation to be written without spaces (`-[…]->`, `<-[…]-`);
 	// the filler inside `[…]` may contain spaces (ZetaSQL graph_edge_pattern adjacency checks).
@@ -2388,7 +2396,9 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and DOT_SYMBOL (
 		dot_identifier
 		| function_name_from_keyword
-	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		if (this.exprIsBareNumeric(localContext.expression_higher_prec_than_and(0)) || /^@@/.test(localContext.expression_higher_prec_than_and(0)?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Unexpected \"(\"", null, null);
+	}
 	// Chained call on a generalized field: base.(pkg.ext)(args).
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
@@ -2551,7 +2561,9 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and DOT_SYMBOL (
 		dot_identifier
 		| function_name_from_keyword
-	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		if (this.exprIsBareNumeric(localContext.expression_higher_prec_than_and(0)) || /^@@/.test(localContext.expression_higher_prec_than_and(0)?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Unexpected \"(\"", null, null);
+	}
 	// Chained call on a generalized field: base.(pkg.ext)(args).
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
