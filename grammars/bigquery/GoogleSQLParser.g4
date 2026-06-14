@@ -1777,7 +1777,11 @@ pipe_with: with_clause COMMA_SYMBOL?;
 
 pipe_export_data: export_data_no_query;
 
-pipe_create_table: create_table_statement;
+// googlesql.tm pipe_create_table: a pipe `|> CREATE TABLE` takes the create prefix only — an AS query
+// is the pipe's own input, so a trailing `AS <query>` is a syntax error.
+pipe_create_table: create_table_statement {
+	if (localContext.create_table_statement()?.as_query()) this.notifyErrorListeners("Syntax error: AS query is not allowed on pipe CREATE TABLE", null, null);
+};
 
 pipe_insert:
 	insert_statement_prefix column_list? on_conflict_clause? opt_assert_rows_modified?
