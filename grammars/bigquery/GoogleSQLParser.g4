@@ -1820,9 +1820,16 @@ query_primary:
 	| TABLE_SYMBOL path_expression
 	| parenthesized_query opt_as_alias_with_required_as?;
 
+// googlesql.tm set_operation_metadata: STRICT is incompatible with an outer mode (FULL/LEFT/OUTER/
+// INNER) and with BY NAME — both are parser syntax errors, not resolver checks.
 set_operation_metadata:
 	opt_corresponding_outer_mode? query_set_operation_type hint? all_or_distinct opt_strict?
-		opt_column_match_suffix?;
+		opt_column_match_suffix? {
+		if (localContext.opt_strict()) {
+			if (localContext.opt_corresponding_outer_mode()) this.notifyErrorListeners("Syntax error: STRICT cannot be used with outer mode in set operations", null, null);
+			else if (localContext.opt_column_match_suffix()?.NAME_SYMBOL()) this.notifyErrorListeners("Syntax error: STRICT cannot be used with BY NAME in set operations", null, null);
+		}
+	};
 
 // …/query-syntax#set_operators: { BY NAME [ON (column_list)] | CORRESPONDING [BY (column_list)] }
 opt_column_match_suffix:
