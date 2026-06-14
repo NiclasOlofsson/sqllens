@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import { Select_column_dot_starContext } from "../generated/bigquery/GoogleSQLParser.js";
+import { Select_column_dot_starContext, Shift_operatorContext } from "../generated/bigquery/GoogleSQLParser.js";
 
 // Post-parse syntax validation: rules that ZetaSQL enforces with operator-precedence (%prec) or
 // hand-parser actions that an ANTLR grammar can't express cleanly, and that are too entangled with the
@@ -34,6 +34,9 @@ function hasTopLevelBinaryOp(text: string): boolean {
  * - select_column_dot_star: googlesql.tm binds `.*` at `.` precedence (`%prec "."`), so the base must be
  *   a postfix expression (`t.*`, `(a+b).*`, `f(x).*`), not a binary one — `a+b.*` parses as `a + (b.*)`
  *   and fails on `*` ("Unexpected *"). A base carrying a top-level binary operator is invalid.
+ * - shift_operator `>>`: the grammar recombines two `>` tokens so nested generics close
+ *   (`ARRAY<STRUCT<INT64>>`), but ZetaSQL only lexes `>>` when the two `>` are ADJACENT. With a space —
+ *   `1 > > 2` — they are two comparison operators and chaining them is "Unexpected >".
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -41,6 +44,13 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 		if (node instanceof Select_column_dot_starContext) {
 			const base = node.expression_higher_prec_than_and()?.getText() ?? "";
 			if (hasTopLevelBinaryOp(base)) errors++;
+		} else if (node instanceof Shift_operatorContext) {
+			const gts = node.GT_OPERATOR();
+			if (gts.length === 2) {
+				const a = gts[0].symbol;
+				const b = gts[1].symbol;
+				if (a.stop + 1 !== b.start) errors++; // `> >` (spaced) is not the `>>` shift operator
+			}
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
