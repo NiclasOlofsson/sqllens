@@ -2417,7 +2417,12 @@ unpivot_nulls_filter:
 
 pivot_clause:
 	PIVOT_SYMBOL LR_BRACKET_SYMBOL pivot_expression_list FOR_SYMBOL expression_higher_prec_than_and
-		IN_SYMBOL LR_BRACKET_SYMBOL pivot_value_list RR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
+		IN_SYMBOL LR_BRACKET_SYMBOL pivot_value_list RR_BRACKET_SYMBOL RR_BRACKET_SYMBOL {
+		// The FOR target must not itself be an IN-expression — `FOR y IN (1,2) IN (…)` greedily binds the
+		// first IN to the target, but ZetaSQL takes it as the pivot's IN and rejects the second
+		// ("Expected ")" but got keyword IN"). Reject a FOR target whose top operator is IN.
+		if (localContext.expression_higher_prec_than_and()?.in_operator?.()) this.notifyErrorListeners("Syntax error: Expected \")\" but got keyword IN", null, null);
+	};
 
 pivot_expression_list:
 	pivot_expression (COMMA_SYMBOL pivot_expression)*;
