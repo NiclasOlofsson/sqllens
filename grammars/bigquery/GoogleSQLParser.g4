@@ -1229,13 +1229,18 @@ maybe_dashed_generalized_path_expression:
 
 opt_into: INTO_SYMBOL;
 
+// Insert mode (googlesql.tm insert_mode): `[OR] IGNORE`, `OR REPLACE` / bare REPLACE, `OR UPDATE` /
+// bare UPDATE. Bare REPLACE/UPDATE are the mode only when the token-rewrite has retyped them to
+// KW_REPLACE_AFTER_INSERT / KW_UPDATE_AFTER_INSERT (REPLACE/UPDATE directly after INSERT, not
+// followed by `.`/`[`); an un-retyped REPLACE/UPDATE is a target path (`INSERT replace.col …`), and
+// `INSERT REPLACE VALUES …` correctly fails as incomplete (mode REPLACE, target VALUES, no source).
 opt_or_ignore_replace_update:
 	OR_SYMBOL IGNORE_SYMBOL
 	| IGNORE_SYMBOL
 	| OR_SYMBOL REPLACE_SYMBOL
-	| REPLACE_SYMBOL
+	| KW_REPLACE_AFTER_INSERT
 	| OR_SYMBOL UPDATE_SYMBOL
-	| UPDATE_SYMBOL;
+	| KW_UPDATE_AFTER_INSERT;
 
 alter_statement:
 	ALTER_SYMBOL table_or_table_function opt_if_exists? maybe_dashed_path_expression

@@ -21,6 +21,12 @@ const T_INTEGER = GoogleSQLLexer.INTEGER_LITERAL; // hex literals lex to INTEGER
 const T_INVALID = GoogleSQLLexer.INVALID_NUMERIC_LITERAL;
 const T_AT = GoogleSQLLexer.AT_SYMBOL;
 const T_ATAT = GoogleSQLLexer.ATAT_SYMBOL;
+const T_INSERT = GoogleSQLLexer.INSERT_SYMBOL;
+const T_REPLACE = GoogleSQLLexer.REPLACE_SYMBOL;
+const T_UPDATE = GoogleSQLLexer.UPDATE_SYMBOL;
+const T_LS_BRACKET = GoogleSQLLexer.LS_BRACKET_SYMBOL;
+const T_REPLACE_AFTER_INSERT = GoogleSQLLexer.KW_REPLACE_AFTER_INSERT;
+const T_UPDATE_AFTER_INSERT = GoogleSQLLexer.KW_UPDATE_AFTER_INSERT;
 
 // Tokens after which a `.` opens a path component. Identifier-capable tokens = token_identifier
 // (IDENTIFIER) plus keyword_as_identifier (the nonreserved keyword set + SIMPLE_SYMBOL), per the
@@ -64,16 +70,38 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 	// token / `)` / `]` / `?`, OR a parameter name right after `@`/`@@` (`@full.1`, `@@sysvar.1`),
 	// where the name may be a reserved keyword and so isn't itself in PATH_HEAD.
 	const pathHead = () => PATH_HEAD.has(lookback) || lookback2 === T_AT || lookback2 === T_ATAT;
+	// Type of the next default-channel token after index i (-1 if none).
+	const nextDefaultType = (i: number): number => {
+		for (let k = i + 1; k < tokens.length; k++) if (tokens[k].channel === 0) return tokens[k].type;
+		return -1;
+	};
 
-	for (const tok of tokens) {
+	for (let idx = 0; idx < tokens.length; idx++) {
+		const tok = tokens[idx];
 		// Hidden-channel tokens (whitespace, comments) pass through and don't affect the lookback;
 		// GoogleSQL allows whitespace around the `.` in a path (`x. 123`, `x.1 .2`).
 		if (tok.channel !== 0) {
 			out.push(tok);
 			continue;
 		}
-		const type = tok.type;
+		let type = tok.type;
 		const text = tok.text ?? "";
+
+		// ZetaSQL lookahead transformer: REPLACE/UPDATE immediately after INSERT is the insert mode
+		// (KW_REPLACE_AFTER_INSERT / KW_UPDATE_AFTER_INSERT) — UNLESS it begins a path (`.`/`[` next),
+		// where it stays a target path component. Retyping forces the grammar to treat it as the mode:
+		// `INSERT REPLACE VALUES …` fails as incomplete while `INSERT replace.col …` parses.
+		if ((type === T_REPLACE || type === T_UPDATE) && lookback === T_INSERT) {
+			const nxt = nextDefaultType(idx);
+			if (nxt !== T_DOT && nxt !== T_LS_BRACKET) {
+				type = type === T_REPLACE ? T_REPLACE_AFTER_INSERT : T_UPDATE_AFTER_INSERT;
+				out.push(cloneRetyped(tok, type, text, tok.start, tok.stop));
+				lookback2 = lookback;
+				lookback = type;
+				pathDot = false;
+				continue;
+			}
+		}
 
 		// In path context a numeric literal is a sequence of identifier components: our lexer fuses
 		// the digit runs and dots (`.123`, `2.0`, `1.`, `2daysago`, `0x1f`, `1.2e3`) into one

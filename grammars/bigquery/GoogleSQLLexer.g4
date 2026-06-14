@@ -560,3 +560,9 @@ fragment POUND_COMMENT: '#' (~[\r\n])* ('\r' | '\n' | '\r\n')?;
 
 COMMENT:
 	(BLOCK_COMMENT | DASH_COMMENT | POUND_COMMENT) -> channel(HIDDEN);
+// REPLACE / UPDATE immediately after INSERT are the insert mode (ZetaSQL KW_REPLACE_AFTER_INSERT /
+// KW_UPDATE_AFTER_INSERT). These rules never match real input — the patterns are control characters
+// that cannot appear in SQL — they exist only to mint stable token types appended at the end (no
+// renumbering); the token-stream rewrite (src/bigquery/dot-path.ts) retypes REPLACE/UPDATE to them.
+KW_REPLACE_AFTER_INSERT: 'REPLACE_AFTER_INSERT';
+KW_UPDATE_AFTER_INSERT: 'UPDATE_AFTER_INSERT';
