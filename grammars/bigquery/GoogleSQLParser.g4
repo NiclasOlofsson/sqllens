@@ -113,7 +113,7 @@ options {
 		const isCross = /CROSS/i.test(jtText);
 		const isNatural = !!s.opt_natural?.();
 		const list = s.on_or_using_clause_list?.();
-		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : 0;
+		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : s.on_or_using_clause?.() ? 1 : 0;
 		return { comma: false, qualified: !isCross && !isNatural, ons, outer: /FULL|RIGHT/i.test(jtText) };
 	}
 	// JOIN condition balance — a faithful port of ZetaSQL join_processor.cc JoinRuleAction's left fold
@@ -1821,8 +1821,10 @@ pipe_limit_offset: limit_offset_clause;
 pipe_distinct: DISTINCT_SYMBOL;
 
 // JOIN with no LHS (the pipe input is the LHS).
+// googlesql.tm pipe_join takes a SINGLE on_or_using_clause (not the list a regular join allows): a pipe
+// `|> JOIN t ON … ON …` / `USING (…) USING (…)` is rejected ("Expected end of input but got ON/USING").
 pipe_join:
-	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list? {
+	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause? {
 		if (!this.joinBalanced([localContext])) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
 	};
 
