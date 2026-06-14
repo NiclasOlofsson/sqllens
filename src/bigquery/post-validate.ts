@@ -7,6 +7,7 @@ import {
 	Graph_call_operator_coreContext,
 	Graph_element_pattern_fillerContext,
 	Graph_linear_operator_listContext,
+	Lambda_argumentContext,
 	Pipe_aggregate_itemContext,
 	Pipe_callContext,
 	Select_clauseContext,
@@ -42,6 +43,40 @@ function isComparisonFamily(ctx: Expression_higher_prec_than_andContext | null):
 // parser folds into its syntax-error total — same approach as the post-lex escape validation. A walk
 // cannot change parse decisions, so it carries none of the prediction-interaction risk of a grammar
 // action.
+
+// A lambda parameter list is valid only as a bare path (`e`, `a.b.c`) or a parenthesized struct
+// constructor with a top-level comma (`(e, i>0)`, `()`); a single parenthesized non-path (`(e>0)`) or a
+// query (`(SELECT 1)`) is "Expecting lambda argument list". Mirrors the grammar's lambdaArgListValid,
+// but the grammar runs it on getText() — which drops token spacing, so `SELECT 1` collapses to the
+// identifier-like `SELECT1` and wrongly passes. We re-check on SPACED text so keyword boundaries survive.
+function lambdaArgListValid(text: string): boolean {
+	const t = (text ?? "").trim();
+	if (/^(`[^`]*`|[A-Za-z_]\w*)(\s*\.\s*(`[^`]*`|[A-Za-z_]\w*))*$/.test(t)) return true; // bare path
+	if (!t.startsWith("(") || !t.endsWith(")")) return false;
+	let depth = 0;
+	for (let k = 0; k < t.length; k++) {
+		const c = t[k];
+		if (c === "(") depth++;
+		else if (c === ")") depth--;
+		else if (c === "," && depth === 1) return true; // top-level comma → struct constructor
+	}
+	return lambdaArgListValid(t.slice(1, -1));
+}
+
+// Space-joined token text of a CST node — preserves the keyword boundaries that getText() loses.
+function spacedText(node: ParserRuleContext): string {
+	const parts: string[] = [];
+	const walk = (n: { getChildCount(): number; getChild(i: number): unknown; getText(): string }): void => {
+		const c = n.getChildCount();
+		if (c === 0) {
+			parts.push(n.getText());
+			return;
+		}
+		for (let i = 0; i < c; i++) walk(n.getChild(i) as never);
+	};
+	walk(node);
+	return parts.join(" ");
+}
 
 // True when `text` carries a binary/comparison/bitwise operator at the top paren/bracket depth, ignoring
 // operators inside parentheses, brackets, or string/backtick literals. A leading sign is not binary.
@@ -88,6 +123,11 @@ function hasTopLevelBinaryOp(text: string): boolean {
  * - standalone subpipeline: a bare `|> …` subpipeline is its own single-statement entry in ZetaSQL, so
  *   it can't be one of several `;`-separated statements (`|> WHERE true; |> WHERE false`, `|> DESCRIBE;
  *   SELECT 1` → "Expected end of input"/"Unexpected"). It must be the sole top-level statement.
+ * - IN value-list hint: a `@{…}` hint on `IN (value, …)` is "HINTs cannot be specified on IN clause with
+ *   value list" (the grammar already rejects the UNNEST form inline; the value-list form is here).
+ * - lambda argument list: a lambda parameter list must be a path or a parenthesized struct (`(e, i>0)`),
+ *   not a query (`(SELECT 1) -> …`) — "Expecting lambda argument list". The grammar's getText()-based
+ *   check misses keyword boundaries; re-validated here on spaced text.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -150,6 +190,15 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
 			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0))) errors++;
 			else if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))) errors++;
+			// A hint on an IN value list (`IN @{…} (a, b)` / `IN @{…} (x)`) is rejected; a hint on an IN
+			// SUBQUERY (`IN @{…} (SELECT …)`) is allowed, as is the IN-UNNEST form (caught in-grammar).
+			const inRhs = node.parenthesized_in_rhs();
+			if (node.in_operator() && node.hint() && inRhs && !inRhs.parenthesized_query()) errors++;
+		} else if (node instanceof Lambda_argumentContext) {
+			// Flag only what the grammar's getText()-based check let through: valid when flattened (keyword
+			// boundary lost) but invalid on spaced text — e.g. `(SELECT 1) -> …`.
+			const e = node.lambda_argument_list().expression();
+			if (e && lambdaArgListValid(e.getText()) && !lambdaArgListValid(spacedText(e))) errors++;
 		} else if (node instanceof Expression_maybe_parenthesized_not_a_queryContext) {
 			// A graph endpoint predicate (IS SOURCE/DESTINATION OF) cannot be chained — its LHS may not be
 			// another endpoint predicate (`a IS SOURCE OF e IS DESTINATION OF d`).

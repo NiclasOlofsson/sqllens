@@ -32,9 +32,20 @@ export function cleanQuery(raw) {
 		.trim();
 }
 
-export const defaultModeOf = (text) => text.match(/^\[default mode=([a-z_]+)\]/m)?.[1] ?? "statement";
+// Strip leading test-directive lines from an EXPANDED variant. cleanQuery drops directive lines before
+// expansion, but three forms only become a leading `[…]` line AFTER `{{}}` expansion / aren't caught by
+// the lowercase line filter: a bracket wrapping an alternation (`[{{preserve_unnecessary_cast|no_…}}]`
+// → `[]` after `{{}}`-removal, so cleanQuery keeps it), an uppercase `[DEFAULT language_features=…]`,
+// and a directive that is itself an alternation OPTION (`{{|[no_preserve_column_aliases]}}` → the
+// `[no_…]` variant carries the directive). All three surface as a leading `[<word>=|]|<space>` line on
+// the variant; remove them (and any blank lines) so the real SQL starts the statement. Case-insensitive
+// on the keyword; an array expression (`[a, b]`, `[1, e]`) does not match (a comma follows the word).
+export const stripLeadingDirectives = (sql) =>
+	sql.replace(/^(?:[ \t]*\[[A-Za-z][A-Za-z0-9_]*\s*[=\] ][^\n]*\r?\n|[ \t]*\r?\n)+/, "");
+
+export const defaultModeOf = (text) => text.match(/^\[default mode=([a-z_]+)\]/im)?.[1] ?? "statement";
 export const blockModeOverride = (querySection) => querySection.match(/^\s*\[mode=([a-z_]+)\]/m)?.[1];
-export const fileDefaultDir = (text) => text.match(/^\[default language_features=([^\]]*)\]/m)?.[1] ?? "";
+export const fileDefaultDir = (text) => text.match(/^\[default language_features=([^\]]*)\]/im)?.[1] ?? "";
 export const blockDir = (querySection) => querySection.match(/^\s*\[language_features=([^\]]*)\]/m)?.[1];
 export const normalize = (s) => s.replace(/\s+/g, " ").trim();
 
@@ -139,6 +150,66 @@ const isFeatureRejection = (expected) => /\bnot\s+(a\s+)?supported\b|\bnot\s+imp
 export const isSyntaxError = (expected) =>
 	startsWithSyntaxError(expected) || (isError(expected) && !isFeatureRejection(expected));
 export const isAnalyzerSyntaxError = (expected) => startsWithSyntaxError(expected);
+
+// Expected-string feature-off / deliberate-divergence rules, shared by BOTH extractors so the two
+// corpora grade identically. A case whose ZetaSQL error fires only because a feature WE implement is
+// disabled (or because of a documented BigQuery-vs-ZetaSQL divergence) is one we correctly accept as a
+// permissive superset — not a valid negative for us. These complement disablesImplemented (which keys
+// off the directive); these key off the error message. Each rule cites the feature it stands in for.
+export function featureOffExpected(expectedSection, query = "") {
+	// Bare QUALIFY: BigQuery's docs allow QUALIFY without a preceding WHERE/GROUP BY/HAVING; ZetaSQL's
+	// parser requires one. This repo deliberately follows BigQuery (CLAUDE.md), so we accept it.
+	if (/QUALIFY clause must be used in conjunction with WHERE/.test(expectedSection)) return true;
+	// "Unexpected FROM [at …]" is ZetaSQL's signature for a FROM-query when FEATURE_PIPES is off. We
+	// implement PIPES (permanently on). Tightened to the `[at` form so the genuine, PIPES-independent
+	// "Unexpected FROM; FROM queries following a set operation must be parenthesized" stays a negative.
+	if (/Syntax error: Unexpected FROM \[at/.test(expectedSection)) return true;
+	// An alias on a parenthesized outer query is a pipe-syntax feature; PIPES-off ZetaSQL rejects it.
+	if (/Alias not allowed on parenthesized outer query/.test(expectedSection)) return true;
+	// `[no_reserve_graph_table]` makes GRAPH_TABLE a plain identifier so `GRAPH_TABLE(… MATCH …)` errors;
+	// we always reserve GRAPH_TABLE (the GoogleSQL default), so this config is one we don't model.
+	if (/Expected "\)" but got keyword MATCH/.test(expectedSection)) return true;
+	// ALLOW_DASHES_IN_TABLE_NAME off → "Table name contains '-' character"; we implement dashed names.
+	if (/Table name contains '-' character/.test(expectedSection)) return true;
+	// Consecutive ON/USING inside a PARENTHESIZED join is the ALLOW_CONSECUTIVE_ON feature we implement;
+	// ZetaSQL with it off reports "Expected end of input but got ON/USING". The `JOIN (` guard keeps the
+	// genuine pipe-direct form (`|> JOIN t ON a ON b`, single-clause only) a negative.
+	if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query)) return true;
+	return false;
+}
+
+// Post-parse structural errors that ZetaSQL labels "Syntax error" but its bare PARSER accepts (it builds
+// a full tree — proven by the parser/testdata, where the identical query is a POSITIVE with a parse
+// tree). The error is emitted by a later structural pass. Since our parseBigQuery follows the parser
+// oracle for these (a valid parse must not be rejected — that would regress the parser-corpus positive),
+// they are NOT parse-negatives for us in the analyzer corpus. Mixed set operations and a hint on a non-
+// first set operation are both such cases (set_operation.test in parser/testdata lists the same SQL as a
+// positive). The semantic layer is where these belong, not the parser.
+export function isParserAcceptedPostParse(expectedSection) {
+	return (
+		/Different set operations cannot be used in the same query without using parentheses/.test(expectedSection) ||
+		/Hints on set operations must appear on the first/.test(expectedSection)
+	);
+}
+
+// Single-statement-mode boundary: ZetaSQL's default analyzer entry is AnalyzeStatement (one statement),
+// which reports "Expected end of input but got keyword <stmt-start>" at the SECOND statement of a multi-
+// statement input. Our entry is `root` = ParseScript (multi-statement), so we legitimately accept it — a
+// mode divergence, not over-acceptance (parallel to the empty-script exclusion). Detected only when the
+// expected is that boundary error AND the input genuinely carries more than one top-level statement (a
+// `;` followed by more non-comment SQL), so a single statement with a real trailing-junk error stays a
+// negative.
+export function isSingleStmtModeBoundary(expectedSection, query) {
+	if (
+		!/Syntax error: Expected end of input but got keyword (SELECT|INSERT|UPDATE|DELETE|MERGE|TRUNCATE|WITH|FROM|CREATE|DROP|ALTER|EXPORT|GRANT|REVOKE)\b/i.test(
+			expectedSection,
+		)
+	) {
+		return false;
+	}
+	const afterSemi = query.split(";").slice(1).join(";");
+	return /\S/.test(afterSemi.replace(/--[^\n]*/g, "").replace(/#[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, ""));
+}
 
 /**
  * Map each ALTERNATION GROUP label → its negative flag. ZetaSQL labels a cell by joining the chosen

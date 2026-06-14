@@ -167,11 +167,16 @@ UNCLOSED_TRIPLE_QUOTED_RAW_BYTES_LITERAL: (R B | B R) (
 		| DQ3TEXT_0
 	);
 
-FLOATING_POINT_LITERAL: (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS DOT_SYMBOL DECIMAL_DIGITS?
+// No LEADING sign: GoogleSQL numeric literals don't carry a sign — `+`/`-` are operators (unary in
+// `-1.5`, binary in `a+1.5`). Including a leading sign made the lexer greedily glue `a+1.5` into
+// `a` `+1.5` (two value tokens, a parse error), so any unspaced binary expression with a float operand
+// failed. The EXPONENT sign (`E±n`) stays — it is part of the literal. (ZetaSQL tokenizes signs the
+// same way; src/bigquery/post-validate.ts re-catches the few negatives that relied on the old glue.)
+FLOATING_POINT_LITERAL: DECIMAL_DIGITS DOT_SYMBOL DECIMAL_DIGITS?
 		(
 		'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
 	)?
-	| (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
+	| DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
 		'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
 	)?
 	| DECIMAL_DIGITS 'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS;

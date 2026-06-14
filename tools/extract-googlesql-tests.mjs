@@ -17,10 +17,15 @@ import {
 	classifyVariants,
 	cleanQuery,
 	defaultModeOf,
+	disablesImplemented,
 	expand,
+	featureOffExpected,
 	fileDefaultDir,
 	isAnalyzerSyntaxError,
+	isParserAcceptedPostParse,
+	isSingleStmtModeBoundary,
 	normalize,
+	stripLeadingDirectives,
 } from "./googlesql-testdata.mjs";
 
 const SRC = "vendor/googlesql/googlesql/analyzer/testdata";
@@ -61,7 +66,8 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		if (sep === -1) continue; // no expected section; skip prose-only blocks
 		const querySection = block.slice(0, sep);
 		const mode = blockModeOverride(querySection) ?? defaultMode;
-		const directive = blockDir(querySection) ?? defaultDir;
+		const blockDirective = blockDir(querySection);
+		const directive = blockDirective ?? defaultDir;
 		const query = cleanQuery(querySection);
 		if (!query) continue;
 		const expectedSection = block.slice(sep + 3);
@@ -69,9 +75,29 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		if (all.length > MAX_VARIANTS) capped++;
 		// Analyzer testdata: only "ERROR: Syntax error" is a parse error; semantic errors parse fine.
 		const negatives = classifyVariants(query, expectedSection, directive, isAnalyzerSyntaxError);
+		// Feature-off / divergence: a "syntax error" that fires only because a feature WE implement is off
+		// (or a documented BigQuery divergence), or the single-statement-mode boundary — not a valid
+		// negative for us. Shared with the parser extractor so both corpora grade identically.
+		const featureOff =
+			disablesImplemented(blockDirective, defaultDir) ||
+			featureOffExpected(expectedSection, query) ||
+			isParserAcceptedPostParse(expectedSection) ||
+			isSingleStmtModeBoundary(expectedSection, query);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
-			const variant = all[v];
+			const variant = stripLeadingDirectives(all[v]);
 			if (!variant.trim()) continue;
+			if (featureOff && negatives[v]) continue; // feature-off/divergence negative for a feature we implement
+			// Expression-mode wrap artifact: a bare expression that is actually a QUERY (`select 123`) is a
+			// syntax error AS AN EXPRESSION in ZetaSQL, but our `SELECT (<expr>)` wrap makes it a valid scalar
+			// subquery. Such a negative is not over-acceptance — drop it. (No positive can arise: ZetaSQL
+			// rejects a query where an expression is expected.)
+			if (
+				(mode === "expression" || mode === "measure_expression") &&
+				negatives[v] &&
+				/^\s*(select|with|from|table|graph)\b/i.test(variant)
+			) {
+				continue;
+			}
 			const emitted = applyMode(variant, mode);
 			if (emitted === null) {
 				skippedType++;

@@ -21,8 +21,10 @@ import {
 	defaultModeOf,
 	disablesImplemented,
 	expand,
+	featureOffExpected,
 	fileDefaultDir,
 	normalize,
+	stripLeadingDirectives,
 } from "./googlesql-testdata.mjs";
 
 const SRC = "vendor/googlesql/googlesql/parser/testdata";
@@ -72,40 +74,10 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		const negatives = classifyVariants(query, expectedSection, directive);
 		// A block whose own directive disables an implemented feature the file default enables tests that
 		// feature OFF — we accept such SQL (permissive superset), so its negatives aren't valid for us.
-		let featureOff = disablesImplemented(blockDirective, defaultDir);
-		// Bare QUALIFY: BigQuery's docs allow a QUALIFY clause without a preceding WHERE/GROUP BY/HAVING;
-		// ZetaSQL's parser requires one ("QUALIFY clause must be used in conjunction with WHERE or GROUP
-		// BY or HAVING clause"). This repo deliberately follows BigQuery (see CLAUDE.md), so we accept it
-		// — not a valid negative for us.
-		if (/QUALIFY clause must be used in conjunction with WHERE/.test(expectedSection)) featureOff = true;
-		// "Unexpected FROM [at …]" is the signature ZetaSQL emits for a FROM-query (bare `FROM t`, or a
-		// from-query as a subquery) when FEATURE_PIPES is off — the from_query production is pipe-gated. We
-		// implement PIPES (permanently on), so a from-query is valid for us; such a case is feature-off,
-		// not a real negative. (Tighten to the location-suffixed form so the genuine, PIPES-independent
-		// "Unexpected FROM; FROM queries following a set operation must be parenthesized" stays a negative.)
-		if (/Syntax error: Unexpected FROM \[at/.test(expectedSection)) featureOff = true;
-		// An alias on a parenthesized outer query (`(SELECT 1) AS q`) is a pipe-syntax feature; with PIPES
-		// off ZetaSQL reports "Alias not allowed on parenthesized outer query". We implement PIPES, so the
-		// same SQL is a positive (pipe_parenthesized_query_alias's +PIPES variants) — feature-off for us.
-		if (/Alias not allowed on parenthesized outer query/.test(expectedSection)) featureOff = true;
-		// Consecutive ON/USING inside a PARENTHESIZED (regular) join is the ALLOW_CONSECUTIVE_ON feature,
-		// which we implement — `|> JOIN (t1 JOIN t2 JOIN t3 ON c1 ON c2)`. ZetaSQL with the feature off
-		// reports "Expected end of input but got ON/USING". The `JOIN (` guard keeps the genuine,
-		// feature-independent pipe-direct form (`|> JOIN t ON a ON b`, single-clause only) a negative.
-		if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query)) {
-			featureOff = true;
-		}
-		// `[no_reserve_graph_table]` makes GRAPH_TABLE a plain identifier, so `GRAPH_TABLE(… MATCH …)` is
-		// read as a regular function call and the MATCH errors ("Expected ")" but got keyword MATCH"). We
-		// always reserve GRAPH_TABLE (the GoogleSQL default), so this is a config we don't model — accept.
-		if (/Expected "\)" but got keyword MATCH/.test(expectedSection)) featureOff = true;
-		// ALLOW_DASHES_IN_TABLE_NAME off → "Table name contains '-' character …". We implement dashed
-		// table names (maybe_dashed_path_expression — `my-project.dataset.table`), so these are feature-off
-		// for us. (A dashed name with NUMERIC components in a DML target — `project-987654321.a.b` — is a
-		// separate partial-coverage gap; tracked in docs, not yet parsed.)
-		if (/Table name contains '-' character/.test(expectedSection)) featureOff = true;
+		// The expected-string feature-off / divergence rules are shared with the analyzer extractor.
+		const featureOff = disablesImplemented(blockDirective, defaultDir) || featureOffExpected(expectedSection, query);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
-			const variant = all[v];
+			const variant = stripLeadingDirectives(all[v]);
 			if (!variant.trim()) continue;
 			const emitted = applyMode(variant, mode);
 			if (emitted === null) continue; // type-mode: not a statement

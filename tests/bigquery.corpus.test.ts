@@ -15,23 +15,57 @@ const CORPUS = resolve("harness/local/bigquery-zetasql");
 const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
 const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
 
-// Baselines: regression floors. Raise as grammar gaps close. Corpus is mode-aware (type-mode
-// blocks dropped, expression-mode wrapped as SELECT) so totals differ from the first extraction.
-const POSITIVE_BASELINE = 17212; // 17212/17272 (99.7%); the ~60 remaining are ZetaSQL errors / unmodeled DDL
-// mis-bucketed as positive (empty `SELECT FROM`, `*_errors` cases), SQLBuilder round-trip DDL
-// artifacts, and a few niche DDL/ordering edges — see docs Open Gaps.
-// The parser implements the full GoogleSQL feature superset (all language_features on), so it
-// legitimately accepts the corpus's feature-OFF negatives — SQL that is a "syntax error" only
-// because a feature (PIPES, …) is disabled — plus a few parser-vs-analyzer cases (mixed set-ops,
-// edge TVF forms). The floor below is the achievable rejection count, not the total.
-const NEGATIVE_BASELINE = 235; // 235/274 true syntax-error cases rejected
+// Detect-only classification — identical to the parser-corpus gate (bigquery.parser-corpus.test.ts).
+// Object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO are recognized and
+// flagged but not parsed/validated, by cleared scope, so they are out of BOTH gates symmetrically: a
+// malformed one we accept is not an over-acceptance bug, and a valid one we don't fully parse is not a
+// coverage gap. Keyed on the LEADING KEYWORD only (deliberately not the broad ddl category, which would
+// also hide in-scope ANALYZE/TRUNCATE/…). A comment/whitespace-only input is a valid EMPTY SCRIPT under
+// our `root` entry but an error under ZetaSQL's single-statement entry — that mode mismatch is also out
+// of both gates. Mirrors the parser gate so the two corpora grade identically.
+const leadKeyword = (sql: string): string =>
+	sql
+		.replace(/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*/, "")
+		.replace(/^@\{[^}]*\}\s*/, "")
+		.match(/^[A-Za-z_]+/)?.[0]
+		?.toLowerCase() ?? "";
+const isMacro = (sql: string): boolean =>
+	/^\s*(?:--[^\n]*\n|\/\*[\s\S]*?\*\/|\s)*(?:@\{[^}]*\}\s*)?DEFINE\s+MACRO\b/i.test(sql);
+const isEmptyScript = (sql: string): boolean =>
+	sql
+		.replace(/--[^\n]*/g, "")
+		.replace(/#[^\n]*/g, "")
+		.replace(/\/\*[\s\S]*?\*\//g, "")
+		.trim() === "";
+const DETECT_ONLY_LEAD = new Set(["create", "alter", "drop"]); // object DDL — cleared Out
+const isDetectOnly = (sql: string): boolean =>
+	isMacro(sql) || isEmptyScript(sql) || DETECT_ONLY_LEAD.has(leadKeyword(sql));
+
+// Baselines: regression floors over the IN-SCOPE bucket (object DDL / DEFINE MACRO / empty-script are
+// detect-only, excluded by isDetectOnly — symmetric with the parser-corpus gate). Corpus is mode-aware
+// (type-mode dropped, expression-mode wrapped as SELECT). The extractor classifies out cases that are
+// not parse-negatives for us: feature-off / divergence (featureOffExpected — PIPES from-queries, bare
+// QUALIFY, dashed names, …), post-parse structural errors ZetaSQL labels "Syntax error" but its bare
+// PARSER accepts (isParserAcceptedPostParse — mixed set operations, hint-on-non-first set op), the
+// single-statement-mode boundary, and expression-mode query-wrap artifacts — all shared with the parser
+// extractor so the two corpora grade identically.
+const POSITIVE_BASELINE = 14695; // in-scope positives parsed (14695/14714); the 19 remaining are real
+// grammar gaps (pipe AGGREGATE WITH DIFFERENTIAL_PRIVACY, multi-level aggregation `agg(x GROUP BY …)`,
+// TVF TABLE/scalar args, WITH POSITION on param-table sources, chained braced call) plus a few mis-
+// bucketed ZetaSQL errors — see docs Open Gaps.
+const NEGATIVE_BASELINE = 166; // 166/166 in-scope syntax-error negatives rejected — zero accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () => {
-	it("parses the positive cases (ratchet)", { timeout: 600000 }, () => {
+	it("parses the positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
 		let pass = 0;
+		let ddlExcluded = 0;
 		const fails: string[] = [];
 		for (const f of positives()) {
 			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			if (isDetectOnly(sql)) {
+				ddlExcluded++;
+				continue;
+			}
 			let errs = 1;
 			try {
 				errs = parseBigQuery(sql).errors;
@@ -42,14 +76,20 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			else fails.push(f);
 		}
 		// eslint-disable-next-line no-console
-		console.log(`BigQuery positives: ${pass}/${positives().length}`);
+		console.log(`BigQuery positives: ${pass}/${pass + fails.length} (${ddlExcluded} DDL/macro detect-only, excluded)`);
 		expect(pass).toBeGreaterThanOrEqual(POSITIVE_BASELINE);
 	});
 
-	it("rejects the syntax-error negative cases (ratchet)", { timeout: 600000 }, () => {
+	it("rejects the syntax-error negative cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
 		let rejected = 0;
+		let accepted = 0;
+		let ddlExcluded = 0;
 		for (const f of negatives()) {
 			const sql = readFileSync(join(CORPUS, "negative", f), "utf8");
+			if (isDetectOnly(sql)) {
+				ddlExcluded++;
+				continue;
+			}
 			let errs = 0;
 			try {
 				errs = parseBigQuery(sql).errors;
@@ -57,9 +97,10 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 				errs = 1;
 			}
 			if (errs > 0) rejected++;
+			else accepted++;
 		}
 		// eslint-disable-next-line no-console
-		console.log(`BigQuery negatives rejected: ${rejected}/${negatives().length}`);
+		console.log(`BigQuery negatives rejected: ${rejected}/${rejected + accepted} (${ddlExcluded} DDL/macro detect-only, excluded)`);
 		expect(rejected).toBeGreaterThanOrEqual(NEGATIVE_BASELINE);
 	});
 
