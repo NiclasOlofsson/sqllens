@@ -1,5 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import {
+	Expression_higher_prec_than_andContext,
 	Graph_call_operator_coreContext,
 	Pipe_aggregate_itemContext,
 	Pipe_callContext,
@@ -7,6 +8,20 @@ import {
 	Select_column_dot_starContext,
 	Shift_operatorContext,
 } from "../generated/bigquery/GoogleSQLParser.js";
+
+// An expression node whose top operator is a comparison-family operator (the non-associative set —
+// googlesql.tm marks these so an operand can't itself be one without parentheses).
+function isComparisonFamily(ctx: Expression_higher_prec_than_andContext | null): boolean {
+	return !!(
+		ctx &&
+		(ctx.comparative_operator() ||
+			ctx.between_operator() ||
+			ctx.in_operator() ||
+			ctx.like_operator() ||
+			ctx.distinct_operator() ||
+			ctx.is_operator())
+	);
+}
 
 // Post-parse syntax validation: rules that ZetaSQL enforces with operator-precedence (%prec) or
 // hand-parser actions that an ANTLR grammar can't express cleanly, and that are too entangled with the
@@ -53,6 +68,9 @@ function hasTopLevelBinaryOp(text: string): boolean {
  *   flag a pipe CALL with a PIVOT/UNPIVOT, and a graph CALL with any tvf alias/pivot suffix.
  * - pipe AGGREGATE dot-star order: googlesql.tm's pipe_selection_item_with_order allows an ASC/DESC
  *   order only on an expression item, not on a dot-star (`|> AGGREGATE s.* ASC`).
+ * - LIKE ANY/SOME/ALL chained on a comparison: `'1' IN (…) LIKE ANY (…)` — the LIKE-quantified alts
+ *   lack the inline non-associativity guard the plain comparison alts have, so a comparison-family LHS
+ *   ("Expression to the left of LIKE must be parenthesized") slips through.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -86,6 +104,9 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
 		} else if (node instanceof Pipe_aggregate_itemContext) {
 			if (node.opt_selection_item_order() && node.pipe_selection_item().select_column_dot_star()) errors++; // no ASC/DESC on a dot-star
+		} else if (node instanceof Expression_higher_prec_than_andContext) {
+			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
+			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0))) errors++;
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {

@@ -679,8 +679,10 @@ opt_from_path_expression:
 
 describe_keyword: DESCRIBE_SYMBOL | DESC_SYMBOL;
 
+// googlesql.tm define_table_statement: the OPTIONS(...) list is REQUIRED — `DEFINE TABLE t1` alone is
+// a syntax error.
 define_table_statement:
-	DEFINE_SYMBOL TABLE_SYMBOL path_expression options_list?;
+	DEFINE_SYMBOL TABLE_SYMBOL path_expression options_list;
 
 create_entity_statement:
 	CREATE_SYMBOL opt_or_replace? generic_entity_type opt_if_not_exists? path_expression
