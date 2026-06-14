@@ -1,6 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import {
 	Analyze_statementContext,
+	Braced_constructor_prefixContext,
 	Expression_higher_prec_than_andContext,
 	Expression_maybe_parenthesized_not_a_queryContext,
 	Graph_call_operator_coreContext,
@@ -147,6 +148,14 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// A standalone subpipeline (`|> …`) must be the only statement — it can't be `;`-chained.
 			const tops = node.top_statement();
 			if (tops.length > 1 && tops.some((t) => t.getText().startsWith("|>"))) errors++;
+		} else if (node instanceof Braced_constructor_prefixContext) {
+			// An extension field `(pkg.Ext)…` that is not the first field needs a preceding comma —
+			// `{ foo: "bar" (ext){…} }` is "Function call cannot be applied to this expression" (ZetaSQL
+			// tries to call the prior value). When the prior value is a path/call (`foo: column (ext)`) the
+			// `(ext)` is absorbed as the call's args, so no comma-less extension field arises there.
+			const inner = node.braced_constructor_prefix();
+			const next = node.braced_constructor_field();
+			if (inner && next && !node.COMMA_SYMBOL() && next.braced_constructor_lhs().braced_constructor_extension()) errors++;
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
