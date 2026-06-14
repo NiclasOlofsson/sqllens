@@ -4616,7 +4616,14 @@ from_list
    ;
 
 table_ref
-   : (relation_expr opt_alias_clause? tablesample_clause?
+   : (
+        // Redshift PartiQL object unpivoting (SUPER): UNPIVOT expr AS value_alias [AT attr_alias],
+        // a FROM-clause item (docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting).
+        // Listed first so the UNPIVOT keyword is read as the operator, not a table named "unpivot".
+        UNPIVOT a_expr AS colid (AT colid)?
+      // SUPER array unnest with an index alias: `relation AS y AT z` iterates array, z = ordinal
+      // (docs.aws.amazon.com/redshift/latest/dg/query-super.html#unnest).
+      | relation_expr opt_alias_clause? (AT colid)? tablesample_clause?
       | func_table func_alias_clause?
       | xmltable opt_alias_clause?
       | select_with_parens opt_alias_clause?
@@ -4688,7 +4695,9 @@ join_qual
    ;
 
 relation_expr
-   : qualified_name STAR?
+   // Redshift catalog three-part path: database@namespace[/cluster].schema.table
+   // (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html).
+   : qualified_name (AT_SIGN colid (SLASH colid)? indirection?)? STAR?
    | ONLY (qualified_name | OPEN_PAREN qualified_name CLOSE_PAREN)
    ;
 
@@ -4709,7 +4718,10 @@ opt_repeatable_clause
    ;
 
 func_table
-   : func_expr_windowless opt_ordinality?
+   // Redshift UNNEST(array) WITH OFFSET — the offset/ordinality column; the alias up(col[, idx])
+   // comes from the enclosing func_alias_clause
+   // (docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-unnest-examples.html).
+   : func_expr_windowless (opt_ordinality | WITH OFFSET)?
    | ROWS FROM OPEN_PAREN rowsfrom_list CLOSE_PAREN opt_ordinality?
    ;
 
@@ -5187,8 +5199,16 @@ func_application
    ;
 
 func_expr
-   : func_application within_group_clause? filter_clause? over_clause?
+   // APPROXIMATE prefix — APPROXIMATE PERCENTILE_DISC(p) WITHIN GROUP (…) and APPROXIMATE
+   // COUNT(DISTINCT …) (docs.aws.amazon.com/redshift/latest/dg/r_APPROXIMATE_PERCENTILE_DISC.html).
+   // null_treatment — IGNORE NULLS / RESPECT NULLS on window functions, after the args, before OVER
+   // (docs.aws.amazon.com/redshift/latest/dg/r_WF_FIRST_VALUE.html).
+   : APPROXIMATE? func_application within_group_clause? filter_clause? null_treatment? over_clause?
    | func_expr_common_subexpr
+   ;
+
+null_treatment
+   : (IGNORE | RESPECT) NULLS_P
    ;
 
 func_expr_windowless
@@ -5498,7 +5518,10 @@ case_arg
    ;
 
 columnref
-   : colid indirection?
+   // Oracle-style outer-join marker on a column in a WHERE join condition: table.column(+)
+   // (docs.aws.amazon.com/redshift/latest/dg/r_WHERE_oracle_outer.html). It attaches only to a
+   // column, so it rides on columnref; func calls and (+1) arithmetic don't match (+).
+   : colid indirection? (OPEN_PAREN PLUS CLOSE_PAREN)?
    ;
 
 indirection_el
@@ -6029,6 +6052,9 @@ unreserved_keyword
    | COMPUPDATE | STATUPDATE | EXPLICIT_IDS | READRATIO | ROUNDEC
    | TRIMBLANKS | PRESET | ACCESS_KEY_ID | SECRET_ACCESS_KEY
    | SESSION_TOKEN_KW | HEADER_P | SETTINGS | FUNCTION_NAME
+   // System-table column names / non-reserved keywords usable as identifiers — none appear in the
+   // reserved-words list (docs.aws.amazon.com/redshift/latest/dg/r_pg_keywords.html).
+   | FILE | QUOTA | DISTSTYLE | APPROXIMATE
    ;
 
 col_name_keyword

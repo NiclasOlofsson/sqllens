@@ -210,6 +210,18 @@ describe("Redshift lower — visible gaps", () => {
 	});
 });
 
+describe("Redshift lower — Redshift-specific sources", () => {
+	it("catalog path database@namespace.schema.table keeps every name part (no silent truncation)", () => {
+		const b = selectBody("SELECT * FROM b@a.c.d");
+		expect(b.from[0]).toMatchObject({ kind: "table", name: ["b", "a", "c", "d"] });
+	});
+
+	it("PartiQL SUPER UNPIVOT in FROM is flagged unsupported, not a silent opaque source", () => {
+		const b = selectBody("SELECT attr FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr");
+		expect(b.unsupported).toContain("unpivot");
+	});
+});
+
 describe("Redshift lower — non-query", () => {
 	it("a non-SELECT statement lowers to a flagged non-query body, never throws", () => {
 		const q = ir("CREATE TABLE t (a int)");

@@ -351,6 +351,10 @@ function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], u
 	// yet, so flag it (visible gap) rather than silently keeping only the un-pivoted relation.
 	if (directChildrenOfRule(tr, P.RULE_pivot_clause).length) unsupported.push("pivot");
 	if (directChildrenOfRule(tr, P.RULE_unpivot_clause).length) unsupported.push("unpivot");
+	// PartiQL SUPER object unpivoting (UNPIVOT expr AS val AT attr — a FROM item, not the SQL UNPIVOT
+	// suffix) reshapes a SUPER object into (value, attribute) rows; the IR doesn't model it yet, so
+	// flag it rather than leaving only an opaque source (docs … query-super.html#unpivoting).
+	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
@@ -425,6 +429,22 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
+	// Redshift catalog path database@namespace[/cluster].schema.table: the @namespace, optional
+	// /cluster, and trailing .schema.table sit beside the qualified_name in relation_expr. Fold them
+	// in so the source name isn't silently truncated to just the database
+	// (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html).
+	if (hasDirectToken(rel, P.AT_SIGN)) {
+		for (const cid of directChildrenOfRule(rel, P.RULE_colid)) parts.push(textOf(cid));
+		const ind = directChildrenOfRule(rel, P.RULE_indirection)[0];
+		if (ind) {
+			for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
+				if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) {
+					const attr = firstShallow(el, P.RULE_attr_name);
+					parts.push(attr ? textOf(attr) : el.getText().replace(/^\./, ""));
+				}
+			}
+		}
+	}
 	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
 }
 
