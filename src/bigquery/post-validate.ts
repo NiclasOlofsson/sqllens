@@ -5,6 +5,7 @@ import {
 	Expression_higher_prec_than_andContext,
 	Expression_maybe_parenthesized_not_a_queryContext,
 	Graph_call_operator_coreContext,
+	Graph_element_pattern_fillerContext,
 	Graph_linear_operator_listContext,
 	Pipe_aggregate_itemContext,
 	Pipe_callContext,
@@ -120,6 +121,19 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 		} else if (node instanceof Pipe_callContext) {
 			const suffix = node.tvf_with_suffixes().pivot_or_unpivot_clause_and_aliases();
 			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) errors++; // pipe CALL takes no PIVOT/UNPIVOT
+		} else if (node instanceof Graph_element_pattern_fillerContext) {
+			// `[cost 12]` — a leading `cost` is the element NAME, not the COST keyword (which only trails a
+			// name/label/where). A filler that is ONLY a COST clause means `cost` was misread as the keyword
+			// and the following expr is unexpected ("Expected "]" but got …").
+			if (
+				node.opt_graph_cost() &&
+				!node.opt_graph_element_identifier() &&
+				!node.opt_is_label_expression() &&
+				!node.graph_property_specification() &&
+				!node.where_clause()
+			) {
+				errors++;
+			}
 		} else if (node instanceof Graph_call_operator_coreContext) {
 			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
 		} else if (node instanceof Graph_linear_operator_listContext) {
