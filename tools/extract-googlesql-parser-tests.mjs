@@ -95,6 +95,10 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query)) {
 			featureOff = true;
 		}
+		// `[no_reserve_graph_table]` makes GRAPH_TABLE a plain identifier, so `GRAPH_TABLE(… MATCH …)` is
+		// read as a regular function call and the MATCH errors ("Expected ")" but got keyword MATCH"). We
+		// always reserve GRAPH_TABLE (the GoogleSQL default), so this is a config we don't model — accept.
+		if (/Expected "\)" but got keyword MATCH/.test(expectedSection)) featureOff = true;
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
