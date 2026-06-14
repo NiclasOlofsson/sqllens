@@ -161,10 +161,17 @@ function buildLabelMap(expectedSection, isNeg) {
 			expectedText = ci === -1 ? body : body.slice(ci + 2);
 		}
 		const neg = isNeg(expectedText);
-		for (const lab of labels) map.set(lab, neg);
+		for (const lab of labels) map.set(normLabel(lab), neg);
 	}
 	return map;
 }
+
+// ZetaSQL emits an ALTERNATION GROUP label by joining the chosen option texts with the literal `, `
+// (comma-space) AS WRITTEN in the template, so a label carries the template's spacing — `replace, VALUES
+// (1, 2)` — while our reconstruction trims each option and joins with a bare `,`. Normalizing the
+// space around every comma on BOTH the map keys and the lookup key makes the two comparable (and is
+// safe for commas inside an option, e.g. `(1, 2)` → `(1,2)`, since the same rule hits both sides).
+const normLabel = (s) => s.replace(/\s*,\s*/g, ",").trim();
 
 /**
  * Classify each expanded query variant as negative (must not parse for our feature config) or positive.
@@ -183,7 +190,7 @@ export function classifyVariants(query, expectedSection, directive = "", isNeg =
 		const parts = [...dChoices, ...v.labels].map((p) => p.trim());
 		while (parts.length && parts[0] === "") parts.shift();
 		const joined = parts.join(",");
-		const key = joined === "" ? "<empty>" : joined;
+		const key = joined === "" ? "<empty>" : normLabel(joined);
 		if (labelMap.has(key)) return labelMap.get(key);
 		const negs = [...labelMap.values()];
 		return negs.filter(Boolean).length >= negs.length / 2;

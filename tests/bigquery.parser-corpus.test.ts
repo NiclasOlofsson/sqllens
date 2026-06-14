@@ -97,15 +97,16 @@ const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.en
 // parseBigQuery as syntax errors (ZetaSQL's ParseStringLiteral/CUnescapeInternal, src/bigquery/
 // literal-escapes.ts) — both corpora reject invalid escapes now.
 //
-// Measured 2026-06-14: of 3539 positives, 881 are detect-only/empty-script (excluded); in-scope
-// positives parse at 2658/2658 (100%) — GoogleSQL DOT_IDENTIFIER rewrite, WITH GROUP ROWS,
+// Measured 2026-06-14: of 3543 positives, 881 are detect-only/empty-script (excluded); in-scope
+// positives parse at 2662/2662 (100%) — GoogleSQL DOT_IDENTIFIER rewrite, WITH GROUP ROWS,
 // reserved-keyword params, pipe statement suffixes, DEFINE MACRO detect-only, aggregate modifiers,
 // LIMIT ALL OFFSET, empty exception handlers, STRUCT<>, quantified hints, Unicode whitespace, escaped
 // comments, empty scripts, QUALIFY-as-alias, UPDATE constructor, graph SHORTEST, …. Negatives: of
-// 2577, 497 detect-only/empty-script excluded; of the 2080 in-scope negatives we reject 1955 and
-// still accept 125 (mostly join ON-cardinality + a few niche keyword/validation rules).
-const IN_SCOPE_POSITIVE_BASELINE = 2658; // in-scope parsed of 2658 — 100% of the in-scope query/DML/script surface
-const IN_SCOPE_NEGATIVE_BASELINE = 2016; // in-scope rejected of 2080; 64 still accepted
+// 2573, 497 detect-only/empty-script excluded; of the 2076 in-scope negatives we reject 2016 and
+// still accept 60 (join ON-cardinality + niche keyword/validation rules; the qualify-as-alias
+// divergence and corpus-lost invalid-UTF-8 literals are among the irreducible remainder).
+const IN_SCOPE_POSITIVE_BASELINE = 2662; // in-scope parsed of 2662 — 100% of the in-scope query/DML/script surface
+const IN_SCOPE_NEGATIVE_BASELINE = 2016; // in-scope rejected of 2076; 60 still accepted
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
