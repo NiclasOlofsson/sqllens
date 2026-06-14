@@ -452,11 +452,18 @@ describe("BigQuery lowering", () => {
 		expect(tq.from[0]).toMatchObject({ kind: "table", name: ["ds", "t"] });
 	});
 
-	it("a piped query still lowers its base query (pipe transforms unmodelled)", () => {
+	it("lowers a piped query to a faithful PipeExpr (base input + ordered stages)", () => {
 		const r = query("FROM t |> WHERE x > 0 |> SELECT a");
 		expect(r.statement).toBe("query");
-		expect(r.body.kind).toBe("select");
-		expect((r.body as { from: { name?: string[] }[] }).from[0]?.name).toEqual(["t"]);
+		expect(r.body.kind).toBe("pipe");
+		const body = r.body as {
+			kind: "pipe";
+			input: { kind: string; from?: { name?: string[] }[] };
+			stages: { op: string }[];
+		};
+		expect(body.input.kind).toBe("select");
+		expect(body.input.from?.[0]?.name).toEqual(["t"]);
+		expect(body.stages.map((s) => s.op)).toEqual(["where", "select"]);
 	});
 
 	it("never throws and records columns for resolution", () => {

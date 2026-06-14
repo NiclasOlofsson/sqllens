@@ -6,6 +6,7 @@ import { lower } from "../src/databricks/lower.js";
 import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { resolveColumn, resolveScopes, type Scope } from "../src/scope/scope.js";
+import { allPipeStages, stageExprs, stageSubIr } from "./helpers/pipe-walk.js";
 
 interface Stats {
 	queries: number;
@@ -105,7 +106,7 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
 		else acc.srcSubquery++;
 	}
 	if (scope.body.kind === "select" && scope.body.unsupported) acc.unsupported++;
-	for (const ref of scope.body.columns) {
+	for (const ref of scope.body.kind === "pipe" ? [] : scope.body.columns) {
 		acc.colTotal++;
 		const r = resolveColumn(scope, ref);
 		if (r.kind === "bound") acc.colBound++;
@@ -129,6 +130,14 @@ function walkBody(body: QueryBody, acc: Stats): void {
 	if (body.kind === "setop") {
 		walkBody(body.left, acc);
 		walkBody(body.right, acc);
+		return;
+	}
+	if (body.kind === "pipe") {
+		walkBody(body.input, acc);
+		for (const stage of allPipeStages(body)) {
+			for (const e of stageExprs(stage)) walkExpr(e, acc);
+			for (const q of stageSubIr(stage)) walkIr(q, acc);
+		}
 		return;
 	}
 	acc.projections += body.projections.length;

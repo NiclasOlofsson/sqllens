@@ -59,6 +59,7 @@ export function columnNamesOf(
 	if (src.kind === "table") return src.source.columnAliases ?? schema.columnsFor(src.name)?.map((c) => c.name);
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? outputNames(src.ref.scope, schema, visited);
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);
+	if (src.kind === "relation") return outputNames(src.scope, schema, visited); // a prior pipe stage
 	return src.source.columns; // lateral
 }
 
@@ -68,7 +69,12 @@ export function columnNamesOf(
 export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = new Set()): string[] | undefined {
 	if (visited.has(scope)) return undefined;
 	visited.add(scope);
+	if (scope.pipeStage) return pipeStageNames(scope, schema, visited);
 	const body = scope.body;
+	if (body.kind === "pipe") {
+		const last = scope.pipe?.stages.at(-1) ?? scope.pipe?.input;
+		return last ? outputNames(last, schema, visited) : undefined;
+	}
 	if (body.kind === "setop") {
 		if (!scope.branches) return undefined;
 		const left = outputNames(scope.branches.left, schema, visited);
@@ -76,8 +82,18 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 		const merged = mergeByName(left ?? "unknown", outputNames(scope.branches.right, schema, visited) ?? "unknown");
 		return merged === "unknown" ? undefined : merged;
 	}
+	return projectionNames(scope, body.projections, schema, visited);
+}
+
+/** Output names of a projection list against a scope's sources (`*`/`t.*` expanded, modifiers applied). */
+function projectionNames(
+	scope: Scope,
+	projections: import("../ir/ir.js").Projection[],
+	schema: Schema,
+	visited: Set<Scope>,
+): string[] | undefined {
 	const out: string[] = [];
-	for (const p of body.projections) {
+	for (const p of projections) {
 		if (p.isStar) {
 			const star = p.expr.kind === "star" ? p.expr : undefined;
 			const want = star?.qualifier ? normalizeName(star.qualifier[star.qualifier.length - 1] ?? "") : undefined;
@@ -96,6 +112,60 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 		}
 	}
 	return out;
+}
+
+/** Output column names of a pipe stage, given the schema-expanded incoming columns. */
+function pipeStageNames(scope: Scope, schema: Schema, visited: Set<Scope>): string[] | undefined {
+	const stage = scope.pipeStage!;
+	const incoming = scope.pipeIncoming ? outputNames(scope.pipeIncoming, schema, visited) : undefined;
+	switch (stage.op) {
+		case "select":
+			return projectionNames(scope, stage.projections, schema, visited);
+		case "extend":
+		case "window": {
+			if (!incoming) return undefined;
+			const added = projectionNames(scope, stage.projections, schema, visited);
+			return added ? [...incoming, ...added] : undefined;
+		}
+		case "aggregate": {
+			const aggs = projectionNames(scope, stage.aggregates, schema, visited);
+			if (!aggs) return undefined;
+			const keys: string[] = [];
+			for (const g of stage.groupBy) {
+				if (g.kind === "column") keys.push(g.parts[g.parts.length - 1]);
+				else return undefined;
+			}
+			return [...aggs, ...keys];
+		}
+		case "drop":
+			return incoming ? incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c))) : undefined;
+		case "rename": {
+			if (!incoming) return undefined;
+			const m = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
+			return incoming.map((c) => m.get(normalizeName(c)) ?? c);
+		}
+		case "join": {
+			if (!incoming) return undefined;
+			const joinSrc = [...scope.sources.entries()].find(([k]) => k !== "")?.[1];
+			const jc = joinSrc ? columnNamesOf(joinSrc, schema, visited) : undefined;
+			return jc ? [...incoming, ...jc] : undefined;
+		}
+		case "where":
+		case "orderBy":
+		case "limit":
+		case "distinct":
+		case "tablesample":
+		case "assert":
+		case "log":
+		case "staticDescribe":
+		case "with":
+		case "set":
+		case "setop":
+		case "recursiveUnion":
+			return incoming;
+		default:
+			return undefined; // call / pivot / unpivot / matchRecognize / describe / branching / sinks
+	}
 }
 
 /** Databricks identifiers are case-insensitive; strip surrounding backticks too. */

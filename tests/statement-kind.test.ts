@@ -118,7 +118,7 @@ describe("T-SQL statement category (one full-range entry, on par with the others
 		const q = lowerTSql(parseTSql("SELECT a, b FROM t").tree);
 		expect(q.statement).toBe("query");
 		expect(q.body.kind).toBe("select");
-		expect(q.body.columns.length).toBeGreaterThan(0);
+		if (q.body.kind !== "pipe") expect(q.body.columns.length).toBeGreaterThan(0);
 	});
 });
 

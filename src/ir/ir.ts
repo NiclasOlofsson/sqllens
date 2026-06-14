@@ -43,7 +43,7 @@ export interface LimitInfo {
 	fetch?: Expr;
 }
 
-export type QueryBody = SelectExpr | SetOpExpr;
+export type QueryBody = SelectExpr | SetOpExpr | PipeExpr;
 
 export interface SelectExpr {
 	kind: "select";
@@ -193,6 +193,131 @@ export interface SetOpExpr {
 	/** Set-op-level column references (e.g. a trailing ORDER BY) that resolve against the
 	 *  set-op output (the left branch's columns). */
 	columns: ColumnRef[];
+	cst: ParserRuleContext;
+}
+
+// ---------------------------------------------------------------------------
+// Pipe queries (`base |> op |> op …`). GoogleSQL pipe syntax (GA in BigQuery) and Spark 4.0 `|>`.
+// Modelled FAITHFULLY: the base relation plus an ORDERED list of pipe operators, each a first-class
+// PipeStage that keeps its own `|> OPERATOR …` source span — NOT desugared into nested subqueries.
+// This serves the editor consumers (semantic tokens, document symbols, hover, go-to-def see the real
+// pipe structure) and never silently rewrites a concept. The semantic layer FLOWS the relation through
+// the stages (scope computes the columns entering and leaving each), so each real column reference still
+// resolves against the relation visible at that point in the pipeline.
+// ---------------------------------------------------------------------------
+
+export interface PipeExpr {
+	kind: "pipe";
+	/** The relation the pipeline starts from (a SELECT, a set operation, a bare FROM, `TABLE name`). */
+	input: QueryBody;
+	/** The pipe operators, applied left-to-right. */
+	stages: PipeStage[];
+	cst: ParserRuleContext;
+}
+
+/** One `|> OPERATOR …` step. `op` names the operator; the payload carries the modelled parts (reusing
+ *  the shared IR — Projection[]/Expr/Source). Each stage keeps its own `cst` span. Stages divide into:
+ *  column-set transforms (select/extend/set/drop/rename/aggregate/window/call/pivot/unpivot), relation
+ *  combiners (join/setop), pass-throughs that keep the column set (where/orderBy/limit/distinct/
+ *  tablesample/as), and `other` — a pipe operator whose relation effect the IR does not model
+ *  (DESCRIBE/LOG/ASSERT/FORK/TEE/IF/EXPORT/CREATE/INSERT/WITH/RECURSIVE UNION/MATCH_RECOGNIZE), kept
+ *  with its kind + span and flagged rather than dropped. */
+export type PipeStage =
+	| { op: "where"; predicate: Expr; columns: ColumnRef[]; cst: ParserRuleContext }
+	| { op: "select"; projections: Projection[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| { op: "extend"; projections: Projection[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| { op: "set"; assignments: PipeSetItem[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| { op: "drop"; drop: string[]; cst: ParserRuleContext }
+	| { op: "rename"; renames: { from: string; to: string }[]; cst: ParserRuleContext }
+	| {
+			op: "aggregate";
+			aggregates: Projection[];
+			groupBy: Expr[];
+			columns: ColumnRef[];
+			cst: ParserRuleContext;
+	  }
+	| { op: "orderBy"; keys: Expr[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| { op: "limit"; limit: LimitInfo; cst: ParserRuleContext }
+	| { op: "distinct"; cst: ParserRuleContext }
+	| { op: "join"; source: Source; joinConditions?: Expr[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| {
+			op: "setop";
+			setOp: "union" | "except" | "intersect";
+			all: boolean;
+			byName?: boolean;
+			operands: QueryExpr[];
+			cst: ParserRuleContext;
+	  }
+	| { op: "as"; alias: string; cst: ParserRuleContext }
+	| { op: "window"; projections: Projection[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	/** `|> CALL tvf(...)` — a table-valued function over the pipe relation; its output columns come from
+	 *  the TVF signature (unknown without a catalog, never wrong — the inference contract). */
+	| { op: "call"; name: string[]; args: Expr[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	| {
+			op: "setop";
+			setOp: "union" | "except" | "intersect";
+			all: boolean;
+			byName?: boolean;
+			operands: QueryExpr[];
+			cst: ParserRuleContext;
+	  }
+	/** `|> RECURSIVE UNION …` — a recursive set operation; `operand` is the recursive term. */
+	| { op: "recursiveUnion"; all: boolean; operand: QueryExpr; alias?: string; cst: ParserRuleContext }
+	| { op: "pivot"; pivot: PivotInfo; cst: ParserRuleContext }
+	| { op: "unpivot"; unpivot: UnpivotInfo; cst: ParserRuleContext }
+	/** `|> TABLESAMPLE …` — samples rows; the column set is unchanged. */
+	| { op: "tablesample"; cst: ParserRuleContext }
+	/** `|> ASSERT cond [, payload…]` — asserts a row condition; the relation passes through unchanged. */
+	| { op: "assert"; condition: Expr; payload: Expr[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	/** `|> LOG [ (subpipeline) ]` — logs the relation (optionally a side-pipeline view of it) and passes
+	 *  it through unchanged. */
+	| { op: "log"; pipeline?: PipeStage[]; cst: ParserRuleContext }
+	/** `|> DESCRIBE` — replaces the relation with a description result (a fixed name/type/… schema). */
+	| { op: "describe"; cst: ParserRuleContext }
+	/** `|> STATIC_DESCRIBE` — prints the static schema; the relation passes through unchanged. */
+	| { op: "staticDescribe"; cst: ParserRuleContext }
+	/** `|> WITH cte AS (…)` — introduces CTEs visible to the rest of the pipeline; relation unchanged. */
+	| { op: "with"; ctes: CteDef[]; cst: ParserRuleContext }
+	/** `|> IF cond THEN (subpipeline) [ELSEIF …] [ELSE (subpipeline)]` — conditional sub-pipelines.
+	 *  `arms[0]` is the IF (with condition); middle arms are ELSEIF (with condition); a final arm with no
+	 *  condition is the ELSE. Each arm's `pipeline` runs on the relation entering the IF. */
+	| { op: "if"; arms: PipeBranch[]; columns: ColumnRef[]; cst: ParserRuleContext }
+	/** `|> FORK (subpipeline), (subpipeline), …` — splits the relation into several independent outputs. */
+	| { op: "fork"; branches: PipeStage[][]; cst: ParserRuleContext }
+	/** `|> TEE (subpipeline), …` — like FORK but also passes the relation through unchanged. */
+	| { op: "tee"; branches: PipeStage[][]; cst: ParserRuleContext }
+	/** `|> MATCH_RECOGNIZE (PARTITION BY … MEASURES … PATTERN … DEFINE …)` — row-pattern matching; the
+	 *  output is the partition keys + the MEASURES columns. The PATTERN/DEFINE row-pattern detail is its
+	 *  own surface, captured by `cst`; column-flow uses partitionBy + measures. */
+	| {
+			op: "matchRecognize";
+			partitionBy: Expr[];
+			measures: Projection[];
+			defines: Expr[];
+			columns: ColumnRef[];
+			cst: ParserRuleContext;
+	  }
+	/** `|> EXPORT DATA …` — a terminal sink that writes the relation out (no downstream relation). */
+	| { op: "exportData"; cst: ParserRuleContext }
+	/** `|> CREATE TABLE name …` — a terminal sink creating a table from the relation (object DDL). */
+	| { op: "createTable"; name: string[]; cst: ParserRuleContext }
+	/** `|> INSERT [INTO] name …` — a terminal sink inserting the relation into a table. */
+	| { op: "insert"; name: string[]; cst: ParserRuleContext }
+	/** Drift guard ONLY — never produced for known GoogleSQL/Spark pipe syntax (all operators above are
+	 *  modelled). Reached only if the grammar grows an operator the lowering hasn't caught up to; gated to
+	 *  zero over the corpus so it can't silently mask a real operator. */
+	| { op: "other"; name: string; cst: ParserRuleContext };
+
+/** A `|> SET col = expr` assignment (updates an existing column's value, keeping its position). */
+export interface PipeSetItem {
+	column: string;
+	expr: Expr;
+}
+
+/** One arm of a `|> IF …` — a condition (absent for the trailing ELSE) and its sub-pipeline. */
+export interface PipeBranch {
+	condition?: Expr;
+	pipeline: PipeStage[];
 	cst: ParserRuleContext;
 }
 

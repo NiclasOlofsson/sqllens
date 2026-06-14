@@ -190,7 +190,7 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
 	const orderBy = extractOrderBy(query);
 	// ORDER BY references the body's output (a select's scope, or a set-op's left branch),
 	// so its columns belong to the body's `columns` — for both selects and set ops.
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	return { kind: "query", ctes, body, orderBy, cst: query };
 }
 

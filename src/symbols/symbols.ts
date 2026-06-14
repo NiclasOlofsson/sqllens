@@ -95,8 +95,19 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
 		walked.add(scope.branches.left);
 		walked.add(scope.branches.right);
 	}
-	// Source references in this frame, plus any alias declaration; a subquery opens its own frame.
+	// A pipe's input + stages share this scope's frame — they are this query's stages, not subqueries.
+	if (scope.body.kind === "pipe" && scope.pipe) {
+		walk(scope.pipe.input, frame, out, schema);
+		walked.add(scope.pipe.input);
+		for (const st of scope.pipe.stages) {
+			walk(st, frame, out, schema);
+			walked.add(st);
+		}
+	}
+	// Source references in this frame, plus any alias declaration; a subquery opens its own frame. The
+	// implicit "relation" source of a pipe stage (the incoming relation) has no name — skip it.
 	for (const src of scope.sources.values()) {
+		if (src.kind === "relation") continue;
 		out.push(relationSymbol(src, frame));
 		const alias = aliasSymbol(src, frame);
 		if (alias) out.push(alias);
@@ -213,6 +224,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
 			}
 		}
 	}
+	if (body.kind === "pipe") return; // a pipe scope's refs live in its per-stage child scopes
 	for (const ref of body.columns) {
 		const res = resolveColumn(scope, ref);
 		const modifiers: SymbolModifier[] = ["reference"];
@@ -247,6 +259,7 @@ function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
 
 /** An alias declaration symbol for a source written `… AS x`, or undefined when unaliased. */
 function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
+	if (src.kind === "relation") return undefined; // the implicit pipe-stage relation has no alias
 	const s = src.source;
 	if (!s.alias) return undefined;
 	return { kind: "alias", modifiers: ["declaration"], name: s.alias, span: spanOf(s.aliasCst ?? s.cst), frame };
@@ -259,6 +272,7 @@ function columnDefinition(res: ColumnResolution): Span | undefined {
 	const src = res.source;
 	if (src.kind === "cte") return projectionSpan(src.ref.scope, res.column, src.ref.def.columnAliases);
 	if (src.kind === "subquery") return projectionSpan(src.scope, res.column, src.source.columnAliases);
+	if (src.kind === "relation") return projectionSpan(src.scope, res.column, undefined); // prior pipe stage
 	return undefined;
 }
 
@@ -278,6 +292,10 @@ function projectionSpan(scope: Scope, column: string, aliases: string[] | undefi
 
 function relationSymbol(src: ResolvedSource, frame: string): Sym {
 	const ref = ["reference"] as SymbolModifier[];
+	// The implicit pipe-stage relation is skipped by the caller; handled here only for exhaustiveness.
+	if (src.kind === "relation") {
+		return { kind: "subquery", modifiers: ref, name: "", span: spanOf(src.scope.body.cst), frame };
+	}
 	if (src.kind === "table") {
 		return { kind: "table", modifiers: ref, name: src.name.join("."), span: spanOf(src.source.cst), frame };
 	}

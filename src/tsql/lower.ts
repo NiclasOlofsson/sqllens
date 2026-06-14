@@ -161,7 +161,7 @@ function lowerStandalone(tree: ParserRuleContext): QueryExpr {
 	const query = directChildrenOfRule(selectStmt, P.RULE_query_expression)[0];
 	const body = query ? lowerQueryExpression(query) : emptyBody(selectStmt);
 	const orderBy = extractOrderBy(selectStmt);
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	return { kind: "query", ctes, body, orderBy, limit: extractLimit(selectStmt), cst: query ?? selectStmt };
 }
 
@@ -186,7 +186,7 @@ function lowerSelect(selectStmt: ParserRuleContext): QueryExpr {
 	const query = directChildrenOfRule(selectStmt, P.RULE_query_expression)[0];
 	const body = query ? lowerQueryExpression(query) : emptyBody(selectStmt);
 	const orderBy = extractOrderBy(selectStmt);
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	return { kind: "query", ctes: [], body, orderBy, limit: extractLimit(selectStmt), cst: selectStmt };
 }
 

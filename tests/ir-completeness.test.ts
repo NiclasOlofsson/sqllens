@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
+import { allPipeStages, stageExprs, stageSubIr } from "./helpers/pipe-walk.js";
 
 // IR completeness gate: every expression in every real Oatly model must lower to a TYPED
 // Expr node — nothing may fall through to `other`. `other` stays in the IR as a safety net
@@ -68,6 +69,14 @@ function walkBody(body: QueryBody, tally: Map<string, number>, samples: Map<stri
 	if (body.kind === "setop") {
 		walkBody(body.left, tally, samples);
 		walkBody(body.right, tally, samples);
+		return;
+	}
+	if (body.kind === "pipe") {
+		walkBody(body.input, tally, samples);
+		for (const stage of allPipeStages(body)) {
+			for (const e of stageExprs(stage)) walkExpr(e, tally, samples);
+			for (const q of stageSubIr(stage)) walkIr(q, tally, samples);
+		}
 		return;
 	}
 	for (const p of body.projections) walkExpr(p.expr, tally, samples);
