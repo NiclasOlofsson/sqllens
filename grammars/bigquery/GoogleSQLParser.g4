@@ -51,6 +51,35 @@ options {
 		const t = ctx?.getText?.() ?? "";
 		return /^[+-]?(\d[\d.]*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)$/.test(t);
 	}
+	// A graph path factor is a bare edge pattern only when it is an UNquantified graph_edge_pattern.
+	// A quantified edge (`-[e]->{1,3}`) is a path pattern in ZetaSQL (ASTGraphPathPattern), not an edge,
+	// so a hint adjacent to it is allowed — only a hint between two bare edges is ambiguous/rejected.
+	private graphFactorIsEdge(f: any): boolean {
+		if (!f) return false;
+		return !!f.graph_path_primary?.()?.graph_element_pattern?.()?.graph_edge_pattern?.();
+	}
+	// ZetaSQL: "Hint cannot be used in between two GraphEdgePatterns" — a `@{…}` hint may precede a node
+	// (or a parenthesized path) but not sit between two adjacent edge patterns.
+	private checkGraphEdgeHints(ctx: any): void {
+		const hints = ctx.hint?.() ?? [];
+		if (!hints.length) return;
+		const factors = ctx.graph_path_factor?.() ?? [];
+		for (const h of hints) {
+			const hs = h.start?.tokenIndex ?? -1;
+			let prev: any = null;
+			let next: any = null;
+			for (const f of factors) {
+				const fStart = f.start?.tokenIndex ?? -1;
+				const fStop = f.stop?.tokenIndex ?? -1;
+				if (fStop < hs && (!prev || fStop > (prev.stop?.tokenIndex ?? -1))) prev = f;
+				if (fStart > hs && (!next || fStart < (next.start?.tokenIndex ?? Number.MAX_SAFE_INTEGER))) next = f;
+			}
+			if (this.graphFactorIsEdge(prev) && this.graphFactorIsEdge(next)) {
+				this.notifyErrorListeners("Syntax error: Hint cannot be used in between two GraphEdgePatterns", null, null);
+				return;
+			}
+		}
+	}
 	// Two tokens are adjacent when no character (whitespace/comment) sits between them. GoogleSQL
 	// requires a graph edge pattern's punctuation to be written without spaces (`-[…]->`, `<-[…]-`);
 	// the filler inside `[…]` may contain spaces (ZetaSQL graph_edge_pattern adjacency checks).
@@ -346,7 +375,7 @@ graph_path_pattern:
 		graph_path_pattern_expr;
 
 graph_path_pattern_expr:
-	graph_path_factor (hint? graph_path_factor)*;
+	graph_path_factor (hint? graph_path_factor)* { this.checkGraphEdgeHints(localContext); };
 
 graph_path_factor:
 	graph_path_primary
