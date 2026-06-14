@@ -2922,7 +2922,12 @@ interval_expression:
 function_call_expression_with_clauses:
 	// NOTE: zetasql bison.y is LALR(1) parser, it checks the first rule should be path_expression
 	// in action code instead of use expression directly to avoid parser ambiguous.
-	path_expression LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	path_expression LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		// REPLACE_FIELDS( always commits to the dedicated replace_fields_expression rule (googlesql.tm
+		// AMBIGUOUS CASE 4); a general call named `replace_fields` means the arg list wasn't the required
+		// `expr, value AS path …` form — e.g. `replace_fields()`, `replace_fields(p)` — which is an error.
+		if (/^replace_fields$/i.test(localContext.path_expression()?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Expected \"AS\"", null, null);
+	}
 	// function_name_from_keyword "(" opt_distinct (IF/GROUPING etc. as aggregate calls — googlesql.tm).
 	| function_name_from_keyword LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix;
 
