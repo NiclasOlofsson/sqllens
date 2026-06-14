@@ -108,10 +108,15 @@ export function countBadLiteralEscapes(tokens: Token[]): number {
 		if (type === T_STRING || type === T_BYTES) {
 			const parts = literalParts(text);
 			if (parts && !literalEscapesValid(parts.content, parts.isRaw, parts.isBytes)) bad++;
+			// String literals (not bytes) must be well-formed UTF-8 (ZetaSQL SpanWellFormedUTF8). The
+			// testdata's invalid-UTF-8 bytes were normalized to U+FFFD on extraction; its presence in a
+			// non-bytes string marks the original as structurally invalid. Bytes literals hold arbitrary
+			// octets and are exempt.
+			else if (parts && !parts.isBytes && parts.content.includes("�")) bad++;
 		} else if (type === T_IDENTIFIER && text.startsWith("`") && text.endsWith("`") && text.length >= 2) {
 			// Backquoted identifier — must be non-empty, same escape rules as a non-raw, non-bytes string.
 			const inner = text.slice(1, -1);
-			if (inner === "" || !literalEscapesValid(inner, false, false)) bad++;
+			if (inner === "" || inner.includes("�") || !literalEscapesValid(inner, false, false)) bad++;
 		}
 	}
 	return bad;
