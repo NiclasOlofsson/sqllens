@@ -10,6 +10,7 @@ import {
 	Select_clauseContext,
 	Select_column_dot_starContext,
 	Shift_operatorContext,
+	StmtsContext,
 } from "../generated/bigquery/GoogleSQLParser.js";
 
 // A graph endpoint predicate `expr IS [NOT] SOURCE|DESTINATION [OF] expr`. Duck-typed: the alt appears
@@ -82,6 +83,9 @@ function hasTopLevelBinaryOp(text: string): boolean {
  *   ("Expression to the left of LIKE must be parenthesized") slips through.
  * - ANALYZE OPTIONS: `OPTIONS` after ANALYZE commits to the OPTIONS keyword (which needs `(...)`), so
  *   `ANALYZE OPTIONS` / `ANALYZE OPTIONS, T` — where it is read as a table name — is a syntax error.
+ * - standalone subpipeline: a bare `|> …` subpipeline is its own single-statement entry in ZetaSQL, so
+ *   it can't be one of several `;`-separated statements (`|> WHERE true; |> WHERE false`, `|> DESCRIBE;
+ *   SELECT 1` → "Expected end of input"/"Unexpected"). It must be the sole top-level statement.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -135,6 +139,10 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// A bare `OPTIONS` table name is really the OPTIONS keyword (which requires `(...)`).
 			const firstTable = node.table_and_column_info_list()?.table_and_column_info(0);
 			if (!node.opt_options_list() && /^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? "")) errors++;
+		} else if (node instanceof StmtsContext) {
+			// A standalone subpipeline (`|> …`) must be the only statement — it can't be `;`-chained.
+			const tops = node.top_statement();
+			if (tops.length > 1 && tops.some((t) => t.getText().startsWith("|>"))) errors++;
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
