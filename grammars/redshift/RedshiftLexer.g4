@@ -3625,6 +3625,20 @@ CASE_INSENSITIVE
    : 'CASE_INSENSITIVE'
    ;
 
+// Redshift-specific keyword tokens (added to this fork). Kept before Identifier so they lex as
+// keywords; each is also listed in the parser's unreserved_keyword so it stays usable as a name.
+PIVOT
+   : 'PIVOT'
+   ;
+
+UNPIVOT
+   : 'UNPIVOT'
+   ;
+
+TRY_CAST
+   : 'TRY_CAST'
+   ;
+
 Identifier
    : IdentifierStartChar IdentifierChar*
    ;

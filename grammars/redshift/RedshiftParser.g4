@@ -4387,7 +4387,9 @@ simple_select_intersect
     ;
 
 simple_select_pramary
-   : ( SELECT (opt_all_clause? into_clause? opt_target_list? | opt_top_clause? into_clause? target_list | distinct_clause target_list)
+   // Redshift SELECT allows TOP n together with DISTINCT (docs.aws.amazon.com/redshift/latest/dg/r_SELECT_list.html):
+   // SELECT TOP n DISTINCT ... — so the top alternative carries an optional distinct_clause.
+   : ( SELECT (opt_all_clause? into_clause? opt_target_list? | opt_top_clause? distinct_clause? into_clause? target_list | distinct_clause target_list)
            exclude_clause?
            into_clause?
            from_clause?
@@ -4404,7 +4406,9 @@ simple_select_pramary
    ;
 
 exclude_clause
-   : EXCLUDE OPEN_PAREN columnlist CLOSE_PAREN
+   // SELECT * EXCLUDE accepts a single bare column or a parenthesized list
+   // (docs.aws.amazon.com/redshift/latest/dg/r_EXCLUDE_list.html): `EXCLUDE col` or `EXCLUDE (c1, c2)`.
+   : EXCLUDE (OPEN_PAREN columnlist CLOSE_PAREN | columnlist)
    ;
 
 qualify_clause
@@ -4412,7 +4416,9 @@ qualify_clause
    ;
 
 start_with_clause
-   : (START WITH a_expr)? CONNECT BY a_expr;
+   // Redshift accepts START WITH on either side of CONNECT BY
+   // (docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html): leading or trailing.
+   : (START WITH a_expr)? CONNECT BY a_expr (START WITH a_expr)?;
 
 with_clause
    : WITH RECURSIVE? cte_list
@@ -4625,7 +4631,28 @@ table_ref
                                 | join_type? JOIN table_ref join_qual
                              )? CLOSE_PAREN opt_alias_clause?
      )
+      (pivot_clause | unpivot_clause)?
       joined_table*
+   ;
+
+// Redshift PIVOT / UNPIVOT on a table reference
+// (docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-pivot-unpivot-examples.html):
+//   table PIVOT   (agg [AS alias] FOR col IN (val [AS alias], …)) [alias]
+//   table UNPIVOT [INCLUDE|EXCLUDE NULLS] (valcol FOR namecol IN (col [AS alias], …)) [alias]
+pivot_clause
+   : PIVOT OPEN_PAREN a_expr opt_alias_clause? FOR colid IN_P OPEN_PAREN pivot_in_list CLOSE_PAREN CLOSE_PAREN opt_alias_clause?
+   ;
+
+unpivot_clause
+   : UNPIVOT ((INCLUDE | EXCLUDE) NULLS_P)? OPEN_PAREN colid FOR colid IN_P OPEN_PAREN pivot_in_list CLOSE_PAREN CLOSE_PAREN opt_alias_clause?
+   ;
+
+pivot_in_list
+   : pivot_in_item (COMMA pivot_in_item)*
+   ;
+
+pivot_in_item
+   : a_expr (AS? collabel)?
    ;
    
 joined_table
@@ -4777,7 +4804,9 @@ simpletypename
    ;
 
 varbyte
-    : (VARBYTE | VARBINARY | BINARY VARYING) OPEN_PAREN iconst CLOSE_PAREN
+    // The length is optional: `'a'::VARBYTE`, `CAST(x AS VARBYTE)` and `VARBYTE(n)` are all valid
+    // (docs.aws.amazon.com/redshift/latest/dg/r_VARBYTE_type.html).
+    : (VARBYTE | VARBINARY | BINARY VARYING) (OPEN_PAREN iconst CLOSE_PAREN)?
     ;
 
 json_type
@@ -5181,6 +5210,8 @@ func_expr_common_subexpr
    | CURRENT_CATALOG
    | CURRENT_SCHEMA
    | CAST OPEN_PAREN a_expr AS typename CLOSE_PAREN
+   // Redshift TRY_CAST: a CAST that yields NULL on failure (docs.aws.amazon.com/redshift/latest/dg/r_TRY_CAST_function.html).
+   | TRY_CAST OPEN_PAREN a_expr AS typename CLOSE_PAREN
    | EXTRACT OPEN_PAREN extract_list? CLOSE_PAREN
    | NORMALIZE OPEN_PAREN a_expr (COMMA unicode_normal_form)? CLOSE_PAREN
    | OVERLAY OPEN_PAREN overlay_list CLOSE_PAREN
@@ -5645,6 +5676,9 @@ collabel
 
 identifier
    : Identifier opt_uescape?
+   // Redshift temp-table names carry a leading '#' (docs.aws.amazon.com/redshift/latest/dg/r_CREATE_TABLE_NEW.html):
+   // `#venuetemp`. The lexer already produces TemporaryIdentifier; accept it wherever a name is expected.
+   | TemporaryIdentifier
    | QuotedIdentifier
    | UnicodeQuotedIdentifier
    | plsqlvariablename
@@ -5725,6 +5759,7 @@ unreserved_keyword
    | DICTIONARY
    | DISABLE_P
    | DISCARD
+   | DISTKEY
    | DOCUMENT_P
    | DOMAIN_P
    | DOUBLE_P
@@ -5840,6 +5875,7 @@ unreserved_keyword
    | PARTITION
    | PASSING
    | PASSWORD
+   | PIVOT
    | PLANS
    | POLICY
    | PRECEDING
@@ -5900,6 +5936,7 @@ unreserved_keyword
    | SIMPLE
    | SKIP_P
    | SNAPSHOT
+   | SORTKEY
    | SQL_P
    | STABLE
    | STANDALONE_P
@@ -5928,6 +5965,7 @@ unreserved_keyword
    | TRIGGER
    | TRUNCATE
    | TRUSTED
+   | TRY_CAST
    | TYPE_P
    | TYPES_P
    | UESCAPE
@@ -5936,6 +5974,7 @@ unreserved_keyword
    | UNENCRYPTED
    | UNKNOWN
    | UNLISTEN
+   | UNPIVOT
    | UNLOGGED
    | UNTIL
    | UPDATE

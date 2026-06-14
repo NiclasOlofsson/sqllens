@@ -59,6 +59,14 @@ function isHeaderish(line) {
 	);
 }
 
+// A psql table row/header with no dash border in the scraped HTML: cells joined by `|`, made of
+// only word/space/pipe/punctuation-of-data chars — no SQL punctuation (parens/quotes/comma/=/*).
+// `'a' || 'b'` has quotes; `a|b` bitwise-or is unspaced and rare in these examples — both excluded.
+function isTabular(line) {
+	const t = line.trim();
+	return /\|/.test(t) && /^[\w\s|.:%/+-]+$/.test(t) && !STATEMENT_STARTERS.test(t);
+}
+
 // A leaked English prose line the docs put between the statement and its result, or the psql
 // `(N rows)` row-count / `Time:` footers.
 const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:)/;
@@ -70,14 +78,29 @@ export function cleanSql(sql) {
 	// would reject them. Normalize to a plain space.
 	sql = sql.replace(/ /g, " ");
 	const lines = sql.split("\n");
-	// Cut at the first sign of rendered output under the SQL: a result-table border, a row-count /
-	// timing footer, or a leaked prose line.
-	let cut = lines.findIndex(
-		(l, i) => i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l)),
-	);
-	// psql prints the column header directly above the border — drop it too, so it does not leak as
-	// a bare trailing line (the dominant corpus-noise failure for single-column results).
-	if (cut > 1 && isResultBorder(lines[cut]) && isHeaderish(lines[cut - 1])) cut -= 1;
+	// Find where rendered output begins under the SQL. Two signals, whichever comes first:
+	//  (a) a result marker — a table border, a `(N rows)` / `Time:` footer, a tabular `a | b` row,
+	//      or a leaked prose line; and
+	//  (b) a statement terminator (`;`) whose next non-blank line is not itself a SQL statement
+	//      (nor a comment) — i.e. psql output that has no dash border in the scraped HTML (a bare
+	//      result value, or a `col | col` header). Multi-statement examples are safe: the next line
+	//      there DOES start with a statement keyword, so (b) does not fire.
+	let cut = -1;
+	for (let i = 0; i < lines.length; i++) {
+		const l = lines[i];
+		if (i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l) || isTabular(l))) {
+			// psql prints the column header directly above a border — drop it too.
+			cut = isResultBorder(l) && i > 1 && isHeaderish(lines[i - 1]) ? i - 1 : i;
+			break;
+		}
+		if (/;\s*$/.test(l)) {
+			const next = lines.slice(i + 1).find((x) => x.trim() !== "");
+			if (next !== undefined && !STATEMENT_STARTERS.test(next.trim()) && !/^\s*(--|\/\*)/.test(next)) {
+				cut = i + 1;
+				break;
+			}
+		}
+	}
 	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block

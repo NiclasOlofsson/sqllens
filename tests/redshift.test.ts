@@ -74,3 +74,51 @@ describe("Redshift parser — canonical statements parse with zero errors", () =
 		expect(errorsOf("SELECT FROM WHERE")).toBeGreaterThan(0);
 	});
 });
+
+// Redshift-specific constructs cleaned from the scraped docs corpus (TDD: each was a corpus
+// failure before its grammar fix). Self-contained so they hold even when the corpus is absent.
+describe("Redshift-specific constructs", () => {
+	it("VARBYTE cast without a length", () => {
+		expect(errorsOf("SELECT 'a'::VARBYTE < 'b'::VARBYTE AS lt")).toBe(0);
+		expect(errorsOf("SELECT LEN(CAST('x' AS VARBYTE))")).toBe(0);
+	});
+
+	it("TRY_CAST", () => {
+		expect(errorsOf("SELECT TRY_CAST('123' AS INT)")).toBe(0);
+	});
+
+	it("# temp-table reference", () => {
+		expect(errorsOf("SELECT * FROM #venuetemp ORDER BY venueid")).toBe(0);
+	});
+
+	it("SELECT * EXCLUDE (bare and parenthesized)", () => {
+		expect(errorsOf("SELECT * EXCLUDE col1, col2 FROM tablea")).toBe(0);
+		expect(errorsOf("SELECT * EXCLUDE (col1, col2) FROM tablea")).toBe(0);
+	});
+
+	it("SELECT TOP n DISTINCT", () => {
+		expect(errorsOf("SELECT TOP 10 DISTINCT sellerid, qtysold FROM sales")).toBe(0);
+	});
+
+	it("CONNECT BY with trailing START WITH", () => {
+		expect(
+			errorsOf(`SELECT COUNT(*) FROM Employee CONNECT BY PRIOR id = manager_id START WITH name = 'John'`),
+		).toBe(0);
+	});
+
+	it("PIVOT", () => {
+		expect(
+			errorsOf("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A', 'B', 'C'))"),
+		).toBe(0);
+	});
+
+	it("UNPIVOT", () => {
+		expect(
+			errorsOf("SELECT * FROM (SELECT red, green, blue FROM count_by_color) UNPIVOT (cnt FOR color IN (red, green, blue))"),
+		).toBe(0);
+	});
+
+	it("DISTKEY/SORTKEY usable as column identifiers", () => {
+		expect(errorsOf(`SELECT "column", type, encoding, distkey, sortkey FROM pg_table_def`)).toBe(0);
+	});
+});

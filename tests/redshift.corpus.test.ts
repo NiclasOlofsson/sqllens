@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { RedshiftLexer } from "../src/generated/redshift/RedshiftLexer.js";
@@ -18,12 +19,12 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 //    since object/platform DDL is cleared Out (CLAUDE.md). Regex bucketing (sql-kind.ts) until
 //    Redshift lower() exposes parse-derived statement kinds — same as Snowflake/Databricks.
 
-const VENDOR_EXAMPLES = resolve("vendor/bytebase-parser/redshift/examples");
-const DOCS_CORPUS = resolve("harness/local/redshift-docs");
+const VENDOR_EXAMPLES = corpusPath("vendor/bytebase-parser/redshift/examples");
+const DOCS_CORPUS = corpusPath("harness/local/redshift-docs");
 
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it
-const QUERY_BASELINE = 1648; // scraped-docs in-scope query bucket (of 1,806, 91.3%); raised by grammar cleaning
+const QUERY_BASELINE = 1768; // scraped-docs in-scope query bucket (of 1,809, 97.7%); raised by grammar cleaning
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
