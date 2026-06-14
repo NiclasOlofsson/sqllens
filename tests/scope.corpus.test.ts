@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
@@ -150,7 +151,7 @@ function walkBody(body: QueryBody, acc: Stats): void {
 // it gates the grammar. lower + resolveScopes must run over every compiled model
 // without throwing. (Correctness of the IR shape is covered by the unit tests; this
 // is the stability + coverage signal at scale.) Skips when the corpus is absent.
-const CORPUS = resolve("harness/local/databricks");
+const CORPUS = corpusPath("harness/local/databricks");
 
 function clusterKey(msg: string): string {
 	return msg

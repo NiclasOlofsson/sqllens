@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { SnowflakeLexer } from "../src/generated/snowflake/SnowflakeLexer.js";
@@ -20,8 +21,8 @@ import { KNOWN_BAD } from "./snowflake-corpus-known-bad.js";
 //    examples that are invalid SQL in Snowflake's own docs are listed in KNOWN_BAD, excluded from
 //    the gate, and asserted to still fail (self-policing) — see tests/snowflake-corpus-known-bad.ts.
 
-const VENDOR_EXAMPLES = resolve("vendor/grammars-v4/sql/snowflake/examples");
-const DOCS_CORPUS = resolve("harness/local/snowflake-docs");
+const VENDOR_EXAMPLES = corpusPath("vendor/grammars-v4/sql/snowflake/examples");
+const DOCS_CORPUS = corpusPath("harness/local/snowflake-docs");
 // The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
 // the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 2942;

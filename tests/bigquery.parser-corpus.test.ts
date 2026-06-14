@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
@@ -50,7 +51,7 @@ function isDetectOnly(sql: string): boolean {
 // productions, some unclosed-literal lexer messages); (2) the positive bucket carries a few
 // parser-emitted "… is not supported" structures our grammar doesn't model. Raise both floors as the
 // grammar closes gaps.
-const CORPUS = resolve("harness/local/bigquery-zetasql-parser");
+const CORPUS = corpusPath("harness/local/bigquery-zetasql-parser");
 const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
 const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
 
@@ -141,35 +142,39 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 		expect(inScopeParsed).toBeGreaterThanOrEqual(IN_SCOPE_POSITIVE_BASELINE);
 	});
 
-	it("rejects the in-scope syntax-error negative cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
-		let ddlExcluded = 0; // DDL-validation out of scope (detect-only)
-		let inScopeRejected = 0;
-		let inScopeAccepted = 0; // in-scope over-acceptance still to fix
-		for (const f of negatives()) {
-			const sql = readFileSync(join(CORPUS, "negative", f), "utf8");
-			let errs = 0;
-			let tree: unknown = null;
-			try {
-				const r = parseBigQuery(sql);
-				errs = r.errors;
-				tree = r.tree;
-			} catch {
-				errs = 1;
+	it(
+		"rejects the in-scope syntax-error negative cases (ratchet; DDL detect-only excluded)",
+		{ timeout: 600000 },
+		() => {
+			let ddlExcluded = 0; // DDL-validation out of scope (detect-only)
+			let inScopeRejected = 0;
+			let inScopeAccepted = 0; // in-scope over-acceptance still to fix
+			for (const f of negatives()) {
+				const sql = readFileSync(join(CORPUS, "negative", f), "utf8");
+				let errs = 0;
+				let tree: unknown = null;
+				try {
+					const r = parseBigQuery(sql);
+					errs = r.errors;
+					tree = r.tree;
+				} catch {
+					errs = 1;
+				}
+				if (isDetectOnly(sql)) {
+					ddlExcluded++;
+					continue;
+				}
+				if (errs > 0) inScopeRejected++;
+				else inScopeAccepted++;
 			}
-			if (isDetectOnly(sql)) {
-				ddlExcluded++;
-				continue;
-			}
-			if (errs > 0) inScopeRejected++;
-			else inScopeAccepted++;
-		}
-		// eslint-disable-next-line no-console
-		console.log(
-			`BigQuery parser-corpus in-scope negatives rejected: ${inScopeRejected}/${inScopeRejected + inScopeAccepted}` +
-				` (${ddlExcluded} DDL/macro detect-only, excluded)`,
-		);
-		expect(inScopeRejected).toBeGreaterThanOrEqual(IN_SCOPE_NEGATIVE_BASELINE);
-	});
+			// eslint-disable-next-line no-console
+			console.log(
+				`BigQuery parser-corpus in-scope negatives rejected: ${inScopeRejected}/${inScopeRejected + inScopeAccepted}` +
+					` (${ddlExcluded} DDL/macro detect-only, excluded)`,
+			);
+			expect(inScopeRejected).toBeGreaterThanOrEqual(IN_SCOPE_NEGATIVE_BASELINE);
+		},
+	);
 
 	it("lower + resolveScopes never throw on a parsed positive case", { timeout: 600000 }, () => {
 		const throws: string[] = [];

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
@@ -11,7 +12,7 @@ import { resolveScopes } from "../src/scope/scope.js";
 // also carries semantically-invalid-but-syntactically-valid cases and a few ZetaSQL-only surfaces
 // (pipe `|>`, test-only constructs), so the positive rate is a partial floor that ratchets up as
 // grammar gaps close — not 100%.
-const CORPUS = resolve("harness/local/bigquery-zetasql");
+const CORPUS = corpusPath("harness/local/bigquery-zetasql");
 const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
 const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
 
@@ -76,7 +77,9 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			else fails.push(f);
 		}
 		// eslint-disable-next-line no-console
-		console.log(`BigQuery positives: ${pass}/${pass + fails.length} (${ddlExcluded} DDL/macro detect-only, excluded)`);
+		console.log(
+			`BigQuery positives: ${pass}/${pass + fails.length} (${ddlExcluded} DDL/macro detect-only, excluded)`,
+		);
 		expect(pass).toBeGreaterThanOrEqual(POSITIVE_BASELINE);
 	});
 
@@ -100,7 +103,9 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			else accepted++;
 		}
 		// eslint-disable-next-line no-console
-		console.log(`BigQuery negatives rejected: ${rejected}/${rejected + accepted} (${ddlExcluded} DDL/macro detect-only, excluded)`);
+		console.log(
+			`BigQuery negatives rejected: ${rejected}/${rejected + accepted} (${ddlExcluded} DDL/macro detect-only, excluded)`,
+		);
 		expect(rejected).toBeGreaterThanOrEqual(NEGATIVE_BASELINE);
 	});
 

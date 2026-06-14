@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
@@ -13,8 +14,8 @@ import { resolveScopes } from "../src/scope/scope.js";
 // This is a smoke gate, not the full comparator: it checks resolution (unknown-table/column), not
 // types/lineage, and the broad pass is a ratchet (harvest covers only referenced columns, so a query
 // using a real-but-unharvested column legitimately shows "unknown" — the floor tracks coverage, not 100%).
-const SCHEMA_JSON = resolve("harness/local/googlesql-schema.json");
-const POS = resolve("harness/local/bigquery-zetasql/positive");
+const SCHEMA_JSON = corpusPath("harness/local/googlesql-schema.json");
+const POS = corpusPath("harness/local/bigquery-zetasql/positive");
 const BROAD_SAMPLE = 3000; // bound the corpus pass for speed
 
 // Floor for the broad ratchet — measured 2026-06-14. Raise as harvest coverage / the resolver improve.
@@ -44,23 +45,29 @@ describe.skipIf(!existsSync(SCHEMA_JSON))("BigQuery resolver vs harvested Google
 		}
 	});
 
-	it.skipIf(!existsSync(POS))("agrees with the catalog across the corpus (ratchet; no throws)", { timeout: 600000 }, () => {
-		const files = readdirSync(POS).filter((f) => f.endsWith(".sql")).slice(0, BROAD_SAMPLE);
-		let fullyResolved = 0;
-		const threw: string[] = [];
-		for (const f of files) {
-			const sql = readFileSync(join(POS, f), "utf8");
-			try {
-				const d = diagsFor(sql);
-				// "fully resolved against the catalog" = parsed + zero unknown-table/column/field diagnostics.
-				if (d.length === 0) fullyResolved++;
-			} catch (e) {
-				threw.push(`${f}: ${(e as Error).message}`);
+	it.skipIf(!existsSync(POS))(
+		"agrees with the catalog across the corpus (ratchet; no throws)",
+		{ timeout: 600000 },
+		() => {
+			const files = readdirSync(POS)
+				.filter((f) => f.endsWith(".sql"))
+				.slice(0, BROAD_SAMPLE);
+			let fullyResolved = 0;
+			const threw: string[] = [];
+			for (const f of files) {
+				const sql = readFileSync(join(POS, f), "utf8");
+				try {
+					const d = diagsFor(sql);
+					// "fully resolved against the catalog" = parsed + zero unknown-table/column/field diagnostics.
+					if (d.length === 0) fullyResolved++;
+				} catch (e) {
+					threw.push(`${f}: ${(e as Error).message}`);
+				}
 			}
-		}
-		// eslint-disable-next-line no-console
-		console.log(`fully resolved against harvested catalog: ${fullyResolved}/${files.length}`);
-		expect(threw, `qualify threw on:\n${threw.slice(0, 10).join("\n")}`).toEqual([]);
-		expect(fullyResolved).toBeGreaterThanOrEqual(FULLY_RESOLVED_BASELINE);
-	});
+			// eslint-disable-next-line no-console
+			console.log(`fully resolved against harvested catalog: ${fullyResolved}/${files.length}`);
+			expect(threw, `qualify threw on:\n${threw.slice(0, 10).join("\n")}`).toEqual([]);
+			expect(fullyResolved).toBeGreaterThanOrEqual(FULLY_RESOLVED_BASELINE);
+		},
+	);
 });
