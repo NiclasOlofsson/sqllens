@@ -70,26 +70,6 @@ options {
 		}
 		return this.lambdaArgListValid(t.slice(1, -1));
 	}
-	// True when the (already-parsed) text carries a binary/comparison/bitwise operator at the top paren
-	// depth — used to reject a dot-star whose base is a binary expression (`a+b.*`). Operators inside
-	// parentheses/brackets or string/backtick literals don't count; a leading sign is not a binary op.
-	private hasTopLevelBinaryOp(text: string): boolean {
-		let depth = 0;
-		let quote = "";
-		const t = text ?? "";
-		for (let k = 0; k < t.length; k++) {
-			const c = t[k];
-			if (quote) {
-				if (c === quote) quote = "";
-				continue;
-			}
-			if (c === "'" || c === '"' || c === "`") quote = c;
-			else if (c === "(" || c === "[") depth++;
-			else if (c === ")" || c === "]") depth--;
-			else if (depth === 0 && k > 0 && "+-*/%|&^=<>!".includes(c)) return true;
-		}
-		return false;
-	}
 	// A graph path factor is a bare edge pattern only when it is an UNquantified graph_edge_pattern.
 	// A quantified edge (`-[e]->{1,3}`) is a path pattern in ZetaSQL (ASTGraphPathPattern), not an edge,
 	// so a hint adjacent to it is allowed — only a hint between two bare edges is ambiguous/rejected.
@@ -2482,13 +2462,8 @@ select_column_expr:
 	| select_column_expr_with_as_alias
 	| expression identifier;
 
-// googlesql.tm select_column_dot_star binds the `.*` at `.` precedence (`%prec "."`), so the base must
-// be a postfix expression — `t.*`, `(a+b).*`, `f(x).*` — NOT a binary expression: `a+b.*` parses as
-// `a + (b.*)` and fails on `*` ("Unexpected *"). Reject a base that carries a top-level binary operator.
 select_column_dot_star:
-	expression_higher_prec_than_and DOT_SYMBOL MULTIPLY_OPERATOR star_modifiers? {
-		if (this.hasTopLevelBinaryOp(localContext.expression_higher_prec_than_and()?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Unexpected \"*\"", null, null);
-	};
+	expression_higher_prec_than_and DOT_SYMBOL MULTIPLY_OPERATOR star_modifiers?;
 
 star_modifiers:
 	star_except_list
