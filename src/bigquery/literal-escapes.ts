@@ -109,8 +109,9 @@ export function countBadLiteralEscapes(tokens: Token[]): number {
 			const parts = literalParts(text);
 			if (parts && !literalEscapesValid(parts.content, parts.isRaw, parts.isBytes)) bad++;
 		} else if (type === T_IDENTIFIER && text.startsWith("`") && text.endsWith("`") && text.length >= 2) {
-			// Backquoted identifier — same escape rules as a non-raw, non-bytes string.
-			if (!literalEscapesValid(text.slice(1, -1), false, false)) bad++;
+			// Backquoted identifier — must be non-empty, same escape rules as a non-raw, non-bytes string.
+			const inner = text.slice(1, -1);
+			if (inner === "" || !literalEscapesValid(inner, false, false)) bad++;
 		}
 	}
 	return bad;
