@@ -1,6 +1,7 @@
 import type {
 	ColumnRef,
 	CteDef,
+	GraphTableSource,
 	LateralViewSource,
 	PipeExpr,
 	PipeStage,
@@ -69,7 +70,10 @@ export type ResolvedSource =
 	| { kind: "lateral"; source: LateralViewSource }
 	/** The relation entering a pipe stage — the previous stage's (or the pipe input's) output, exposed
 	 *  unqualified. Carries no name of its own; its columns are that scope's outputs. */
-	| { kind: "relation"; scope: Scope };
+	| { kind: "relation"; scope: Scope }
+	/** A GRAPH_TABLE(…) relation — its own scope binds the graph element variables; its output columns
+	 *  are the COLUMNS / RETURN list. Behaves like a derived (subquery) relation to the enclosing query. */
+	| { kind: "graphtable"; scope: Scope; source: GraphTableSource };
 
 export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
 	return { root: buildQueryScope(query, undefined, dialect), statement: query.statement ?? "other" };
@@ -250,23 +254,7 @@ function fillScope(scope: Scope): void {
 		return;
 	}
 
-	for (const source of body.from) {
-		const key = sourceKey(source);
-		if (source.kind === "subquery") {
-			const child = buildQueryScope(source.query, scope);
-			scope.children.push(child);
-			scope.sources.set(key, { kind: "subquery", scope: child, source });
-		} else if (source.kind === "lateral") {
-			scope.sources.set(key, { kind: "lateral", source });
-		} else {
-			// A single-part name that matches a visible CTE is a CTE reference, not a table.
-			const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
-			scope.sources.set(
-				key,
-				cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source },
-			);
-		}
-	}
+	for (const source of body.from) registerSource(scope, source);
 
 	// Scalar / IN / EXISTS subqueries in expressions become child scopes (parent set for correlation).
 	for (const sub of body.subqueries ?? []) {
@@ -340,7 +328,7 @@ function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): S
 	return ss;
 }
 
-/** Register a FROM/JOIN source on a scope (table / CTE-ref / subquery / lateral). */
+/** Register a FROM/JOIN source on a scope (table / CTE-ref / subquery / lateral / graph-table). */
 function registerSource(scope: Scope, source: Source): void {
 	const key = sourceKey(source);
 	if (source.kind === "subquery") {
@@ -349,10 +337,38 @@ function registerSource(scope: Scope, source: Source): void {
 		scope.sources.set(key, { kind: "subquery", scope: child, source });
 	} else if (source.kind === "lateral") {
 		scope.sources.set(key, { kind: "lateral", source });
+	} else if (source.kind === "graphtable") {
+		const child = buildGraphScope(scope, source);
+		scope.children.push(child);
+		scope.sources.set(key, { kind: "graphtable", scope: child, source });
 	} else {
 		const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
 		scope.sources.set(key, cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source });
 	}
+}
+
+/** A GRAPH_TABLE relation's own scope: the graph element variables are its sources (their columns need a
+ *  graph schema, so unknown), and its output columns are the COLUMNS / RETURN projection list. The graph
+ *  WHERE / output expressions resolve against the element variables. */
+function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
+	const refs = [...src.columnRefs];
+	const body: SelectExpr = {
+		kind: "select",
+		projections: src.columns,
+		from: [],
+		columns: refs,
+		where: src.where,
+		aggregated: false,
+		cst: src.cst,
+	};
+	const scope = newScope(body, parent, parent.dialect);
+	for (const el of src.elements) {
+		if (!el.variable) continue;
+		const ts: TableSource = { kind: "table", name: [el.variable], alias: el.variable, cst: el.variableCst ?? el.cst };
+		scope.sources.set(normalizeName(el.variable), { kind: "table", name: [el.variable], source: ts });
+	}
+	scope.outputs = outputsOf(body);
+	return scope;
 }
 
 /** A sub-pipeline (IF/FORK/TEE/LOG branch): stages applied to `incoming`, built as child scopes. */
@@ -561,6 +577,7 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
  *  since Databricks identifiers are case-insensitive (so `U.col` binds to a source aliased `u`). */
 function sourceKey(source: Source): string {
 	if (source.kind === "lateral") return normalizeName(source.alias ?? "");
+	if (source.kind === "graphtable") return normalizeName(source.alias ?? source.graph[source.graph.length - 1] ?? "graph_table");
 	const raw = source.alias ?? (source.kind === "table" ? source.name[source.name.length - 1] : "");
 	return normalizeName(raw ?? "");
 }
@@ -571,6 +588,7 @@ function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
 	if (src.kind === "cte") return src.ref.scope.outputs;
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return src.scope.outputs; // a prior pipe stage's relation
+	if (src.kind === "graphtable") return src.scope.outputs;
 	return src.scope.outputs; // subquery
 }
 

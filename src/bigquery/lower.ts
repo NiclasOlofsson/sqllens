@@ -5,6 +5,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	GraphElement,
+	GraphTableSource,
 	LimitInfo,
 	PipeBranch,
 	PipeExpr,
@@ -86,6 +88,13 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 			lowered.statement = "query";
 			return lowered;
 		}
+	}
+	// Standalone GQL: `GRAPH g MATCH … RETURN …` — a relation-producing graph query.
+	const gql = firstOfRule(tree, P.RULE_gql_statement);
+	if (gql) {
+		const lowered = lowerGqlStatement(gql);
+		lowered.statement = "query";
+		return lowered;
 	}
 	const q = emptyQuery(tree, statement === "other" ? "empty" : "non-query");
 	q.statement = statement;
@@ -836,6 +845,10 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 		};
 	}
 
+	// graph_table_query: GRAPH_TABLE(graph MATCH … COLUMNS(…)) — a graph relation.
+	const graphTable = directChildrenOfRule(tp, P.RULE_graph_table_query)[0];
+	if (graphTable) return buildGraphTableSource(graphTable);
+
 	// table_path_expression: table_path_expression_base hint? alias? with_offset? at_system_time?
 	const pathExpr = directChildrenOfRule(tp, P.RULE_table_path_expression)[0];
 	if (pathExpr) return buildPathSource(pathExpr);
@@ -855,6 +868,132 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 	}
 
 	return { kind: "table", name: [stripBackticks(tp.getText())], cst: tp };
+}
+
+// --- graph / GQL -----------------------------------------------------------------
+// GRAPH_TABLE(graph MATCH … COLUMNS(…)) in FROM, and the standalone `GRAPH g … RETURN …` statement.
+// Modelled faithfully: the graph name, the MATCH element variables (nodes/edges + labels + direction),
+// the WHERE, and the output columns (COLUMNS / RETURN). The element variables are the graph query's own
+// relation namespace; scope resolves the WHERE / output expressions against them.
+
+/** A standalone gql_statement (`GRAPH g … RETURN …`) → `SELECT * FROM <graph-table>`. */
+function lowerGqlStatement(gql: ParserRuleContext): QueryExpr {
+	const src = buildGraphTableSource(gql);
+	const body: SelectExpr = {
+		kind: "select",
+		projections: [implicitStar(gql)],
+		from: [src],
+		columns: [],
+		aggregated: false,
+		cst: gql,
+	};
+	return { kind: "query", ctes: [], body, cst: gql };
+}
+
+/** graph_table_query / gql_statement → a GraphTableSource (MATCH form or operation-block/RETURN form). */
+function buildGraphTableSource(graph: ParserRuleContext): GraphTableSource {
+	const pathNode = directChildrenOfRule(graph, P.RULE_path_expression)[0];
+	const name = pathNode ? pathParts(pathNode) : [];
+	const elements: GraphElement[] = [];
+	const columnRefs: ColumnRef[] = [];
+	let where: Expr | undefined;
+	let columns: Projection[] = [];
+
+	const matchOp = directChildrenOfRule(graph, P.RULE_graph_match_operator)[0];
+	const pattern = matchOp ? directChildrenOfRule(matchOp, P.RULE_graph_pattern)[0] : undefined;
+	if (pattern) {
+		collectGraphElements(pattern, elements);
+		const wc = directChildrenOfRule(pattern, P.RULE_where_clause)[0];
+		if (wc) {
+			where = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
+			columnsOf(where, columnRefs, "where");
+		}
+	}
+	const shape = directChildrenOfRule(graph, P.RULE_graph_shape_clause)[0];
+	if (shape) {
+		const sl = directChildrenOfRule(shape, P.RULE_select_list)[0];
+		columns = sl ? directChildrenOfRule(sl, P.RULE_select_list_item).map(buildProjection) : [];
+	}
+	const opBlock = directChildrenOfRule(graph, P.RULE_graph_operation_block)[0];
+	if (opBlock) {
+		for (const pat of collectOfRule(opBlock, P.RULE_graph_pattern)) {
+			collectGraphElements(pat, elements);
+			const wc = directChildrenOfRule(pat, P.RULE_where_clause)[0];
+			if (wc) {
+				const w = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
+				columnsOf(w, columnRefs, "where");
+				where ??= w;
+			}
+		}
+		const retList = collectOfRule(opBlock, P.RULE_graph_return_item_list)[0];
+		if (retList) columns = directChildrenOfRule(retList, P.RULE_graph_return_item).map(graphReturnProjection);
+	}
+	for (const p of columns) columnsOf(p.expr, columnRefs, "projection");
+	const aliasInfo = aliasOf(directChildrenOfRule(graph, P.RULE_as_alias)[0]);
+	return {
+		kind: "graphtable",
+		graph: name,
+		elements,
+		where,
+		columns,
+		columnRefs,
+		alias: aliasInfo?.alias,
+		aliasCst: aliasInfo?.cst,
+		cst: graph,
+	};
+}
+
+/** Collect node/edge element variables (with labels + edge direction) from a graph pattern. */
+function collectGraphElements(node: ParserRuleContext, out: GraphElement[]): void {
+	for (const ep of collectOfRule(node, P.RULE_graph_element_pattern)) {
+		const nodePat = directChildrenOfRule(ep, P.RULE_graph_node_pattern)[0];
+		const edgePat = directChildrenOfRule(ep, P.RULE_graph_edge_pattern)[0];
+		const filler = firstOfRule(ep, P.RULE_graph_element_pattern_filler);
+		const variable = filler ? graphElementVar(filler) : undefined;
+		const label = filler ? graphElementLabel(filler) : undefined;
+		if (nodePat) {
+			out.push({ graphKind: "node", variable: variable?.text, variableCst: variable?.cst, label, cst: ep });
+		} else if (edgePat) {
+			out.push({
+				graphKind: "edge",
+				variable: variable?.text,
+				variableCst: variable?.cst,
+				label,
+				direction: edgeDirection(edgePat),
+				cst: ep,
+			});
+		}
+	}
+}
+
+function graphElementVar(filler: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
+	const id = directChildrenOfRule(filler, P.RULE_opt_graph_element_identifier)[0];
+	const gid = id ? firstOfRule(id, P.RULE_graph_identifier) : undefined;
+	return gid ? { text: stripBackticks(gid.getText()), cst: gid } : undefined;
+}
+
+function graphElementLabel(filler: ParserRuleContext): string | undefined {
+	const lbl = directChildrenOfRule(filler, P.RULE_opt_is_label_expression)[0];
+	const le = lbl ? firstOfRule(lbl, P.RULE_label_expression) : undefined;
+	return le ? le.getText() : undefined;
+}
+
+function edgeDirection(edgePat: ParserRuleContext): "left" | "right" | "any" {
+	if (directTokenType(edgePat, [P.SUB_GT_BRACKET_SYMBOL]) !== undefined) return "right";
+	if (directTokenType(edgePat, [P.LT_OPERATOR]) !== undefined) return "left";
+	return "any";
+}
+
+/** graph_return_item: expression (AS identifier)? | *. */
+function graphReturnProjection(item: ParserRuleContext): Projection {
+	if (directTokenType(item, [P.MULTIPLY_OPERATOR]) !== undefined) {
+		return { name: undefined, isStar: true, expr: { kind: "star", cst: item }, cst: item };
+	}
+	const e = directChildrenOfRule(item, P.RULE_expression)[0];
+	const id = directChildrenOfRule(item, P.RULE_identifier)[0];
+	const expr = e ? lowerExpr(e) : otherExpr(item);
+	const name = id ? identText(id) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
+	return { name, isStar: false, expr, cst: item };
 }
 
 /** table_path_expression: base (unnest | path) + alias. */

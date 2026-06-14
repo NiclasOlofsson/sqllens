@@ -214,6 +214,7 @@ function columnsOfSource(
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return known(resolved.get(src.scope));
+	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
@@ -324,6 +325,7 @@ function sourceColumns(
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return known(resolved.get(src.scope));
+	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 

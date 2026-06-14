@@ -114,6 +114,9 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
 		if (src.kind === "subquery") {
 			walk(src.scope, src.source.alias ?? "_subquery_", out, schema);
 			walked.add(src.scope);
+		} else if (src.kind === "graphtable") {
+			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema);
+			walked.add(src.scope);
 		}
 	}
 	// Expression subqueries (scalar / IN / EXISTS) — the remaining children, each its own frame.
@@ -260,6 +263,11 @@ function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
 /** An alias declaration symbol for a source written `… AS x`, or undefined when unaliased. */
 function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
 	if (src.kind === "relation") return undefined; // the implicit pipe-stage relation has no alias
+	if (src.kind === "graphtable") {
+		return src.source.alias
+			? { kind: "alias", modifiers: ["declaration"], name: src.source.alias, span: spanOf(src.source.aliasCst ?? src.source.cst), frame }
+			: undefined;
+	}
 	const s = src.source;
 	if (!s.alias) return undefined;
 	return { kind: "alias", modifiers: ["declaration"], name: s.alias, span: spanOf(s.aliasCst ?? s.cst), frame };
@@ -273,6 +281,7 @@ function columnDefinition(res: ColumnResolution): Span | undefined {
 	if (src.kind === "cte") return projectionSpan(src.ref.scope, res.column, src.ref.def.columnAliases);
 	if (src.kind === "subquery") return projectionSpan(src.scope, res.column, src.source.columnAliases);
 	if (src.kind === "relation") return projectionSpan(src.scope, res.column, undefined); // prior pipe stage
+	if (src.kind === "graphtable") return projectionSpan(src.scope, res.column, undefined);
 	return undefined;
 }
 
@@ -295,6 +304,9 @@ function relationSymbol(src: ResolvedSource, frame: string): Sym {
 	// The implicit pipe-stage relation is skipped by the caller; handled here only for exhaustiveness.
 	if (src.kind === "relation") {
 		return { kind: "subquery", modifiers: ref, name: "", span: spanOf(src.scope.body.cst), frame };
+	}
+	if (src.kind === "graphtable") {
+		return { kind: "table", modifiers: ref, name: src.source.graph.join("."), span: spanOf(src.source.cst), frame };
 	}
 	if (src.kind === "table") {
 		return { kind: "table", modifiers: ref, name: src.name.join("."), span: spanOf(src.source.cst), frame };

@@ -196,6 +196,7 @@ function columnOrigins(src: ResolvedSource, column: string, schema: Schema, seen
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
 	if (src.kind === "relation") return derivedOrigins(src.scope, column, undefined, schema, seen); // prior pipe stage
+	if (src.kind === "graphtable") return derivedOrigins(src.scope, column, undefined, schema, seen);
 	return []; // lateral — no base-table origin
 }
 

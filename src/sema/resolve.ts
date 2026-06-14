@@ -60,6 +60,7 @@ export function columnNamesOf(
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? outputNames(src.ref.scope, schema, visited);
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);
 	if (src.kind === "relation") return outputNames(src.scope, schema, visited); // a prior pipe stage
+	if (src.kind === "graphtable") return outputNames(src.scope, schema, visited);
 	return src.source.columns; // lateral
 }
 

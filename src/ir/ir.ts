@@ -330,7 +330,46 @@ export interface Projection {
 	cst: ParserRuleContext;
 }
 
-export type Source = TableSource | SubquerySource | LateralViewSource;
+export type Source = TableSource | SubquerySource | LateralViewSource | GraphTableSource;
+
+// ---------------------------------------------------------------------------
+// Graph / GQL (BigQuery `GRAPH_TABLE(graph MATCH … COLUMNS(…))` in FROM, and the standalone
+// `GRAPH graph MATCH … RETURN …` statement). Modelled FAITHFULLY: the property-graph name, the
+// MATCH pattern's element variables (nodes/edges with their labels + direction, each with its span),
+// the WHERE, and the output columns (the COLUMNS / RETURN list). The element variables form the graph
+// query's own little relation namespace — the WHERE/COLUMNS/RETURN expressions resolve against them —
+// so an editor can highlight and resolve `(a)-[e]->(b)`'s `a`, `e`, `b` as graph elements.
+// ---------------------------------------------------------------------------
+
+export interface GraphTableSource {
+	kind: "graphtable";
+	/** The property graph name (`GRAPH_TABLE(my_graph MATCH …)`). */
+	graph: string[];
+	/** The element variables bound by the MATCH pattern(s) — nodes and edges, in order. */
+	elements: GraphElement[];
+	/** The MATCH WHERE predicate(s), modelled. */
+	where?: Expr;
+	/** Output columns — the `COLUMNS(<select_list>)` shape or the `RETURN <items>` list. */
+	columns: Projection[];
+	/** Every column reference inside the pattern fillers / WHERE / output list (for resolution). */
+	columnRefs: ColumnRef[];
+	alias?: string;
+	aliasCst?: ParserRuleContext;
+	cst: ParserRuleContext;
+}
+
+/** A graph pattern element — a node `(a:Label {p} WHERE …)` or an edge `-[e:Label]->`. */
+export interface GraphElement {
+	graphKind: "node" | "edge";
+	/** The element variable (`a`), if named. */
+	variable?: string;
+	variableCst?: ParserRuleContext;
+	/** The label expression text (`Person`, `Knows|Likes`), if present. */
+	label?: string;
+	/** Edge direction: `->` right, `<-` left, `-`/`~` any (undirected). Absent for nodes. */
+	direction?: "left" | "right" | "any";
+	cst: ParserRuleContext;
+}
 
 export interface LateralViewSource {
 	kind: "lateral";
