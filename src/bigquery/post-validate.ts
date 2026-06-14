@@ -109,8 +109,12 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// OPTIONS, so there it IS a select item — only flag the form with no all_or_distinct.
 			const w = node.opt_select_with();
 			const first = node.select_list()?.select_list_item(0)?.select_column_expr();
-			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier() && !first.select_column_expr_with_as_alias()) {
-				if (/^OPTIONS\s*\(.*\)$/is.test(first.expression()?.getText() ?? "")) errors++;
+			// A bare `OPTIONS(…)` (empty list) or `OPTIONS(…) AS x` (the with-options binds OPTIONS, leaving
+			// `AS x` — which can't start a select item) is invalid. A bare-word alias `OPTIONS(…) x` is a
+			// genuine select item (x is the list), so exclude that (first.identifier()).
+			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier()) {
+				const expr = first.select_column_expr_with_as_alias()?.expression() ?? first.expression();
+				if (/^OPTIONS\s*\(.*\)$/is.test(expr?.getText() ?? "")) errors++;
 			}
 		} else if (node instanceof Pipe_callContext) {
 			const suffix = node.tvf_with_suffixes().pivot_or_unpivot_clause_and_aliases();
