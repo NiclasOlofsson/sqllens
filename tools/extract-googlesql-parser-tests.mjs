@@ -19,6 +19,7 @@ import {
 	classifyVariants,
 	cleanQuery,
 	defaultModeOf,
+	disablesImplemented,
 	expand,
 	fileDefaultDir,
 	normalize,
@@ -61,18 +62,23 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		if (sep === -1) continue; // no expected section; skip prose-only blocks
 		const querySection = block.slice(0, sep);
 		const mode = blockModeOverride(querySection) ?? defaultMode;
-		const directive = blockDir(querySection) ?? defaultDir;
+		const blockDirective = blockDir(querySection);
+		const directive = blockDirective ?? defaultDir;
 		const query = cleanQuery(querySection);
 		if (!query) continue;
 		const expectedSection = block.slice(sep + 3);
 		const all = expand(query);
 		if (all.length > MAX_VARIANTS) capped++;
 		const negatives = classifyVariants(query, expectedSection, directive);
+		// A block whose own directive disables an implemented feature the file default enables tests that
+		// feature OFF — we accept such SQL (permissive superset), so its negatives aren't valid for us.
+		const featureOff = disablesImplemented(blockDirective, defaultDir);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
 			const emitted = applyMode(variant, mode);
 			if (emitted === null) continue; // type-mode: not a statement
+			if (featureOff && negatives[v]) continue; // feature-off negative for a feature we implement
 			items.push({ neg: negatives[v], name: `${base}_${i++}.sql`, sql: emitted });
 		}
 	}

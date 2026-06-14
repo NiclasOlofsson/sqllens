@@ -83,7 +83,18 @@ export const IMPLEMENTED = new Set([
 	"IS_DISTINCT",
 	"BRACED_PROTO_CONSTRUCTORS",
 	"WITH_GROUP_ROWS",
+	"ALLOW_CONSECUTIVE_ON",
 ]);
+
+// A block whose own `[language_features=…]` directive REMOVES a feature the file default turns on, where
+// that feature is one we implement, is testing the feature-OFF behaviour of a feature we support — we
+// accept such SQL as a permissive superset, so its "syntax error" is not a valid negative for us. (Only
+// meaningful when the block has a fixed directive; alternation cases are graded by directiveChoices.)
+export function disablesImplemented(blockDirective, fileDefault) {
+	if (blockDirective == null) return false; // no block override → governed by the file default
+	const have = new Set(featureTokens(blockDirective));
+	return featureTokens(fileDefault).some((f) => IMPLEMENTED.has(f) && !have.has(f));
+}
 
 const featureTokens = (s) => [...s.matchAll(/\+([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]);
 
