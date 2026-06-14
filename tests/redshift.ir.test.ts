@@ -193,6 +193,23 @@ describe("Redshift lower — CTE, set ops, VALUES", () => {
 	});
 });
 
+describe("Redshift lower — visible gaps", () => {
+	it("PIVOT is flagged unsupported, not silently dropped", () => {
+		const b = selectBody("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A', 'B'))");
+		expect(b.unsupported).toContain("pivot");
+	});
+
+	it("UNPIVOT is flagged unsupported", () => {
+		const b = selectBody("SELECT * FROM (SELECT a, b FROM t) UNPIVOT (v FOR n IN (a, b))");
+		expect(b.unsupported).toContain("unpivot");
+	});
+
+	it("CONNECT BY is flagged unsupported", () => {
+		const b = selectBody("SELECT id FROM t CONNECT BY PRIOR id = pid START WITH id = 1");
+		expect(b.unsupported).toContain("connect-by");
+	});
+});
+
 describe("Redshift lower — non-query", () => {
 	it("a non-SELECT statement lowers to a flagged non-query body, never throws", () => {
 		const q = ir("CREATE TABLE t (a int)");

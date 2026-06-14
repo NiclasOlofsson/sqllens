@@ -347,6 +347,10 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 
 /** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. */
 function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
+	// PIVOT / UNPIVOT reshape the source's output columns; the IR doesn't model that for Redshift
+	// yet, so flag it (visible gap) rather than silently keeping only the un-pivoted relation.
+	if (directChildrenOfRule(tr, P.RULE_pivot_clause).length) unsupported.push("pivot");
+	if (directChildrenOfRule(tr, P.RULE_unpivot_clause).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
