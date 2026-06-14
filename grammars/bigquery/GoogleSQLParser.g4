@@ -86,56 +86,101 @@ options {
 	private adj(a: any, b: any): boolean {
 		return !!a && !!b && a.stop + 1 === b.start;
 	}
-	// JOIN condition balance (ZetaSQL join_processor.cc). Within a comma-separated FROM segment the
-	// number of qualified joins (not CROSS / not NATURAL — those take no ON/USING) must equal the
-	// number of ON/USING clauses. Too few → "JOIN must have an ON or USING clause"; too many / a CROSS
-	// with an ON → likewise rejected. A comma starts a new segment.
-	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; bad: boolean; outer: boolean } {
-		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, bad: false, outer: false };
+	// One join step: a comma join, or a JOIN carrying N consecutive ON/USING clauses. `qualified` is a
+	// join that requires a condition — i.e. not CROSS and not NATURAL (join_processor IsQualifiedJoin).
+	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; outer: boolean } {
+		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, outer: false };
 		const jtText = s.join_type?.()?.getText?.() ?? "";
 		const isCross = /CROSS/i.test(jtText);
-		const isOuter = /FULL|RIGHT/i.test(jtText); // only RIGHT/FULL may not follow a comma join
 		const isNatural = !!s.opt_natural?.();
 		const list = s.on_or_using_clause_list?.();
 		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : 0;
-		// CROSS / NATURAL joins combine without a condition (join_processor GetCrossCommaOrNaturalJoin):
-		// they contribute neither a qualified-join nor an ON to the balance. A CROSS/NATURAL join may
-		// syntactically still carry an ON/USING (it parses; the contradiction is a resolver concern), so
-		// its condition is simply ignored here rather than rejected.
-		if (isCross || isNatural) return { comma: false, qualified: false, ons: 0, bad: false, outer: false };
-		return { comma: false, qualified: true, ons, bad: false, outer: isOuter };
+		return { comma: false, qualified: !isCross && !isNatural, ons, outer: /FULL|RIGHT/i.test(jtText) };
 	}
+	// JOIN condition balance — a faithful port of ZetaSQL join_processor.cc JoinRuleAction's left fold
+	// over the join chain. Each step carries a running `unmatched` join count (lhs.unmatched_join_count):
+	// a qualified join adds 1, then the step's ON/USING clauses subtract. A step with ≥2 clauses (the
+	// consecutive-ON "join rewrite") that has more clauses than unmatched joins is a hard error; with a
+	// comma join already in the chain it is "Unexpected keyword ON"; a single over-count is *deferred*
+	// (backward compat) and only thrown if a later ≥2-clause step meets it. A comma after a step that
+	// used consecutive ON/USING is rejected ("Comma join is not allowed after consecutive ON/USING"),
+	// and resets the running state (a comma join node carries none of it). Returns true when valid.
 	private joinBalanced(steps: any[]): boolean {
-		// A single ON/USING per join binds to its own join, so a chain may freely mix joins with and
-		// without a condition. Only CONSECUTIVE ON/USING (a single suffix carrying >1 condition — the
-		// "join rewrite") forces a count match: those conditions bind across the preceding joins, so the
-		// segment's total ON/USING count must equal its qualified-join count. A comma may not follow a
-		// segment that used consecutive ON/USING (join_processor: "Comma join is not allowed after
-		// consecutive ON/USING clauses"). Commas start a new segment.
-		let q = 0;
-		let c = 0;
-		let consec = false; // this segment used a >1 ON/USING list
-		let sawComma = false; // a comma join appeared earlier in the FROM clause
+		let unmatched = 0; // lhs.unmatched_join_count
+		let transformNeeded = false; // lhs.transformation_needed — a ≥2-clause step occurred (sticky until a comma)
+		let containsComma = false; // lhs.contains_comma_join (sticky)
+		let deferred = false; // lhs has a saved (not-yet-thrown) parse error
+		let sawComma = false; // any comma join seen (for the outer-after-comma grammar guard)
 		for (const s of steps ?? []) {
 			const st = this.joinStep(s);
-			if (st.bad) return false; // CROSS/NATURAL join carrying an ON/USING
-			// A RIGHT/FULL join after a comma join must be parenthesized (join_processor: "RIGHT JOIN
-			// must be parenthesized when following a comma join"): reject `FROM a, b RIGHT JOIN c`,
-			// `FROM a, b JOIN c FULL JOIN d`. LEFT JOIN after a comma is fine.
+			// A RIGHT/FULL join after a comma join must be parenthesized — `FROM a, b RIGHT JOIN c`.
 			if (st.outer && sawComma) return false;
 			if (st.comma) {
-				if (consec) return false; // comma after consecutive ON/USING
+				if (transformNeeded) return false; // comma after consecutive ON/USING
+				containsComma = true;
 				sawComma = true;
-				q = 0;
-				c = 0;
-				consec = false;
+				unmatched = 0;
+				transformNeeded = false;
+				deferred = false;
 				continue;
 			}
-			if (st.qualified) q++;
-			c += st.ons;
-			if (st.ons > 1) consec = true;
+			const cc = st.ons;
+			const u = unmatched + (st.qualified ? 1 : 0);
+			if (cc >= 2 && containsComma) return false; // mixing consecutive ON/USING with a comma join
+			if (deferred || cc > u) {
+				if (cc >= 2) return false; // more join conditions than joins that require one
+				deferred = true; // single over-count: defer; thrown only if a later ≥2-clause step hits it
+			}
+			unmatched = u - cc;
+			if (cc >= 2) transformNeeded = true;
 		}
-		return !consec || c === q;
+		// When a consecutive-ON "join rewrite" occurred, ZetaSQL runs a second pass
+		// (ProcessFlattenedJoinExpression) that re-pairs each ON/USING with a join; if any qualified join
+		// is left without a matching condition the flattened stack does not reduce to one node and it
+		// errors ("… JOIN must have an ON or USING clause"). Replay that stack reduction here.
+		return transformNeeded ? this.joinPhase2(steps) : true;
+	}
+	// ZetaSQL join_processor.cc ProcessFlattenedJoinExpression, replayed over the join steps. Builds the
+	// source-order token stream (T=operand, Q=qualified-join marker, X=cross/comma/natural-join marker,
+	// O=ON/USING clause) and reduces it: a Q pushes a pending join (join_count++), an O matches the top
+	// (lhs, join, rhs)→one node (join_condition_count++, both counts reset when equal — a new block), an
+	// X folds lhs with the next operand. Valid iff the stack reduces to exactly one node.
+	private joinPhase2(steps: any[]): boolean {
+		const toks: string[] = ["T"]; // leading table_primary
+		for (const s of steps ?? []) {
+			const st = this.joinStep(s);
+			toks.push(st.comma || !st.qualified ? "X" : "Q", "T");
+			for (let k = 0; k < st.ons; k++) toks.push("O");
+		}
+		const stack: string[] = [];
+		let jc = 0;
+		let jcc = 0;
+		for (let i = 0; i < toks.length; i++) {
+			const t = toks[i];
+			if (t === "T") {
+				stack.push("T");
+			} else if (t === "Q") {
+				jc++;
+				stack.push("Q");
+			} else if (t === "X") {
+				if (!stack.length || toks[i + 1] !== "T") return false;
+				stack.pop();
+				i++; // fold lhs with the next operand → one node
+				stack.push("T");
+			} else {
+				jcc++;
+				if (jcc === jc) {
+					jc = 0;
+					jcc = 0;
+				}
+				if (stack.length < 3) return false;
+				stack.pop();
+				stack.pop();
+				stack.pop();
+				stack.push("T");
+			}
+		}
+		return stack.length === 1;
 	}
 	private checkGraphEdgeAdjacency(ctx: any): void {
 		const lt = ctx.LT_OPERATOR?.()?.symbol;
