@@ -1,5 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import {
+	Graph_call_operator_coreContext,
+	Pipe_callContext,
 	Select_clauseContext,
 	Select_column_dot_starContext,
 	Shift_operatorContext,
@@ -45,6 +47,9 @@ function hasTopLevelBinaryOp(text: string): boolean {
  *   own OPTIONS, leaving an empty SELECT list ("SELECT list must not be empty" / "Unexpected ,"). ANTLR
  *   instead reads `OPTIONS(…)` as a select item (so the with-clause has no OPTIONS); detect that shape —
  *   a `WITH <id>` with no OPTIONS whose first select item is an `OPTIONS(…)` call — and reject it.
+ * - CALL tvf suffixes: googlesql.tm `pipe_call` is `CALL tvf as_alias?` (no PIVOT/UNPIVOT) and a graph
+ *   `CALL … tvf` takes a bare tvf (no alias, no pivot). Our shared tvf_with_suffixes permits both, so
+ *   flag a pipe CALL with a PIVOT/UNPIVOT, and a graph CALL with any tvf alias/pivot suffix.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -71,6 +76,11 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier() && !first.select_column_expr_with_as_alias()) {
 				if (/^OPTIONS\s*\(.*\)$/is.test(first.expression()?.getText() ?? "")) errors++;
 			}
+		} else if (node instanceof Pipe_callContext) {
+			const suffix = node.tvf_with_suffixes().pivot_or_unpivot_clause_and_aliases();
+			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) errors++; // pipe CALL takes no PIVOT/UNPIVOT
+		} else if (node instanceof Graph_call_operator_coreContext) {
+			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
