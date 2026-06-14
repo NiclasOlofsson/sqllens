@@ -1,10 +1,27 @@
-// Extract a parse corpus from ZetaSQL's .test golden files.
+// Extract a parse corpus from ZetaSQL's ANALYZER golden files (googlesql/analyzer/testdata).
 // Each .test file is `==`-separated blocks; the query precedes `--`, the expected result follows.
-// Expected starting with "ERROR: Syntax error" => the query must NOT parse (negative); anything else
-// (a resolved AST, or a semantic ERROR) => the query must parse (positive). `{{a|b}}` alternations
-// are expanded combinatorially (capped per block to avoid blow-up). Run: node tools/extract-googlesql-tests.mjs
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
+// A negative is a query that does not parse (a "Syntax error" or a custom structural parser error);
+// anything else — a resolved AST, or a post-parse semantic / "not supported" error — is a positive.
+// `{{a|b}}` alternations expand combinatorially (capped per block) and are classified per variant.
+//
+// All extraction/classification is shared with the parser-testdata extractor via
+// tools/googlesql-testdata.mjs so the two gates grade identically (feature-aware alternation label
+// matching, custom-error handling, plural ALTERNATION GROUPS, the `\--`/array/directive cleaning).
+// Run: node tools/extract-googlesql-tests.mjs
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	blockDir,
+	blockModeOverride,
+	blocks,
+	classifyVariants,
+	cleanQuery,
+	defaultModeOf,
+	expand,
+	fileDefaultDir,
+	isAnalyzerSyntaxError,
+	normalize,
+} from "./googlesql-testdata.mjs";
 
 const SRC = "vendor/googlesql/googlesql/analyzer/testdata";
 const OUT = "harness/local/bigquery-zetasql";
@@ -15,106 +32,43 @@ if (!existsSync(SRC)) {
 	process.exit(1);
 }
 
-/**
- * Expand `{{a|b|c}}` alternations into all variants. Empty option (e.g. `{{x.|}}`) => "".
- * Non-greedy `[\s\S]*?` so an option may itself contain a single `}` (e.g. `{{|{1}}}`, a graph
- * quantifier, or a `{prop: v}` spec) — the delimiter is `}}`, not `}`. Leftmost group varies
- * slowest, which matches ZetaSQL's ALTERNATION GROUP emission order (see classifyVariants).
- */
-function expand(query) {
-	const m = query.match(/\{\{([\s\S]*?)\}\}/);
-	if (!m) return [query];
-	const opts = m[1].split("|");
-	return opts.flatMap((o) => expand(query.slice(0, m.index) + o + query.slice(m.index + m[0].length)));
-}
-
-function blocks(text) {
-	return text.split(/^==$/m); // top-level test separator
-}
-
-function cleanQuery(raw) {
-	// Drop leading `[options...]` lines and `#` comment lines; keep the SQL.
-	return raw
-		.split("\n")
-		.filter((l) => !/^\s*\[/.test(l) && !/^\s*#/.test(l))
-		.join("\n")
-		.trim();
-}
-
-// ZetaSQL analyzer tests run in a `mode`: statement (default), expression, or type, selecting the
-// ParseScript / ParseExpression / ParseType entry point. Our parser only exposes the statement
-// entry (`root`), so a bare expression or type isn't a parseable "statement". To keep the corpus a
-// statement-parse corpus while preserving expression coverage, expression-mode blocks are wrapped
-// as `SELECT (<expr>)` (faithful — routes the expression through the statement grammar) and
-// type-mode blocks are dropped (type-name syntax is already exercised by every CAST / column-def
-// in the statement-mode files; wrapping types is fragile on the negative cases).
-function defaultModeOf(text) {
-	const m = text.match(/^\[default mode=([a-z_]+)\]/m);
-	return m ? m[1] : "statement";
-}
-
-function blockModeOverride(rawQuerySection) {
-	const m = rawQuerySection.match(/^\s*\[mode=([a-z_]+)\]/m);
-	return m ? m[1] : undefined;
-}
-
-/** Apply the effective mode to a cleaned query. Returns the SQL to emit, or null to skip. */
+// ZetaSQL analyzer tests run in a `mode`: statement (default), expression, measure_expression, or
+// type, selecting the ParseScript / ParseExpression / ParseType entry. Our parser exposes only the
+// statement entry (`root`), so a bare expression isn't a parseable statement: expression-mode blocks
+// are wrapped as `SELECT (<expr>)` (faithful) and type-mode blocks are dropped (type-name syntax is
+// already exercised by every CAST / column-def in statement-mode files).
 function applyMode(query, mode) {
 	if (mode === "type") return null;
-	// expression / measure_expression — a bare expression, not a statement; route through SELECT.
 	if (mode === "expression" || mode === "measure_expression") return `SELECT (${query})`;
 	return query;
-}
-
-const isSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(expected.trim());
-
-/**
- * Classify each expanded variant of a block as negative (syntax error) or positive.
- *
- * A `{{a|b}}` block's expected section is a sequence of `ALTERNATION GROUP: <subst>\n--\n<expected>`
- * subsections, emitted in the same order `expand()` produces variants (leftmost group slowest), so
- * we zip them positionally. Without alternations the whole expected applies to the single variant.
- * Returns an array of booleans (negative?) aligned with `variants`.
- */
-function classifyVariants(variants, expectedSection) {
-	if (!/^ALTERNATION GROUP:/m.test(expectedSection)) {
-		const neg = isSyntaxError(expectedSection);
-		return variants.map(() => neg);
-	}
-	// Split into per-group expecteds, in order. Each chunk after a group header is `\n--\n<exp>`
-	// (CRLF-tolerant: strip the leading newline(s) + `--` + newline(s) before the expected text).
-	const chunks = expectedSection.split(/^ALTERNATION GROUP:.*$/m).slice(1);
-	const groupNegatives = chunks.map((c) => isSyntaxError(c.replace(/^[\r\n]*--[\r\n]*/, "")));
-	// Zip positionally; if ZetaSQL emitted fewer groups than we expanded (shouldn't happen), the
-	// trailing variants fall back to the first group's classification.
-	return variants.map((_, i) => groupNegatives[i] ?? groupNegatives[0] ?? false);
 }
 
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "positive"), { recursive: true });
 mkdirSync(join(OUT, "negative"), { recursive: true });
 
-let pos = 0;
-let neg = 0;
+const items = []; // { neg, name, sql }
 let capped = 0;
 let skippedType = 0;
 for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 	const text = readFileSync(join(SRC, file), "utf8");
 	const base = file.replace(/\.test$/, "");
 	const defaultMode = defaultModeOf(text);
+	const defaultDir = fileDefaultDir(text);
 	let i = 0;
 	for (const block of blocks(text)) {
 		const sep = block.indexOf("\n--");
 		if (sep === -1) continue; // no expected section; skip prose-only blocks
 		const querySection = block.slice(0, sep);
 		const mode = blockModeOverride(querySection) ?? defaultMode;
+		const directive = blockDir(querySection) ?? defaultDir;
 		const query = cleanQuery(querySection);
 		if (!query) continue;
 		const expectedSection = block.slice(sep + 3);
 		const all = expand(query);
 		if (all.length > MAX_VARIANTS) capped++;
-		// Per-variant classification (alternation groups carry per-variant expecteds).
-		const negatives = classifyVariants(all, expectedSection);
+		// Analyzer testdata: only "ERROR: Syntax error" is a parse error; semantic errors parse fine.
+		const negatives = classifyVariants(query, expectedSection, directive, isAnalyzerSyntaxError);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
@@ -123,13 +77,28 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 				skippedType++;
 				continue;
 			}
-			const dir = negatives[v] ? "negative" : "positive";
-			writeFileSync(join(OUT, dir, `${base}_${i++}.sql`), emitted + "\n");
-			if (negatives[v]) neg++;
-			else pos++;
+			items.push({ neg: negatives[v], name: `${base}_${i++}.sql`, sql: emitted });
 		}
 	}
 }
+
+// Cross-corpus dedup: a feature-off case under a FIXED directive lands in the negative bucket, but if
+// the identical SQL is tested with the feature ON elsewhere it is a positive there too. We implement
+// the feature, so we correctly accept it — drop the negative copy.
+const posSql = new Set(items.filter((it) => !it.neg).map((it) => normalize(it.sql)));
+let pos = 0;
+let neg = 0;
+let dedup = 0;
+for (const it of items) {
+	if (it.neg && posSql.has(normalize(it.sql))) {
+		dedup++;
+		continue;
+	}
+	writeFileSync(join(OUT, it.neg ? "negative" : "positive", it.name), it.sql + "\n");
+	if (it.neg) neg++;
+	else pos++;
+}
 console.log(`extracted: ${pos} positive, ${neg} negative (skipped ${skippedType} type-mode) -> ${OUT}`);
+console.log(`feature-aware: ${dedup} negative(s) dropped as feature-off duplicates of a positive`);
 if (capped)
 	console.log(`note: ${capped} block(s) had >${MAX_VARIANTS} {{}} variants; capped to the first ${MAX_VARIANTS}`);

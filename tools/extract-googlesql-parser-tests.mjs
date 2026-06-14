@@ -6,16 +6,23 @@
 // analyzer corpus, the negatives here are *true* syntax errors (the parser's own error productions),
 // so this gate is a cleaner two-sided signal and the positives are parseable by construction.
 //
-// Classification mirrors the analyzer extractor: expected starting with "ERROR: Syntax error" =>
-// the query must NOT parse (negative); anything else (a parse tree, or a non-syntax "… is not
-// supported" error the parser emits *after* parsing) => the query must parse (positive). `{{a|b}}`
-// alternations expand combinatorially and are classified per-variant via the ALTERNATION GROUP
-// subsections. Block options (`[default …]`, `[language_features=…]`, `[node_kind=…]`) and `#`
-// comments are stripped — they are test directives, not SQL. There are no analyzer modes here.
-//
-// Run: node tools/extract-googlesql-parser-tests.mjs
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync, rmSync } from "node:fs";
+// Block options (`[default …]`, `[language_features=…]`, `[node_kind=…]`) and `#` comments are
+// stripped; alternations are classified per-variant by reconstructing their ALTERNATION GROUP labels.
+// All shared extraction/classification lives in tools/googlesql-testdata.mjs (kept identical to the
+// analyzer extractor). Run: node tools/extract-googlesql-parser-tests.mjs
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import {
+	blockDir,
+	blockModeOverride,
+	blocks,
+	classifyVariants,
+	cleanQuery,
+	defaultModeOf,
+	expand,
+	fileDefaultDir,
+	normalize,
+} from "./googlesql-testdata.mjs";
 
 const SRC = "vendor/googlesql/googlesql/parser/testdata";
 const OUT = "harness/local/bigquery-zetasql-parser";
@@ -29,215 +36,17 @@ if (!existsSync(SRC)) {
 	process.exit(1);
 }
 
-/**
- * Expand `{{a|b|c}}` alternations into all variants. Empty option (e.g. `{{x.|}}`) => "".
- * Non-greedy so an option may itself contain a single `}` (graph quantifier, `{prop: v}` spec);
- * the delimiter is `}}`. Leftmost group varies slowest — matches ZetaSQL's ALTERNATION GROUP order.
- */
-function expand(query) {
-	const m = query.match(/\{\{([\s\S]*?)\}\}/);
-	if (!m) return [query];
-	const opts = m[1].split("|");
-	return opts.flatMap((o) => expand(query.slice(0, m.index) + o + query.slice(m.index + m[0].length)));
-}
-
-function blocks(text) {
-	return text.split(/^==$/m); // top-level test separator
-}
-
-// A `[options…]` directive line: `[` then a lowercase keyword then `=`, a space, or `]`
-// (`[language_features=…]`, `[default …]`, `[mode=…]`, `[reserve_graph_table]`). This deliberately
-// does NOT match a SQL array constructor on its own line (`[1,2,3]`, `[1, e]`, `[col, x]`), which
-// starts with a digit/expression — those must survive into the query (lambda/array cases).
-const DIRECTIVE_LINE = /^\s*\[[a-z][a-z0-9_]*\s*[=\] ]/;
-function cleanQuery(raw) {
-	// Drop directive lines and `#` comment lines; keep the SQL. The .test format escapes an INPUT line
-	// that itself begins with `--` or `==` (which would collide with the input/expected `--` and block
-	// `==` separators) by prefixing a backslash; unescape those so the real comment line is recovered
-	// (`\--comment` → `--comment`).
-	return raw
-		.split("\n")
-		// A directive line may itself carry an alternation (`[{{|no_}}qualify_reserved]`); test with the
-		// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array).
-		.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*#/.test(l))
-		.map((l) => l.replace(/^\\(--|==)/, "$1"))
-		.join("\n")
-		.trim();
-}
-
-// The parser testdata also uses analyzer-style modes: `type` (bare type names), `expression`
-// (bare expressions), `script` / `statement` (top-level statements). Our entry is `root` (a
-// script of statements), so type-mode blocks aren't statements (drop) and expression-mode blocks
-// are wrapped as `SELECT (…)`; script/statement pass through.
-const defaultModeOf = (text) => text.match(/^\[default mode=([a-z_]+)\]/m)?.[1] ?? "statement";
-const blockModeOverride = (querySection) => querySection.match(/^\s*\[mode=([a-z_]+)\]/m)?.[1];
+// The parser testdata uses analyzer-style modes: `type` (bare type names — dropped, not a statement),
+// `expression` (bare expressions — wrapped as `SELECT (…)`), `script`/`statement` (pass through).
 function applyMode(query, mode) {
 	if (mode === "type") return null;
 	if (mode === "expression") return `SELECT (${query})`;
 	return query;
 }
 
-// An expected `ERROR:` means the query did not parse — a NEGATIVE — EXCEPT a post-parse feature/
-// support rejection ("… is not supported", "… is not implemented", "… is not a supported object
-// type"). Those we accept: our parser is a permissive superset (every GoogleSQL feature ON), and a
-// feature-OFF rejection for a feature WE implement reads exactly that way; DDL object-type rejections
-// are post-parse too and are excluded from the gate as detect-only. Genuine structural parser errors
-// with custom messages — "EXCEPT must be followed by ALL, DISTINCT, or (", "Expected keyword X but
-// got Y", "The argument to UNNEST is an expression, not a query", "DEFINE MACRO … cannot be nested" —
-// are real syntax errors and stay negatives even though they don't start with "Syntax error".
-// An expected block may begin with bracketed directive lines (e.g. `[NEWLINE \n]`) before the ERROR
-// or parse tree; strip them so the error check sees the real first content line.
-const stripExpectedDirectives = (expected) =>
-	expected.replace(/^(?:\s*\[[^\]]*\]\s*\r?\n)+/, "").trim();
-const startsWithSyntaxError = (expected) => /^ERROR:\s*Syntax error/i.test(stripExpectedDirectives(expected));
-const isError = (expected) => /^ERROR:/i.test(stripExpectedDirectives(expected));
-// A feature/support rejection only when the message is ABOUT support — and only if it is not already
-// flagged as a "Syntax error" (those, e.g. "Syntax error: WHERE not supported after FROM query", are
-// genuine parse errors that merely happen to contain the word "supported").
-const isFeatureRejection = (expected) =>
-	/\bnot\s+(a\s+)?supported\b|\bnot\s+implemented\b/i.test(expected);
-const isSyntaxError = (expected) =>
-	startsWithSyntaxError(expected) || (isError(expected) && !isFeatureRejection(expected));
-
-// Feature-aware grading. ZetaSQL's parser is feature-gated: a `[language_features=…]` directive turns
-// LanguageFeatures on/off, and a syntax that needs a disabled feature reports a *Syntax error*. Our
-// parser is a permissive superset — every feature we implement is permanently ON — so a case that is
-// a "syntax error" *only because a feature we implement is disabled* is one we correctly accept; it is
-// NOT a valid negative for us. We therefore grade each case by the alternation group matching OUR
-// feature config (the IMPLEMENTED set, all on) instead of the test's first (usually feature-off) group.
-//
-// IMPLEMENTED is deliberately conservative — only the query-layer features we have actually built. A
-// feature we do NOT implement (Spanner-legacy DDL, dashed/slashed paths, …) is graded feature-OFF, so
-// those negatives stay in the bucket to be driven to rejection by tightening the grammar, not excluded.
-const IMPLEMENTED = new Set([
-	"PIPES",
-	"STATEMENT_WITH_PIPE_OPERATORS",
-	"SQL_GRAPH",
-	"SQL_GRAPH_ADVANCED_QUERY",
-	"SQL_GRAPH_PATH_TYPE",
-	"SQL_GRAPH_BOUNDED_PATH_QUANTIFICATION",
-	"FOR_UPDATE",
-	"QUALIFY",
-	"LIMIT_ALL",
-	"IS_DISTINCT",
-	"BRACED_PROTO_CONSTRUCTORS",
-	"WITH_GROUP_ROWS",
-]);
-
-const featureTokens = (s) => [...s.matchAll(/\+([A-Z][A-Z0-9_]*)/g)].map((m) => m[1]);
-
-/**
- * Expand `{{a|b}}` like `expand`, but also record, per result, the chosen option text at each `{{}}`
- * in source order. The label sequence lets us reconstruct ZetaSQL's per-cell ALTERNATION GROUP label.
- */
-function expandWithLabels(query) {
-	const m = query.match(/\{\{([\s\S]*?)\}\}/);
-	if (!m) return [{ sql: query, labels: [] }];
-	const opts = m[1].split("|");
-	return opts.flatMap((o) =>
-		expandWithLabels(query.slice(0, m.index) + o + query.slice(m.index + m[0].length)).map((r) => ({
-			sql: r.sql,
-			labels: [o, ...r.labels],
-		})),
-	);
-}
-
-/**
- * Our chosen option text at each `{{}}` in the directive — the option that enables the most IMPLEMENTED
- * features and no unimplemented ones, i.e. the feature config our permissive superset represents.
- */
-function directiveChoices(directive) {
-	const choices = [];
-	for (const m of directive.matchAll(/\{\{([\s\S]*?)\}\}/g)) {
-		const opts = m[1].split("|");
-		let best = opts[0];
-		let bestScore = -1;
-		for (const o of opts) {
-			const feats = featureTokens(o);
-			if (feats.every((f) => IMPLEMENTED.has(f)) && feats.length > bestScore) {
-				bestScore = feats.length;
-				best = o;
-			}
-		}
-		choices.push(best);
-	}
-	return choices;
-}
-
-/**
- * Map each ALTERNATION GROUP label → its negative flag. ZetaSQL labels a cell by joining the chosen
- * alternation option texts — directive `{{}}`s then query `{{}}`s, in source order — with ",", and uses
- * "<empty>" when every choice is empty. `ALTERNATION GROUP: <label>` (singular) carries one label on
- * the header; `ALTERNATION GROUPS:` (plural) lists several labels (sharing one expected) on the lines
- * before `--`. Returns null when the block has no alternations at all.
- */
-function buildLabelMap(expectedSection) {
-	if (!/^ALTERNATION GROUPS?:/m.test(expectedSection)) return null;
-	const map = new Map();
-	const heads = [...expectedSection.matchAll(/^ALTERNATION GROUP(S)?:(.*)$/gm)];
-	for (let h = 0; h < heads.length; h++) {
-		const plural = heads[h][1] === "S";
-		const start = heads[h].index + heads[h][0].length;
-		const end = h + 1 < heads.length ? heads[h + 1].index : expectedSection.length;
-		const body = expectedSection.slice(start, end);
-		const labels = [];
-		let expectedText;
-		if (plural) {
-			const lines = body.replace(/^[\r\n]+/, "").split("\n");
-			let i = 0;
-			while (i < lines.length && lines[i].trim() !== "--") {
-				if (lines[i].trim()) labels.push(lines[i].trim());
-				i++;
-			}
-			expectedText = lines.slice(i).join("\n").replace(/^[\r\n]*--[\r\n]*/, "");
-		} else {
-			labels.push(heads[h][2].trim());
-			const ci = body.indexOf("--");
-			expectedText = ci === -1 ? body : body.slice(ci + 2);
-		}
-		const neg = isSyntaxError(expectedText);
-		for (const lab of labels) map.set(lab, neg);
-	}
-	return map;
-}
-
-/**
- * Classify each expanded query variant as negative (the query must not parse for our feature config)
- * or positive. We reconstruct the ALTERNATION GROUP label of each cell — our directive feature choices
- * plus the variant's own query choices, joined with "," (ZetaSQL's labelling) — and look it up. This is
- * robust to multi-dimensional alternations and to ZetaSQL grouping several combos under one expected
- * (where a positional grid is ambiguous). Falls back to the single non-alternation expected.
- */
-function classifyVariants(query, expectedSection, directive) {
-	const withLabels = expandWithLabels(query);
-	const labelMap = buildLabelMap(expectedSection);
-	if (!labelMap) return withLabels.map(() => isSyntaxError(expectedSection));
-	const dChoices = directiveChoices(directive);
-	return withLabels.map((v) => {
-		// ZetaSQL joins the chosen option texts (directive then query, source order) with "," to label
-		// a cell, TRIMMING each choice (the ALTERNATION GROUP labels in the expected are trimmed), then
-		// drops LEADING empty choices (their separator too) while keeping empty middle/trailing ones
-		// (`,+PIPES,,commit`, `,+PIPES,`); all-empty is "<empty>". Without the per-choice trim, options
-		// written with surrounding whitespace (`{{ a | b }}`) never match the trimmed labels and fall to
-		// the majority-vote fallback — silently mis-bucketing ~220 corpus cases.
-		const parts = [...dChoices, ...v.labels].map((p) => p.trim());
-		while (parts.length && parts[0] === "") parts.shift();
-		const joined = parts.join(",");
-		const key = joined === "" ? "<empty>" : joined;
-		if (labelMap.has(key)) return labelMap.get(key);
-		// Unmatched (label-format edge): default to the most common verdict among the groups.
-		const negs = [...labelMap.values()];
-		return negs.filter(Boolean).length >= negs.length / 2;
-	});
-}
-
 rmSync(OUT, { recursive: true, force: true });
 mkdirSync(join(OUT, "positive"), { recursive: true });
 mkdirSync(join(OUT, "negative"), { recursive: true });
-
-const fileDefaultDir = (text) => text.match(/^\[default language_features=([^\]]*)\]/m)?.[1] ?? "";
-const blockDir = (querySection) => querySection.match(/^\s*\[language_features=([^\]]*)\]/m)?.[1];
-const normalize = (s) => s.replace(/\s+/g, " ").trim();
 
 const items = []; // { neg, name, sql }
 let capped = 0;
