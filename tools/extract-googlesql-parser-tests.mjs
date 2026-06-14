@@ -72,7 +72,12 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		const negatives = classifyVariants(query, expectedSection, directive);
 		// A block whose own directive disables an implemented feature the file default enables tests that
 		// feature OFF — we accept such SQL (permissive superset), so its negatives aren't valid for us.
-		const featureOff = disablesImplemented(blockDirective, defaultDir);
+		let featureOff = disablesImplemented(blockDirective, defaultDir);
+		// Bare QUALIFY: BigQuery's docs allow a QUALIFY clause without a preceding WHERE/GROUP BY/HAVING;
+		// ZetaSQL's parser requires one ("QUALIFY clause must be used in conjunction with WHERE or GROUP
+		// BY or HAVING clause"). This repo deliberately follows BigQuery (see CLAUDE.md), so we accept it
+		// — not a valid negative for us.
+		if (/QUALIFY clause must be used in conjunction with WHERE/.test(expectedSection)) featureOff = true;
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
