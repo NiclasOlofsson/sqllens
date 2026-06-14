@@ -38,22 +38,46 @@ function unescapeHtml(s) {
 const STATEMENT_STARTERS =
 	/^(abort|alter|analyze|attach|begin|call|cancel|close|comment|commit|copy|create|deallocate|declare|delete|desc|describe|detach|drop|end|execute|explain|fetch|grant|insert|lock|merge|prepare|reassign|refresh|reset|revoke|rollback|select|set|show|start|truncate|unload|update|vacuum|values|with)\b/i;
 
-// A result-table border line — only dashes/pluses/equals/pipes/spaces, with a run of dashes and
-// at least one column separator. Redshift renders psql-style tables (`----+----`, `+----+`).
+// A psql result-table border line — only dashes/pluses/equals/pipes/spaces, with a run of dashes.
+// Redshift's psql output uses BOTH multi-column borders (`----+----`) and single-column pure-dash
+// rules (`----------------`), so — unlike a +/|-requiring matcher — we accept dash-only borders. A
+// SQL `--` comment is `-- text` (dashes then non-border text), so it is not an all-border line.
 function isResultBorder(line) {
-	return /^[\s\-+=|]+$/.test(line) && /-{3,}/.test(line) && /[+|]/.test(line);
+	return /^[\s\-+=|]+$/.test(line) && /-{3,}/.test(line);
 }
 
-// A leaked English prose line the docs put between the statement and its result.
+// The psql column-header line sits directly above the border (` col1 | col2 ` or ` arrays_overlap `):
+// identifiers/pipes/spaces only, no SQL punctuation and not a statement. Used to also drop that
+// header when cutting at a border (otherwise a single leaked header line reads as trailing input).
+function isHeaderish(line) {
+	const t = line.trim();
+	return (
+		t !== "" &&
+		!/[(),;'"*]/.test(line) &&
+		!STATEMENT_STARTERS.test(t) &&
+		!/^(from|where|group|order|having|union|join|on|and|or|limit|offset|select)\b/i.test(t)
+	);
+}
+
+// A leaked English prose line the docs put between the statement and its result, or the psql
+// `(N rows)` row-count / `Time:` footers.
 const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:)/;
+const ROWS_FOOTER = /^\s*\(\d+ rows?\)\s*$/;
+const TIMING_FOOTER = /^\s*Time: [\d.]+ ms/;
 
 export function cleanSql(sql) {
 	// Docs HTML renders spacing with non-breaking spaces (U+00A0); SQL has none, so the lexer
 	// would reject them. Normalize to a plain space.
 	sql = sql.replace(/ /g, " ");
 	const lines = sql.split("\n");
-	// Cut at the first result-table border or leaked prose line (output rendered under the SQL).
-	const cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || PROSE_LINE.test(l)));
+	// Cut at the first sign of rendered output under the SQL: a result-table border, a row-count /
+	// timing footer, or a leaked prose line.
+	let cut = lines.findIndex(
+		(l, i) => i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l)),
+	);
+	// psql prints the column header directly above the border — drop it too, so it does not leak as
+	// a bare trailing line (the dominant corpus-noise failure for single-column results).
+	if (cut > 1 && isResultBorder(lines[cut]) && isHeaderish(lines[cut - 1])) cut -= 1;
 	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
