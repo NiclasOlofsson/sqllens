@@ -1,5 +1,9 @@
 import type { ParserRuleContext } from "antlr4ng";
-import { Select_column_dot_starContext, Shift_operatorContext } from "../generated/bigquery/GoogleSQLParser.js";
+import {
+	Select_clauseContext,
+	Select_column_dot_starContext,
+	Shift_operatorContext,
+} from "../generated/bigquery/GoogleSQLParser.js";
 
 // Post-parse syntax validation: rules that ZetaSQL enforces with operator-precedence (%prec) or
 // hand-parser actions that an ANTLR grammar can't express cleanly, and that are too entangled with the
@@ -37,6 +41,10 @@ function hasTopLevelBinaryOp(text: string): boolean {
  * - shift_operator `>>`: the grammar recombines two `>` tokens so nested generics close
  *   (`ARRAY<STRUCT<INT64>>`), but ZetaSQL only lexes `>>` when the two `>` are ADJACENT. With a space —
  *   `1 > > 2` — they are two comparison operators and chaining them is "Unexpected >".
+ * - SELECT WITH <kind> OPTIONS(...): `WITH kind OPTIONS(…)` is the differential-privacy with-clause's
+ *   own OPTIONS, leaving an empty SELECT list ("SELECT list must not be empty" / "Unexpected ,"). ANTLR
+ *   instead reads `OPTIONS(…)` as a select item (so the with-clause has no OPTIONS); detect that shape —
+ *   a `WITH <id>` with no OPTIONS whose first select item is an `OPTIONS(…)` call — and reject it.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -50,6 +58,18 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 				const a = gts[0].symbol;
 				const b = gts[1].symbol;
 				if (a.stop + 1 !== b.start) errors++; // `> >` (spaced) is not the `>>` shift operator
+			}
+		} else if (node instanceof Select_clauseContext) {
+			// `SELECT WITH kind OPTIONS(…)` with the OPTIONS bound (by ZetaSQL) to the with-clause and NO
+			// further select item is an empty SELECT list. ANTLR instead reads it as `WITH kind` + a select
+			// item `OPTIONS(…)`; flag only the bare form — a `WITH <id>` with no OPTIONS whose first item is
+			// an un-aliased `OPTIONS(…)` call (an aliased `OPTIONS(…) x` is a genuine select item, valid).
+			// An intervening ALL/DISTINCT (`WITH kind ALL OPTIONS(…)`) separates the with-clause from the
+			// OPTIONS, so there it IS a select item — only flag the form with no all_or_distinct.
+			const w = node.opt_select_with();
+			const first = node.select_list()?.select_list_item(0)?.select_column_expr();
+			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier() && !first.select_column_expr_with_as_alias()) {
+				if (/^OPTIONS\s*\(.*\)$/is.test(first.expression()?.getText() ?? "")) errors++;
 			}
 		}
 		const count = node.getChildCount();
