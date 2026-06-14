@@ -22,16 +22,23 @@ if (!existsSync(SRC)) {
 }
 
 const TABLESCAN = /TableScan\(column_list=\[([^\]]*)\], table=([A-Za-z0-9_]+)/g;
-const COLUMNREF = /ColumnRef\(type=(.*?), column=([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)#\d+\)/g;
+// ColumnRef(type=<TYPE>[, type_annotation_map={…}], column=<prefix>.<col>#<n>[{…}]). The type capture
+// stops before the optional `, type_annotation_map={…}` (collated columns); the annotation map AND the
+// column's own trailing `{…}` collation tag are skipped so `#<n>)` matches. Without this, a collated
+// ColumnRef either doesn't match (`#n{…})` ≠ `#n)`) or captures "STRING, type_annotation_map={…}" as
+// the type — poisoning CollatedTable and order-dependent KeyValue.
+const COLUMNREF =
+	/ColumnRef\(type=(.*?)(?:, type_annotation_map=\{[^}]*\})?, column=([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)#\d+(?:\{[^}]*\})?\)/g;
 const COLENTRY = /([A-Za-z0-9_]+)\.([A-Za-z0-9_]+)#\d+/g; // inside a column_list
+// Value-table pseudo-columns ZetaSQL surfaces in scans that are not real schema columns.
+const PSEUDO_COLUMNS = new Set(["value", "Filename", "RowId"]);
 
 const tables = new Set(); // real table names (from `table=`)
 const schema = {}; // table -> { col: type | null }
 const pending = []; // [prefix, col, type] from ColumnRefs; applied once the table set is known
-// NOTE (Tier-1 limitation): value-table pseudo-columns (value / Filename / RowId) are harvested as if
-// they were ordinary columns. Fine for the scalar tables the smoke-gate uses; revisit for value tables.
 
 function ensure(table, col) {
+	if (PSEUDO_COLUMNS.has(col)) return; // skip value-table pseudo-columns
 	(schema[table] ??= {});
 	if (!(col in schema[table])) schema[table][col] = null;
 }
@@ -47,21 +54,19 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 			if (prefix === table) ensure(table, col);
 		}
 	}
-	// 2) column types from ColumnRefs (filtered to real tables below)
+	// 2) column types from ColumnRefs (filtered to real tables below). The regex already excludes the
+	// annotation map, so `type` is the bare type.
 	for (const m of text.matchAll(COLUMNREF)) {
 		const [, type, prefix, col] = m;
-		// The non-greedy capture stops at the first `, column=`, which sits AFTER a `type_annotation_map`
-		// (collated columns), so strip that trailing field to recover the bare type.
-		const cleanType = type.replace(/,\s*type_annotation_map=.*$/s, "").trim();
 		// defer: prefix may be a real table or a computed scope ($groupby…); resolve after pass
-		pending.push([prefix, col, cleanType]);
+		pending.push([prefix, col, type.trim()]);
 	}
 }
 
 // Apply types only where the prefix is a real table.
 let typed = 0;
 for (const [prefix, col, type] of pending) {
-	if (!tables.has(prefix)) continue;
+	if (!tables.has(prefix) || PSEUDO_COLUMNS.has(col)) continue;
 	ensure(prefix, col);
 	if (schema[prefix][col] == null) {
 		schema[prefix][col] = type;
