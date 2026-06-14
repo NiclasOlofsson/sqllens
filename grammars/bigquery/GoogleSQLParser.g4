@@ -51,6 +51,25 @@ options {
 		const t = ctx?.getText?.() ?? "";
 		return /^[+-]?(\d[\d.]*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)$/.test(t);
 	}
+	// googlesql.tm lambda_argument_list: a lambda's parameter list is either a bare path expression
+	// (`e`, `a.b.c`) or a parenthesized struct constructor with a top-level comma (`(e, i>0)`, `()`).
+	// A single parenthesized non-path (`(e>0)`), a STRUCT(…) constructor, or any other expression is
+	// "Expecting lambda argument list". `()` is its own grammar alt; this validates the expression alt.
+	private lambdaArgListValid(text: string): boolean {
+		const t = (text ?? "").trim();
+		if (/^(`[^`]*`|[A-Za-z_]\w*)(\s*\.\s*(`[^`]*`|[A-Za-z_]\w*))*$/.test(t)) return true; // bare path
+		if (!t.startsWith("(") || !t.endsWith(")")) return false;
+		// Parenthesized: a struct constructor (a top-level comma → any element kinds, `(e, i>0)`) or a
+		// single parenthesized path (`(e)`, `(a.b.c)`). A single parenthesized non-path (`(e>0)`) is not.
+		let depth = 0;
+		for (let k = 0; k < t.length; k++) {
+			const c = t[k];
+			if (c === "(") depth++;
+			else if (c === ")") depth--;
+			else if (c === "," && depth === 1) return true;
+		}
+		return this.lambdaArgListValid(t.slice(1, -1));
+	}
 	// A graph path factor is a bare edge pattern only when it is an UNquantified graph_edge_pattern.
 	// A quantified edge (`-[e]->{1,3}`) is a path pattern in ZetaSQL (ASTGraphPathPattern), not an edge,
 	// so a hint adjacent to it is allowed — only a hint between two bare edges is ambiguous/rejected.
@@ -464,11 +483,14 @@ graph_edge_pattern:
 graph_node_pattern:
 	LR_BRACKET_SYMBOL graph_element_pattern_filler RR_BRACKET_SYMBOL;
 
-// graph-patterns element filler: name, label filter, property spec, WHERE, COST (all optional;
-// WHERE and the {prop:…} spec are mutually exclusive semantically, allowed together grammatically).
+// graph-patterns element filler: name, label filter, property spec, WHERE, COST (all optional). The
+// {prop:…} spec and a WHERE clause cannot both appear — ZetaSQL "WHERE clause cannot be used together
+// with property specification".
 graph_element_pattern_filler:
 	hint? opt_graph_element_identifier? opt_is_label_expression? graph_property_specification?
-		where_clause? opt_graph_cost?;
+		where_clause? opt_graph_cost? {
+		if (localContext.graph_property_specification() && localContext.where_clause()) this.notifyErrorListeners("Syntax error: WHERE clause cannot be used together with property specification", null, null);
+	};
 
 opt_graph_cost: COST_SYMBOL expression;
 
@@ -3005,10 +3027,13 @@ named_argument:
 	| identifier EQUAL_GT_BRACKET_SYMBOL INPUT_SYMBOL TABLE_SYMBOL;
 
 lambda_argument:
-	lambda_argument_list SUB_GT_BRACKET_SYMBOL expression;
+	lambda_argument_list SUB_GT_BRACKET_SYMBOL expression {
+		const al = localContext.lambda_argument_list();
+		if (al?.expression() && !this.lambdaArgListValid(al.getText())) this.notifyErrorListeners("Syntax error: Expecting lambda argument list", null, null);
+	};
 
 lambda_argument_list:
-	/* XXX(zp): expr kind check expression*/ expression
+	expression
 	| LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
 
 // GoogleSQL allows `LIMIT ALL` (no row cap) as well as `LIMIT n [OFFSET m]`.
