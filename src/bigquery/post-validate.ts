@@ -1,5 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import {
+	Analyze_statementContext,
 	Expression_higher_prec_than_andContext,
 	Graph_call_operator_coreContext,
 	Pipe_aggregate_itemContext,
@@ -71,6 +72,8 @@ function hasTopLevelBinaryOp(text: string): boolean {
  * - LIKE ANY/SOME/ALL chained on a comparison: `'1' IN (…) LIKE ANY (…)` — the LIKE-quantified alts
  *   lack the inline non-associativity guard the plain comparison alts have, so a comparison-family LHS
  *   ("Expression to the left of LIKE must be parenthesized") slips through.
+ * - ANALYZE OPTIONS: `OPTIONS` after ANALYZE commits to the OPTIONS keyword (which needs `(...)`), so
+ *   `ANALYZE OPTIONS` / `ANALYZE OPTIONS, T` — where it is read as a table name — is a syntax error.
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -107,6 +110,10 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 		} else if (node instanceof Expression_higher_prec_than_andContext) {
 			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
 			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0))) errors++;
+		} else if (node instanceof Analyze_statementContext) {
+			// A bare `OPTIONS` table name is really the OPTIONS keyword (which requires `(...)`).
+			const firstTable = node.table_and_column_info_list()?.table_and_column_info(0);
+			if (!node.opt_options_list() && /^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? "")) errors++;
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
