@@ -4,6 +4,7 @@ import {
 	Expression_higher_prec_than_andContext,
 	Expression_maybe_parenthesized_not_a_queryContext,
 	Graph_call_operator_coreContext,
+	Graph_linear_operator_listContext,
 	Pipe_aggregate_itemContext,
 	Pipe_callContext,
 	Select_clauseContext,
@@ -112,6 +113,14 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) errors++; // pipe CALL takes no PIVOT/UNPIVOT
 		} else if (node instanceof Graph_call_operator_coreContext) {
 			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
+		} else if (node instanceof Graph_linear_operator_listContext) {
+			// After `FOR x IN expr`, a `WITH` binds to the FOR's offset clause — it must be `WITH OFFSET`.
+			// A FOR with no offset directly followed by a WITH operator is "Expected keyword OFFSET …".
+			const ops = node.graph_linear_operator();
+			for (let k = 0; k < ops.length - 1; k++) {
+				const forOp = ops[k].graph_for_operator();
+				if (forOp && !forOp.opt_with_offset_and_alias_with_required_as() && ops[k + 1].graph_with_operator()) errors++;
+			}
 		} else if (node instanceof Pipe_aggregate_itemContext) {
 			if (node.opt_selection_item_order() && node.pipe_selection_item().select_column_dot_star()) errors++; // no ASC/DESC on a dot-star
 		} else if (node instanceof Expression_higher_prec_than_andContext) {
