@@ -99,6 +99,11 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		// read as a regular function call and the MATCH errors ("Expected ")" but got keyword MATCH"). We
 		// always reserve GRAPH_TABLE (the GoogleSQL default), so this is a config we don't model — accept.
 		if (/Expected "\)" but got keyword MATCH/.test(expectedSection)) featureOff = true;
+		// ALLOW_DASHES_IN_TABLE_NAME off → "Table name contains '-' character …". We implement dashed
+		// table names (maybe_dashed_path_expression — `my-project.dataset.table`), so these are feature-off
+		// for us. (A dashed name with NUMERIC components in a DML target — `project-987654321.a.b` — is a
+		// separate partial-coverage gap; tracked in docs, not yet parsed.)
+		if (/Table name contains '-' character/.test(expectedSection)) featureOff = true;
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
