@@ -9,6 +9,7 @@ import {
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";
+import { countPostParseErrors } from "./post-validate.js";
 
 export interface ParseResult {
 	/** The CST rooted at `root` (`stmts EOF`). */
@@ -55,7 +56,8 @@ export function parseBigQuery(sql: string): ParseResult {
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		return { tree: parser.root(), errors };
+		const tree = parser.root();
+		return { tree, errors: errors + countPostParseErrors(tree) };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -64,6 +66,7 @@ export function parseBigQuery(sql: string): ParseResult {
 		errors = lexErrors;
 		parser.removeErrorListeners();
 		parser.addErrorListener(listener as never);
-		return { tree: parser.root(), errors };
+		const tree = parser.root();
+		return { tree, errors: errors + countPostParseErrors(tree) };
 	}
 }
