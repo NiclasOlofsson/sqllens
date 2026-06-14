@@ -2467,10 +2467,12 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
 	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
 		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
 	}
 	| expression_higher_prec_than_and comparative_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs {
 		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
 	}
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
 		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
@@ -2632,10 +2634,12 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_higher_prec_than_and in_operator braced_graph_subquery
 	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
 		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
 	}
 	| expression_higher_prec_than_and comparative_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs {
 		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
 	}
 	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
 		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
