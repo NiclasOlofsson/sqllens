@@ -7,6 +7,7 @@ import { lower } from "../src/databricks/lower.js";
 import type { Expr, QueryBody, QueryExpr } from "../src/ir/ir.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { DatabricksParser as P } from "../src/generated/databricks/DatabricksParser.js";
+import { allPipeStages, stageSubIr } from "./helpers/pipe-walk.js";
 
 // CST<->IR conservation: the parse tree can't omit anything, so for each construct the CST
 // contains, the IR must represent it. Catches sins of OMISSION (dropped structure) that a
@@ -63,6 +64,11 @@ function walkBody(b: QueryBody, acc: Counts): void {
 	if (b.kind === "setop") {
 		walkBody(b.left, acc);
 		walkBody(b.right, acc);
+		return;
+	}
+	if (b.kind === "pipe") {
+		walkBody(b.input, acc);
+		for (const stage of allPipeStages(b)) for (const q of stageSubIr(stage)) irCounts(q, acc);
 		return;
 	}
 	if (b.where) acc.where++;

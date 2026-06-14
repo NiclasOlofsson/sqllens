@@ -1,8 +1,12 @@
 import type {
 	ColumnRef,
 	CteDef,
+	GraphTableSource,
 	LateralViewSource,
+	PipeExpr,
+	PipeStage,
 	PivotInfo,
+	Projection,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,
@@ -38,6 +42,15 @@ export interface Scope {
 	outputs: string[] | "unknown";
 	/** For a set-op body, the left/right branch scopes (also in `children`). */
 	branches?: { left: Scope; right: Scope };
+	/** For a pipe body (body.kind === "pipe"): the input relation's scope and the ordered per-stage
+	 *  scopes (all also in `children`). The pipe's output is the last stage's output (input's if empty). */
+	pipe?: { input: Scope; stages: Scope[] };
+	/** When this scope IS a pipe stage: the stage it resolves and the scope of the relation entering it
+	 *  (the previous stage, or the pipe input for the first). Its `sources` hold that incoming relation
+	 *  (unqualified) plus any source the stage adds (a JOIN); its outputs are the stage transform applied
+	 *  to the incoming columns. */
+	pipeStage?: PipeStage;
+	pipeIncoming?: Scope;
 	parent?: Scope;
 	children: Scope[];
 	/** The dialect this query was lowered from ("databricks" | "tsql"). Drives dialect-specific
@@ -54,7 +67,13 @@ export type ResolvedSource =
 	| { kind: "table"; name: string[]; source: TableSource }
 	| { kind: "cte"; ref: CteRef; source: TableSource }
 	| { kind: "subquery"; scope: Scope; source: SubquerySource }
-	| { kind: "lateral"; source: LateralViewSource };
+	| { kind: "lateral"; source: LateralViewSource }
+	/** The relation entering a pipe stage — the previous stage's (or the pipe input's) output, exposed
+	 *  unqualified. Carries no name of its own; its columns are that scope's outputs. */
+	| { kind: "relation"; scope: Scope }
+	/** A GRAPH_TABLE(…) relation — its own scope binds the graph element variables; its output columns
+	 *  are the COLUMNS / RETURN list. Behaves like a derived (subquery) relation to the enclosing query. */
+	| { kind: "graphtable"; scope: Scope; source: GraphTableSource };
 
 export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
 	return { root: buildQueryScope(query, undefined, dialect), statement: query.statement ?? "other" };
@@ -163,6 +182,7 @@ function aliasNames(scope: Scope): string[] {
 	if (scope.body.kind === "select") {
 		return scope.body.projections.flatMap((p) => (p.name !== undefined ? [p.name] : []));
 	}
+	if (scope.body.kind === "pipe") return scope.pipe ? aliasNames(scope.pipe.stages.at(-1) ?? scope.pipe.input) : [];
 	return scope.branches ? aliasNames(scope.branches.left) : [];
 }
 
@@ -229,23 +249,12 @@ function fillScope(scope: Scope): void {
 		return;
 	}
 
-	for (const source of body.from) {
-		const key = sourceKey(source);
-		if (source.kind === "subquery") {
-			const child = buildQueryScope(source.query, scope);
-			scope.children.push(child);
-			scope.sources.set(key, { kind: "subquery", scope: child, source });
-		} else if (source.kind === "lateral") {
-			scope.sources.set(key, { kind: "lateral", source });
-		} else {
-			// A single-part name that matches a visible CTE is a CTE reference, not a table.
-			const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
-			scope.sources.set(
-				key,
-				cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source },
-			);
-		}
+	if (body.kind === "pipe") {
+		fillPipeScope(scope, body);
+		return;
 	}
+
+	for (const source of body.from) registerSource(scope, source);
 
 	// Scalar / IN / EXISTS subqueries in expressions become child scopes (parent set for correlation).
 	for (const sub of body.subqueries ?? []) {
@@ -254,6 +263,213 @@ function fillScope(scope: Scope): void {
 
 	scope.outputs = computeOutputs(scope, body);
 	registerPivotAliasSource(scope, body);
+}
+
+// --- pipe scopes -----------------------------------------------------------------
+// A pipe body flows the relation through ordered stages. Each stage becomes a child scope whose visible
+// source is the relation ENTERING it (the previous stage, or the pipe input) — exposed unqualified as a
+// "relation" source — plus any source the stage itself adds (a JOIN). The stage's column references
+// resolve against that, so a ref in `|> WHERE x` or `|> SELECT a` binds to the relation visible at that
+// point, with its real span. The pipe's output is the last stage's output.
+
+function fillPipeScope(scope: Scope, body: PipeExpr): void {
+	const input = buildBodyScope(body.input, scope);
+	scope.children.push(input);
+	const stages: Scope[] = [];
+	let incoming = input;
+	for (const stage of body.stages) {
+		const ss = buildStageScope(scope, stage, incoming);
+		scope.children.push(ss);
+		stages.push(ss);
+		incoming = ss;
+	}
+	scope.pipe = { input, stages };
+	scope.outputs = stages.length ? stages[stages.length - 1].outputs : input.outputs;
+}
+
+/** The synthetic body carried by a stage scope — it holds the stage's own column references (for the
+ *  qualify pass to check) and, for projection stages, the projections (for `*` expansion). `from` is
+ *  empty: the stage's relations live on the scope's `sources`, not in a FROM clause. */
+function stageBody(stage: PipeStage): SelectExpr {
+	const projections = projectionsOfStage(stage);
+	const columns = "columns" in stage ? stage.columns : [];
+	return { kind: "select", projections, from: [], columns, aggregated: stage.op === "aggregate", cst: stage.cst };
+}
+
+function projectionsOfStage(stage: PipeStage): Projection[] {
+	if (stage.op === "select" || stage.op === "extend" || stage.op === "window") return stage.projections;
+	if (stage.op === "aggregate") return stage.aggregates;
+	return [];
+}
+
+function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): Scope {
+	const ss = newScope(stageBody(stage), pipeScope, pipeScope.dialect);
+	ss.pipeStage = stage;
+	ss.pipeIncoming = incoming;
+	// The relation entering this stage, exposed unqualified (key "").
+	ss.sources.set("", { kind: "relation", scope: incoming });
+
+	if (stage.op === "join") registerSource(ss, stage.source);
+	if (stage.op === "with") {
+		for (const cte of stage.ctes) {
+			const cteScope = buildQueryScope(cte.body, ss);
+			if (cte.columnAliases) cteScope.outputs = cte.columnAliases;
+			ss.ctes.set(normalizeName(cte.name), { def: cte, scope: cteScope });
+			ss.children.push(cteScope);
+		}
+	}
+	if (stage.op === "setop") for (const q of stage.operands) ss.children.push(buildQueryScope(q, ss));
+	if (stage.op === "recursiveUnion") ss.children.push(buildQueryScope(stage.operand, ss));
+	if (stage.op === "if") for (const arm of stage.arms) buildSubpipeline(ss, arm.pipeline, incoming);
+	if (stage.op === "fork" || stage.op === "tee") for (const br of stage.branches) buildSubpipeline(ss, br, incoming);
+	if (stage.op === "log" && stage.pipeline) buildSubpipeline(ss, stage.pipeline, incoming);
+
+	ss.outputs = stageOutputsFree(stage, incoming.outputs, ss);
+	return ss;
+}
+
+/** Register a FROM/JOIN source on a scope (table / CTE-ref / subquery / lateral / graph-table). */
+function registerSource(scope: Scope, source: Source): void {
+	const key = sourceKey(source);
+	if (source.kind === "subquery") {
+		const child = buildQueryScope(source.query, scope);
+		scope.children.push(child);
+		scope.sources.set(key, { kind: "subquery", scope: child, source });
+	} else if (source.kind === "lateral") {
+		scope.sources.set(key, { kind: "lateral", source });
+	} else if (source.kind === "graphtable") {
+		const child = buildGraphScope(scope, source);
+		scope.children.push(child);
+		scope.sources.set(key, { kind: "graphtable", scope: child, source });
+	} else {
+		const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
+		scope.sources.set(key, cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source });
+	}
+}
+
+/** A GRAPH_TABLE relation's own scope: the graph element variables are its sources (their columns need a
+ *  graph schema, so unknown), and its output columns are the COLUMNS / RETURN projection list. The graph
+ *  WHERE / output expressions resolve against the element variables. */
+function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
+	const refs = [...src.columnRefs];
+	const body: SelectExpr = {
+		kind: "select",
+		projections: src.columns,
+		from: [],
+		columns: refs,
+		where: src.where,
+		aggregated: false,
+		cst: src.cst,
+	};
+	const scope = newScope(body, parent, parent.dialect);
+	for (const el of src.elements) {
+		if (!el.variable) continue;
+		const ts: TableSource = { kind: "table", name: [el.variable], alias: el.variable, cst: el.variableCst ?? el.cst };
+		scope.sources.set(normalizeName(el.variable), { kind: "table", name: [el.variable], source: ts });
+	}
+	scope.outputs = outputsOf(body);
+	return scope;
+}
+
+/** A sub-pipeline (IF/FORK/TEE/LOG branch): stages applied to `incoming`, built as child scopes. */
+function buildSubpipeline(parent: Scope, stages: PipeStage[], incoming: Scope): void {
+	let cur = incoming;
+	for (const stage of stages) {
+		const ss = buildStageScope(parent, stage, cur);
+		parent.children.push(ss);
+		cur = ss;
+	}
+}
+
+/** Schema-free output columns of a stage given the incoming columns. Conservative: anything needing a
+ *  catalog (a JOINed table's columns, a TVF's output, a PIVOT/reshape) is "unknown" here and refined by
+ *  qualify. Pass-through stages keep the incoming columns; column-set transforms apply their change. */
+function stageOutputsFree(stage: PipeStage, incoming: string[] | "unknown", scope: Scope): string[] | "unknown" {
+	switch (stage.op) {
+		case "where":
+		case "orderBy":
+		case "limit":
+		case "distinct":
+		case "tablesample":
+		case "assert":
+		case "log":
+		case "staticDescribe":
+		case "with":
+		case "set":
+		case "setop":
+		case "recursiveUnion":
+			return incoming;
+		case "drop":
+			if (incoming === "unknown") return "unknown";
+			return incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c)));
+		case "rename":
+			if (incoming === "unknown") return "unknown";
+			return applyRenameList(incoming, stage.renames);
+		case "select":
+			return projectionOutputsFree(stage.projections, incoming);
+		case "aggregate":
+			return aggregateOutputsFree(stage, incoming);
+		case "extend":
+		case "window": {
+			if (incoming === "unknown") return "unknown";
+			const added = simpleProjNames(stage.projections);
+			return added === "unknown" ? "unknown" : [...incoming, ...added];
+		}
+		default:
+			// join / call / pivot / unpivot / matchRecognize / describe / if / fork / tee / export /
+			// create / insert / other — output needs a catalog or is terminal/branching: unknown here.
+			return "unknown";
+	}
+}
+
+/** Project a star-or-named list against the incoming columns (schema-free: incoming is the only source,
+ *  so a qualified `t.*` or an anonymous expression yields "unknown"). */
+function projectionOutputsFree(projections: Projection[], incoming: string[] | "unknown"): string[] | "unknown" {
+	if (projections.length === 0) return "unknown";
+	const names: string[] = [];
+	for (const p of projections) {
+		if (p.isStar) {
+			if (incoming === "unknown") return "unknown";
+			const star = p.expr.kind === "star" ? p.expr : undefined;
+			if (star?.qualifier) return "unknown";
+			names.push(...(star ? applyStarModifiers(incoming, star) : incoming));
+		} else if (p.name !== undefined) {
+			names.push(p.name);
+		} else {
+			return "unknown";
+		}
+	}
+	return names;
+}
+
+/** Pipe AGGREGATE output: the aggregate columns plus the grouping-key columns (GoogleSQL order). */
+function aggregateOutputsFree(
+	stage: Extract<PipeStage, { op: "aggregate" }>,
+	incoming: string[] | "unknown",
+): string[] | "unknown" {
+	const aggs = simpleProjNames(stage.aggregates);
+	if (aggs === "unknown") return "unknown";
+	const keys: string[] = [];
+	for (const g of stage.groupBy) {
+		if (g.kind === "column") keys.push(g.parts[g.parts.length - 1]);
+		else return "unknown"; // a non-column grouping key has no determinable name
+	}
+	return [...aggs, ...keys];
+}
+
+/** Names of a non-star projection list, or "unknown" if any item is a star/anonymous. */
+function simpleProjNames(projections: Projection[]): string[] | "unknown" {
+	const names: string[] = [];
+	for (const p of projections) {
+		if (p.isStar || p.name === undefined) return "unknown";
+		names.push(p.name);
+	}
+	return names;
+}
+
+function applyRenameList(cols: string[], renames: { from: string; to: string }[]): string[] {
+	const map = new Map(renames.map((r) => [normalizeName(r.from), r.to]));
+	return cols.map((c) => map.get(normalizeName(c)) ?? c);
 }
 
 /** A select's output columns, accounting for a PIVOT/UNPIVOT transforming the FROM relation. */
@@ -361,6 +577,7 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
  *  since Databricks identifiers are case-insensitive (so `U.col` binds to a source aliased `u`). */
 function sourceKey(source: Source): string {
 	if (source.kind === "lateral") return normalizeName(source.alias ?? "");
+	if (source.kind === "graphtable") return normalizeName(source.alias ?? source.graph[source.graph.length - 1] ?? "graph_table");
 	const raw = source.alias ?? (source.kind === "table" ? source.name[source.name.length - 1] : "");
 	return normalizeName(raw ?? "");
 }
@@ -370,6 +587,8 @@ function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
 	if (src.kind === "table") return src.source.columnAliases ?? "unknown";
 	if (src.kind === "cte") return src.ref.scope.outputs;
 	if (src.kind === "lateral") return src.source.columns;
+	if (src.kind === "relation") return src.scope.outputs; // a prior pipe stage's relation
+	if (src.kind === "graphtable") return src.scope.outputs;
 	return src.scope.outputs; // subquery
 }
 

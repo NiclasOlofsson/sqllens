@@ -89,6 +89,16 @@ export function cleanSql(sql) {
 	let cut = -1;
 	for (let i = 0; i < lines.length; i++) {
 		const l = lines[i];
+		// EXPLAIN query-plan output: Redshift/Postgres plan nodes carry the unmistakable
+		// "(cost=N..N rows=N …)" annotation. Cut at the plan and also drop a bare introducing
+		// EXPLAIN line (and any blanks) so no dangling statement is left behind.
+		if (i > 0 && /\(cost=[\d.]+\.\.[\d.]+\s+rows=/.test(l)) {
+			let j = i;
+			while (j > 0 && lines[j - 1].trim() === "") j--;
+			if (j > 0 && /^\s*explain\b/i.test(lines[j - 1])) j--;
+			cut = j;
+			break;
+		}
 		if (
 			i > 0 &&
 			(isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l) || isTabular(l))
@@ -109,8 +119,15 @@ export function cleanSql(sql) {
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
 	if (/(^|[\s(,])\.\.\.([\s),;]|$)/.test(kept)) return null; // ellipsis placeholder
-	if (/<[a-z_][a-z0-9_]*>/i.test(kept)) return null; // <placeholder> template, not real SQL
-	if (!/^\(/.test(kept) && !STATEMENT_STARTERS.test(kept)) return null; // clause/result fragment
+	if (/<[a-z_][a-z0-9_]*>/i.test(kept)) return null; // single-word <placeholder> template
+	// A spaced metasyntax placeholder ("… * <Price for 1 RPU> …"). Narrow on purpose: the '<' must be
+	// preceded by neither a word char (so nested types array<float >, map<…> are NOT matched) nor a
+	// quote (so '<IAM role arn>' inside a string literal is NOT matched — that SQL is valid).
+	if (/(^|[^\w'"`])<[a-z_][a-z0-9_]* [^>]*>/i.test(kept)) return null;
+	// A '('-leading block is a real statement only when it opens a parenthesized query
+	// ((SELECT …) UNION …). A bare '(' on prose math ("(200 GB * 50%) / 4 slots"), an expression
+	// list ("(1, 5, 10)"), or an UNLOAD arg-string ("('select …')") is not a SQL statement.
+	if (!/^\(+\s*(select|with|values|table)\b/i.test(kept) && !STATEMENT_STARTERS.test(kept)) return null;
 	return kept;
 }
 

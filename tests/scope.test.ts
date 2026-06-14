@@ -21,7 +21,7 @@ function colOf(sql: string, partsJoined: string) {
 function findCol(sql: string, partsJoined: string) {
 	const tree = resolveScopes(lower(parseDatabricks(sql).tree));
 	const walk = (s: import("../src/scope/scope.js").Scope): { scope: typeof s; ref: ColumnRefT } | undefined => {
-		const ref = s.body.columns.find((c) => c.parts.join(".") === partsJoined);
+		const ref = (s.body.kind === "pipe" ? [] : s.body.columns).find((c) => c.parts.join(".") === partsJoined);
 		if (ref) return { scope: s, ref };
 		for (const child of s.children) {
 			const found = walk(child);

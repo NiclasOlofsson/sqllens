@@ -39,7 +39,12 @@ export function originsOf(expr: Expr, scope: Scope, schema: Schema): Origin[] {
 }
 
 function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+	if (scope.pipeStage) return pipeStageLineage(scope, schema, seen);
 	const body = scope.body;
+	if (body.kind === "pipe") {
+		const last = scope.pipe?.stages.at(-1) ?? scope.pipe?.input;
+		return last ? bodyLineage(last, schema, seen) : [];
+	}
 	if (body.kind === "setop") {
 		// A union: output column i derives from BOTH branches' column i.
 		const left = scope.branches ? bodyLineage(scope.branches.left, schema, seen) : [];
@@ -49,8 +54,18 @@ function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLine
 			origins: dedup([...l.origins, ...(right[i]?.origins ?? [])]),
 		}));
 	}
+	return projectionLineage(scope, body.projections, schema, seen);
+}
+
+/** Lineage of a projection list (a star expands to each source column traced to its origins). */
+function projectionLineage(
+	scope: Scope,
+	projections: import("../ir/ir.js").Projection[],
+	schema: Schema,
+	seen: Set<Scope>,
+): ColumnLineage[] {
 	const out: ColumnLineage[] = [];
-	for (const p of body.projections) {
+	for (const p of projections) {
 		if (p.isStar) {
 			const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
 			out.push(...starLineage(scope, qualifier, schema, seen));
@@ -60,6 +75,58 @@ function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLine
 		// anonymous projection → no nameable output, skip
 	}
 	return out;
+}
+
+/** Lineage of a pipe stage's output columns, flowing the incoming relation through the stage. */
+function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+	const stage = scope.pipeStage!;
+	// The incoming relation, each column traced to its origins (the "relation" source under key "").
+	const passthrough = (): ColumnLineage[] => starLineage(scope, undefined, schema, seen);
+	switch (stage.op) {
+		case "select":
+			return projectionLineage(scope, stage.projections, schema, seen);
+		case "extend":
+		case "window":
+			return [...passthrough(), ...projectionLineage(scope, stage.projections, schema, seen)];
+		case "aggregate": {
+			const aggs = projectionLineage(scope, stage.aggregates, schema, seen);
+			const keys: ColumnLineage[] = [];
+			for (const g of stage.groupBy) {
+				if (g.kind === "column") keys.push({ output: g.parts[g.parts.length - 1], origins: dedup(exprOrigins(g, scope, schema, seen)) });
+			}
+			return [...aggs, ...keys];
+		}
+		case "drop": {
+			const dropped = new Set(stage.drop.map(normalizeName));
+			return passthrough().filter((l) => !dropped.has(normalizeName(l.output)));
+		}
+		case "rename": {
+			const map = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
+			return passthrough().map((l) => ({ output: map.get(normalizeName(l.output)) ?? l.output, origins: l.origins }));
+		}
+		case "set": {
+			const set = new Map(stage.assignments.map((a) => [normalizeName(a.column), a.expr]));
+			return passthrough().map((l) => {
+				const e = set.get(normalizeName(l.output));
+				return e ? { output: l.output, origins: dedup(exprOrigins(e, scope, schema, seen)) } : l;
+			});
+		}
+		case "join":
+		case "where":
+		case "orderBy":
+		case "limit":
+		case "distinct":
+		case "tablesample":
+		case "assert":
+		case "log":
+		case "staticDescribe":
+		case "with":
+		case "setop":
+		case "recursiveUnion":
+			return passthrough();
+		default:
+			return []; // call / pivot / unpivot / matchRecognize / describe / branching / sinks
+	}
 }
 
 /** Expand `*` / `t.*`: each source column becomes an output, traced to its origins. */
@@ -128,6 +195,8 @@ function columnOrigins(src: ResolvedSource, column: string, schema: Schema, seen
 	if (src.kind === "table") return [{ table: src.name, column }];
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
+	if (src.kind === "relation") return derivedOrigins(src.scope, column, undefined, schema, seen); // prior pipe stage
+	if (src.kind === "graphtable") return derivedOrigins(src.scope, column, undefined, schema, seen);
 	return []; // lateral — no base-table origin
 }
 
@@ -141,7 +210,8 @@ function derivedOrigins(
 	if (seen.has(child)) return []; // recursive CTE — stop
 	seen.add(child); // guard the whole subtree (incl. a set-op body that re-references this relation)
 	try {
-		if (child.body.kind === "setop") {
+		// A set-op / pipe / pipe-stage relation has no plain projection list — trace via its lineage.
+		if (child.pipeStage || child.body.kind === "setop" || child.body.kind === "pipe") {
 			const lin = bodyLineage(child, schema, seen);
 			const i = aliases ? aliases.findIndex((a) => eq(a, column)) : lin.findIndex((l) => eq(l.output, column));
 			return i >= 0 ? (lin[i]?.origins ?? []) : [];

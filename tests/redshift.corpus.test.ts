@@ -5,6 +5,10 @@ import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulat
 import { describe, expect, it } from "vitest";
 import { RedshiftLexer } from "../src/generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../src/generated/redshift/RedshiftParser.js";
+import { lower } from "../src/redshift/lower.js";
+import { parseRedshift } from "../src/redshift/parse.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { classifySql } from "./helpers/sql-kind.js";
 import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 
 // Two Redshift conformance corpora, both gitignored and skipped when absent:
@@ -14,17 +18,40 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 //    broke something the upstream grammar already handled. Ratchets on the pass count.
 //
 // 2. harness/local/redshift-docs — every SQL example scraped from the Amazon Redshift SQL
-//    reference (tools/scrape-redshift-docs.mjs, ~3,193 files). It spans the full surface; the
-//    gate ratchets the in-scope query bucket (SELECT/WITH/VALUES/…) and only REPORTS dml/ddl,
-//    since object/platform DDL is cleared Out (CLAUDE.md). Regex bucketing (sql-kind.ts) until
-//    Redshift lower() exposes parse-derived statement kinds — same as Snowflake/Databricks.
+//    reference (tools/scrape-redshift-docs.mjs, ~3,186 files). It spans the full surface; the
+//    gate requires 100% of the in-scope query bucket (SELECT/WITH/VALUES/…) to parse — minus the
+//    verified KNOWN_BAD documented-broken examples — and only REPORTS dml/ddl, since object/
+//    platform DDL is cleared Out (CLAUDE.md). Regex bucketing (sql-kind.ts) until Redshift lower()
+//    exposes parse-derived statement kinds — same as Snowflake/Databricks.
 
 const VENDOR_EXAMPLES = corpusPath("vendor/bytebase-parser/redshift/examples");
 const DOCS_CORPUS = corpusPath("harness/local/redshift-docs");
 
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it
-const QUERY_BASELINE = 1768; // scraped-docs in-scope query bucket (of 1,809, 97.7%); raised by grammar cleaning
+const QUERY_BASELINE = 1790; // scraped-docs in-scope query bucket; superseded by the 100%/knownBad gate below
+
+// Documented-broken query examples — every in-scope query example must parse EXCEPT these, each
+// verified against its AWS doc source as genuinely malformed SQL (not a grammar gap, not scraper
+// noise). Passing `knownBad` flips the query gate from "ratchet ≥ baseline" to "100% of the rest
+// must parse", and a known-bad that starts parsing fails the gate as stale. (T-SQL precedent:
+// tests/tsql-corpus-known-bad.ts.) Pure scraper noise — leaked EXPLAIN plans, prose math,
+// expression-fragment listings, bare <placeholder> metasyntax — is fixed at the scraper instead
+// (tools/scrape-redshift-docs.mjs) so it never reaches the corpus.
+const KNOWN_BAD: Record<string, string> = {
+	"nested-data-use-cases/7.sql":
+		"AWS doc 'illustration' mixes comma-join with a trailing ON clause (FROM …, prices p ON …) — no JOIN keyword; rejected by the PostgreSQL/PartiQL grammar.",
+	"r_COPY_command_examples/34.sql":
+		"AWS doc Oracle-export example REPLACE(c2, \\n',\\\\n') is malformed — a stray \\n sits outside the string and the quotes are mismatched.",
+	"r_GROUP_BY_clause/3.sql":
+		"AWS doc typo — missing comma between col2 and sum(col3): `SELECT col1, col2 sum(col3) … GROUP BY ALL`. (GROUP BY ALL itself parses — see redshift.test.ts.)",
+	"r_SET_CONFIG/2.sql":
+		"AWS doc uses typographic smart quotes (‘…’) around the SET_CONFIG arguments — not valid SQL string delimiters.",
+	"SYS_DATASHARE_USAGE_PRODUCER/1.sql":
+		"AWS doc typo — `SELECT DISTINCT` with an empty select list before FROM.",
+	"tutorial_multi-class_classification/7.sql":
+		"AWS doc has unbalanced parentheses — the first SELECT closes with ) but has no opening ( before UNION.",
+};
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
@@ -93,7 +120,31 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Redshift grammar vs the bytebase 
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs corpus", () => {
-	it("ratchets the in-scope query bucket; reports dml/ddl", { timeout: 1_800_000 }, () => {
-		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE);
+	it("parses 100% of the in-scope query bucket (minus verified known-bad); reports dml/ddl", { timeout: 1_800_000 }, () => {
+		// No-other policy: every in-scope query example parses, or it is a documented-broken example
+		// listed (and justified) in KNOWN_BAD. There is no silently-tolerated failing tail.
+		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
+	});
+
+	// lower() + resolveScopes must be TOTAL over every parsed query: a valid parse never throws in
+	// the semantic pipeline (unmodelled forms become `other`/`unsupported`, not exceptions). This is
+	// the contract the shared semantic layer relies on — proven here over the real corpus, not faked.
+	it("lower + resolveScopes never throw over the parsed query corpus", { timeout: 1_800_000 }, () => {
+		const throwers: string[] = [];
+		let parsed = 0;
+		for (const f of sqlFiles(DOCS_CORPUS)) {
+			const sql = readFileSync(f, "utf8");
+			if (classifySql(sql) !== "query") continue;
+			const { tree, errors } = parseRedshift(sql);
+			if (errors > 0) continue; // unparsed — the ratchet covers those
+			parsed++;
+			try {
+				resolveScopes(lower(tree), "redshift");
+			} catch (e) {
+				throwers.push(`${f.slice(DOCS_CORPUS.length + 1).split("\\").join("/")}: ${String(e).slice(0, 120)}`);
+			}
+		}
+		expect(parsed).toBeGreaterThan(0);
+		expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 	});
 });

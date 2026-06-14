@@ -45,6 +45,9 @@ import type {
 	CteDef,
 	Expr,
 	LateralViewSource,
+	PipeExpr,
+	PipeSetItem,
+	PipeStage,
 	PivotInfo,
 	Projection,
 	QueryBody,
@@ -195,7 +198,7 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
 	const orderBy = extractOrderBy(query);
 	// ORDER BY references the body's output (a select's scope, or a set-op's left branch),
 	// so its columns belong to the body's `columns` — for both selects and set ops.
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	return { kind: "query", ctes, body, orderBy, cst: query };
 }
 
@@ -224,8 +227,11 @@ function extractOrderBy(query: ParserRuleContext): Expr[] | undefined {
 	return items.length ? items : undefined;
 }
 
-/** A queryTerm is either a set operation (two queryTerm branches) or a single select. */
+/** A queryTerm is a pipe (`queryTerm |> rhs`), a set operation (two queryTerm branches), or a select. */
 function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
+	// Pipe (Spark 4.0 `|>`): the queryTerm left-recurses — `((base |> op1) |> op2)`. Unwind the left
+	// spine into the base relation (input) plus the operators in order, modelled as a faithful PipeExpr.
+	if (directChildrenOfRule(queryTerm, P.RULE_operatorPipeRightSide)[0]) return lowerPipe(queryTerm);
 	const branches = directChildrenOfRule(queryTerm, P.RULE_queryTerm);
 	if (branches.length === 2) {
 		return {
@@ -272,6 +278,165 @@ function lowerQueryTerm(queryTerm: ParserRuleContext): QueryBody {
 		unsupported: ["query-body"],
 		cst: queryTerm,
 	};
+}
+
+// --- pipe operators (Spark 4.0 `|>`) ---------------------------------------------
+// Spark's pipe operator set is a subset of GoogleSQL's; each operatorPipeRightSide lowers to a faithful
+// PipeStage keeping its span (cst = the rhs node). The relation flows through the stages in scope.
+
+/** Unwind a left-recursive pipe queryTerm (`((base |> op1) |> op2)`) into a PipeExpr. */
+function lowerPipe(queryTerm: ParserRuleContext): PipeExpr {
+	const rhsChain: ParserRuleContext[] = [];
+	let cur = queryTerm;
+	for (;;) {
+		const rhs = directChildrenOfRule(cur, P.RULE_operatorPipeRightSide)[0];
+		const left = directChildrenOfRule(cur, P.RULE_queryTerm)[0];
+		if (rhs && left) {
+			rhsChain.unshift(rhs);
+			cur = left;
+		} else break;
+	}
+	return { kind: "pipe", input: lowerQueryTerm(cur), stages: rhsChain.map(lowerSparkPipeRhs), cst: queryTerm };
+}
+
+function pipeProjCols(projections: Projection[]): ColumnRef[] {
+	const cols: ColumnRef[] = [];
+	for (const p of projections) columnsOf(p.expr, cols, "projection");
+	return cols;
+}
+
+/** operatorPipeRightSide → a faithful PipeStage. */
+function lowerSparkPipeRhs(rhs: ParserRuleContext): PipeStage {
+	const namedSeqProjections = (): Projection[] => {
+		const seq = directChildrenOfRule(rhs, P.RULE_namedExpressionSeq)[0];
+		return seq ? directChildrenOfRule(seq, P.RULE_namedExpression).map(buildProjection) : [];
+	};
+	if (directTokenType(rhs, [P.EXTEND]) !== undefined) {
+		const projections = namedSeqProjections();
+		return { op: "extend", projections, columns: pipeProjCols(projections), cst: rhs };
+	}
+	if (directTokenType(rhs, [P.AGGREGATE]) !== undefined) {
+		const aggregates = namedSeqProjections();
+		const aggCtx = directChildrenOfRule(rhs, P.RULE_aggregationClause)[0];
+		const groupBy = aggCtx ? extractGroupBy(aggCtx) : [];
+		const columns = pipeProjCols(aggregates);
+		for (const g of groupBy) columnsOf(g, columns, "groupBy");
+		return { op: "aggregate", aggregates, groupBy, columns, cst: rhs };
+	}
+	// selectClause aggregationClause? windowClause? — `|> SELECT …` (trailing agg is an error case).
+	const selectClause = directChildrenOfRule(rhs, P.RULE_selectClause)[0];
+	if (selectClause) {
+		const seq = directChildrenOfRule(selectClause, P.RULE_namedExpressionSeq)[0];
+		const projections = seq ? directChildrenOfRule(seq, P.RULE_namedExpression).map(buildProjection) : [];
+		return { op: "select", projections, columns: pipeProjCols(projections), cst: rhs };
+	}
+	const setSeq = directChildrenOfRule(rhs, P.RULE_operatorPipeSetAssignmentSeq)[0];
+	if (setSeq) {
+		const idents = directChildrenOfRule(setSeq, P.RULE_errorCapturingIdentifier);
+		const exprs = directChildrenOfRule(setSeq, P.RULE_expression);
+		const assignments: PipeSetItem[] = [];
+		const columns: ColumnRef[] = [];
+		for (let i = 0; i < exprs.length; i++) {
+			const expr = lowerExpression(exprs[i]);
+			assignments.push({ column: idents[i] ? idents[i].getText() : "", expr });
+			columnsOf(expr, columns, "projection");
+		}
+		return { op: "set", assignments, columns, cst: rhs };
+	}
+	const dropList = directChildrenOfRule(rhs, P.RULE_multipartIdentifierList)[0];
+	if (dropList) {
+		const drop = directChildrenOfRule(dropList, P.RULE_multipartIdentifier).map((m) => lastNamePart(m.getText()));
+		return { op: "drop", drop, cst: rhs };
+	}
+	if (directTokenType(rhs, [P.AS]) !== undefined) {
+		const id = directChildrenOfRule(rhs, P.RULE_errorCapturingIdentifier)[0];
+		return { op: "as", alias: id ? id.getText() : "", cst: rhs };
+	}
+	const whereCtx = directChildrenOfRule(rhs, P.RULE_whereClause)[0];
+	if (whereCtx) {
+		const predicate = lowerClausePredicate(whereCtx) ?? otherExpr(rhs);
+		const columns: ColumnRef[] = [];
+		columnsOf(predicate, columns, "where");
+		return { op: "where", predicate, columns, cst: rhs };
+	}
+	if (shallowNodesOfRule(rhs, P.RULE_pivotClause)[0]) {
+		const pivot = extractPivot(rhs);
+		if (pivot) return { op: "pivot", pivot, cst: rhs };
+	}
+	if (shallowNodesOfRule(rhs, P.RULE_unpivotClause)[0]) {
+		const unpivot = extractUnpivot(rhs);
+		if (unpivot) return { op: "unpivot", unpivot, cst: rhs };
+	}
+	if (directChildrenOfRule(rhs, P.RULE_sample)[0]) return { op: "tablesample", cst: rhs };
+	const join = directChildrenOfRule(rhs, P.RULE_joinRelation)[0];
+	if (join) {
+		const rel = directChildrenOfRule(join, P.RULE_relationPrimary)[0];
+		const source: Source = rel ? buildSource(rel) : { kind: "table", name: [], cst: rhs };
+		const joinConditions: Expr[] = [];
+		const columns: ColumnRef[] = [];
+		const crit = directChildrenOfRule(join, P.RULE_joinCriteria)[0];
+		const bool = crit ? firstOfRule(crit, P.RULE_booleanExpression) : undefined;
+		if (bool) {
+			const e = lowerExpression(bool);
+			joinConditions.push(e);
+			columnsOf(e, columns, "join");
+		}
+		return { op: "join", source, joinConditions: joinConditions.length ? joinConditions : undefined, columns, cst: rhs };
+	}
+	const setTok = directTokenType(rhs, [P.UNION, P.EXCEPT, P.SETMINUS, P.INTERSECT]);
+	const qp = directChildrenOfRule(rhs, P.RULE_queryPrimary)[0];
+	if (setTok !== undefined && qp) {
+		const setOp = setTok === P.INTERSECT ? "intersect" : setTok === P.UNION ? "union" : "except";
+		const all = directTokenType(rhs, [P.ALL]) !== undefined;
+		return { op: "setop", setOp, all, operands: [queryPrimaryAsQuery(qp)], cst: rhs };
+	}
+	const qo = directChildrenOfRule(rhs, P.RULE_queryOrganization)[0];
+	if (qo) return lowerPipeQueryOrg(qo, rhs);
+	// Unreachable for known Spark pipe syntax — drift guard.
+	return { op: "other", name: rhs.getText().slice(0, 24), cst: rhs };
+}
+
+/** A pipe set-op operand: queryPrimary → a QueryExpr. */
+function queryPrimaryAsQuery(qp: ParserRuleContext): QueryExpr {
+	const inner = directChildrenOfRule(qp, P.RULE_query)[0];
+	if (inner) return lowerQuery(inner);
+	const spec = directChildrenOfRule(qp, P.RULE_querySpecification)[0];
+	const body: QueryBody = spec
+		? buildSelect(spec)
+		: { kind: "select", projections: [], from: [], columns: [], aggregated: false, cst: qp };
+	return { kind: "query", ctes: [], body, cst: qp };
+}
+
+/** queryOrganization as a pipe stage: ORDER BY → orderBy, else LIMIT → limit. */
+function lowerPipeQueryOrg(qo: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const keys: Expr[] = [];
+	let inOrder = false;
+	let limitExpr: Expr | undefined;
+	for (let i = 0; i < qo.getChildCount(); i++) {
+		const c = qo.getChild(i);
+		if (!(c instanceof ParserRuleContext)) {
+			const t = (c as TerminalNode | null)?.symbol?.type;
+			if (t === P.ORDER) inOrder = true;
+			else if (t === P.CLUSTER || t === P.DISTRIBUTE || t === P.SORT) inOrder = false;
+			else if (t === P.LIMIT) {
+				inOrder = false;
+				const nx = qo.getChild(i + 1);
+				if (nx instanceof ParserRuleContext && nx.ruleIndex === P.RULE_expression) limitExpr = lowerExpression(nx);
+			}
+			continue;
+		}
+		if (inOrder && c.ruleIndex === P.RULE_sortItem) {
+			const e = firstOfRule(c, P.RULE_expression);
+			if (e) keys.push(lowerExpression(e));
+		}
+	}
+	if (keys.length) {
+		const columns: ColumnRef[] = [];
+		for (const k of keys) columnsOf(k, columns, "orderBy");
+		return { op: "orderBy", keys, columns, cst };
+	}
+	if (limitExpr) return { op: "limit", limit: { top: limitExpr }, cst };
+	return { op: "orderBy", keys: [], columns: [], cst };
 }
 
 /** VALUES rows: the first row fixes the output shape — its expressions become the

@@ -168,7 +168,7 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 	// when the body is that single select.
 	const stmt = ssip ? onlySelectStatement(ssip) : undefined;
 	const orderBy = stmt && body.kind === "select" ? extractOrderBy(stmt) : undefined;
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	const limit = stmt && body.kind === "select" ? extractLimit(stmt) : undefined;
 	return { kind: "query", ctes, body, orderBy, limit, cst: qs };
 }
@@ -196,7 +196,7 @@ function ssipToQuery(ssip: ParserRuleContext): QueryExpr {
 	const body = lowerSsip(ssip);
 	const stmt = onlySelectStatement(ssip);
 	const orderBy = stmt && body.kind === "select" ? extractOrderBy(stmt) : undefined;
-	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	const limit = stmt && body.kind === "select" ? extractLimit(stmt) : undefined;
 	return { kind: "query", ctes: [], body, orderBy, limit, cst: ssip };
 }

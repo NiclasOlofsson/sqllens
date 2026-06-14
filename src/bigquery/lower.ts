@@ -5,12 +5,20 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	GraphElement,
+	GraphTableSource,
 	LimitInfo,
+	PipeBranch,
+	PipeExpr,
+	PipeSetItem,
+	PipeStage,
+	PivotInfo,
 	Projection,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,
 	Source,
+	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { freezeIR } from "../ir/freeze.js";
@@ -86,6 +94,13 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 			return lowered;
 		}
 	}
+	// Standalone GQL: `GRAPH g MATCH … RETURN …` — a relation-producing graph query.
+	const gql = firstOfRule(tree, P.RULE_gql_statement);
+	if (gql) {
+		const lowered = lowerGqlStatement(gql);
+		lowered.statement = "query";
+		return lowered;
+	}
 	const q = emptyQuery(tree, statement === "other" ? "empty" : "non-query");
 	q.statement = statement;
 	return q;
@@ -129,10 +144,22 @@ function bodyCategory(body: ParserRuleContext): StatementCategory {
 
 // --- query / set-op --------------------------------------------------------------
 
-/** query_statement: query. query: query_without_pipe_operators. */
+/** query_statement: query. */
 function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
-	const qwpo = firstOfRule(qs, P.RULE_query_without_pipe_operators);
-	if (!qwpo) return emptyQuery(qs, "non-query");
+	return lowerQueryNode(firstOfRule(qs, P.RULE_query), qs);
+}
+
+/**
+ * Lower a `query` node — `query_without_pipe_operators pipe_operator*`. `cst` is the span to record on
+ * the QueryExpr (the enclosing query_statement at top level, else the query itself). When pipe operators
+ * follow the base, the body becomes a PipeExpr: the base relation plus an ordered list of faithful
+ * PipeStage nodes (the base ORDER BY / LIMIT, which sit inside query_without_pipe_operators and apply to
+ * the input, lead as orderBy/limit stages). No pipes → the plain base body, with ORDER BY / LIMIT on the
+ * QueryExpr as before.
+ */
+function lowerQueryNode(query: ParserRuleContext | undefined, cst: ParserRuleContext): QueryExpr {
+	const qwpo = query ? directChildrenOfRule(query, P.RULE_query_without_pipe_operators)[0] : undefined;
+	if (!query || !qwpo) return emptyQuery(cst, "non-query");
 
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
 	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
@@ -144,7 +171,7 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
 	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
-	const body = qpos
+	const base = qpos
 		? lowerPrimaryOrSetOp(qpos)
 		: fromQuery
 			? buildFromQuery(fromQuery)
@@ -152,12 +179,21 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 
 	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
 	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
-	if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
-
 	const limitClause = directChildrenOfRule(qwpo, P.RULE_limit_offset_clause)[0];
 	const limit = limitClause ? extractLimit(limitClause) : undefined;
 
-	return { kind: "query", ctes, body, orderBy, limit, cst: qs };
+	const pipeOps = directChildrenOfRule(query, P.RULE_pipe_operator);
+	if (pipeOps.length > 0) {
+		const stages: PipeStage[] = [];
+		if (orderBy && orderByClause) stages.push(makeOrderByStage(orderBy, orderByClause));
+		if (limit && limitClause) stages.push({ op: "limit", limit, cst: limitClause });
+		for (const po of pipeOps) stages.push(lowerPipeOperator(po));
+		const body: PipeExpr = { kind: "pipe", input: base, stages, cst: query };
+		return { kind: "query", ctes, body, cst };
+	}
+
+	if (orderBy && base.kind !== "pipe") for (const o of orderBy) columnsOf(o, base.columns, "orderBy");
+	return { kind: "query", ctes, body: base, orderBy, limit, cst };
 }
 
 /** aliased_query: identifier AS parenthesized_query opt_aliased_query_modifiers? */
@@ -189,7 +225,7 @@ function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 	if (path) {
 		return {
 			kind: "select",
-			projections: [],
+			projections: [implicitStar(primary)],
 			from: [{ kind: "table", name: pathParts(path), cst: path }],
 			columns: [],
 			aggregated: false,
@@ -208,9 +244,10 @@ function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
 	const joinConditions = fromContents ? extractJoinConditions(fromContents) : [];
 	const columns: ColumnRef[] = [];
 	for (const j of joinConditions) columnsOf(j, columns, "join");
+	// A bare FROM-query (`FROM t`) is implicitly `SELECT * FROM t` — carry the star so its outputs expand.
 	return {
 		kind: "select",
-		projections: [],
+		projections: [implicitStar(fromQuery)],
 		from,
 		columns,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
@@ -218,6 +255,11 @@ function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
 		unsupported: unsupported.length ? unsupported : undefined,
 		cst: fromQuery,
 	};
+}
+
+/** An implicit `SELECT *` projection for a bare FROM-query or `TABLE name` (both ≡ SELECT * FROM …). */
+function implicitStar(cst: ParserRuleContext): Projection {
+	return { name: undefined, isStar: true, expr: { kind: "star", cst }, cst };
 }
 
 /**
@@ -250,37 +292,395 @@ function lowerParenthesizedQuery(paren: ParserRuleContext): QueryExpr {
 	const qs = firstOfRule(paren, P.RULE_query_statement);
 	if (qs) return lowerQueryStatement(qs);
 	const query = directChildrenOfRule(paren, P.RULE_query)[0];
-	if (query) {
-		const qwpo = firstOfRule(query, P.RULE_query_without_pipe_operators);
-		// Reuse the statement path by treating the inner query directly.
-		return lowerInnerQuery(query, qwpo);
-	}
+	if (query) return lowerQueryNode(query, query);
 	return emptyQuery(paren, "non-query");
 }
 
-/** Lower a `query` node (no enclosing query_statement) — CTE/subquery bodies. */
-function lowerInnerQuery(query: ParserRuleContext, qwpo: ParserRuleContext | undefined): QueryExpr {
-	if (!qwpo) return emptyQuery(query, "non-query");
-	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
-	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
-	const ctes = withClause
-		? directChildrenOfRule(withClause, P.RULE_with_clause_entry)
-				.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
-				.map(lowerCte)
+// --- pipe operators --------------------------------------------------------------
+// pipe_operator: PIPE_SYMBOL (pipe_where | pipe_select | …). Each operator lowers to a faithful
+// PipeStage keeping its `|> OPERATOR …` span (cst = the pipe_operator node). No operator is dropped.
+
+/** An ORDER BY (base or `|> ORDER BY`) as a pipe stage. */
+function makeOrderByStage(keys: Expr[], cst: ParserRuleContext): PipeStage {
+	const columns: ColumnRef[] = [];
+	for (const k of keys) columnsOf(k, columns, "orderBy");
+	return { op: "orderBy", keys, columns, cst };
+}
+
+/** select_clause → its projection list (shared with buildSelect's path). */
+function projectionsOfSelectClause(sc: ParserRuleContext | undefined): Projection[] {
+	const selectList = sc ? directChildrenOfRule(sc, P.RULE_select_list)[0] : undefined;
+	return selectList ? directChildrenOfRule(selectList, P.RULE_select_list_item).map(buildProjection) : [];
+}
+
+/** pipe_selection_item_list → projections (pipe_selection_item is select_column_expr|dot_star, which
+ *  buildProjection already handles). */
+function projectionsOfSelectionList(list: ParserRuleContext | undefined): Projection[] {
+	return list ? directChildrenOfRule(list, P.RULE_pipe_selection_item).map(buildProjection) : [];
+}
+
+function projectionColumns(projections: Projection[]): ColumnRef[] {
+	const columns: ColumnRef[] = [];
+	for (const p of projections) columnsOf(p.expr, columns, "projection");
+	return columns;
+}
+
+/** as_alias → its identifier text, if present. */
+function asAliasText(node: ParserRuleContext | undefined): string | undefined {
+	if (!node) return undefined;
+	const id = firstOfRule(node, P.RULE_identifier);
+	return id ? identText(id) : undefined;
+}
+
+/** A (maybe-dashed) path target → its name parts (best-effort; a dashed path keeps its joined text). */
+function dashedPathPartsOf(ctx: ParserRuleContext): string[] {
+	const path = firstOfRule(ctx, P.RULE_path_expression);
+	if (path) return pathParts(path);
+	const dashed = firstOfRule(ctx, P.RULE_dashed_path_expression);
+	return dashed ? [dashed.getText()] : [];
+}
+
+/** subpipeline: '(' pipe_operator* ')'. */
+function lowerSubpipeline(sp: ParserRuleContext): PipeStage[] {
+	return directChildrenOfRule(sp, P.RULE_pipe_operator).map(lowerPipeOperator);
+}
+
+/** subquery_or_subpipeline → a QueryExpr (a subpipeline becomes a pipe with an implicit input). */
+function lowerSubqueryOrSubpipeline(node: ParserRuleContext | undefined, fallbackCst: ParserRuleContext): QueryExpr {
+	if (!node) return emptyQuery(fallbackCst, "non-query");
+	const paren = directChildrenOfRule(node, P.RULE_parenthesized_query)[0];
+	if (paren) return lowerParenthesizedQuery(paren);
+	const sp = directChildrenOfRule(node, P.RULE_subpipeline)[0];
+	if (sp) {
+		const body: PipeExpr = { kind: "pipe", input: emptyBody(sp, "non-query"), stages: lowerSubpipeline(sp), cst: sp };
+		return { kind: "query", ctes: [], body, cst: sp };
+	}
+	return emptyQuery(node, "non-query");
+}
+
+/** pipe_set_operation_operand: parenthesized_query | table_clause. */
+function lowerPipeSetOperand(operand: ParserRuleContext): QueryExpr {
+	const paren = directChildrenOfRule(operand, P.RULE_parenthesized_query)[0];
+	if (paren) return lowerParenthesizedQuery(paren);
+	const tc = directChildrenOfRule(operand, P.RULE_table_clause)[0];
+	if (tc) {
+		// table_clause: TABLE path_expression | TABLE tvf — `TABLE name` ≡ `SELECT * FROM name`.
+		const path = directChildrenOfRule(tc, P.RULE_path_expression)[0];
+		const body: SelectExpr = {
+			kind: "select",
+			projections: path ? [implicitStar(tc)] : [],
+			from: path ? [{ kind: "table", name: pathParts(path), cst: path }] : [],
+			columns: [],
+			aggregated: false,
+			cst: tc,
+		};
+		return { kind: "query", ctes: [], body, cst: tc };
+	}
+	return emptyQuery(operand, "non-query");
+}
+
+/** pipe_aggregate: AGGREGATE pipe_aggregate_item_list? pipe_group_by_clause? */
+function lowerPipeAggregate(agg: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const list = directChildrenOfRule(agg, P.RULE_pipe_aggregate_item_list)[0];
+	const aggregates: Projection[] = list
+		? directChildrenOfRule(list, P.RULE_pipe_aggregate_item).flatMap((it) => {
+				const si = directChildrenOfRule(it, P.RULE_pipe_selection_item)[0];
+				return si ? [buildProjection(si)] : [];
+			})
 		: [];
-	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
-	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
-	const body = qpos
-		? lowerPrimaryOrSetOp(qpos)
-		: fromQuery
-			? buildFromQuery(fromQuery)
-			: emptyBody(qwpo, "non-query");
-	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
-	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
-	if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
-	const limitClause = directChildrenOfRule(qwpo, P.RULE_limit_offset_clause)[0];
-	const limit = limitClause ? extractLimit(limitClause) : undefined;
-	return { kind: "query", ctes, body, orderBy, limit, cst: query };
+	const gbClause = directChildrenOfRule(agg, P.RULE_pipe_group_by_clause)[0];
+	const groupBy: Expr[] = [];
+	if (gbClause) for (const gi of directChildrenOfRule(gbClause, P.RULE_grouping_item_in_pipe)) {
+		for (const e of collectOfRule(gi, P.RULE_expression)) groupBy.push(lowerExpr(e));
+	}
+	const columns: ColumnRef[] = projectionColumns(aggregates);
+	for (const g of groupBy) columnsOf(g, columns, "groupBy");
+	return { op: "aggregate", aggregates, groupBy, columns, cst };
+}
+
+/** pipe_join: opt_natural? join_type? join_hint? JOIN hint? table_primary on_or_using_clause? */
+function lowerPipeJoin(join: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const unsupported: string[] = [];
+	const out: Source[] = [];
+	const tp = directChildrenOfRule(join, P.RULE_table_primary)[0];
+	if (tp) collectTablePrimary(tp, out, unsupported);
+	const source: Source = out[0] ?? { kind: "table", name: [], cst: join };
+	const joinConditions: Expr[] = [];
+	const columns: ColumnRef[] = [];
+	const onUsing = directChildrenOfRule(join, P.RULE_on_or_using_clause)[0];
+	const onClause = onUsing ? directChildrenOfRule(onUsing, P.RULE_on_clause)[0] : undefined;
+	const onExpr = onClause ? directChildrenOfRule(onClause, P.RULE_expression)[0] : undefined;
+	if (onExpr) {
+		const ex = lowerExpr(onExpr);
+		joinConditions.push(ex);
+		columnsOf(ex, columns, "join");
+	}
+	return { op: "join", source, joinConditions: joinConditions.length ? joinConditions : undefined, columns, cst };
+}
+
+/** pipe_set_operation: set_operation_metadata pipe_set_operation_operand (, operand)*. */
+function lowerPipeSetOperation(setop: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const meta = directChildrenOfRule(setop, P.RULE_set_operation_metadata)[0];
+	const typeNode = meta ? directChildrenOfRule(meta, P.RULE_query_set_operation_type)[0] : undefined;
+	const t = typeNode ? directTokenType(typeNode, [P.UNION_SYMBOL, P.EXCEPT_SYMBOL, P.INTERSECT_SYMBOL]) : undefined;
+	const setOp = t === P.INTERSECT_SYMBOL ? "intersect" : t === P.EXCEPT_SYMBOL ? "except" : "union";
+	const all = meta !== undefined && hasTokenDeep(meta, P.ALL_SYMBOL);
+	const byName = meta !== undefined && hasTokenDeep(meta, P.NAME_SYMBOL);
+	const operands = directChildrenOfRule(setop, P.RULE_pipe_set_operation_operand).map(lowerPipeSetOperand);
+	return { op: "setop", setOp, all, byName: byName || undefined, operands, cst };
+}
+
+/** pipe_if: IF expr THEN subpipeline pipe_if_elseif* (ELSE subpipeline)?. */
+function lowerPipeIf(ifOp: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const arms: PipeBranch[] = [];
+	const columns: ColumnRef[] = [];
+	const ifCond = directChildrenOfRule(ifOp, P.RULE_expression)[0];
+	const ifSubs = directChildrenOfRule(ifOp, P.RULE_subpipeline);
+	if (ifSubs[0]) {
+		const cond = ifCond ? lowerExpr(ifCond) : undefined;
+		if (cond) columnsOf(cond, columns, "where");
+		arms.push({ condition: cond, pipeline: lowerSubpipeline(ifSubs[0]), cst: ifOp });
+	}
+	for (const ei of directChildrenOfRule(ifOp, P.RULE_pipe_if_elseif)) {
+		const c = directChildrenOfRule(ei, P.RULE_expression)[0];
+		const s = directChildrenOfRule(ei, P.RULE_subpipeline)[0];
+		const cond = c ? lowerExpr(c) : undefined;
+		if (cond) columnsOf(cond, columns, "where");
+		arms.push({ condition: cond, pipeline: s ? lowerSubpipeline(s) : [], cst: ei });
+	}
+	if (ifSubs.length > 1) {
+		arms.push({ pipeline: lowerSubpipeline(ifSubs[ifSubs.length - 1]), cst: ifOp });
+	}
+	return { op: "if", arms, columns, cst };
+}
+
+/** pipe_match_recognize → match_recognize_clause (PARTITION BY … MEASURES … PATTERN … DEFINE …). */
+function lowerPipeMatchRecognize(mr: ParserRuleContext, cst: ParserRuleContext): PipeStage {
+	const clause = directChildrenOfRule(mr, P.RULE_match_recognize_clause)[0];
+	const partitionBy: Expr[] = [];
+	const measures: Projection[] = [];
+	const defines: Expr[] = [];
+	if (clause) {
+		const part = directChildrenOfRule(clause, P.RULE_partition_by_clause_prefix)[0];
+		if (part) for (const e of directChildrenOfRule(part, P.RULE_expression)) partitionBy.push(lowerExpr(e));
+		const meas = directChildrenOfRule(clause, P.RULE_select_list_prefix_with_as_aliases)[0];
+		if (meas) {
+			for (const it of directChildrenOfRule(meas, P.RULE_select_column_expr_with_as_alias)) {
+				measures.push(projectionOfExprWithAlias(it));
+			}
+		}
+		const defs = directChildrenOfRule(clause, P.RULE_with_expression_variable_prefix)[0];
+		if (defs) {
+			for (const v of directChildrenOfRule(defs, P.RULE_with_expression_variable)) {
+				const e = directChildrenOfRule(v, P.RULE_expression)[0];
+				if (e) defines.push(lowerExpr(e));
+			}
+		}
+	}
+	const columns: ColumnRef[] = [];
+	for (const e of partitionBy) columnsOf(e, columns, "groupBy");
+	for (const m of measures) columnsOf(m.expr, columns, "projection");
+	for (const d of defines) columnsOf(d, columns, "where");
+	return { op: "matchRecognize", partitionBy, measures, defines, columns, cst };
+}
+
+/** select_column_expr_with_as_alias: expression AS identifier. */
+function projectionOfExprWithAlias(it: ParserRuleContext): Projection {
+	const e = directChildrenOfRule(it, P.RULE_expression)[0];
+	const id = directChildrenOfRule(it, P.RULE_identifier)[0];
+	const expr = e ? lowerExpr(e) : otherExpr(it);
+	const name = id ? identText(id) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
+	return { name, isStar: false, expr, cst: it };
+}
+
+/** pipe_pivot: pivot_clause as_alias? → PivotInfo (best-effort column extraction). */
+function pivotInfoOf(pipePivot: ParserRuleContext): PivotInfo {
+	const pc = directChildrenOfRule(pipePivot, P.RULE_pivot_clause)[0];
+	const aggColumns: string[] = [];
+	const forColumns: string[] = [];
+	const values: string[] = [];
+	if (pc) {
+		const aggList = directChildrenOfRule(pc, P.RULE_pivot_expression_list)[0];
+		if (aggList) {
+			const refs: ColumnRef[] = [];
+			for (const pe of directChildrenOfRule(aggList, P.RULE_pivot_expression)) {
+				const e = directChildrenOfRule(pe, P.RULE_expression)[0];
+				if (e) columnsOf(lowerExpr(e), refs, "projection");
+			}
+			for (const r of refs) aggColumns.push(r.parts[r.parts.length - 1]);
+		}
+		const forExpr = directChildrenOfRule(pc, P.RULE_expression_higher_prec_than_and)[0];
+		const fnp = forExpr ? exprToNameParts(forExpr) : undefined;
+		if (fnp && fnp.length) forColumns.push(fnp[fnp.length - 1]);
+		const valList = directChildrenOfRule(pc, P.RULE_pivot_value_list)[0];
+		if (valList) {
+			for (const pv of directChildrenOfRule(valList, P.RULE_pivot_value)) {
+				const alias = asAliasText(directChildrenOfRule(pv, P.RULE_as_alias)[0]);
+				const e = directChildrenOfRule(pv, P.RULE_expression)[0];
+				values.push(alias ?? (e ? e.getText() : ""));
+			}
+		}
+	}
+	return { values, forColumns, aggColumns, alias: asAliasText(directChildrenOfRule(pipePivot, P.RULE_as_alias)[0]) };
+}
+
+/** pipe_unpivot: unpivot_clause as_alias? → UnpivotInfo (best-effort). */
+function unpivotInfoOf(pipeUnpivot: ParserRuleContext): UnpivotInfo {
+	const uc = directChildrenOfRule(pipeUnpivot, P.RULE_unpivot_clause)[0];
+	let valueColumn = "";
+	let nameColumn = "";
+	const removed: string[] = [];
+	if (uc) {
+		const valCols = directChildrenOfRule(uc, P.RULE_path_expression_list_with_opt_parens)[0];
+		const firstVal = valCols ? firstOfRule(valCols, P.RULE_path_expression) : undefined;
+		if (firstVal) valueColumn = pathParts(firstVal).slice(-1)[0] ?? "";
+		const forPath = directChildrenOfRule(uc, P.RULE_path_expression)[0];
+		if (forPath) nameColumn = pathParts(forPath).slice(-1)[0] ?? "";
+		const inList = directChildrenOfRule(uc, P.RULE_unpivot_in_item_list)[0];
+		if (inList) for (const p of collectOfRule(inList, P.RULE_path_expression)) removed.push(pathParts(p).slice(-1)[0] ?? "");
+	}
+	return { valueColumn, nameColumn, removed, alias: asAliasText(directChildrenOfRule(pipeUnpivot, P.RULE_as_alias)[0]) };
+}
+
+/** Lower one pipe_operator to its faithful PipeStage. Every GoogleSQL pipe operator is handled. */
+function lowerPipeOperator(po: ParserRuleContext): PipeStage {
+	const where = directChildrenOfRule(po, P.RULE_pipe_where)[0];
+	if (where) {
+		const wc = directChildrenOfRule(where, P.RULE_where_clause)[0];
+		const predicate = wc ? lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]) : otherExpr(where);
+		const columns: ColumnRef[] = [];
+		columnsOf(predicate, columns, "where");
+		return { op: "where", predicate, columns, cst: po };
+	}
+	const select = directChildrenOfRule(po, P.RULE_pipe_select)[0];
+	if (select) {
+		const projections = projectionsOfSelectClause(directChildrenOfRule(select, P.RULE_select_clause)[0]);
+		return { op: "select", projections, columns: projectionColumns(projections), cst: po };
+	}
+	const extend = directChildrenOfRule(po, P.RULE_pipe_extend)[0];
+	if (extend) {
+		const projections = projectionsOfSelectionList(directChildrenOfRule(extend, P.RULE_pipe_selection_item_list)[0]);
+		return { op: "extend", projections, columns: projectionColumns(projections), cst: po };
+	}
+	const set = directChildrenOfRule(po, P.RULE_pipe_set)[0];
+	if (set) {
+		const assignments: PipeSetItem[] = [];
+		const columns: ColumnRef[] = [];
+		for (const item of directChildrenOfRule(set, P.RULE_pipe_set_item)) {
+			const id = directChildrenOfRule(item, P.RULE_identifier)[0];
+			const e = directChildrenOfRule(item, P.RULE_expression)[0];
+			const expr = e ? lowerExpr(e) : otherExpr(item);
+			assignments.push({ column: id ? identText(id) : "", expr });
+			columnsOf(expr, columns, "projection");
+		}
+		return { op: "set", assignments, columns, cst: po };
+	}
+	const drop = directChildrenOfRule(po, P.RULE_pipe_drop)[0];
+	if (drop) return { op: "drop", drop: directChildrenOfRule(drop, P.RULE_identifier).map(identText), cst: po };
+	const rename = directChildrenOfRule(po, P.RULE_pipe_rename)[0];
+	if (rename) {
+		const renames = directChildrenOfRule(rename, P.RULE_pipe_rename_item).map((it) => {
+			const ids = directChildrenOfRule(it, P.RULE_identifier);
+			return { from: ids[0] ? identText(ids[0]) : "", to: ids[1] ? identText(ids[1]) : "" };
+		});
+		return { op: "rename", renames, cst: po };
+	}
+	const agg = directChildrenOfRule(po, P.RULE_pipe_aggregate)[0];
+	if (agg) return lowerPipeAggregate(agg, po);
+	const orderBy = directChildrenOfRule(po, P.RULE_pipe_order_by)[0];
+	if (orderBy) {
+		const oc = directChildrenOfRule(orderBy, P.RULE_order_by_clause)[0];
+		return makeOrderByStage(oc ? (extractOrderBy(oc) ?? []) : [], po);
+	}
+	const limit = directChildrenOfRule(po, P.RULE_pipe_limit_offset)[0];
+	if (limit) {
+		const lc = directChildrenOfRule(limit, P.RULE_limit_offset_clause)[0];
+		return { op: "limit", limit: (lc ? extractLimit(lc) : undefined) ?? {}, cst: po };
+	}
+	if (directChildrenOfRule(po, P.RULE_pipe_distinct)[0]) return { op: "distinct", cst: po };
+	const window = directChildrenOfRule(po, P.RULE_pipe_window)[0];
+	if (window) {
+		const projections = projectionsOfSelectionList(directChildrenOfRule(window, P.RULE_pipe_selection_item_list)[0]);
+		return { op: "window", projections, columns: projectionColumns(projections), cst: po };
+	}
+	const join = directChildrenOfRule(po, P.RULE_pipe_join)[0];
+	if (join) return lowerPipeJoin(join, po);
+	const call = directChildrenOfRule(po, P.RULE_pipe_call)[0];
+	if (call) {
+		const tvf = directChildrenOfRule(call, P.RULE_tvf_with_suffixes)[0];
+		const pathNode = tvf ? firstOfRule(tvf, P.RULE_path_expression) : undefined;
+		const name = pathNode ? pathParts(pathNode) : [];
+		const args = tvf ? collectOfRule(tvf, P.RULE_expression).map((e) => lowerExpr(e)) : [];
+		const columns: ColumnRef[] = [];
+		for (const a of args) columnsOf(a, columns, "projection");
+		return { op: "call", name, args, columns, cst: po };
+	}
+	const as = directChildrenOfRule(po, P.RULE_pipe_as)[0];
+	if (as) {
+		const id = directChildrenOfRule(as, P.RULE_identifier)[0];
+		return { op: "as", alias: id ? identText(id) : "", cst: po };
+	}
+	const setop = directChildrenOfRule(po, P.RULE_pipe_set_operation)[0];
+	if (setop) return lowerPipeSetOperation(setop, po);
+	const recUnion = directChildrenOfRule(po, P.RULE_pipe_recursive_union)[0];
+	if (recUnion) {
+		const meta = directChildrenOfRule(recUnion, P.RULE_set_operation_metadata)[0];
+		const all = meta !== undefined && hasTokenDeep(meta, P.ALL_SYMBOL);
+		const operand = lowerSubqueryOrSubpipeline(directChildrenOfRule(recUnion, P.RULE_subquery_or_subpipeline)[0], recUnion);
+		const aliasId = firstOfRule(recUnion, P.RULE_identifier);
+		return { op: "recursiveUnion", all, operand, alias: aliasId ? identText(aliasId) : undefined, cst: po };
+	}
+	const pivot = directChildrenOfRule(po, P.RULE_pipe_pivot)[0];
+	if (pivot) return { op: "pivot", pivot: pivotInfoOf(pivot), cst: po };
+	const unpivot = directChildrenOfRule(po, P.RULE_pipe_unpivot)[0];
+	if (unpivot) return { op: "unpivot", unpivot: unpivotInfoOf(unpivot), cst: po };
+	if (directChildrenOfRule(po, P.RULE_pipe_tablesample)[0]) return { op: "tablesample", cst: po };
+	const assert = directChildrenOfRule(po, P.RULE_pipe_assert)[0];
+	if (assert) {
+		const exprs = directChildrenOfRule(assert, P.RULE_expression).map((e) => lowerExpr(e));
+		const columns: ColumnRef[] = [];
+		for (const e of exprs) columnsOf(e, columns, "where");
+		const [condition, ...payload] = exprs.length ? exprs : [otherExpr(assert)];
+		return { op: "assert", condition, payload, columns, cst: po };
+	}
+	const log = directChildrenOfRule(po, P.RULE_pipe_log)[0];
+	if (log) {
+		const sp = directChildrenOfRule(log, P.RULE_subpipeline)[0];
+		return { op: "log", pipeline: sp ? lowerSubpipeline(sp) : undefined, cst: po };
+	}
+	if (directChildrenOfRule(po, P.RULE_pipe_describe)[0]) return { op: "describe", cst: po };
+	if (directChildrenOfRule(po, P.RULE_pipe_static_describe)[0]) return { op: "staticDescribe", cst: po };
+	const withOp = directChildrenOfRule(po, P.RULE_pipe_with)[0];
+	if (withOp) {
+		const wc = directChildrenOfRule(withOp, P.RULE_with_clause)[0];
+		const ctes = wc
+			? directChildrenOfRule(wc, P.RULE_with_clause_entry)
+					.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
+					.map(lowerCte)
+			: [];
+		return { op: "with", ctes, cst: po };
+	}
+	const ifOp = directChildrenOfRule(po, P.RULE_pipe_if)[0];
+	if (ifOp) return lowerPipeIf(ifOp, po);
+	const fork = directChildrenOfRule(po, P.RULE_pipe_fork)[0];
+	if (fork) return { op: "fork", branches: directChildrenOfRule(fork, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
+	const tee = directChildrenOfRule(po, P.RULE_pipe_tee)[0];
+	if (tee) return { op: "tee", branches: directChildrenOfRule(tee, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
+	const mr = directChildrenOfRule(po, P.RULE_pipe_match_recognize)[0];
+	if (mr) return lowerPipeMatchRecognize(mr, po);
+	if (directChildrenOfRule(po, P.RULE_pipe_export_data)[0]) return { op: "exportData", cst: po };
+	const createTable = directChildrenOfRule(po, P.RULE_pipe_create_table)[0];
+	if (createTable) {
+		const cts = directChildrenOfRule(createTable, P.RULE_create_table_statement)[0];
+		return { op: "createTable", name: cts ? dashedPathPartsOf(cts) : [], cst: po };
+	}
+	const insert = directChildrenOfRule(po, P.RULE_pipe_insert)[0];
+	if (insert) {
+		const prefix = directChildrenOfRule(insert, P.RULE_insert_statement_prefix)[0];
+		return { op: "insert", name: prefix ? dashedPathPartsOf(prefix) : [], cst: po };
+	}
+	// Unreachable for known GoogleSQL syntax — every pipe operator is handled above. Drift guard only.
+	return { op: "other", name: po.getText().slice(0, 24), cst: po };
 }
 
 // --- SELECT body -----------------------------------------------------------------
@@ -290,10 +690,7 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 	const unsupported: string[] = [];
 
 	const selectClause = directChildrenOfRule(select, P.RULE_select_clause)[0];
-	const selectList = selectClause ? directChildrenOfRule(selectClause, P.RULE_select_list)[0] : undefined;
-	const projections = selectList
-		? directChildrenOfRule(selectList, P.RULE_select_list_item).map(buildProjection)
-		: [];
+	const projections = projectionsOfSelectClause(selectClause);
 
 	const fromClause = directChildrenOfRule(select, P.RULE_from_clause)[0];
 	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
@@ -453,6 +850,10 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 		};
 	}
 
+	// graph_table_query: GRAPH_TABLE(graph MATCH … COLUMNS(…)) — a graph relation.
+	const graphTable = directChildrenOfRule(tp, P.RULE_graph_table_query)[0];
+	if (graphTable) return buildGraphTableSource(graphTable);
+
 	// table_path_expression: table_path_expression_base hint? alias? with_offset? at_system_time?
 	const pathExpr = directChildrenOfRule(tp, P.RULE_table_path_expression)[0];
 	if (pathExpr) return buildPathSource(pathExpr);
@@ -472,6 +873,132 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 	}
 
 	return { kind: "table", name: [stripBackticks(tp.getText())], cst: tp };
+}
+
+// --- graph / GQL -----------------------------------------------------------------
+// GRAPH_TABLE(graph MATCH … COLUMNS(…)) in FROM, and the standalone `GRAPH g … RETURN …` statement.
+// Modelled faithfully: the graph name, the MATCH element variables (nodes/edges + labels + direction),
+// the WHERE, and the output columns (COLUMNS / RETURN). The element variables are the graph query's own
+// relation namespace; scope resolves the WHERE / output expressions against them.
+
+/** A standalone gql_statement (`GRAPH g … RETURN …`) → `SELECT * FROM <graph-table>`. */
+function lowerGqlStatement(gql: ParserRuleContext): QueryExpr {
+	const src = buildGraphTableSource(gql);
+	const body: SelectExpr = {
+		kind: "select",
+		projections: [implicitStar(gql)],
+		from: [src],
+		columns: [],
+		aggregated: false,
+		cst: gql,
+	};
+	return { kind: "query", ctes: [], body, cst: gql };
+}
+
+/** graph_table_query / gql_statement → a GraphTableSource (MATCH form or operation-block/RETURN form). */
+function buildGraphTableSource(graph: ParserRuleContext): GraphTableSource {
+	const pathNode = directChildrenOfRule(graph, P.RULE_path_expression)[0];
+	const name = pathNode ? pathParts(pathNode) : [];
+	const elements: GraphElement[] = [];
+	const columnRefs: ColumnRef[] = [];
+	let where: Expr | undefined;
+	let columns: Projection[] = [];
+
+	const matchOp = directChildrenOfRule(graph, P.RULE_graph_match_operator)[0];
+	const pattern = matchOp ? directChildrenOfRule(matchOp, P.RULE_graph_pattern)[0] : undefined;
+	if (pattern) {
+		collectGraphElements(pattern, elements);
+		const wc = directChildrenOfRule(pattern, P.RULE_where_clause)[0];
+		if (wc) {
+			where = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
+			columnsOf(where, columnRefs, "where");
+		}
+	}
+	const shape = directChildrenOfRule(graph, P.RULE_graph_shape_clause)[0];
+	if (shape) {
+		const sl = directChildrenOfRule(shape, P.RULE_select_list)[0];
+		columns = sl ? directChildrenOfRule(sl, P.RULE_select_list_item).map(buildProjection) : [];
+	}
+	const opBlock = directChildrenOfRule(graph, P.RULE_graph_operation_block)[0];
+	if (opBlock) {
+		for (const pat of collectOfRule(opBlock, P.RULE_graph_pattern)) {
+			collectGraphElements(pat, elements);
+			const wc = directChildrenOfRule(pat, P.RULE_where_clause)[0];
+			if (wc) {
+				const w = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
+				columnsOf(w, columnRefs, "where");
+				where ??= w;
+			}
+		}
+		const retList = collectOfRule(opBlock, P.RULE_graph_return_item_list)[0];
+		if (retList) columns = directChildrenOfRule(retList, P.RULE_graph_return_item).map(graphReturnProjection);
+	}
+	for (const p of columns) columnsOf(p.expr, columnRefs, "projection");
+	const aliasInfo = aliasOf(directChildrenOfRule(graph, P.RULE_as_alias)[0]);
+	return {
+		kind: "graphtable",
+		graph: name,
+		elements,
+		where,
+		columns,
+		columnRefs,
+		alias: aliasInfo?.alias,
+		aliasCst: aliasInfo?.cst,
+		cst: graph,
+	};
+}
+
+/** Collect node/edge element variables (with labels + edge direction) from a graph pattern. */
+function collectGraphElements(node: ParserRuleContext, out: GraphElement[]): void {
+	for (const ep of collectOfRule(node, P.RULE_graph_element_pattern)) {
+		const nodePat = directChildrenOfRule(ep, P.RULE_graph_node_pattern)[0];
+		const edgePat = directChildrenOfRule(ep, P.RULE_graph_edge_pattern)[0];
+		const filler = firstOfRule(ep, P.RULE_graph_element_pattern_filler);
+		const variable = filler ? graphElementVar(filler) : undefined;
+		const label = filler ? graphElementLabel(filler) : undefined;
+		if (nodePat) {
+			out.push({ graphKind: "node", variable: variable?.text, variableCst: variable?.cst, label, cst: ep });
+		} else if (edgePat) {
+			out.push({
+				graphKind: "edge",
+				variable: variable?.text,
+				variableCst: variable?.cst,
+				label,
+				direction: edgeDirection(edgePat),
+				cst: ep,
+			});
+		}
+	}
+}
+
+function graphElementVar(filler: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
+	const id = directChildrenOfRule(filler, P.RULE_opt_graph_element_identifier)[0];
+	const gid = id ? firstOfRule(id, P.RULE_graph_identifier) : undefined;
+	return gid ? { text: stripBackticks(gid.getText()), cst: gid } : undefined;
+}
+
+function graphElementLabel(filler: ParserRuleContext): string | undefined {
+	const lbl = directChildrenOfRule(filler, P.RULE_opt_is_label_expression)[0];
+	const le = lbl ? firstOfRule(lbl, P.RULE_label_expression) : undefined;
+	return le ? le.getText() : undefined;
+}
+
+function edgeDirection(edgePat: ParserRuleContext): "left" | "right" | "any" {
+	if (directTokenType(edgePat, [P.SUB_GT_BRACKET_SYMBOL]) !== undefined) return "right";
+	if (directTokenType(edgePat, [P.LT_OPERATOR]) !== undefined) return "left";
+	return "any";
+}
+
+/** graph_return_item: expression (AS identifier)? | *. */
+function graphReturnProjection(item: ParserRuleContext): Projection {
+	if (directTokenType(item, [P.MULTIPLY_OPERATOR]) !== undefined) {
+		return { name: undefined, isStar: true, expr: { kind: "star", cst: item }, cst: item };
+	}
+	const e = directChildrenOfRule(item, P.RULE_expression)[0];
+	const id = directChildrenOfRule(item, P.RULE_identifier)[0];
+	const expr = e ? lowerExpr(e) : otherExpr(item);
+	const name = id ? identText(id) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
+	return { name, isStar: false, expr, cst: item };
 }
 
 /** table_path_expression: base (unnest | path) + alias. */

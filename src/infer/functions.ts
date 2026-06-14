@@ -6,6 +6,9 @@ import { scalar, UNKNOWN, type Type } from "./types.js";
 // rule is `(argTypes) => Type`. A function is absent (→ unknown) only when its return type is
 // genuinely arg/lambda/schema-dependent in a way we don't model yet (transform, from_json,
 // named_struct, …). We never guess: a missing rule yields `unknown`, never a wrong type.
+//
+// Why a rule is a *function* and not a fixed type string — and what each dialect calls a
+// return-type-follows-input ("templated"/"polymorphic"/generic) function: docs/type-polymorphism.md.
 
 export type FnRule = (args: Type[]) => Type;
 

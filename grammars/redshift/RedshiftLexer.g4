@@ -234,6 +234,14 @@ PERCENT
    : '%'
    ;
 
+// Redshift catalog three-part path separator: database@namespace.schema.table
+// (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html). A bare '@' must be
+// its own token; the Operator rule would otherwise swallow it. Multi-char '@'-operators (@>, @@)
+// still win by maximal munch since they are longer than this single character.
+AT_SIGN
+   : '@'
+   ;
+
 PARAM
    : '$' ([0-9])+
    ;
@@ -2732,6 +2740,18 @@ USAGE
 
 IGNORE
     : 'IGNORE'
+    ;
+
+// RESPECT NULLS / IGNORE NULLS — window-function null treatment
+// (docs.aws.amazon.com/redshift/latest/dg/r_WF_FIRST_VALUE.html). RESPECT is a reserved word.
+RESPECT
+    : 'RESPECT'
+    ;
+
+// APPROXIMATE prefix: APPROXIMATE PERCENTILE_DISC(p) / APPROXIMATE COUNT(DISTINCT …)
+// (docs.aws.amazon.com/redshift/latest/dg/r_APPROXIMATE_PERCENTILE_DISC.html). Non-reserved.
+APPROXIMATE
+    : 'APPROXIMATE'
     ;
 
 LANGUAGES

@@ -36,11 +36,12 @@ export function qualify(tree: ScopeTree, schema: Schema): Qualification {
 	const diagnostics: Diagnostic[] = [];
 	const resolved = new Map<Scope, string[] | "unknown">();
 
-	// Post-order: a scope's columns (and their types) may depend on its CTE/subquery children.
+	// Post-order: a scope's columns (and their types) may depend on its CTE/subquery children. A pipe
+	// stage depends on the scope of the relation entering it (a sibling), also visited first by order.
 	const visit = (scope: Scope): void => {
 		for (const child of scope.children) visit(child);
 		resolved.set(scope, resolveColumns(scope, schema, resolved, diagnostics));
-		for (const ref of scope.body.columns) checkColumn(scope, ref, schema, resolved, diagnostics);
+		for (const ref of bodyColumns(scope)) checkColumn(scope, ref, schema, resolved, diagnostics);
 	};
 	visit(tree.root);
 
@@ -50,22 +51,46 @@ export function qualify(tree: ScopeTree, schema: Schema): Qualification {
 	};
 }
 
+/** Column references this scope checks directly — a select/setop body's own refs. A pipe scope holds
+ *  none (its refs live in its per-stage child scopes, each a synthetic select carrying its own refs). */
+function bodyColumns(scope: Scope): ColumnRef[] {
+	const body = scope.body;
+	if (body.kind === "pipe") return [];
+	return body.columns;
+}
+
 function resolveColumns(
 	scope: Scope,
 	schema: Schema,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
+	if (scope.pipeStage) return resolvePipeStage(scope, schema, resolved, diagnostics);
 	const body = scope.body;
+	if (body.kind === "pipe") {
+		const last = scope.pipe?.stages.at(-1) ?? scope.pipe?.input;
+		return last ? (resolved.get(last) ?? "unknown") : "unknown";
+	}
 	if (body.kind === "setop") {
 		if (!scope.branches) return "unknown";
 		const left = resolved.get(scope.branches.left) ?? "unknown";
 		if (!body.byName) return left;
 		return mergeByName(left, resolved.get(scope.branches.right) ?? "unknown");
 	}
+	return projectionColumns(scope, body.projections, schema, resolved, diagnostics);
+}
 
+/** Resolve a projection list to output names: a star expands against the scope's sources (its modifiers
+ *  applied), a named/aliased item keeps its name, an anonymous expression makes the set "unknown". */
+function projectionColumns(
+	scope: Scope,
+	projections: import("../ir/ir.js").Projection[],
+	schema: Schema,
+	resolved: Map<Scope, string[] | "unknown">,
+	diagnostics: Diagnostic[],
+): string[] | "unknown" {
 	const out: string[] = [];
-	for (const p of body.projections) {
+	for (const p of projections) {
 		if (p.isStar) {
 			const star = p.expr.kind === "star" ? p.expr : undefined;
 			let cols = expandStar(scope, schema, resolved, diagnostics, star?.qualifier);
@@ -79,6 +104,70 @@ function resolveColumns(
 		}
 	}
 	return out;
+}
+
+/** Output columns of a pipe stage given the schema-resolved incoming columns. Mirrors the schema-free
+ *  flow in scope.ts, but resolves stars / a JOINed table's columns against the catalog. */
+function resolvePipeStage(
+	scope: Scope,
+	schema: Schema,
+	resolved: Map<Scope, string[] | "unknown">,
+	diagnostics: Diagnostic[],
+): string[] | "unknown" {
+	const stage = scope.pipeStage!;
+	const incoming = scope.pipeIncoming ? (resolved.get(scope.pipeIncoming) ?? "unknown") : "unknown";
+	switch (stage.op) {
+		case "select":
+			return projectionColumns(scope, stage.projections, schema, resolved, diagnostics);
+		case "extend":
+		case "window": {
+			if (incoming === "unknown") return "unknown";
+			const added = projectionColumns(scope, stage.projections, schema, resolved, diagnostics);
+			return added === "unknown" ? "unknown" : [...incoming, ...added];
+		}
+		case "aggregate": {
+			const aggs = projectionColumns(scope, stage.aggregates, schema, resolved, diagnostics);
+			if (aggs === "unknown") return "unknown";
+			const keys: string[] = [];
+			for (const g of stage.groupBy) {
+				if (g.kind === "column") keys.push(g.parts[g.parts.length - 1]);
+				else return "unknown";
+			}
+			return [...aggs, ...keys];
+		}
+		case "drop":
+			return incoming === "unknown"
+				? "unknown"
+				: incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c)));
+		case "rename": {
+			if (incoming === "unknown") return "unknown";
+			const map = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
+			return incoming.map((c) => map.get(normalizeName(c)) ?? c);
+		}
+		case "join": {
+			if (incoming === "unknown") return "unknown";
+			const joinSrc = [...scope.sources.entries()].find(([k]) => k !== "")?.[1];
+			const joinCols = joinSrc ? columnsOfSource(joinSrc, schema, resolved, diagnostics) : undefined;
+			return joinCols === undefined ? "unknown" : [...incoming, ...joinCols];
+		}
+		case "where":
+		case "orderBy":
+		case "limit":
+		case "distinct":
+		case "tablesample":
+		case "assert":
+		case "log":
+		case "staticDescribe":
+		case "with":
+		case "set":
+		case "setop":
+		case "recursiveUnion":
+			return incoming;
+		default:
+			// call / pivot / unpivot / matchRecognize / describe / if / fork / tee / export / create /
+			// insert / other — needs a catalog or is terminal/branching: unknown.
+			return "unknown";
+	}
 }
 
 function expandStar(
@@ -124,6 +213,8 @@ function columnsOfSource(
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
+	if (src.kind === "relation") return known(resolved.get(src.scope));
+	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
@@ -233,6 +324,8 @@ function sourceColumns(
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
+	if (src.kind === "relation") return known(resolved.get(src.scope));
+	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
