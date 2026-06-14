@@ -6,8 +6,9 @@
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanSql } from "./scrape-snowflake-docs.mjs";
+import { corpusPath } from "./corpus-paths.mjs";
 
-const OUT = join(import.meta.dirname, "..", "harness", "local", "snowflake-docs");
+const OUT = corpusPath("harness/local/snowflake-docs");
 
 function* sqlFiles(dir) {
 	for (const e of readdirSync(dir, { withFileTypes: true })) {

@@ -10,6 +10,7 @@
 // Run: node tools/extract-googlesql-tests.mjs
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { corpusPath } from "./corpus-paths.mjs";
 import {
 	blockDir,
 	blockModeOverride,
@@ -28,8 +29,8 @@ import {
 	stripLeadingDirectives,
 } from "./googlesql-testdata.mjs";
 
-const SRC = "vendor/googlesql/googlesql/analyzer/testdata";
-const OUT = "harness/local/bigquery-zetasql";
+const SRC = corpusPath("vendor/googlesql/googlesql/analyzer/testdata");
+const OUT = corpusPath("harness/local/bigquery-zetasql");
 const MAX_VARIANTS = 8; // cap `{{a|b|…}}` expansion per block; see Open Risk 2 in the plan
 
 if (!existsSync(SRC)) {

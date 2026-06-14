@@ -14,9 +14,10 @@
 import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { corpusPath } from "./corpus-paths.mjs";
 
-const SRC = join(import.meta.dirname, "..", "vendor", "sql-docs", "docs", "t-sql");
-const OUT = join(import.meta.dirname, "..", "harness", "local", "tsql-docs");
+const SRC = corpusPath("vendor/sql-docs/docs/t-sql");
+const OUT = corpusPath("harness/local/tsql-docs");
 
 // First words that can begin a T-SQL statement (or batch). A block starting with anything
 // else (a bare expression, a column list, a WHEN/ON clause) is a fragment, not a statement.

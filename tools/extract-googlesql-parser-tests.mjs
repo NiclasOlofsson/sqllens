@@ -12,6 +12,7 @@
 // analyzer extractor). Run: node tools/extract-googlesql-parser-tests.mjs
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { corpusPath } from "./corpus-paths.mjs";
 import {
 	blockDir,
 	blockModeOverride,
@@ -27,8 +28,8 @@ import {
 	stripLeadingDirectives,
 } from "./googlesql-testdata.mjs";
 
-const SRC = "vendor/googlesql/googlesql/parser/testdata";
-const OUT = "harness/local/bigquery-zetasql-parser";
+const SRC = corpusPath("vendor/googlesql/googlesql/parser/testdata");
+const OUT = corpusPath("harness/local/bigquery-zetasql-parser");
 const MAX_VARIANTS = 8; // cap `{{a|b|…}}` expansion per block (matches the analyzer extractor)
 
 if (!existsSync(SRC)) {
@@ -75,7 +76,8 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		// A block whose own directive disables an implemented feature the file default enables tests that
 		// feature OFF — we accept such SQL (permissive superset), so its negatives aren't valid for us.
 		// The expected-string feature-off / divergence rules are shared with the analyzer extractor.
-		const featureOff = disablesImplemented(blockDirective, defaultDir) || featureOffExpected(expectedSection, query);
+		const featureOff =
+			disablesImplemented(blockDirective, defaultDir) || featureOffExpected(expectedSection, query);
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = stripLeadingDirectives(all[v]);
 			if (!variant.trim()) continue;

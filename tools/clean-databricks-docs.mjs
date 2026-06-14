@@ -6,8 +6,9 @@
 import { readdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { cleanSql } from "./scrape-databricks-docs.mjs";
+import { corpusPath } from "./corpus-paths.mjs";
 
-const OUT = join(import.meta.dirname, "..", "harness", "local", "databricks-docs");
+const OUT = corpusPath("harness/local/databricks-docs");
 
 function* sqlFiles(dir) {
 	for (const e of readdirSync(dir, { withFileTypes: true })) {

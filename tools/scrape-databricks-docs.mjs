@@ -20,10 +20,11 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { corpusPath } from "./corpus-paths.mjs";
 
 const SITEMAP = "https://docs.databricks.com/aws/en/sitemap.xml";
-const OUT = join(import.meta.dirname, "..", "harness", "local", "databricks-docs");
-const HTML_CACHE = join(import.meta.dirname, "..", "harness", "local", "databricks-docs-html");
+const OUT = corpusPath("harness/local/databricks-docs");
+const HTML_CACHE = corpusPath("harness/local/databricks-docs-html");
 const MANIFEST = join(OUT, "manifest.json");
 const CONCURRENCY = 4;
 

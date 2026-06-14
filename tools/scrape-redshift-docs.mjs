@@ -14,10 +14,11 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { corpusPath } from "./corpus-paths.mjs";
 
 const BASE = "https://docs.aws.amazon.com/redshift/latest/dg";
 const TOC = `${BASE}/toc-contents.json`;
-const OUT = join(import.meta.dirname, "..", "harness", "local", "redshift-docs");
+const OUT = corpusPath("harness/local/redshift-docs");
 const MANIFEST = join(OUT, "manifest.json");
 const CONCURRENCY = 4;
 
@@ -88,7 +89,10 @@ export function cleanSql(sql) {
 	let cut = -1;
 	for (let i = 0; i < lines.length; i++) {
 		const l = lines[i];
-		if (i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l) || isTabular(l))) {
+		if (
+			i > 0 &&
+			(isResultBorder(l) || ROWS_FOOTER.test(l) || TIMING_FOOTER.test(l) || PROSE_LINE.test(l) || isTabular(l))
+		) {
 			// psql prints the column header directly above a border — drop it too.
 			cut = isResultBorder(l) && i > 1 && isHeaderish(lines[i - 1]) ? i - 1 : i;
 			break;

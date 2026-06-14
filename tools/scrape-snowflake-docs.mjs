@@ -11,9 +11,10 @@
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { pathToFileURL } from "node:url";
+import { corpusPath } from "./corpus-paths.mjs";
 
 const BASE = "https://docs.snowflake.com";
-const OUT = join(import.meta.dirname, "..", "harness", "local", "snowflake-docs");
+const OUT = corpusPath("harness/local/snowflake-docs");
 const MANIFEST = join(OUT, "manifest.json");
 const CONCURRENCY = 4;
 

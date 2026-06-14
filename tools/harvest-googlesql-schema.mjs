@@ -12,9 +12,10 @@
 // Run: node tools/harvest-googlesql-schema.mjs
 import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { corpusPath } from "./corpus-paths.mjs";
 
-const SRC = "vendor/googlesql/googlesql/analyzer/testdata";
-const OUT = "harness/local/googlesql-schema.json";
+const SRC = corpusPath("vendor/googlesql/googlesql/analyzer/testdata");
+const OUT = corpusPath("harness/local/googlesql-schema.json");
 
 if (!existsSync(SRC)) {
 	console.error(`missing ${SRC} — sparse-clone google/googlesql analyzer/testdata first`);
@@ -39,7 +40,7 @@ const pending = []; // [prefix, col, type] from ColumnRefs; applied once the tab
 
 function ensure(table, col) {
 	if (PSEUDO_COLUMNS.has(col)) return; // skip value-table pseudo-columns
-	(schema[table] ??= {});
+	schema[table] ??= {};
 	if (!(col in schema[table])) schema[table][col] = null;
 }
 
