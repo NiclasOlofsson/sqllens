@@ -1,6 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import {
 	Graph_call_operator_coreContext,
+	Pipe_aggregate_itemContext,
 	Pipe_callContext,
 	Select_clauseContext,
 	Select_column_dot_starContext,
@@ -50,6 +51,8 @@ function hasTopLevelBinaryOp(text: string): boolean {
  * - CALL tvf suffixes: googlesql.tm `pipe_call` is `CALL tvf as_alias?` (no PIVOT/UNPIVOT) and a graph
  *   `CALL … tvf` takes a bare tvf (no alias, no pivot). Our shared tvf_with_suffixes permits both, so
  *   flag a pipe CALL with a PIVOT/UNPIVOT, and a graph CALL with any tvf alias/pivot suffix.
+ * - pipe AGGREGATE dot-star order: googlesql.tm's pipe_selection_item_with_order allows an ASC/DESC
+ *   order only on an expression item, not on a dot-star (`|> AGGREGATE s.* ASC`).
  */
 export function countPostParseErrors(tree: ParserRuleContext): number {
 	let errors = 0;
@@ -81,6 +84,8 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) errors++; // pipe CALL takes no PIVOT/UNPIVOT
 		} else if (node instanceof Graph_call_operator_coreContext) {
 			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
+		} else if (node instanceof Pipe_aggregate_itemContext) {
+			if (node.opt_selection_item_order() && node.pipe_selection_item().select_column_dot_star()) errors++; // no ASC/DESC on a dot-star
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
