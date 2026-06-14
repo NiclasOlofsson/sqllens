@@ -2303,9 +2303,13 @@ dashed_path_expression:
 	dashed_identifier
 	| dashed_path_expression DOT_SYMBOL identifier;
 
+// googlesql.tm dashed_identifier: a dash-separated path component (`my-project`, `a-3-b`, `db-1-2`). The
+// recursive alts APPEND one component at a time (`dashed_identifier "-" identifier`), so an odd-length
+// chain ending in a plain identifier (`a-3-b` = `((a-3)-b)`) parses — not `dashed_identifier "-"
+// dashed_identifier`, which would wrongly require the trailing component to itself be dashed.
 dashed_identifier:
 	identifier MINUS_OPERATOR identifier
-	| dashed_identifier MINUS_OPERATOR dashed_identifier
+	| dashed_identifier MINUS_OPERATOR identifier
 	| identifier MINUS_OPERATOR INTEGER_LITERAL
 	| dashed_identifier MINUS_OPERATOR INTEGER_LITERAL
 	| identifier MINUS_OPERATOR floating_point_literal identifier
