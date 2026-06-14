@@ -84,6 +84,10 @@ for (const file of readdirSync(SRC).filter((f) => f.endsWith(".test"))) {
 		// not a real negative. (Tighten to the location-suffixed form so the genuine, PIPES-independent
 		// "Unexpected FROM; FROM queries following a set operation must be parenthesized" stays a negative.)
 		if (/Syntax error: Unexpected FROM \[at/.test(expectedSection)) featureOff = true;
+		// An alias on a parenthesized outer query (`(SELECT 1) AS q`) is a pipe-syntax feature; with PIPES
+		// off ZetaSQL reports "Alias not allowed on parenthesized outer query". We implement PIPES, so the
+		// same SQL is a positive (pipe_parenthesized_query_alias's +PIPES variants) — feature-off for us.
+		if (/Alias not allowed on parenthesized outer query/.test(expectedSection)) featureOff = true;
 		for (let v = 0; v < Math.min(all.length, MAX_VARIANTS); v++) {
 			const variant = all[v];
 			if (!variant.trim()) continue;
