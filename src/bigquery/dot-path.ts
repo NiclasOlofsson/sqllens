@@ -27,6 +27,8 @@ const T_UPDATE = GoogleSQLLexer.UPDATE_SYMBOL;
 const T_LS_BRACKET = GoogleSQLLexer.LS_BRACKET_SYMBOL;
 const T_REPLACE_AFTER_INSERT = GoogleSQLLexer.KW_REPLACE_AFTER_INSERT;
 const T_UPDATE_AFTER_INSERT = GoogleSQLLexer.KW_UPDATE_AFTER_INSERT;
+const T_SEQUENCE = GoogleSQLLexer.SEQUENCE_SYMBOL;
+const T_CLAMPED = GoogleSQLLexer.CLAMPED_SYMBOL;
 
 // Tokens after which a `.` opens a path component. Identifier-capable tokens = token_identifier
 // (IDENTIFIER) plus keyword_as_identifier (the nonreserved keyword set + SIMPLE_SYMBOL), per the
@@ -86,6 +88,18 @@ function rewriteDotPaths(tokens: Token[]): Token[] {
 		}
 		let type = tok.type;
 		const text = tok.text ?? "";
+
+		// ZetaSQL lookahead transformer (AMBIGUOUS CASE 11): SEQUENCE immediately followed by CLAMPED is
+		// forced to an IDENTIFIER, so `f(sequence clamped …)` reads `sequence` as a column with a CLAMPED
+		// BETWEEN modifier (and `f(sequence clamped)` without BETWEEN is an error) rather than a SEQUENCE
+		// input argument. A real SEQUENCE arg named `clamped` must be backtick-quoted.
+		if (type === T_SEQUENCE && nextDefaultType(idx) === T_CLAMPED) {
+			out.push(cloneRetyped(tok, T_IDENTIFIER, text, tok.start, tok.stop));
+			lookback2 = lookback;
+			lookback = T_IDENTIFIER;
+			pathDot = false;
+			continue;
+		}
 
 		// ZetaSQL lookahead transformer: REPLACE/UPDATE immediately after INSERT is the insert mode
 		// (KW_REPLACE_AFTER_INSERT / KW_UPDATE_AFTER_INSERT) — UNLESS it begins a path (`.`/`[` next),
