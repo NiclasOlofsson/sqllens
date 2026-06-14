@@ -2,6 +2,7 @@ import type { ParserRuleContext } from "antlr4ng";
 import {
 	Analyze_statementContext,
 	Expression_higher_prec_than_andContext,
+	Expression_maybe_parenthesized_not_a_queryContext,
 	Graph_call_operator_coreContext,
 	Pipe_aggregate_itemContext,
 	Pipe_callContext,
@@ -9,6 +10,12 @@ import {
 	Select_column_dot_starContext,
 	Shift_operatorContext,
 } from "../generated/bigquery/GoogleSQLParser.js";
+
+// A graph endpoint predicate `expr IS [NOT] SOURCE|DESTINATION [OF] expr`. Duck-typed: the alt appears
+// in both expression_higher_prec_than_and and expression_maybe_parenthesized_not_a_query.
+function isGraphEndpointPredicate(ctx: { IS_SYMBOL?(): unknown; SOURCE_SYMBOL?(): unknown; DESTINATION_SYMBOL?(): unknown } | null): boolean {
+	return !!(ctx?.IS_SYMBOL?.() && (ctx.SOURCE_SYMBOL?.() || ctx.DESTINATION_SYMBOL?.()));
+}
 
 // An expression node whose top operator is a comparison-family operator (the non-associative set —
 // googlesql.tm marks these so an operand can't itself be one without parentheses).
@@ -110,6 +117,11 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 		} else if (node instanceof Expression_higher_prec_than_andContext) {
 			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
 			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0))) errors++;
+			else if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))) errors++;
+		} else if (node instanceof Expression_maybe_parenthesized_not_a_queryContext) {
+			// A graph endpoint predicate (IS SOURCE/DESTINATION OF) cannot be chained — its LHS may not be
+			// another endpoint predicate (`a IS SOURCE OF e IS DESTINATION OF d`).
+			if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))) errors++;
 		} else if (node instanceof Analyze_statementContext) {
 			// A bare `OPTIONS` table name is really the OPTIONS keyword (which requires `(...)`).
 			const firstTable = node.table_and_column_info_list()?.table_and_column_info(0);
