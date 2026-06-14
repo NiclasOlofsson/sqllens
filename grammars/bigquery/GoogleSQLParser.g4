@@ -20,21 +20,229 @@ options {
 	tokenVocab = GoogleSQLLexer;
 }
 
-root: stmts EOF;
+@parser::members {
+	// ZetaSQL enforces non-associativity of the comparison family (=, <, >, …, LIKE, IN, BETWEEN, IS,
+	// IS DISTINCT) via bison %nonassoc plus IsAllowedInComparison()/ErrorIfUnparenthesizedNotExpression()
+	// actions (googlesql.tm). ANTLR left-recursion has neither, so we reproduce the actions: an operand
+	// of a comparison-family or arithmetic operator may not itself be an unparenthesized comparison-family
+	// node, and a binary operand may not be a bare `NOT expr`.
+	private exprIsComparisonFamily(ctx: any): boolean {
+		return (
+			!!ctx &&
+			!!(
+				ctx.comparative_operator?.() ||
+				ctx.between_operator?.() ||
+				ctx.in_operator?.() ||
+				ctx.like_operator?.() ||
+				ctx.distinct_operator?.() ||
+				ctx.is_operator?.()
+			)
+		);
+	}
+	private exprIsBareNot(ctx: any): boolean {
+		const c0 = ctx?.getChild?.(0);
+		return !!c0 && c0.getText?.().toUpperCase?.() === "NOT" && !!ctx.NOT_SYMBOL?.();
+	}
+	// A chained function call / field access cannot be applied to a bare (unparenthesized) numeric
+	// literal — `123.0.x()`, `-5.0.f()`, `123 .f()` — only to a path or parenthesized expression
+	// (googlesql.tm function_call_expression_base: INT/FLOAT base → "Unexpected ("). Parenthesized
+	// forms have a `(` in their text and don't match.
+	private exprIsBareNumeric(ctx: any): boolean {
+		const t = ctx?.getText?.() ?? "";
+		return /^[+-]?(\d[\d.]*([eE][+-]?\d+)?|\.\d+([eE][+-]?\d+)?)$/.test(t);
+	}
+	// googlesql.tm lambda_argument_list: a lambda's parameter list is either a bare path expression
+	// (`e`, `a.b.c`) or a parenthesized struct constructor with a top-level comma (`(e, i>0)`, `()`).
+	// A single parenthesized non-path (`(e>0)`), a STRUCT(…) constructor, or any other expression is
+	// "Expecting lambda argument list". `()` is its own grammar alt; this validates the expression alt.
+	private lambdaArgListValid(text: string): boolean {
+		const t = (text ?? "").trim();
+		if (/^(`[^`]*`|[A-Za-z_]\w*)(\s*\.\s*(`[^`]*`|[A-Za-z_]\w*))*$/.test(t)) return true; // bare path
+		if (!t.startsWith("(") || !t.endsWith(")")) return false;
+		// Parenthesized: a struct constructor (a top-level comma → any element kinds, `(e, i>0)`) or a
+		// single parenthesized path (`(e)`, `(a.b.c)`). A single parenthesized non-path (`(e>0)`) is not.
+		let depth = 0;
+		for (let k = 0; k < t.length; k++) {
+			const c = t[k];
+			if (c === "(") depth++;
+			else if (c === ")") depth--;
+			else if (c === "," && depth === 1) return true;
+		}
+		return this.lambdaArgListValid(t.slice(1, -1));
+	}
+	// A graph path factor is a bare edge pattern only when it is an UNquantified graph_edge_pattern.
+	// A quantified edge (`-[e]->{1,3}`) is a path pattern in ZetaSQL (ASTGraphPathPattern), not an edge,
+	// so a hint adjacent to it is allowed — only a hint between two bare edges is ambiguous/rejected.
+	private graphFactorIsEdge(f: any): boolean {
+		if (!f) return false;
+		return !!f.graph_path_primary?.()?.graph_element_pattern?.()?.graph_edge_pattern?.();
+	}
+	// ZetaSQL: "Hint cannot be used in between two GraphEdgePatterns" — a `@{…}` hint may precede a node
+	// (or a parenthesized path) but not sit between two adjacent edge patterns.
+	private checkGraphEdgeHints(ctx: any): void {
+		const hints = ctx.hint?.() ?? [];
+		if (!hints.length) return;
+		const factors = ctx.graph_path_factor?.() ?? [];
+		for (const h of hints) {
+			const hs = h.start?.tokenIndex ?? -1;
+			let prev: any = null;
+			let next: any = null;
+			for (const f of factors) {
+				const fStart = f.start?.tokenIndex ?? -1;
+				const fStop = f.stop?.tokenIndex ?? -1;
+				if (fStop < hs && (!prev || fStop > (prev.stop?.tokenIndex ?? -1))) prev = f;
+				if (fStart > hs && (!next || fStart < (next.start?.tokenIndex ?? Number.MAX_SAFE_INTEGER))) next = f;
+			}
+			if (this.graphFactorIsEdge(prev) && this.graphFactorIsEdge(next)) {
+				this.notifyErrorListeners("Syntax error: Hint cannot be used in between two GraphEdgePatterns", null, null);
+				return;
+			}
+		}
+	}
+	// Two tokens are adjacent when no character (whitespace/comment) sits between them. GoogleSQL
+	// requires a graph edge pattern's punctuation to be written without spaces (`-[…]->`, `<-[…]-`);
+	// the filler inside `[…]` may contain spaces (ZetaSQL graph_edge_pattern adjacency checks).
+	private adj(a: any, b: any): boolean {
+		return !!a && !!b && a.stop + 1 === b.start;
+	}
+	// One join step: a comma join, or a JOIN carrying N consecutive ON/USING clauses. `qualified` is a
+	// join that requires a condition — i.e. not CROSS and not NATURAL (join_processor IsQualifiedJoin).
+	private joinStep(s: any): { comma: boolean; qualified: boolean; ons: number; outer: boolean } {
+		if (s.COMMA_SYMBOL?.()) return { comma: true, qualified: false, ons: 0, outer: false };
+		const jtText = s.join_type?.()?.getText?.() ?? "";
+		const isCross = /CROSS/i.test(jtText);
+		const isNatural = !!s.opt_natural?.();
+		const list = s.on_or_using_clause_list?.();
+		const ons = list ? (list.on_or_using_clause?.()?.length ?? 0) : s.on_or_using_clause?.() ? 1 : 0;
+		return { comma: false, qualified: !isCross && !isNatural, ons, outer: /FULL|RIGHT/i.test(jtText) };
+	}
+	// JOIN condition balance — a faithful port of ZetaSQL join_processor.cc JoinRuleAction's left fold
+	// over the join chain. Each step carries a running `unmatched` join count (lhs.unmatched_join_count):
+	// a qualified join adds 1, then the step's ON/USING clauses subtract. A step with ≥2 clauses (the
+	// consecutive-ON "join rewrite") that has more clauses than unmatched joins is a hard error; with a
+	// comma join already in the chain it is "Unexpected keyword ON"; a single over-count is *deferred*
+	// (backward compat) and only thrown if a later ≥2-clause step meets it. A comma after a step that
+	// used consecutive ON/USING is rejected ("Comma join is not allowed after consecutive ON/USING"),
+	// and resets the running state (a comma join node carries none of it). Returns true when valid.
+	private joinBalanced(steps: any[]): boolean {
+		let unmatched = 0; // lhs.unmatched_join_count
+		let transformNeeded = false; // lhs.transformation_needed — a ≥2-clause step occurred (sticky until a comma)
+		let containsComma = false; // lhs.contains_comma_join (sticky)
+		let deferred = false; // lhs has a saved (not-yet-thrown) parse error
+		let sawComma = false; // any comma join seen (for the outer-after-comma grammar guard)
+		for (const s of steps ?? []) {
+			const st = this.joinStep(s);
+			// A RIGHT/FULL join after a comma join must be parenthesized — `FROM a, b RIGHT JOIN c`.
+			if (st.outer && sawComma) return false;
+			if (st.comma) {
+				if (transformNeeded) return false; // comma after consecutive ON/USING
+				containsComma = true;
+				sawComma = true;
+				unmatched = 0;
+				transformNeeded = false;
+				deferred = false;
+				continue;
+			}
+			const cc = st.ons;
+			const u = unmatched + (st.qualified ? 1 : 0);
+			if (cc >= 2 && containsComma) return false; // mixing consecutive ON/USING with a comma join
+			if (deferred || cc > u) {
+				if (cc >= 2) return false; // more join conditions than joins that require one
+				deferred = true; // single over-count: defer; thrown only if a later ≥2-clause step hits it
+			}
+			unmatched = u - cc;
+			if (cc >= 2) transformNeeded = true;
+		}
+		// When a consecutive-ON "join rewrite" occurred, ZetaSQL runs a second pass
+		// (ProcessFlattenedJoinExpression) that re-pairs each ON/USING with a join; if any qualified join
+		// is left without a matching condition the flattened stack does not reduce to one node and it
+		// errors ("… JOIN must have an ON or USING clause"). Replay that stack reduction here.
+		return transformNeeded ? this.joinPhase2(steps) : true;
+	}
+	// ZetaSQL join_processor.cc ProcessFlattenedJoinExpression, replayed over the join steps. Builds the
+	// source-order token stream (T=operand, Q=qualified-join marker, X=cross/comma/natural-join marker,
+	// O=ON/USING clause) and reduces it: a Q pushes a pending join (join_count++), an O matches the top
+	// (lhs, join, rhs)→one node (join_condition_count++, both counts reset when equal — a new block), an
+	// X folds lhs with the next operand. Valid iff the stack reduces to exactly one node.
+	private joinPhase2(steps: any[]): boolean {
+		const toks: string[] = ["T"]; // leading table_primary
+		for (const s of steps ?? []) {
+			const st = this.joinStep(s);
+			toks.push(st.comma || !st.qualified ? "X" : "Q", "T");
+			for (let k = 0; k < st.ons; k++) toks.push("O");
+		}
+		const stack: string[] = [];
+		let jc = 0;
+		let jcc = 0;
+		for (let i = 0; i < toks.length; i++) {
+			const t = toks[i];
+			if (t === "T") {
+				stack.push("T");
+			} else if (t === "Q") {
+				jc++;
+				stack.push("Q");
+			} else if (t === "X") {
+				if (!stack.length || toks[i + 1] !== "T") return false;
+				stack.pop();
+				i++; // fold lhs with the next operand → one node
+				stack.push("T");
+			} else {
+				jcc++;
+				if (jcc === jc) {
+					jc = 0;
+					jcc = 0;
+				}
+				if (stack.length < 3) return false;
+				stack.pop();
+				stack.pop();
+				stack.pop();
+				stack.push("T");
+			}
+		}
+		return stack.length === 1;
+	}
+	private checkGraphEdgeAdjacency(ctx: any): void {
+		const lt = ctx.LT_OPERATOR?.()?.symbol;
+		const m0 = ctx.MINUS_OPERATOR?.(0)?.symbol;
+		const m1 = ctx.MINUS_OPERATOR?.(1)?.symbol;
+		const ls = ctx.LS_BRACKET_SYMBOL?.()?.symbol;
+		const rs = ctx.RS_BRACKET_SYMBOL?.()?.symbol;
+		const arrow = ctx.SUB_GT_BRACKET_SYMBOL?.()?.symbol;
+		const tail = m1 ?? arrow; // trailing `-` or `->`
+		const bad =
+			(lt && m0 && !this.adj(lt, m0)) ||
+			(m0 && ls && !this.adj(m0, ls)) ||
+			(rs && tail && !this.adj(rs, tail));
+		if (bad) {
+			this.notifyErrorListeners("Syntax error: graph edge pattern punctuation must be adjacent", null, null);
+		}
+	}
+}
 
+// An input of only comments/whitespace is a valid (empty) script in GoogleSQL (ParseScript).
+root: stmts? EOF;
+
+// A script is a sequence of SQL or procedural (scripting) statements — ZetaSQL ParseScript.
+// Top level accepts both; the script statements (DECLARE/IF/WHILE/LOOP/BREAK/RAISE/BEGIN…) were
+// previously reachable only inside a BEGIN…END block.
 stmts:
-	unterminated_sql_statement (
-		SEMI_SYMBOL unterminated_sql_statement
-	)* SEMI_SYMBOL?;
+	top_statement (SEMI_SYMBOL top_statement)* SEMI_SYMBOL?;
 
-unterminated_sql_statement:
-	statement_level_hint? sql_statement_body
-	| DEFINE_SYMBOL MACRO_SYMBOL {
-		this.notifyErrorListeners("Syntax error: DEFINE MACRO statements cannot be composed from other expansions", null, null)
-	 }
-	| statement_level_hint DEFINE_SYMBOL MACRO_SYMBOL {
-		this.notifyErrorListeners("Hints are not allowed on DEFINE MACRO statements", null, null)
-	 };
+// DEFINE MACRO is valid only at the top level (not nested under a statement/block); a nested one is a
+// syntax error in GoogleSQL, so it is reachable only here, not from unterminated_statement.
+top_statement: define_macro_statement | unterminated_statement;
+
+unterminated_sql_statement: statement_level_hint? sql_statement_body;
+
+// DEFINE MACRO is DETECT-ONLY (like Spark's CREATE TEMPORARY MACRO and our object DDL): GoogleSQL's
+// macro body uses a dedicated preprocessor lexer mode (`$arg` substitution, bare tokens like `3m`,
+// `*/`) we don't model, so we recognize the statement and consume its name + body opaquely to the
+// terminator rather than parsing it. It lowers to a flagged non-query body. (define_macro_statement
+// in googlesql.tm.)
+define_macro_statement:
+	statement_level_hint? DEFINE_SYMBOL MACRO_SYMBOL define_macro_body?;
+
+define_macro_body: ~SEMI_SYMBOL+;
 
 sql_statement_body:
 	query_statement
@@ -65,6 +273,7 @@ sql_statement_body:
 	| create_model_statement
 	| create_property_graph_statement
 	| create_schema_statement
+	| create_sequence_statement
 	| create_external_schema_statement
 	| create_snapshot_statement
 	| create_table_function_statement
@@ -73,8 +282,10 @@ sql_statement_body:
 	| create_entity_statement
 	// /* TODO(zp): define macro statement */ | define_macro_statement
 	| define_table_statement
-	| describe_statement
-	| execute_immediate
+	// CALL/DESCRIBE/EXECUTE IMMEDIATE/RUN/SHOW may carry a pipe-operator suffix when they return a
+	// single table (FEATURE_STATEMENT_WITH_PIPE_OPERATORS; sql_statement_body_maybe_pipe_suffix in
+	// googlesql.tm). The suffix is optional, so this also covers the bare statements.
+	| statement_maybe_pipe_suffix
 	| explain_statement
 	| export_data_statement
 	| export_model_statement
@@ -84,13 +295,36 @@ sql_statement_body:
 	| rename_statement
 	| revoke_statement
 	| rollback_statement
-	| show_statement
 	| drop_all_row_access_policies_statement
 	| drop_statement
-	| call_statement
 	| import_statement
 	| module_statement
-	| undrop_statement;
+	| undrop_statement
+	// A bare subpipeline (`|> op …`) is a valid statement with an implicit input table.
+	| subpipeline_statement;
+
+subpipeline_statement: pipe_operator+;
+
+// Statements that may return a single table and so accept a trailing pipe-operator suffix
+// (googlesql.tm sql_statement_body_maybe_pipe_suffix). The suffix is optional.
+statement_maybe_pipe_suffix: (
+		call_statement
+		| describe_statement
+		| execute_immediate
+		| run_statement
+		| show_statement
+	) pipe_operator*;
+
+// RUN '<path>' [( arg => 'v', … )] (run_statement in googlesql.tm). RUN BATCH is a separate batch
+// statement (run_batch_statement), distinguished by the BATCH keyword vs a string literal.
+run_statement:
+	RUN_SYMBOL string_literal (
+		LR_BRACKET_SYMBOL run_statement_arg_list? RR_BRACKET_SYMBOL
+	)?;
+
+run_statement_arg_list: run_statement_arg (COMMA_SYMBOL run_statement_arg)* COMMA_SYMBOL?;
+
+run_statement_arg: identifier (EQUAL_OPERATOR | EQUAL_GT_BRACKET_SYMBOL) string_literal;
 
 gql_statement:
 	GRAPH_SYMBOL path_expression graph_operation_block;
@@ -109,8 +343,9 @@ graph_composite_query_prefix:
 		graph_set_operation_metadata graph_linear_query_operation
 	)*;
 
+// GQL composite query set ops carry an outer mode (LEFT/FULL/INNER/OUTER) like SQL set ops.
 graph_set_operation_metadata:
-	query_set_operation_type all_or_distinct;
+	opt_corresponding_outer_mode? query_set_operation_type all_or_distinct;
 
 graph_linear_query_operation:
 	graph_linear_operator_list? graph_return_operator;
@@ -126,7 +361,31 @@ graph_linear_operator:
 	| graph_page_operator
 	| graph_with_operator
 	| graph_for_operator
-	| graph_sample_clause;
+	| graph_sample_clause
+	| graph_call_operator;
+
+// CALL operator: named/TVF call (with optional PER and YIELD), or an inline braced subquery.
+graph_call_operator:
+	OPTIONAL_SYMBOL? graph_call_operator_core;
+
+graph_call_operator_core:
+	CALL_SYMBOL graph_per_clause? tvf_with_suffixes graph_yield_clause?
+	| CALL_SYMBOL graph_per_clause? braced_graph_subquery
+	| CALL_SYMBOL parenthesized_identifier_list braced_graph_subquery;
+
+graph_per_clause: PER_SYMBOL parenthesized_identifier_list;
+
+parenthesized_identifier_list:
+	LR_BRACKET_SYMBOL identifier_list? RR_BRACKET_SYMBOL;
+
+graph_yield_clause: YIELD_SYMBOL graph_yield_item (COMMA_SYMBOL graph_yield_item)*;
+
+graph_yield_item: identifier opt_as_alias_with_required_as?;
+
+// Braced graph subquery: { ops } or { GRAPH g ops }
+braced_graph_subquery:
+	LC_BRACKET_SYMBOL graph_operation_block RC_BRACKET_SYMBOL
+	| LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_operation_block RC_BRACKET_SYMBOL;
 
 graph_sample_clause:
 	TABLESAMPLE_SYMBOL identifier LR_BRACKET_SYMBOL sample_size RR_BRACKET_SYMBOL
@@ -180,16 +439,26 @@ graph_path_pattern:
 		graph_path_pattern_expr;
 
 graph_path_pattern_expr:
-	graph_path_factor (hint? graph_path_factor)*;
+	graph_path_factor (hint? graph_path_factor)* { this.checkGraphEdgeHints(localContext); };
 
 graph_path_factor:
 	graph_path_primary
 	| graph_quantified_path_primary;
 
+// A quantifier (`{m,n}`, `+`, `*`) may follow an edge pattern or a parenthesized path, but NOT a bare
+// node pattern (`(a){1,3}`) — ZetaSQL "Quantifier cannot be used on a node pattern".
 graph_quantified_path_primary:
-	graph_path_primary LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL
-		int_literal_or_parameter RC_BRACKET_SYMBOL
-	| graph_path_primary LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL;
+	graph_path_primary graph_quantifier {
+		if (localContext.graph_path_primary()?.graph_element_pattern()?.graph_node_pattern()) this.notifyErrorListeners("Syntax error: Quantifier cannot be used on a node pattern", null, null);
+	};
+
+// {m,n} (bounds optional), {n}, +, *  (graph-patterns quantifier)
+graph_quantifier:
+	LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL int_literal_or_parameter?
+		RC_BRACKET_SYMBOL
+	| LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL
+	| MULTIPLY_OPERATOR
+	| PLUS_OPERATOR;
 
 graph_path_primary:
 	graph_element_pattern
@@ -202,22 +471,28 @@ graph_element_pattern: graph_node_pattern | graph_edge_pattern;
 
 graph_edge_pattern:
 	LT_OPERATOR? MINUS_OPERATOR LS_BRACKET_SYMBOL graph_element_pattern_filler RS_BRACKET_SYMBOL
-		MINUS_OPERATOR
+		MINUS_OPERATOR { this.checkGraphEdgeAdjacency(localContext); }
 	| MINUS_OPERATOR LS_BRACKET_SYMBOL graph_element_pattern_filler RS_BRACKET_SYMBOL
-		SUB_GT_BRACKET_SYMBOL
+		SUB_GT_BRACKET_SYMBOL { this.checkGraphEdgeAdjacency(localContext); }
 	| MINUS_OPERATOR
-	| LT_OPERATOR MINUS_OPERATOR
+	| LT_OPERATOR MINUS_OPERATOR {
+		if (!this.adj(localContext.LT_OPERATOR()?.symbol, localContext.MINUS_OPERATOR(0)?.symbol)) this.notifyErrorListeners("Syntax error: graph edge pattern punctuation must be adjacent", null, null);
+	}
 	| SUB_GT_BRACKET_SYMBOL;
 
 graph_node_pattern:
 	LR_BRACKET_SYMBOL graph_element_pattern_filler RR_BRACKET_SYMBOL;
 
+// graph-patterns element filler: name, label filter, property spec, WHERE, COST (all optional). The
+// {prop:…} spec and a WHERE clause cannot both appear — ZetaSQL "WHERE clause cannot be used together
+// with property specification".
 graph_element_pattern_filler:
-	// TODO(zp): It is better to avoid using empty production because it confused listener user.
 	hint? opt_graph_element_identifier? opt_is_label_expression? graph_property_specification?
-	| hint? opt_graph_element_identifier opt_is_label_expression? where_clause
-	| hint? opt_graph_element_identifier opt_is_label_expression? graph_property_specification
-		where_clause;
+		where_clause? opt_graph_cost? {
+		if (localContext.graph_property_specification() && localContext.where_clause()) this.notifyErrorListeners("Syntax error: WHERE clause cannot be used together with property specification", null, null);
+	};
+
+opt_graph_cost: COST_SYMBOL expression;
 
 graph_property_specification:
 	LC_BRACKET_SYMBOL graph_property_name_and_value (
@@ -257,14 +532,22 @@ opt_graph_path_mode:
 	| SIMPLE_SYMBOL
 	| ACYCLIC_SYMBOL;
 
+// graph-patterns search prefix: ANY / ANY SHORTEST / ANY CHEAPEST / ANY k / SHORTEST k /
+// CHEAPEST k / ALL / ALL SHORTEST / ALL CHEAPEST.
 opt_graph_search_prefix:
-	(ANY_SYMBOL | ALL_SYMBOL) SHORTEST_SYMBOL?;
+	ANY_SYMBOL (SHORTEST_SYMBOL | CHEAPEST_SYMBOL | int_literal_or_parameter)?
+	| SHORTEST_SYMBOL int_literal_or_parameter
+	| CHEAPEST_SYMBOL int_literal_or_parameter
+	| ALL_SYMBOL (SHORTEST_SYMBOL | CHEAPEST_SYMBOL)?;
 
 opt_path_variable_assignment: graph_identifier EQUAL_OPERATOR;
 
 graph_identifier:
 	token_identifier
-	| common_keyword_as_identifier;
+	| common_keyword_as_identifier
+	// SHORTEST is nonreserved in GoogleSQL (common_keyword_as_identifier), so it may name a graph path
+	// variable (`MATCH shortest = …`) even though we also use it as a search-prefix keyword.
+	| SHORTEST_SYMBOL;
 
 graph_return_operator:
 	RETURN_SYMBOL hint? all_or_distinct? graph_return_item_list group_by_clause?
@@ -329,6 +612,7 @@ drop_statement:
 	| /* TODO(zp): Refine syntax error */ DROP_SYMBOL table_or_table_function opt_if_exists?
 		maybe_dashed_path_expression opt_function_parameters?
 	| DROP_SYMBOL SNAPSHOT_SYMBOL TABLE_SYMBOL opt_if_exists? maybe_dashed_path_expression
+	| DROP_SYMBOL PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_exists? path_expression
 	| DROP_SYMBOL generic_entity_type opt_if_exists? path_expression
 	| DROP_SYMBOL schema_object_kind opt_if_exists? path_expression opt_function_parameters?
 		opt_drop_mode?;
@@ -395,8 +679,10 @@ opt_from_path_expression:
 
 describe_keyword: DESCRIBE_SYMBOL | DESC_SYMBOL;
 
+// googlesql.tm define_table_statement: the OPTIONS(...) list is REQUIRED — `DEFINE TABLE t1` alone is
+// a syntax error.
 define_table_statement:
-	DEFINE_SYMBOL TABLE_SYMBOL path_expression options_list?;
+	DEFINE_SYMBOL TABLE_SYMBOL path_expression options_list;
 
 create_entity_statement:
 	CREATE_SYMBOL opt_or_replace? generic_entity_type opt_if_not_exists? path_expression
@@ -489,9 +775,14 @@ create_schema_statement:
 	CREATE_SYMBOL opt_or_replace? SCHEMA_SYMBOL opt_if_not_exists? path_expression
 		opt_default_collate_clause? opt_options_list?;
 
+// CREATE SEQUENCE [IF NOT EXISTS] name [OPTIONS(...)]  (data-definition-language#create_sequence)
+create_sequence_statement:
+	CREATE_SYMBOL opt_or_replace? SEQUENCE_SYMBOL opt_if_not_exists? path_expression opt_options_list?;
+
 create_property_graph_statement:
-	CREATE_SYMBOL opt_or_replace? PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_not_exists path_expression
-		opt_options_list? NODE_SYMBOL TABLES_SYMBOL element_table_list opt_edge_table_clause?;
+	CREATE_SYMBOL opt_or_replace? opt_create_scope? PROPERTY_SYMBOL GRAPH_SYMBOL opt_if_not_exists?
+		path_expression NODE_SYMBOL TABLES_SYMBOL element_table_list opt_edge_table_clause?
+		opt_options_list?;
 
 opt_edge_table_clause:
 	EDGE_SYMBOL TABLES_SYMBOL element_table_list;
@@ -503,7 +794,8 @@ element_table_list:
 
 element_table_definition:
 	path_expression opt_as_alias_with_required_as? opt_key_clause? opt_source_node_table_clause?
-		opt_dest_node_table_clause? opt_label_and_properties_clause?;
+		opt_dest_node_table_clause? opt_options_list? opt_label_and_properties_clause?
+		dynamic_label_and_properties?;
 
 opt_label_and_properties_clause:
 	properties_clause
@@ -511,8 +803,16 @@ opt_label_and_properties_clause:
 
 label_and_properties_list: label_and_properties+;
 
+// graph-schema-statements: DEFAULT LABEL [OPTIONS …] | LABEL <name>, each with optional PROPERTIES.
 label_and_properties:
-	DEFAULT_SYMBOL? LABEL_SYMBOL identifier properties_clause?;
+	DEFAULT_SYMBOL LABEL_SYMBOL opt_options_list? properties_clause?
+	| LABEL_SYMBOL identifier properties_clause?;
+
+dynamic_label_and_properties: dynamic_label_or_properties+;
+
+dynamic_label_or_properties:
+	DYNAMIC_SYMBOL LABEL_SYMBOL LR_BRACKET_SYMBOL expression RR_BRACKET_SYMBOL
+	| DYNAMIC_SYMBOL PROPERTIES_SYMBOL LR_BRACKET_SYMBOL expression RR_BRACKET_SYMBOL;
 
 properties_clause:
 	NO_SYMBOL PROPERTIES_SYMBOL
@@ -522,7 +822,7 @@ properties_clause:
 derived_property_list:
 	derived_property (COMMA_SYMBOL derived_property)*;
 
-derived_property: expression opt_as_alias_with_required_as?;
+derived_property: expression opt_as_alias_with_required_as? opt_options_list?;
 
 opt_except_column_list: EXCEPT_SYMBOL column_list;
 
@@ -554,7 +854,8 @@ opt_as_query_or_aliased_query_list:
 
 aliased_query_list: aliased_query (COMMA_SYMBOL aliased_query)*;
 
-as_query: AS_SYMBOL query;
+// CREATE … AS <query> — the body may also be a GQL graph query (CREATE VIEW v AS GRAPH g …).
+as_query: AS_SYMBOL (query | gql_statement);
 
 create_external_table_function_statement:
 	CREATE_SYMBOL opt_or_replace? opt_create_scope? EXTERNAL_SYMBOL TABLE_SYMBOL FUNCTION_SYMBOL {
@@ -660,8 +961,9 @@ begin_end_block_or_language_as_code:
 begin_end_block:
 	BEGIN_SYMBOL statement_list? opt_exception_handler? END_SYMBOL;
 
+// The handler body may be empty (`EXCEPTION WHEN ERROR THEN END`) — spec statement_list allows %empty.
 opt_exception_handler:
-	EXCEPTION_SYMBOL WHEN_SYMBOL ERROR_SYMBOL THEN_SYMBOL statement_list;
+	EXCEPTION_SYMBOL WHEN_SYMBOL ERROR_SYMBOL THEN_SYMBOL statement_list?;
 
 statement_list:
 	unterminated_non_empty_statement_list SEMI_SYMBOL;
@@ -1029,13 +1331,18 @@ maybe_dashed_generalized_path_expression:
 
 opt_into: INTO_SYMBOL;
 
+// Insert mode (googlesql.tm insert_mode): `[OR] IGNORE`, `OR REPLACE` / bare REPLACE, `OR UPDATE` /
+// bare UPDATE. Bare REPLACE/UPDATE are the mode only when the token-rewrite has retyped them to
+// KW_REPLACE_AFTER_INSERT / KW_UPDATE_AFTER_INSERT (REPLACE/UPDATE directly after INSERT, not
+// followed by `.`/`[`); an un-retyped REPLACE/UPDATE is a target path (`INSERT replace.col …`), and
+// `INSERT REPLACE VALUES …` correctly fails as incomplete (mode REPLACE, target VALUES, no source).
 opt_or_ignore_replace_update:
 	OR_SYMBOL IGNORE_SYMBOL
 	| IGNORE_SYMBOL
 	| OR_SYMBOL REPLACE_SYMBOL
-	| REPLACE_SYMBOL
+	| KW_REPLACE_AFTER_INSERT
 	| OR_SYMBOL UPDATE_SYMBOL
-	| UPDATE_SYMBOL;
+	| KW_UPDATE_AFTER_INSERT;
 
 alter_statement:
 	ALTER_SYMBOL table_or_table_function opt_if_exists? maybe_dashed_path_expression
@@ -1162,6 +1469,7 @@ schema_object_kind:
 	| INDEX_SYMBOL
 	| MATERIALIZED_SYMBOL VIEW_SYMBOL
 	| MODEL_SYMBOL
+	| SEQUENCE_SYMBOL
 	| PROCEDURE_SYMBOL
 	| SCHEMA_SYMBOL
 	| VIEW_SYMBOL;
@@ -1190,6 +1498,7 @@ alter_action:
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier SET_SYMBOL DEFAULT_SYMBOL expression
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL DEFAULT_SYMBOL
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL NOT_SYMBOL NULL_SYMBOL
+	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier SET_SYMBOL generated_column_info
 	| ALTER_SYMBOL COLUMN_SYMBOL opt_if_exists? identifier DROP_SYMBOL GENERATED_SYMBOL
 	| RENAME_SYMBOL TO_SYMBOL path_expression
 	| SET_SYMBOL DEFAULT_SYMBOL collate_clause
@@ -1309,7 +1618,11 @@ raw_column_schema_inner:
 	simple_column_schema_inner
 	| array_column_schema_inner
 	| struct_column_schema_inner
-	| range_column_schema_inner;
+	| range_column_schema_inner
+	| map_column_schema_inner;
+
+map_column_schema_inner:
+	MAP_SYMBOL template_type_open field_schema COMMA_SYMBOL field_schema template_type_close;
 
 range_column_schema_inner:
 	RANGE_SYMBOL template_type_open field_schema template_type_close;
@@ -1396,21 +1709,183 @@ opt_if_exists: IF_SYMBOL EXISTS_SYMBOL;
 
 table_or_table_function: TABLE_SYMBOL FUNCTION_SYMBOL?;
 
-query: query_without_pipe_operators;
+// …/pipe-syntax — a query is a base query followed by zero or more `|>` pipe operators.
+// Pipes propagate through `query` everywhere it is used (subqueries, set-op operands, CTEs).
+query: query_without_pipe_operators pipe_operator*;
 
+// A bare FROM clause (no SELECT) is a valid query in pipe syntax — `FROM t` ≡ `SELECT * FROM t`.
 query_without_pipe_operators:
-	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause?
+	with_clause query_primary_or_set_operation order_by_clause? limit_offset_clause? lock_mode_clause?
 	| with_clause_with_trailing_comma select_or_from_keyword {this.notifyErrorListeners("Syntax error: Trailing comma after the WITH clause before the main query is not allowed", null, null)
 		}
 	| with_clause PIPE_SYMBOL {this.notifyErrorListeners("Syntax error: A pipe operator cannot follow the WITH clause before the main query; The main query usually starts with SELECT or FROM here", null, null)
 		}
-	| query_primary_or_set_operation order_by_clause? limit_offset_clause?
-	| with_clause? from_clause {this.notifyErrorListeners("Syntax error: Unexpected FROM", null, null)}
-	// FIXME(zp): Inject the keyword from original input.
-	| with_clause? from_clause bad_keyword_after_from_query {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
-		}
-	| with_clause? from_clause bad_keyword_after_from_query_allows_parens {this.notifyErrorListeners("Syntax error: <KEYWORD> not supported after FROM query; Consider using pipe operator `|>` ", null, null)
-		};
+	| query_primary_or_set_operation order_by_clause? limit_offset_clause? lock_mode_clause?
+	| with_clause? from_query lock_mode_clause?;
+
+// FROM-query: the whole query is just a FROM clause (rows flow into the pipe operators).
+from_query: from_clause;
+
+// FOR UPDATE — the only lock mode in GoogleSQL (query-syntax). Trails ORDER BY / LIMIT.
+lock_mode_clause: FOR_SYMBOL UPDATE_SYMBOL;
+
+// --- Pipe operators (…/pipe-syntax; grammar from google/googlesql googlesql.tm) -----------------
+// Every operator is introduced by `|>`. Each delegates to the standard clause it mirrors; the
+// EXTEND/WINDOW/AGGREGATE selection list is the restricted form (no bare `*`).
+pipe_operator:
+	PIPE_SYMBOL (
+		pipe_where
+		| pipe_select
+		| pipe_extend
+		| pipe_rename
+		| pipe_set
+		| pipe_drop
+		| pipe_aggregate
+		| pipe_order_by
+		| pipe_limit_offset
+		| pipe_distinct
+		| pipe_window
+		| pipe_join
+		| pipe_call
+		| pipe_as
+		| pipe_set_operation
+		| pipe_recursive_union
+		| pipe_pivot
+		| pipe_unpivot
+		| pipe_tablesample
+		| pipe_match_recognize
+		| pipe_assert
+		| pipe_log
+		| pipe_static_describe
+		| pipe_describe
+		| pipe_if
+		| pipe_fork
+		| pipe_tee
+		| pipe_with
+		| pipe_export_data
+		| pipe_create_table
+		| pipe_insert
+	);
+
+// A subpipeline is a parenthesized run of `|>` operators with an implicit input (may be empty).
+subpipeline: LR_BRACKET_SYMBOL pipe_operator* RR_BRACKET_SYMBOL;
+
+subquery_or_subpipeline: subpipeline | parenthesized_query;
+
+pipe_where: where_clause;
+
+// SELECT reuses the full select_clause (bare `*`, star modifiers, AS aliases) + trailing WINDOW.
+// SELECT / EXTEND allow a trailing WINDOW clause which itself may have a trailing comma
+// (opt_window_clause_with_trailing_comma in googlesql.tm).
+pipe_select: select_clause (window_clause COMMA_SYMBOL?)?;
+
+// EXTEND / WINDOW use the restricted selection list (no bare `*`); EXTEND allows a trailing WINDOW.
+pipe_extend: EXTEND_SYMBOL pipe_selection_item_list (window_clause COMMA_SYMBOL?)?;
+
+pipe_window: WINDOW_SYMBOL pipe_selection_item_list;
+
+pipe_selection_item: select_column_expr | select_column_dot_star;
+
+pipe_selection_item_list:
+	pipe_selection_item (COMMA_SYMBOL pipe_selection_item)* COMMA_SYMBOL?;
+
+pipe_rename: RENAME_SYMBOL pipe_rename_item (COMMA_SYMBOL pipe_rename_item)* COMMA_SYMBOL?;
+
+pipe_rename_item: identifier AS_SYMBOL? identifier;
+
+pipe_set: SET_SYMBOL pipe_set_item (COMMA_SYMBOL pipe_set_item)* COMMA_SYMBOL?;
+
+pipe_set_item: identifier EQUAL_OPERATOR expression;
+
+pipe_drop: DROP_SYMBOL identifier (COMMA_SYMBOL identifier)* COMMA_SYMBOL?;
+
+// AGGREGATE: agg list may be empty; GROUP BY is the pipe variant (no GROUP BY ALL) but otherwise
+// the full grouping-item set (ROLLUP/CUBE/GROUPING SETS/(), AS alias, order suffix, GROUP AND ORDER).
+pipe_aggregate:
+	AGGREGATE_SYMBOL pipe_aggregate_item_list? pipe_group_by_clause?;
+
+// Pipe GROUP BY: the pipe variant — `GROUP [AND ORDER] BY` and per-item alias/ordering suffixes,
+// which the standard GROUP BY (group_by_clause_prefix) does NOT allow (googlesql.tm grouping_item vs
+// grouping_item_in_pipe, group_by_preamble vs group_by_preamble_in_pipe).
+pipe_group_by_clause:
+	group_by_preamble_in_pipe grouping_item_in_pipe (COMMA_SYMBOL grouping_item_in_pipe)* COMMA_SYMBOL?;
+
+pipe_aggregate_item_list:
+	pipe_aggregate_item (COMMA_SYMBOL pipe_aggregate_item)* COMMA_SYMBOL?;
+
+pipe_aggregate_item: pipe_selection_item opt_selection_item_order?;
+
+// Pipe ORDER BY allows a trailing comma (order_by_clause_with_opt_comma in googlesql.tm).
+pipe_order_by: order_by_clause COMMA_SYMBOL?;
+
+pipe_limit_offset: limit_offset_clause;
+
+pipe_distinct: DISTINCT_SYMBOL;
+
+// JOIN with no LHS (the pipe input is the LHS).
+// googlesql.tm pipe_join takes a SINGLE on_or_using_clause (not the list a regular join allows): a pipe
+// `|> JOIN t ON … ON …` / `USING (…) USING (…)` is rejected ("Expected end of input but got ON/USING").
+pipe_join:
+	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause? {
+		if (!this.joinBalanced([localContext])) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	};
+
+pipe_call: CALL_SYMBOL tvf_with_suffixes;
+
+pipe_as: AS_SYMBOL identifier;
+
+// Set operations: {ALL|DISTINCT} mandatory; operands are parenthesized queries or `TABLE name`.
+pipe_set_operation:
+	set_operation_metadata pipe_set_operation_operand (
+		COMMA_SYMBOL pipe_set_operation_operand
+	)* COMMA_SYMBOL?;
+
+pipe_set_operation_operand: parenthesized_query | table_clause;
+
+pipe_recursive_union:
+	RECURSIVE_SYMBOL set_operation_metadata recursion_depth_modifier? subquery_or_subpipeline
+		opt_as_alias_with_required_as?;
+
+pipe_pivot: pivot_clause as_alias?;
+
+pipe_unpivot: unpivot_clause as_alias?;
+
+pipe_tablesample: sample_clause;
+
+pipe_match_recognize: match_recognize_clause;
+
+pipe_assert: ASSERT_SYMBOL expression (COMMA_SYMBOL expression)* COMMA_SYMBOL?;
+
+pipe_log: LOG_SYMBOL hint? subpipeline?;
+
+pipe_static_describe: STATIC_DESCRIBE_SYMBOL;
+
+pipe_describe: DESCRIBE_SYMBOL;
+
+pipe_if:
+	IF_SYMBOL hint? expression THEN_SYMBOL subpipeline pipe_if_elseif* (
+		ELSE_SYMBOL subpipeline
+	)?;
+
+pipe_if_elseif: ELSEIF_SYMBOL expression THEN_SYMBOL subpipeline;
+
+pipe_fork: FORK_SYMBOL hint? subpipeline (COMMA_SYMBOL subpipeline)* COMMA_SYMBOL?;
+
+pipe_tee: TEE_SYMBOL hint? (subpipeline (COMMA_SYMBOL subpipeline)* COMMA_SYMBOL?)?;
+
+pipe_with: with_clause COMMA_SYMBOL?;
+
+pipe_export_data: export_data_no_query;
+
+// googlesql.tm pipe_create_table: a pipe `|> CREATE TABLE` takes the create prefix only — an AS query
+// is the pipe's own input, so a trailing `AS <query>` is a syntax error.
+pipe_create_table: create_table_statement {
+	if (localContext.create_table_statement()?.as_query()) this.notifyErrorListeners("Syntax error: AS query is not allowed on pipe CREATE TABLE", null, null);
+};
+
+pipe_insert:
+	insert_statement_prefix column_list? on_conflict_clause? opt_assert_rows_modified?
+		opt_returning_clause?;
 
 bad_keyword_after_from_query:
 	WHERE_SYMBOL
@@ -1443,17 +1918,31 @@ query_set_operation_prefix:
 
 query_set_operation_item: set_operation_metadata query_primary;
 
+// `TABLE name` is shorthand for `SELECT * FROM name` (query-syntax).
 query_primary:
 	select
+	| TABLE_SYMBOL path_expression
 	| parenthesized_query opt_as_alias_with_required_as?;
 
+// googlesql.tm set_operation_metadata: STRICT is incompatible with an outer mode (FULL/LEFT/OUTER/
+// INNER) and with BY NAME — both are parser syntax errors, not resolver checks.
 set_operation_metadata:
 	opt_corresponding_outer_mode? query_set_operation_type hint? all_or_distinct opt_strict?
-		opt_column_match_suffix?;
+		opt_column_match_suffix? {
+		if (localContext.opt_strict()) {
+			if (localContext.opt_corresponding_outer_mode()) this.notifyErrorListeners("Syntax error: STRICT cannot be used with outer mode in set operations", null, null);
+			else if (localContext.opt_column_match_suffix()?.NAME_SYMBOL()) this.notifyErrorListeners("Syntax error: STRICT cannot be used with BY NAME in set operations", null, null);
+		}
+	};
 
+// …/query-syntax#set_operators: { BY NAME [ON (column_list)] | CORRESPONDING [BY (column_list)] }
 opt_column_match_suffix:
-	CORRESPONDING_SYMBOL
-	| CORRESPONDING_SYMBOL BY_SYMBOL;
+	CORRESPONDING_SYMBOL (
+		BY_SYMBOL LR_BRACKET_SYMBOL identifier_list RR_BRACKET_SYMBOL
+	)?
+	| BY_SYMBOL NAME_SYMBOL (
+		ON_SYMBOL LR_BRACKET_SYMBOL identifier_list RR_BRACKET_SYMBOL
+	)?;
 
 opt_strict: STRICT_SYMBOL;
 
@@ -1464,17 +1953,26 @@ query_set_operation_type:
 	| EXCEPT_SYMBOL
 	| INTERSECT_SYMBOL;
 
+// …/pipe-syntax + query-syntax#set_operators — set-op outer mode (also pipe set ops): the bytebase
+// port had FULL/OUTER/LEFT; ZetaSQL also allows INNER.
 opt_corresponding_outer_mode:
 	FULL_SYMBOL opt_outer?
 	| OUTER_SYMBOL
+	| INNER_SYMBOL
 	| LEFT_SYMBOL opt_outer?;
 
 opt_outer: OUTER_SYMBOL;
 
 with_clause:
-	WITH_SYMBOL RECURSIVE_SYMBOL? aliased_query (
-		COMMA_SYMBOL aliased_query
+	WITH_SYMBOL RECURSIVE_SYMBOL? with_clause_entry (
+		COMMA_SYMBOL with_clause_entry
 	)*;
+
+// A WITH entry is a named subquery, or the WITH_GROUP_ROWS form `name() AS GROUP ROWS` usable inside
+// an aggregate subquery (googlesql.tm with_clause_entry).
+with_clause_entry:
+	aliased_query
+	| identifier LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL AS_SYMBOL GROUP_SYMBOL ROWS_SYMBOL;
 
 aliased_query:
 	identifier AS_SYMBOL parenthesized_query opt_aliased_query_modifiers?;
@@ -1557,7 +2055,9 @@ opt_select_with:
 from_clause: FROM_SYMBOL from_clause_contents;
 
 from_clause_contents:
-	table_primary from_clause_contents_suffix*
+	table_primary from_clause_contents_suffix* {
+		if (!this.joinBalanced(localContext.from_clause_contents_suffix())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	}
 	| AT_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
 		}
 	| QUESTION_SYMBOL {this.notifyErrorListeners("Query parameters cannot be used in place of table names",null,null)
@@ -1569,42 +2069,60 @@ from_clause_contents_suffix:
 	COMMA_SYMBOL table_primary
 	| opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
 
+// LATERAL allows the RHS subquery/TVF to reference earlier sources (query-syntax LATERAL).
 table_primary:
 	tvf_with_suffixes
+	| LATERAL_SYMBOL tvf_with_suffixes
 	| table_path_expression
-	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
+	// table_subquery (a parenthesized query, incl. nested `((query))`) is tried before the
+	// parenthesized join so `(((select 1)))` / `(table t)` parse as subqueries; only non-query
+	// parenthesized content (`(a join b)`, and the invalid `(t1)`) reaches the join alt.
 	| table_subquery
+	| LATERAL_SYMBOL table_subquery
+	| LR_BRACKET_SYMBOL join RR_BRACKET_SYMBOL
+	| graph_table_query
 	| table_primary match_recognize_clause
 	| table_primary sample_clause;
+
+// GRAPH_TABLE(...) operator (graph-sql-queries#graph_table_operator): a graph + a single MATCH
+// with a COLUMNS shape, or a full GQL operation block (ending in RETURN).
+graph_table_query:
+	GRAPH_TABLE_SYMBOL LR_BRACKET_SYMBOL path_expression graph_match_operator graph_shape_clause?
+		RR_BRACKET_SYMBOL as_alias?
+	| GRAPH_TABLE_SYMBOL LR_BRACKET_SYMBOL path_expression graph_operation_block RR_BRACKET_SYMBOL
+		as_alias?;
+
+graph_shape_clause: COLUMNS_SYMBOL LR_BRACKET_SYMBOL select_list RR_BRACKET_SYMBOL;
 
 tvf_with_suffixes:
 	tvf_prefix_no_args RR_BRACKET_SYMBOL hint? pivot_or_unpivot_clause_and_aliases?
 	| tvf_prefix RR_BRACKET_SYMBOL hint? pivot_or_unpivot_clause_and_aliases?;
 
+// Bare QUALIFY (no WHERE/GROUP BY/HAVING) is valid BigQuery — …/query-syntax#qualify_clause;
+// the upstream error actions predate that. The clause still lands here (after the table
+// alias) because opt_clauses_following_from only reaches QUALIFY via WHERE/GROUP BY/HAVING.
 pivot_or_unpivot_clause_and_aliases:
-	AS_SYMBOL identifier
+	// QUALIFY is nonreserved in GoogleSQL, so it may be a bare table alias (`FROM t QUALIFY`,
+	// `FROM t AS QUALIFY`); LL prediction still routes `QUALIFY <expr>` to the qualify clause below.
+	AS_SYMBOL (identifier | QUALIFY_SYMBOL)
 	| identifier
+	| QUALIFY_SYMBOL
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
-	| AS_SYMBOL identifier qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		}
+	| AS_SYMBOL identifier qualify_clause_nonreserved
 	| identifier pivot_clause as_alias
 	| identifier unpivot_clause as_alias
-	| identifier qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		}
+	| identifier qualify_clause_nonreserved
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
-	| qualify_clause_nonreserved {
-				 this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null); 
-		};
+	| qualify_clause_nonreserved;
 
 as_alias: AS_SYMBOL? identifier;
 
+// …/query-syntax#tablesample_operator — REPEATABLE/WITH WEIGHT suffix is optional.
 sample_clause:
 	TABLESAMPLE_SYMBOL identifier LR_BRACKET_SYMBOL sample_size RR_BRACKET_SYMBOL
-		opt_sample_clause_suffix;
+		opt_sample_clause_suffix?;
 
 opt_sample_clause_suffix:
 	repeatable_clause
@@ -1637,23 +2155,45 @@ partition_by_clause_prefix_no_hint:
 		COMMA_SYMBOL expression
 	)*;
 
+// query-syntax MATCH_RECOGNIZE — ORDER BY / MEASURES / DEFINE mandatory; PARTITION BY, AFTER MATCH
+// SKIP, OPTIONS, alias optional. (ZetaSQL has no ONE/ALL ROWS PER MATCH, PERMUTE, CLASSIFIER, etc.)
 match_recognize_clause:
 	MATCH_RECOGNIZE_SYMBOL LR_BRACKET_SYMBOL partition_by_clause_prefix? order_by_clause
-		MEASURES_SYMBOL select_list_prefix_with_as_aliases PATTERN_SYMBOL LR_BRACKET_SYMBOL
-		row_pattern_expr RR_BRACKET_SYMBOL DEFINE_SYMBOL with_expression_variable_prefix
-		RR_BRACKET_SYMBOL as_alias?;
+		MEASURES_SYMBOL select_list_prefix_with_as_aliases after_match_skip_clause? PATTERN_SYMBOL
+		LR_BRACKET_SYMBOL row_pattern_expr RR_BRACKET_SYMBOL DEFINE_SYMBOL
+		with_expression_variable_prefix opt_options_list? RR_BRACKET_SYMBOL as_alias?;
 
+after_match_skip_clause:
+	AFTER_SYMBOL MATCH_SYMBOL SKIP_SYMBOL PAST_SYMBOL LAST_SYMBOL ROW_SYMBOL
+	| AFTER_SYMBOL MATCH_SYMBOL SKIP_SYMBOL TO_SYMBOL NEXT_SYMBOL ROW_SYMBOL;
+
+// `|` alternation (and `||` = alternate-with-empty); concatenation by juxtaposition.
 row_pattern_expr:
-	row_pattern_concatenation
-	| row_pattern_expr STROKE_SYMBOL row_pattern_concatenation;
+	row_pattern_concatenation_or_empty
+	| row_pattern_expr STROKE_SYMBOL row_pattern_concatenation_or_empty
+	| row_pattern_expr BOOL_OR_SYMBOL row_pattern_concatenation_or_empty;
+
+row_pattern_concatenation_or_empty: row_pattern_concatenation?;
 
 row_pattern_concatenation:
 	row_pattern_factor
 	| row_pattern_concatenation row_pattern_factor;
 
 row_pattern_factor:
+	row_pattern_primary row_pattern_quantifier?
+	| CIRCUMFLEX_SYMBOL // ^ start anchor
+	| DOLLAR_SYMBOL; // $ end anchor
+
+row_pattern_primary:
 	identifier
 	| LR_BRACKET_SYMBOL row_pattern_expr RR_BRACKET_SYMBOL;
+
+// *, +, ?, {n}, {m,n} with optional reluctant `?`.
+row_pattern_quantifier:
+	(MULTIPLY_OPERATOR | PLUS_OPERATOR | QUESTION_SYMBOL) QUESTION_SYMBOL?
+	| LC_BRACKET_SYMBOL int_literal_or_parameter? COMMA_SYMBOL int_literal_or_parameter?
+		RC_BRACKET_SYMBOL QUESTION_SYMBOL?
+	| LC_BRACKET_SYMBOL int_literal_or_parameter RC_BRACKET_SYMBOL;
 
 select_list_prefix_with_as_aliases:
 	select_column_expr_with_as_alias (
@@ -1666,27 +2206,58 @@ select_column_expr_with_as_alias:
 table_subquery:
 	parenthesized_query opt_pivot_or_unpivot_clause_and_alias?;
 
-join: table_primary join_item*;
+// `join` only appears parenthesized — `( a JOIN b … )`. A parenthesized single table or a
+// double-parenthesized join is invalid (`(t1)`, `((a join b))`), so require at least one join_item.
+join: table_primary join_item* {
+		if (localContext.join_item().length === 0) this.notifyErrorListeners("Syntax error: Expected keyword JOIN", null, null);
+		else if (!this.joinBalanced(localContext.join_item())) this.notifyErrorListeners("Syntax error: JOIN must have an ON or USING clause", null, null);
+	};
 
 // join_item resolves the mutually left-recursive for [join, join_input]. join_input: join |
 // table_primary;
 join_item:
 	opt_natural? join_type? join_hint? JOIN_SYMBOL hint? table_primary on_or_using_clause_list?;
 
+
 on_or_using_clause_list: on_or_using_clause+;
 
 on_or_using_clause: on_clause | using_clause;
 
+// JOIN … USING (col, col, …) — a comma-separated column list (the port had a dotted path here).
 using_clause:
 	USING_SYMBOL LR_BRACKET_SYMBOL identifier (
-		DOT_SYMBOL identifier
+		COMMA_SYMBOL identifier
 	)* RR_BRACKET_SYMBOL;
 
 join_hint: HASH_SYMBOL | LOOKUP_SYMBOL;
 
+// googlesql.tm table_path_expression: WITH OFFSET precedes PIVOT/UNPIVOT, and PIVOT/UNPIVOT may not
+// be followed by WITH OFFSET or FOR SYSTEM TIME (the spec errors on pivot + at_system_time, and offset
+// has no slot after pivot). We model the mutual exclusion structurally by splitting on pivot presence:
+// the pivot-bearing alternative offers no trailing offset/time, the non-pivot one keeps both.
 table_path_expression:
-	table_path_expression_base hint? opt_pivot_or_unpivot_clause_and_alias?
-		opt_with_offset_and_alias? opt_at_system_time?;
+	table_path_expression_base hint? opt_with_offset_and_alias? table_path_pivot_suffix
+	| table_path_expression_base hint? table_path_alias_or_qualify? opt_with_offset_and_alias?
+		opt_at_system_time?;
+
+table_path_pivot_suffix:
+	AS_SYMBOL identifier pivot_clause as_alias?
+	| AS_SYMBOL identifier unpivot_clause as_alias?
+	| identifier pivot_clause as_alias?
+	| identifier unpivot_clause as_alias?
+	| pivot_clause as_alias?
+	| unpivot_clause as_alias?;
+
+table_path_alias_or_qualify:
+	AS_SYMBOL identifier qualify_clause_nonreserved
+	| identifier qualify_clause_nonreserved
+	| qualify_clause_nonreserved
+	// QUALIFY is nonreserved in GoogleSQL, so it may itself be the table alias (`FROM t QUALIFY`,
+	// `FROM t AS QUALIFY`); the `qualify_clause_nonreserved` alts above are tried first, so a real
+	// `QUALIFY <expr>` clause still wins over a bare-QUALIFY alias.
+	| AS_SYMBOL (identifier | QUALIFY_SYMBOL)
+	| identifier
+	| QUALIFY_SYMBOL;
 
 opt_at_system_time:
 	FOR_SYMBOL SYSTEM_SYMBOL TIME_SYMBOL AS_SYMBOL OF_SYMBOL expression
@@ -1694,21 +2265,19 @@ opt_at_system_time:
 
 opt_with_offset_and_alias: WITH_SYMBOL OFFSET_SYMBOL as_alias?;
 
+// Bare QUALIFY is valid BigQuery — see pivot_or_unpivot_clause_and_aliases above.
 opt_pivot_or_unpivot_clause_and_alias:
 	AS_SYMBOL identifier
 	| identifier
 	| AS_SYMBOL identifier pivot_clause as_alias?
 	| AS_SYMBOL identifier unpivot_clause as_alias?
-	| AS_SYMBOL identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		}
+	| AS_SYMBOL identifier qualify_clause_nonreserved
 	| identifier pivot_clause as_alias?
 	| identifier unpivot_clause as_alias?
-	| identifier qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		}
+	| identifier qualify_clause_nonreserved
 	| pivot_clause as_alias?
 	| unpivot_clause as_alias?
-	| qualify_clause_nonreserved {this.notifyErrorListeners("QUALIFY clause must be used in conjunction with WHERE or GROUP BY or HAVING clause", null, null)
-		};
+	| qualify_clause_nonreserved;
 
 table_path_expression_base:
 	unnest_expression
@@ -1734,9 +2303,13 @@ dashed_path_expression:
 	dashed_identifier
 	| dashed_path_expression DOT_SYMBOL identifier;
 
+// googlesql.tm dashed_identifier: a dash-separated path component (`my-project`, `a-3-b`, `db-1-2`). The
+// recursive alts APPEND one component at a time (`dashed_identifier "-" identifier`), so an odd-length
+// chain ending in a plain identifier (`a-3-b` = `((a-3)-b)`) parses — not `dashed_identifier "-"
+// dashed_identifier`, which would wrongly require the trailing component to itself be dashed.
 dashed_identifier:
 	identifier MINUS_OPERATOR identifier
-	| dashed_identifier MINUS_OPERATOR dashed_identifier
+	| dashed_identifier MINUS_OPERATOR identifier
 	| identifier MINUS_OPERATOR INTEGER_LITERAL
 	| dashed_identifier MINUS_OPERATOR INTEGER_LITERAL
 	| identifier MINUS_OPERATOR floating_point_literal identifier
@@ -1784,6 +2357,8 @@ tvf_argument:
 	| model_clause
 	| connection_clause
 	| named_argument
+	// INPUT TABLE: the pipe input passed as a TVF table arg (PIPE_CALL_INPUT_TABLE).
+	| INPUT_SYMBOL TABLE_SYMBOL
 	| LR_BRACKET_SYMBOL table_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Table arguments for table-valued function calls written as \"TABLE path\" must not be enclosed in parentheses. To fix this, replace (TABLE path) with TABLE path",null,null)
 		}
 	| LR_BRACKET_SYMBOL model_clause RR_BRACKET_SYMBOL {this.notifyErrorListeners("Syntax error: Model arguments for table-valued function calls written as \"MODEL path\" must not be enclosed in parentheses. To fix this, replace (MODEL path) with MODEL path",null,null)
@@ -1848,7 +2423,12 @@ unpivot_nulls_filter:
 
 pivot_clause:
 	PIVOT_SYMBOL LR_BRACKET_SYMBOL pivot_expression_list FOR_SYMBOL expression_higher_prec_than_and
-		IN_SYMBOL LR_BRACKET_SYMBOL pivot_value_list RR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
+		IN_SYMBOL LR_BRACKET_SYMBOL pivot_value_list RR_BRACKET_SYMBOL RR_BRACKET_SYMBOL {
+		// The FOR target must not itself be an IN-expression — `FOR y IN (1,2) IN (…)` greedily binds the
+		// first IN to the target, but ZetaSQL takes it as the pivot's IN and rejects the second
+		// ("Expected ")" but got keyword IN"). Reject a FOR target whose top operator is IN.
+		if (localContext.expression_higher_prec_than_and()?.in_operator?.()) this.notifyErrorListeners("Syntax error: Expected \")\" but got keyword IN", null, null);
+	};
 
 pivot_expression_list:
 	pivot_expression (COMMA_SYMBOL pivot_expression)*;
@@ -1859,8 +2439,11 @@ pivot_value_list: pivot_value (COMMA_SYMBOL pivot_value)*;
 
 pivot_value: expression as_alias?;
 
+// docs.cloud.google.com/bigquery/docs/table-functions — the TVF name is followed by '('.
+// (The upstream port dropped the paren on the path_expression alternative, which made every
+// TVF call in FROM unparseable.)
 tvf_prefix_no_args:
-	path_expression
+	path_expression LR_BRACKET_SYMBOL
 	| IF_SYMBOL LR_BRACKET_SYMBOL;
 
 join_type:
@@ -1935,6 +2518,9 @@ expression_higher_prec_than_and:
 	| new_constructor
 	| braced_constructor
 	| braced_new_constructor
+	// UPDATE constructor: a function call followed by a braced field block — `UPDATE(p) {f:10}`
+	// (googlesql.tm: function_call_expression braced_constructor → ASTUpdateConstructor).
+	| function_call_expression_with_clauses braced_constructor
 	| struct_braced_constructor
 	| case_expression
 	| cast_expression
@@ -1948,13 +2534,36 @@ expression_higher_prec_than_and:
 	| expression_subquery_with_keyword
 	| expression_higher_prec_than_and LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
-	| expression_higher_prec_than_and DOT_SYMBOL identifier
+	// Chained function call: base.method(args) — functions-reference#chained_function_calls.
+	| expression_higher_prec_than_and DOT_SYMBOL (
+		dot_identifier
+		| function_name_from_keyword
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		if (this.exprIsBareNumeric(localContext.expression_higher_prec_than_and(0)) || /^@@/.test(localContext.expression_higher_prec_than_and(0)?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Unexpected \"(\"", null, null);
+	}
+	// Chained call on a generalized field: base.(pkg.ext)(args).
+	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	| expression_higher_prec_than_and DOT_SYMBOL dot_identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of LIKE must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
 		if (localContext.hint() !== null) {
 			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
@@ -1962,21 +2571,95 @@ expression_higher_prec_than_and:
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
-		expression_higher_prec_than_and
+		expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsBareNot(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
 		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
-	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
-	| expression_higher_prec_than_and is_operator null_literal
-	| expression_higher_prec_than_and is_operator boolean_literal
-	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator null_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator boolean_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	// Graph predicates (graph-sql-functions): IS [NOT] SOURCE/DESTINATION [OF], IS [NOT] LABELED.
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
+		OF_SYMBOL? expression_higher_prec_than_and
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
+	| expression_higher_prec_than_and in_operator braced_graph_subquery
+	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
+		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator any_some_all hint?
+		parenthesized_anysomeall_list_in_rhs {
+		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of comparison must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| unary_operator expression_higher_prec_than_and
 	// unparenthesized_expression_higher_prec_than_and scope end
 	| parenthesized_expression_not_a_query
@@ -2002,6 +2685,9 @@ expression_maybe_parenthesized_not_a_query:
 	| new_constructor
 	| braced_constructor
 	| braced_new_constructor
+	// UPDATE constructor: a function call followed by a braced field block — `UPDATE(p) {f:10}`
+	// (googlesql.tm: function_call_expression braced_constructor → ASTUpdateConstructor).
+	| function_call_expression_with_clauses braced_constructor
 	| struct_braced_constructor
 	| case_expression
 	| cast_expression
@@ -2015,13 +2701,36 @@ expression_maybe_parenthesized_not_a_query:
 	| expression_subquery_with_keyword
 	| expression_higher_prec_than_and LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
-	| expression_higher_prec_than_and DOT_SYMBOL identifier
+	// Chained function call (see expression_higher_prec_than_and).
+	| expression_higher_prec_than_and DOT_SYMBOL (
+		dot_identifier
+		| function_name_from_keyword
+	) LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		if (this.exprIsBareNumeric(localContext.expression_higher_prec_than_and(0)) || /^@@/.test(localContext.expression_higher_prec_than_and(0)?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Unexpected \"(\"", null, null);
+	}
+	// Chained call on a generalized field: base.(pkg.ext)(args).
+	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
+		LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
+	| expression_higher_prec_than_and DOT_SYMBOL dot_identifier
 	| NOT_SYMBOL expression_higher_prec_than_and
 	| expression_higher_prec_than_and like_operator any_some_all hint? unnest_expression
 	| expression_higher_prec_than_and like_operator any_some_all hint?
 		parenthesized_anysomeall_list_in_rhs
-	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and like_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of LIKE must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and distinct_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
 	| expression_higher_prec_than_and in_operator hint? unnest_expression {
 		if (localContext.hint() !== null) {
 			this.notifyErrorListeners("Syntax error: HINTs cannot be specified on IN clause with UNNEST", null, null)
@@ -2029,21 +2738,95 @@ expression_maybe_parenthesized_not_a_query:
 	}
 	| expression_higher_prec_than_and in_operator hint? parenthesized_in_rhs
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and AND_SYMBOL
-		expression_higher_prec_than_and
+		expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1)) ||
+			this.exprIsBareNot(localContext.expression_higher_prec_than_and(2))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| expression_higher_prec_than_and between_operator expression_higher_prec_than_and OR_SYMBOL {
 		this.notifyErrorListeners("Syntax error: Expression in BETWEEN must be parenthesized", null, null)
 	}
-	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL
-	| expression_higher_prec_than_and is_operator null_literal
-	| expression_higher_prec_than_and is_operator boolean_literal
-	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and
-	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and
-	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and
+	| expression_higher_prec_than_and is_operator UNKNOWN_SYMBOL {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator null_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	| expression_higher_prec_than_and is_operator boolean_literal {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of IS must be parenthesized", null, null)
+		}
+	}
+	// Graph predicates (also valid inside parentheses, e.g. GRAPH_TABLE COLUMNS((a IS SOURCE OF b))).
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? (SOURCE_SYMBOL | DESTINATION_SYMBOL)
+		OF_SYMBOL? expression_higher_prec_than_and
+	| expression_higher_prec_than_and IS_SYMBOL NOT_SYMBOL? LABELED_SYMBOL label_expression
+	| expression_higher_prec_than_and in_operator braced_graph_subquery
+	| expression_higher_prec_than_and comparative_operator any_some_all hint? unnest_expression {
+		if (localContext.hint()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with UNNEST", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator any_some_all hint?
+		parenthesized_anysomeall_list_in_rhs {
+		if (localContext.hint() && !localContext.parenthesized_anysomeall_list_in_rhs()?.parenthesized_query()) this.notifyErrorListeners("Syntax error: HINTs cannot be specified on ANY/SOME/ALL clause with value list", null, null)
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0))) this.notifyErrorListeners("Syntax error: comparison operator cannot be chained", null, null)
+	}
+	| expression_higher_prec_than_and comparative_operator expression_higher_prec_than_and {
+		if (this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(0)) ||
+			this.exprIsComparisonFamily(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Expression to the left of comparison must be parenthesized", null, null)
+		}
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and STROKE_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and CIRCUMFLEX_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BIT_AND_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and BOOL_OR_SYMBOL expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and shift_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and additive_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
+	| expression_higher_prec_than_and multiplicative_operator expression_higher_prec_than_and {
+		if (this.exprIsBareNot(localContext.expression_higher_prec_than_and(1))) {
+			this.notifyErrorListeners("Syntax error: Unexpected NOT", null, null)
+		}
+	}
 	| unary_operator expression_higher_prec_than_and
 	// unparenthesized_expression_higher_prec_than_and scope end
 	| and_expression
@@ -2069,7 +2852,8 @@ comparative_operator:
 	| GT_OPERATOR
 	| GE_OPERATOR;
 
-shift_operator: KL_OPERATOR | KR_OPERATOR;
+// '>>' is lexed as two '>' so nested generics close (ARRAY<STRUCT<INT64>>); recombine here.
+shift_operator: KL_OPERATOR | GT_OPERATOR GT_OPERATOR;
 
 additive_operator: PLUS_OPERATOR | MINUS_OPERATOR;
 
@@ -2112,7 +2896,16 @@ like_operator: LIKE_SYMBOL | NOT_SYMBOL LIKE_SYMBOL;
 
 expression_subquery_with_keyword:
 	ARRAY_SYMBOL parenthesized_query
-	| EXISTS_SYMBOL hint? parenthesized_query;
+	| ARRAY_SYMBOL braced_graph_subquery
+	| VALUE_SYMBOL hint? braced_graph_subquery
+	| EXISTS_SYMBOL hint? parenthesized_query
+	| EXISTS_SYMBOL hint? braced_graph_subquery
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL graph_pattern RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL graph_linear_operator_list RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_pattern
+		RC_BRACKET_SYMBOL
+	| EXISTS_SYMBOL hint? LC_BRACKET_SYMBOL GRAPH_SYMBOL path_expression graph_linear_operator_list
+		RC_BRACKET_SYMBOL;
 
 struct_constructor:
 	struct_constructor_prefix_with_keyword RR_BRACKET_SYMBOL
@@ -2142,20 +2935,34 @@ interval_expression:
 function_call_expression_with_clauses:
 	// NOTE: zetasql bison.y is LALR(1) parser, it checks the first rule should be path_expression
 	// in action code instead of use expression directly to avoid parser ambiguous.
-	path_expression LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix
-	| function_name_from_keyword LR_BRACKET_SYMBOL function_call_expression_with_clauses_suffix;
+	path_expression LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix {
+		// REPLACE_FIELDS( always commits to the dedicated replace_fields_expression rule (googlesql.tm
+		// AMBIGUOUS CASE 4); a general call named `replace_fields` means the arg list wasn't the required
+		// `expr, value AS path …` form — e.g. `replace_fields()`, `replace_fields(p)` — which is an error.
+		if (/^replace_fields$/i.test(localContext.path_expression()?.getText?.() ?? "")) this.notifyErrorListeners("Syntax error: Expected \"AS\"", null, null);
+	}
+	// function_name_from_keyword "(" opt_distinct (IF/GROUPING etc. as aggregate calls — googlesql.tm).
+	| function_name_from_keyword LR_BRACKET_SYMBOL DISTINCT_SYMBOL? function_call_expression_with_clauses_suffix;
 
 function_call_expression_with_clauses_suffix:
 	(
-		// Empty argument list.
-		opt_having_or_group_by_modifier? order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
-		// Non empty argument list.
+		// Empty argument list — same modifier set as the non-empty form minus clamped_between (which
+		// requires at least one argument): [IGNORE|RESPECT NULLS] [WHERE] [GROUP BY/HAVING] [WITH
+		// REPORT] [ORDER BY] [LIMIT] (googlesql.tm function_call_expression, empty-arg-list rule).
+		opt_null_handling_modifier? where_clause? opt_having_or_group_by_modifier? with_report_modifier?
+			order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
+		// Non empty argument list. Modifier order per ZetaSQL aggregate-call grammar:
+		// [IGNORE|RESPECT NULLS] [WHERE …] [GROUP BY … / HAVING …] [CLAMPED BETWEEN …]
+		// [WITH REPORT …] [ORDER BY …] [LIMIT …] — WHERE (aggregate filtering) and the
+		// full GROUP BY / boolean HAVING (multi-level aggregation) are ZetaSQL surface
+		// the corpus exercises.
 		| (
 			(function_call_argument | MULTIPLY_OPERATOR) (
 				COMMA_SYMBOL function_call_argument
 			)*
-		) opt_null_handling_modifier? opt_having_or_group_by_modifier? clamped_between_modifier?
-			with_report_modifier? order_by_clause? limit_offset_clause? RR_BRACKET_SYMBOL
+		) opt_null_handling_modifier? where_clause? opt_having_or_group_by_modifier?
+			clamped_between_modifier? with_report_modifier? order_by_clause? limit_offset_clause?
+			RR_BRACKET_SYMBOL
 	) hint? with_group_rows? over_clause?;
 
 over_clause: OVER_SYMBOL window_specification;
@@ -2188,11 +2995,13 @@ partition_by_clause_prefix:
 with_group_rows:
 	WITH_SYMBOL GROUP_SYMBOL ROWS_SYMBOL /* XXX(zp): query = parenthesized_query*/;
 
+// Anonymization WITH REPORT — the OPTIONS(...) format is optional (e.g. anon_avg(* WITH REPORT)).
 with_report_modifier:
-	WITH_SYMBOL REPORT_SYMBOL with_report_format;
+	WITH_SYMBOL REPORT_SYMBOL with_report_format?;
 
+// ZetaSQL anonymization: CLAMPED BETWEEN low AND high (the port dropped BETWEEN).
 clamped_between_modifier:
-	CLAMPED_SYMBOL expression_higher_prec_than_and AND_SYMBOL expression;
+	CLAMPED_SYMBOL BETWEEN_SYMBOL expression_higher_prec_than_and AND_SYMBOL expression;
 
 with_report_format: options_list;
 
@@ -2229,27 +3038,50 @@ sequence_arg: SEQUENCE_SYMBOL path_expression;
 
 named_argument:
 	identifier EQUAL_GT_BRACKET_SYMBOL expression
-	| identifier EQUAL_GT_BRACKET_SYMBOL lambda_argument;
+	| identifier EQUAL_GT_BRACKET_SYMBOL lambda_argument
+	// Named relation arg: name => TABLE t  /  name => TABLE  /  name => INPUT TABLE.
+	| identifier EQUAL_GT_BRACKET_SYMBOL table_clause
+	| identifier EQUAL_GT_BRACKET_SYMBOL TABLE_SYMBOL
+	| identifier EQUAL_GT_BRACKET_SYMBOL INPUT_SYMBOL TABLE_SYMBOL;
 
 lambda_argument:
-	lambda_argument_list SUB_GT_BRACKET_SYMBOL expression;
+	lambda_argument_list SUB_GT_BRACKET_SYMBOL expression {
+		const al = localContext.lambda_argument_list();
+		if (al?.expression() && !this.lambdaArgListValid(al.getText())) this.notifyErrorListeners("Syntax error: Expecting lambda argument list", null, null);
+	};
 
 lambda_argument_list:
-	/* XXX(zp): expr kind check expression*/ expression
+	expression
 	| LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL;
 
+// GoogleSQL allows `LIMIT ALL` (no row cap) as well as `LIMIT n [OFFSET m]`.
+// LIMIT <expr> [OFFSET <expr>] or LIMIT ALL [OFFSET <expr>] (limit_offset_clause in googlesql.tm;
+// LIMIT ALL means no row cap but an OFFSET may still apply).
 limit_offset_clause:
 	LIMIT_SYMBOL expression OFFSET_SYMBOL expression
-	| LIMIT_SYMBOL expression;
+	| LIMIT_SYMBOL expression
+	| LIMIT_SYMBOL ALL_SYMBOL OFFSET_SYMBOL expression
+	| LIMIT_SYMBOL ALL_SYMBOL;
 
+// Aggregate-call modifiers (ZetaSQL): the "HAVING MAX/MIN value" row-picker, and the
+// multi-level-aggregation "GROUP BY keys [HAVING <bool>]". The GROUP BY keys here are plain
+// expressions — no AND ORDER preamble, no ASC/DESC, no alias (those forms are errors inside an
+// aggregate, distinct from the top-level group_by_clause_prefix). Bare boolean HAVING is valid
+// only after GROUP BY; standalone HAVING requires MAX/MIN.
 opt_having_or_group_by_modifier:
-	HAVING_SYMBOL MAX_SYMBOL expression
-	| HAVING_SYMBOL MIN_SYMBOL expression group_by_clause_prefix;
+	HAVING_SYMBOL (MAX_SYMBOL | MIN_SYMBOL) expression aggregate_group_by_modifier?
+	| aggregate_group_by_modifier (HAVING_SYMBOL expression)?;
+
+aggregate_group_by_modifier:
+	GROUP_SYMBOL hint? BY_SYMBOL expression (COMMA_SYMBOL expression)*;
 
 group_by_clause_prefix:
 	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)*;
 
-group_by_preamble: GROUP_SYMBOL hint? opt_and_order? BY_SYMBOL;
+// Standard GROUP BY has no `AND ORDER` — that is pipe-AGGREGATE-only (group_by_preamble_in_pipe).
+group_by_preamble: GROUP_SYMBOL hint? BY_SYMBOL;
+
+group_by_preamble_in_pipe: GROUP_SYMBOL hint? opt_and_order? BY_SYMBOL;
 
 opt_and_order: AND_SYMBOL ORDER_SYMBOL;
 
@@ -2276,12 +3108,21 @@ extra_identifier_in_hints_name:
 	| PROTO_SYMBOL
 	| PARTITION_SYMBOL;
 
-grouping_item:
+// Standard GROUP BY item: a bare expression or a grouping construct — NO alias, NO ordering suffix
+// (those are pipe-AGGREGATE-only — grouping_item_in_pipe). googlesql.tm grouping_item/grouping_item_base.
+grouping_item_base:
 	LR_BRACKET_SYMBOL RR_BRACKET_SYMBOL
-	| expression opt_as_alias_with_required_as? opt_grouping_item_order?
 	| rollup_list RR_BRACKET_SYMBOL
 	| cube_list RR_BRACKET_SYMBOL
 	| grouping_set_list RR_BRACKET_SYMBOL;
+
+grouping_item: grouping_item_base | expression;
+
+// In a pipe GROUP BY, a grouping key may carry an implicit (AS-optional) alias and an ordering
+// suffix: `GROUP BY x y`, `x+1 alias NULLS FIRST` (googlesql.tm grouping_item_in_pipe uses as_alias?).
+grouping_item_in_pipe:
+	grouping_item_base
+	| expression as_alias? opt_grouping_item_order?;
 
 grouping_set_list:
 	GROUPING_SYMBOL SETS_SYMBOL LR_BRACKET_SYMBOL grouping_set (
@@ -2295,7 +3136,7 @@ grouping_set:
 	| cube_list RR_BRACKET_SYMBOL;
 
 cube_list:
-	CUBE_SYMBOL LR_BRACKET_SYMBOL (COMMA_SYMBOL expression)*;
+	CUBE_SYMBOL LR_BRACKET_SYMBOL expression (COMMA_SYMBOL expression)*;
 
 rollup_list:
 	ROLLUP_SYMBOL LR_BRACKET_SYMBOL expression (
@@ -2337,7 +3178,8 @@ replace_fields_arg:
 generalized_path_expression:
 	identifier
 	| generalized_path_expression DOT_SYMBOL generalized_extension_path
-	| generalized_path_expression DOT_SYMBOL identifier
+	// After a dot, a path component may be a reserved keyword (DOT_IDENTIFIER mode): `path.to.extension`.
+	| generalized_path_expression DOT_SYMBOL dot_identifier
 	| generalized_path_expression LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL;
 
 generalized_extension_path:
@@ -2358,14 +3200,14 @@ with_expression_variable: identifier AS_SYMBOL expression;
 
 extract_expression:
 	extract_expression_base RR_BRACKET_SYMBOL
-	| extract_expression_base AT_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression RR_BRACKET_SYMBOL;
+	| extract_expression_base AT_KEYWORD_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression RR_BRACKET_SYMBOL;
 
 extract_expression_base:
 	EXTRACT_SYMBOL LR_BRACKET_SYMBOL expression FROM_SYMBOL expression;
 
 opt_format: FORMAT_SYMBOL expression opt_at_time_zone?;
 
-opt_at_time_zone: AT_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression;
+opt_at_time_zone: AT_KEYWORD_SYMBOL TIME_SYMBOL ZONE_SYMBOL expression;
 
 cast_expression:
 	CAST_SYMBOL LR_BRACKET_SYMBOL expression AS_SYMBOL type opt_format? RR_BRACKET_SYMBOL
@@ -2395,15 +3237,18 @@ struct_braced_constructor:
 	stype = struct_type ctor = braced_constructor
 	| STRUCT_SYMBOL ctor = braced_constructor;
 
-braced_new_constructor: NEW_SYMBOL type_name new_constructor;
+// NEW Type { field: value, … } — braced form (the parenthesized `NEW Type(args)` is new_constructor).
+braced_new_constructor: NEW_SYMBOL type_name braced_constructor;
 
 braced_constructor:
 	braced_constructor_start RC_BRACKET_SYMBOL
 	| braced_constructor_prefix RC_BRACKET_SYMBOL
-	// Allow trailing comma in braced constructor. | braced_constructor_prefix
-	COMMA_SYMBOL RC_BRACKET_SYMBOL;
+	// Allow a trailing comma in a braced constructor.
+	| braced_constructor_prefix COMMA_SYMBOL RC_BRACKET_SYMBOL;
 
-braced_constructor_start: RC_BRACKET_SYMBOL;
+// A braced constructor opens with `{` (the port had `}` here, which broke every braced/proto/
+// struct constructor).
+braced_constructor_start: LC_BRACKET_SYMBOL;
 
 braced_constructor_prefix:
 	braced_constructor_start braced_constructor_field
@@ -2415,7 +3260,10 @@ braced_constructor_prefix:
 braced_constructor_field:
 	braced_constructor_lhs braced_constructor_field_value;
 
-braced_constructor_lhs: generalized_path_expression;
+// A field key is a path or a parenthesized proto-extension path `(pkg.Ext)` (with value or nested brace).
+braced_constructor_lhs:
+	generalized_path_expression
+	| braced_constructor_extension;
 
 braced_constructor_field_value:
 	COLON_SYMBOL expression
@@ -2469,13 +3317,17 @@ string_literal_or_parameter:
 	| parameter_expression
 	| system_variable_expression;
 
-system_variable_expression: ATAT_SYMBOL path_expression;
+// @@name.path — every component (incl. the head) may be a reserved keyword (@@FROM, @@ORDER.with).
+system_variable_expression: ATAT_SYMBOL dot_identifier (DOT_SYMBOL dot_identifier)*;
 
 parameter_expression:
 	named_parameter_expression
 	| QUESTION_SYMBOL;
 
-named_parameter_expression: AT_SYMBOL identifier;
+// After `@`, GoogleSQL's tokenizer lexes the name in DOT_IDENTIFIER mode, so a query parameter may be
+// named with a reserved keyword (`@from`, `@union`, `@full`, `@proto`) — same set as a path component
+// after a dot. (named_parameter_expression in googlesql.tm; the reserved names re-lex as identifiers.)
+named_parameter_expression: AT_SYMBOL dot_identifier;
 
 // This is opt_type_parameters in zetasql yacc, but here prefer to use ? in ANTLR.
 opt_type_parameters:
@@ -2523,7 +3375,108 @@ function_type_prefix:
 
 type_name: path_expression | INTERVAL_SYMBOL;
 
-path_expression: identifier (DOT_SYMBOL identifier)*;
+// After a `.`, GoogleSQL's tokenizer enters DOT_IDENTIFIER mode, so a path component may be a
+// reserved keyword (foo.all, hll_count.merge, t.array). We model that as dot_identifier; the head
+// must still be a regular identifier.
+path_expression: identifier (DOT_SYMBOL dot_identifier)*;
+
+dot_identifier: identifier | reserved_keyword_as_dot_identifier;
+
+// Reserved keywords usable as a path component after a dot (the DOT_IDENTIFIER set).
+reserved_keyword_as_dot_identifier:
+	ALL_SYMBOL
+	| AND_SYMBOL
+	| ANY_SYMBOL
+	| ARRAY_SYMBOL
+	| AS_SYMBOL
+	| ASC_SYMBOL
+	| ASSERT_ROWS_MODIFIED_SYMBOL
+	| BETWEEN_SYMBOL
+	| BY_SYMBOL
+	| CASE_SYMBOL
+	| CAST_SYMBOL
+	| COLLATE_SYMBOL
+	| CREATE_SYMBOL
+	| CROSS_SYMBOL
+	| CUBE_SYMBOL
+	| CURRENT_SYMBOL
+	| DEFAULT_SYMBOL
+	| DEFINE_SYMBOL
+	| DESC_SYMBOL
+	| DISTINCT_SYMBOL
+	| ELSE_SYMBOL
+	| END_SYMBOL
+	| ENUM_SYMBOL
+	| EXCEPT_SYMBOL
+	| EXCLUDE_SYMBOL
+	| EXISTS_SYMBOL
+	| EXTRACT_SYMBOL
+	| FALSE_SYMBOL
+	| FOLLOWING_SYMBOL
+	| FOR_SYMBOL
+	| FROM_SYMBOL
+	| FULL_SYMBOL
+	| GROUP_SYMBOL
+	| GROUPING_SYMBOL
+	| HASH_SYMBOL
+	| HAVING_SYMBOL
+	| IF_SYMBOL
+	| IGNORE_SYMBOL
+	| IN_SYMBOL
+	| INNER_SYMBOL
+	| INTERSECT_SYMBOL
+	| INTERVAL_SYMBOL
+	| INTO_SYMBOL
+	| IS_SYMBOL
+	| JOIN_SYMBOL
+	| LATERAL_SYMBOL
+	| LEFT_SYMBOL
+	| LIKE_SYMBOL
+	| LIMIT_SYMBOL
+	| LOOKUP_SYMBOL
+	| MATCH_RECOGNIZE_SYMBOL
+	| MERGE_SYMBOL
+	| NATURAL_SYMBOL
+	| NEW_SYMBOL
+	| NO_SYMBOL
+	| NOT_SYMBOL
+	| NOTHING_SYMBOL
+	| NULL_SYMBOL
+	| NULLS_SYMBOL
+	| OF_SYMBOL
+	| ON_SYMBOL
+	| OR_SYMBOL
+	| ORDER_SYMBOL
+	| OUTER_SYMBOL
+	| OVER_SYMBOL
+	| PARTITION_SYMBOL
+	| PRECEDING_SYMBOL
+	| PROTO_SYMBOL
+	| QUALIFY_SYMBOL
+	| RANGE_SYMBOL
+	| RECURSIVE_SYMBOL
+	| RESPECT_SYMBOL
+	| RIGHT_SYMBOL
+	| ROLLUP_SYMBOL
+	| ROWS_SYMBOL
+	| SELECT_SYMBOL
+	| SET_SYMBOL
+	| SHORTEST_SYMBOL
+	| SLASH_SYMBOL
+	| SOME_SYMBOL
+	| STRUCT_SYMBOL
+	| TABLESAMPLE_SYMBOL
+	| THEN_SYMBOL
+	| TO_SYMBOL
+	| TRUE_SYMBOL
+	| UNBOUNDED_SYMBOL
+	| UNION_SYMBOL
+	| UNNEST_SYMBOL
+	| USING_SYMBOL
+	| WHEN_SYMBOL
+	| WHERE_SYMBOL
+	| WINDOW_SYMBOL
+	| WITH_SYMBOL;
 
 identifier: token_identifier | keyword_as_identifier;
 
@@ -2535,6 +3488,8 @@ common_keyword_as_identifier:
 	ABORT_SYMBOL
 	| ACCESS_SYMBOL
 	| ACTION_SYMBOL
+	| AFTER_SYMBOL
+	| PAST_SYMBOL
 	| AGGREGATE_SYMBOL
 	| ADD_SYMBOL
 	| ALTER_SYMBOL
@@ -2543,6 +3498,7 @@ common_keyword_as_identifier:
 	| APPROX_SYMBOL
 	| ARE_SYMBOL
 	| ASSERT_SYMBOL
+	| AT_KEYWORD_SYMBOL
 	| BATCH_SYMBOL
 	| BEGIN_SYMBOL
 	| BIGDECIMAL_SYMBOL
@@ -2577,10 +3533,14 @@ common_keyword_as_identifier:
 	| DEPTH_SYMBOL
 	| DESCRIBE_SYMBOL
 	| DETERMINISTIC_SYMBOL
+	| DELTA_SYMBOL
+	| DIFFERENTIAL_PRIVACY_SYMBOL
 	| DO_SYMBOL
+	| DYNAMIC_SYMBOL
 	| DROP_SYMBOL
 	| ELSEIF_SYMBOL
 	| ENFORCED_SYMBOL
+	| EPSILON_SYMBOL
 	| ERROR_SYMBOL
 	| EXCEPTION_SYMBOL
 	| EXECUTE_SYMBOL
@@ -2593,6 +3553,7 @@ common_keyword_as_identifier:
 	| FILL_SYMBOL
 	| FIRST_SYMBOL
 	| FOREIGN_SYMBOL
+	| FORK_SYMBOL
 	| FORMAT_SYMBOL
 	| FUNCTION_SYMBOL
 	| GENERATED_SYMBOL
@@ -2619,8 +3580,10 @@ common_keyword_as_identifier:
 	| LEAVE_SYMBOL
 	| LEVEL_SYMBOL
 	| LOAD_SYMBOL
+	| LOG_SYMBOL
 	| LOOP_SYMBOL
 	| MACRO_SYMBOL
+	| TEE_SYMBOL
 	| MAP_SYMBOL
 	| MATCH_SYMBOL
 	| KW_MATCH_RECOGNIZE_NONRESERVED_SYMBOL
@@ -2634,7 +3597,9 @@ common_keyword_as_identifier:
 	| MIN_SYMBOL
 	| MINVALUE_SYMBOL
 	| MODEL_SYMBOL
+	| MAX_GROUPS_CONTRIBUTED_SYMBOL
 	| MODULE_SYMBOL
+	| NAME_SYMBOL
 	| NUMERIC_SYMBOL
 	| OFFSET_SYMBOL
 	| ONLY_SYMBOL
@@ -2649,6 +3614,7 @@ common_keyword_as_identifier:
 	| POLICIES_SYMBOL
 	| POLICY_SYMBOL
 	| PRIMARY_SYMBOL
+	| PRIVACY_UNIT_COLUMN_SYMBOL
 	| PRIVATE_SYMBOL
 	| PRIVILEGE_SYMBOL
 	| PRIVILEGES_SYMBOL
@@ -2727,9 +3693,17 @@ common_keyword_as_identifier:
 	| DESTINATION_SYMBOL
 	| PROPERTY_SYMBOL
 	| GRAPH_SYMBOL
+	// GRAPH_TABLE is conditionally reserved (reserved only in the GRAPH_TABLE(…) operator position);
+	// ZetaSQL's parser testdata uses it as a bare identifier (alias, zero-arg TVF), so keep it here.
+	| GRAPH_TABLE_SYMBOL
 	| NODE_SYMBOL
 	| PROPERTIES_SYMBOL
 	| LABEL_SYMBOL
+	| LABELED_SYMBOL
+	| CHEAPEST_SYMBOL
+	| PER_SYMBOL
+	| YIELD_SYMBOL
+	| COST_SYMBOL
 	| EDGE_SYMBOL
 	| NEXT_SYMBOL
 	| ASCENDING_SYMBOL
@@ -2747,6 +3721,9 @@ token_identifier: IDENTIFIER;
 
 struct_type:
 	STRUCT_SYMBOL template_type_open template_type_close
+	// STRUCT<> empty type list: `<>` is lexed as a single token (the not-equals operator) by
+	// maximal munch, so the adjacent open/close angles arrive fused.
+	| STRUCT_SYMBOL NOT_EQUAL2_OPERATOR
 	| struct_type_prefix template_type_close;
 
 struct_type_prefix:

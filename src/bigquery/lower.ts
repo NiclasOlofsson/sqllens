@@ -94,10 +94,19 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 // --- statement category ---------------------------------------------------------
 
 function statementCategory(tree: ParserRuleContext): StatementCategory {
+	// stmts → unterminated_statement → (unterminated_sql_statement | unterminated_script_statement).
+	// Script statements (DECLARE/IF/LOOP/…) carry no sql_statement_body and don't contribute here.
+	// stmts → top_statement → (define_macro_statement | unterminated_statement). A define_macro_statement
+	// (DEFINE MACRO, detect-only) carries no sql_statement_body, so it contributes nothing here and the
+	// statement lowers to a flagged non-query "other" body.
 	const bodies: ParserRuleContext[] = [];
 	for (const s of directChildrenOfRule(tree, P.RULE_stmts)) {
-		for (const u of directChildrenOfRule(s, P.RULE_unterminated_sql_statement)) {
-			bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+		for (const tp of directChildrenOfRule(s, P.RULE_top_statement)) {
+			for (const ut of directChildrenOfRule(tp, P.RULE_unterminated_statement)) {
+				for (const u of directChildrenOfRule(ut, P.RULE_unterminated_sql_statement)) {
+					bodies.push(...directChildrenOfRule(u, P.RULE_sql_statement_body));
+				}
+			}
 		}
 	}
 	if (bodies.length === 0) return "other";
@@ -126,10 +135,20 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 	if (!qwpo) return emptyQuery(qs, "non-query");
 
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
-	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
+	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
+	const ctes = withClause
+		? directChildrenOfRule(withClause, P.RULE_with_clause_entry)
+				.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
+				.map(lowerCte)
+		: [];
 
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
-	const body = qpos ? lowerPrimaryOrSetOp(qpos) : emptyBody(qwpo, "non-query");
+	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
+	const body = qpos
+		? lowerPrimaryOrSetOp(qpos)
+		: fromQuery
+			? buildFromQuery(fromQuery)
+			: emptyBody(qwpo, "non-query");
 
 	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
 	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
@@ -159,13 +178,46 @@ function lowerPrimaryOrSetOp(qpos: ParserRuleContext): QueryBody {
 	return primary ? lowerQueryPrimary(primary) : emptyBody(qpos, "non-query");
 }
 
-/** query_primary: select | parenthesized_query opt_as_alias_with_required_as? */
+/** query_primary: select | TABLE path | parenthesized_query opt_as_alias_with_required_as? */
 function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 	const select = directChildrenOfRule(primary, P.RULE_select)[0];
 	if (select) return buildSelect(select);
 	const paren = directChildrenOfRule(primary, P.RULE_parenthesized_query)[0];
 	if (paren) return lowerParenthesizedQuery(paren).body;
+	// `TABLE name` ≡ `SELECT * FROM name`.
+	const path = directChildrenOfRule(primary, P.RULE_path_expression)[0];
+	if (path) {
+		return {
+			kind: "select",
+			projections: [],
+			from: [{ kind: "table", name: pathParts(path), cst: path }],
+			columns: [],
+			aggregated: false,
+			cst: primary,
+		};
+	}
 	return emptyBody(primary, "non-query");
+}
+
+/** from_query: from_clause — a bare FROM (no SELECT), implicitly `SELECT * FROM …`. */
+function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
+	const unsupported: string[] = [];
+	const fromClause = directChildrenOfRule(fromQuery, P.RULE_from_clause)[0];
+	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
+	const from = fromContents ? buildSources(fromContents, unsupported) : [];
+	const joinConditions = fromContents ? extractJoinConditions(fromContents) : [];
+	const columns: ColumnRef[] = [];
+	for (const j of joinConditions) columnsOf(j, columns, "join");
+	return {
+		kind: "select",
+		projections: [],
+		from,
+		columns,
+		joinConditions: joinConditions.length ? joinConditions : undefined,
+		aggregated: false,
+		unsupported: unsupported.length ? unsupported : undefined,
+		cst: fromQuery,
+	};
 }
 
 /**
@@ -210,9 +262,19 @@ function lowerParenthesizedQuery(paren: ParserRuleContext): QueryExpr {
 function lowerInnerQuery(query: ParserRuleContext, qwpo: ParserRuleContext | undefined): QueryExpr {
 	if (!qwpo) return emptyQuery(query, "non-query");
 	const withClause = directChildrenOfRule(qwpo, P.RULE_with_clause)[0];
-	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_aliased_query).map(lowerCte) : [];
+	// with_clause → with_clause_entry → aliased_query (the GROUP ROWS entry form has no aliased_query).
+	const ctes = withClause
+		? directChildrenOfRule(withClause, P.RULE_with_clause_entry)
+				.flatMap((e) => directChildrenOfRule(e, P.RULE_aliased_query))
+				.map(lowerCte)
+		: [];
 	const qpos = directChildrenOfRule(qwpo, P.RULE_query_primary_or_set_operation)[0];
-	const body = qpos ? lowerPrimaryOrSetOp(qpos) : emptyBody(qwpo, "non-query");
+	const fromQuery = directChildrenOfRule(qwpo, P.RULE_from_query)[0];
+	const body = qpos
+		? lowerPrimaryOrSetOp(qpos)
+		: fromQuery
+			? buildFromQuery(fromQuery)
+			: emptyBody(qwpo, "non-query");
 	const orderByClause = directChildrenOfRule(qwpo, P.RULE_order_by_clause)[0];
 	const orderBy = orderByClause ? extractOrderBy(orderByClause) : undefined;
 	if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
@@ -416,7 +478,8 @@ function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
 function buildPathSource(pathExpr: ParserRuleContext): Source {
 	const base = directChildrenOfRule(pathExpr, P.RULE_table_path_expression_base)[0];
 	const aliasInfo =
-		aliasOf(directChildrenOfRule(pathExpr, P.RULE_opt_pivot_or_unpivot_clause_and_alias)[0]) ??
+		aliasOf(directChildrenOfRule(pathExpr, P.RULE_table_path_alias_or_qualify)[0]) ??
+		aliasOf(directChildrenOfRule(pathExpr, P.RULE_table_path_pivot_suffix)[0]) ??
 		offsetAliasOf(pathExpr);
 
 	const unnest = base ? firstOfRule(base, P.RULE_unnest_expression) : undefined;
@@ -435,7 +498,7 @@ function buildPathSource(pathExpr: ParserRuleContext): Source {
 	return { kind: "table", name, alias: aliasInfo?.alias, aliasCst: aliasInfo?.cst, cst: pathExpr };
 }
 
-/** opt_pivot_or_unpivot_clause_and_alias / pivot_or_unpivot_clause_and_aliases → its leading identifier. */
+/** table_path_alias_or_qualify / table_path_pivot_suffix / pivot_or_unpivot_clause_and_aliases → its leading identifier. */
 function aliasOf(node: ParserRuleContext | undefined): { alias: string; cst: ParserRuleContext } | undefined {
 	if (!node) return undefined;
 	const id = directChildrenOfRule(node, P.RULE_identifier)[0];
@@ -629,15 +692,20 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 				cst: node,
 			};
 		}
-		// dotted field access: ehpa '.' identifier  |  ehpa '.' '(' path ')'
+		// dotted field access: ehpa '.' dot_identifier  |  ehpa '.' '(' path ')'
+		// dot_identifier wraps `identifier | <reserved keyword>` (lexical DOT_IDENTIFIER).
 		if (hasDirectToken(node, P.DOT_SYMBOL)) {
 			const base = lowerHigherPrec(subs[0]);
-			const id = directChildrenOfRule(node, P.RULE_identifier)[0];
-			if (id && base.kind === "column") {
-				return { kind: "column", parts: [...base.parts, identText(id)], cst: node };
+			const dotId = directChildrenOfRule(node, P.RULE_dot_identifier)[0];
+			const id =
+				directChildrenOfRule(node, P.RULE_identifier)[0] ??
+				(dotId ? directChildrenOfRule(dotId, P.RULE_identifier)[0] : undefined);
+			const fieldName = id ? identText(id) : dotId ? stripBackticks(dotId.getText()) : undefined;
+			if (fieldName !== undefined && base.kind === "column") {
+				return { kind: "column", parts: [...base.parts, fieldName], cst: node };
 			}
 			const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
-			const idxText = id ? identText(id) : path ? path.getText() : "field";
+			const idxText = fieldName ?? (path ? path.getText() : "field");
 			return { kind: "subscript", base, index: { kind: "literal", text: idxText, cst: node }, cst: node };
 		}
 		const unary = directChildrenOfRule(node, P.RULE_unary_operator)[0];
@@ -1018,11 +1086,18 @@ function extractExpressionSubqueries(select: ParserRuleContext, fromQueries: Set
 
 // --- name helpers ----------------------------------------------------------------
 
-/** path_expression: identifier (DOT identifier)* — the dotted parts. A single backtick-quoted
- *  identifier may itself hold a dotted path (`proj.ds.t`), so each part is split on `.`. */
+/** path_expression: identifier (DOT dot_identifier)* — the dotted parts. The head is an identifier;
+ *  later parts are dot_identifier (which may be a reserved keyword after the dot). A single
+ *  backtick-quoted identifier may itself hold a dotted path (`proj.ds.t`), so split each part on `.`. */
 function pathParts(node: ParserRuleContext): string[] {
-	const ids = collectOfRule(node, P.RULE_identifier);
-	if (ids.length) return ids.flatMap((id) => stripBackticks(id.getText()).split("."));
+	const head = directChildrenOfRule(node, P.RULE_identifier)[0];
+	const tail = directChildrenOfRule(node, P.RULE_dot_identifier);
+	if (head || tail.length) {
+		const parts: string[] = [];
+		if (head) parts.push(...stripBackticks(head.getText()).split("."));
+		for (const d of tail) parts.push(...stripBackticks(d.getText()).split("."));
+		return parts;
+	}
 	return node
 		.getText()
 		.split(".")

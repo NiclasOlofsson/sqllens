@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { lower, statementCategories } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
@@ -17,8 +18,8 @@ import { KNOWN_BAD, OUT_OF_SCOPE } from "./tsql-corpus-known-bad.js";
 // vendor/ is a gitignored sparse clone, so this gate is a no-op (skipped) when the corpus is absent
 // (CI / other machines) — same pattern as the Databricks corpus gate.
 
-const EXAMPLES = resolve("vendor/grammars-v4/sql/tsql/examples");
-const DOCS_CORPUS = resolve("harness/local/tsql-docs");
+const EXAMPLES = corpusPath("vendor/grammars-v4/sql/tsql/examples");
+const DOCS_CORPUS = corpusPath("harness/local/tsql-docs");
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
 // docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { lineage } from "../src/lineage/lineage.js";
@@ -7,7 +8,7 @@ import { parseDatabricks } from "../src/databricks/parse.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
-const CORPUS = resolve("harness/local/databricks");
+const CORPUS = corpusPath("harness/local/databricks");
 
 function origins(sql: string, output: string, schema = new Schema({})): string[] {
 	const tree = resolveScopes(lower(parseDatabricks(sql).tree));

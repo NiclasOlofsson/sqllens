@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { ParserRuleContext, type ParseTree } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
@@ -110,7 +111,7 @@ describe("CST <-> IR clause conservation", () => {
 	});
 });
 
-const CORPUS = resolve("harness/local/databricks");
+const CORPUS = corpusPath("harness/local/databricks");
 
 describe.skipIf(!existsSync(CORPUS))("CST <-> IR conservation over the Oatly corpus", () => {
 	it("the IR drops no clause the CST contains, across all 1558 models", () => {

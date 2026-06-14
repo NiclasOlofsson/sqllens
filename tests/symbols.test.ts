@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
@@ -11,7 +12,7 @@ function symbolsOf(sql: string) {
 	return deriveSymbols(resolveScopes(lower(parseDatabricks(sql).tree)));
 }
 
-const CORPUS = resolve("harness/local/databricks");
+const CORPUS = corpusPath("harness/local/databricks");
 
 describe("deriveSymbols — relations", () => {
 	it("emits a table source as a relation reference", () => {

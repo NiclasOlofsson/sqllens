@@ -55,7 +55,8 @@ LE_OPERATOR: '<=';
 GT_OPERATOR: '>';
 GE_OPERATOR: '>=';
 KL_OPERATOR: '<<';
-KR_OPERATOR: '>>';
+// No '>>' token: it would swallow the closing angle brackets of nested generics
+// (ARRAY<STRUCT<INT64>>). Shift-right is parsed as two adjacent '>' (see shift_operator).
 PLUS_OPERATOR: '+';
 MINUS_OPERATOR: '-';
 MULTIPLY_OPERATOR: '*';
@@ -91,6 +92,8 @@ PIPE_SYMBOL: '|>';
 CIRCUMFLEX_SYMBOL: '^';
 BIT_AND_SYMBOL: '&';
 BOOL_OR_SYMBOL: '||';
+// '$' — MATCH_RECOGNIZE end-of-match anchor (row_pattern_anchor).
+DOLLAR_SYMBOL: '$';
 
 fragment ANY_ESCAPE:
 	'\\' .
@@ -164,16 +167,42 @@ UNCLOSED_TRIPLE_QUOTED_RAW_BYTES_LITERAL: (R B | B R) (
 		| DQ3TEXT_0
 	);
 
-FLOATING_POINT_LITERAL: (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS DOT_SYMBOL DECIMAL_DIGITS?
+// No LEADING sign: GoogleSQL numeric literals don't carry a sign — `+`/`-` are operators (unary in
+// `-1.5`, binary in `a+1.5`). Including a leading sign made the lexer greedily glue `a+1.5` into
+// `a` `+1.5` (two value tokens, a parse error), so any unspaced binary expression with a float operand
+// failed. The EXPONENT sign (`E±n`) stays — it is part of the literal. (ZetaSQL tokenizes signs the
+// same way; src/bigquery/post-validate.ts re-catches the few negatives that relied on the old glue.)
+FLOATING_POINT_LITERAL: DECIMAL_DIGITS DOT_SYMBOL DECIMAL_DIGITS?
 		(
 		'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
 	)?
-	| (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
+	| DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
 		'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
 	)?
 	| DECIMAL_DIGITS 'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS;
 
 INTEGER_LITERAL: DECIMAL_DIGITS | HEX_DIGITS;
+
+// A numeric literal immediately followed by an identifier character (no whitespace) is invalid in
+// GoogleSQL — `123abc`, `1BEGIN`, `2E10m`, `.2m`, `2.2m`. ZetaSQL's tokenizer rejects this adjacency
+// (the ATTACHED_ALIAS / lookahead-transformer note in googlesql.tm). GoogleSQL has no numeric type
+// suffixes, so a digit-run glued to a letter is always an error. We match the glued form as one token
+// with no parser rule, so it surfaces as a syntax error; maximal munch picks it over the number rules.
+INVALID_NUMERIC_LITERAL:
+	(
+		// A dotted float requires digits after the dot, so `987654321.a` stays `987654321 . a`
+		// (a dashed/dotted path component) rather than being swallowed as one invalid token.
+		DECIMAL_DIGITS? DOT_SYMBOL DECIMAL_DIGITS (
+			'E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS
+		)?
+		// `digit . E±digits` (SIGNED exponent, no fraction digits) glued to a letter — `1.E-0x1`. The sign
+		// is required: `987654321.a` (no E) and `1.E0x1` (no sign — ZetaSQL lexes it `1.` + ident `E0x1`)
+		// are both unaffected; only the signed-exponent form is the unambiguous malformed token.
+		| DECIMAL_DIGITS DOT_SYMBOL 'E' (PLUS_OPERATOR | MINUS_OPERATOR) DECIMAL_DIGITS
+		| DECIMAL_DIGITS ('E' (PLUS_OPERATOR | MINUS_OPERATOR)? DECIMAL_DIGITS)?
+		| HEX_DIGITS
+	) [a-z_] [a-z_0-9]*;
+
 fragment DECIMAL_DIGIT: [0-9];
 fragment HEX_DIGIT: [0-9a-f];
 fragment DECIMAL_DIGITS: DECIMAL_DIGIT+;
@@ -256,6 +285,14 @@ ANALYZE_SYMBOL: 'ANALYZE';
 APPROX_SYMBOL: 'APPROX';
 ARE_SYMBOL: 'ARE';
 ASSERT_SYMBOL: 'ASSERT';
+// MATCH_RECOGNIZE AFTER MATCH SKIP PAST … (non-reserved).
+AFTER_SYMBOL: 'AFTER';
+PAST_SYMBOL: 'PAST';
+// 'AT' the keyword (AT TIME ZONE) — distinct from AT_SYMBOL '@'; the upstream port
+// used '@' in opt_at_time_zone, which made AT TIME ZONE unparseable.
+AT_KEYWORD_SYMBOL: 'AT';
+// BY NAME set-operation column matching: …/query-syntax#set_operators
+NAME_SYMBOL: 'NAME';
 BATCH_SYMBOL: 'BATCH';
 BEGIN_SYMBOL: 'BEGIN';
 BREAK_SYMBOL: 'BREAK';
@@ -285,6 +322,8 @@ DEPTH_SYMBOL: 'DEPTH';
 DESCRIBE_SYMBOL: 'DESCRIBE';
 DETERMINISTIC_SYMBOL: 'DETERMINISTIC';
 DO_SYMBOL: 'DO';
+// DYNAMIC LABEL/PROPERTIES in CREATE PROPERTY GRAPH (non-reserved).
+DYNAMIC_SYMBOL: 'DYNAMIC';
 DROP_SYMBOL: 'DROP';
 ELSEIF_SYMBOL: 'ELSEIF';
 ENFORCED_SYMBOL: 'ENFORCED';
@@ -321,9 +360,16 @@ ITERATE_SYMBOL: 'ITERATE';
 KEY_SYMBOL: 'KEY';
 LANGUAGE_SYMBOL: 'LANGUAGE';
 LAST_SYMBOL: 'LAST';
+// LATERAL join (reserved keyword): query-syntax LATERAL — RHS subquery/TVF may reference the LHS.
+LATERAL_SYMBOL: 'LATERAL';
 LEAVE_SYMBOL: 'LEAVE';
 LEVEL_SYMBOL: 'LEVEL';
 LOAD_SYMBOL: 'LOAD';
+// Pipe-operator keywords (…/pipe-syntax). Non-reserved — also added to the identifier set so
+// LOG(x), TEE, FORK remain usable as function names / identifiers outside a pipe.
+LOG_SYMBOL: 'LOG';
+TEE_SYMBOL: 'TEE';
+FORK_SYMBOL: 'FORK';
 LOOP_SYMBOL: 'LOOP';
 MACRO_SYMBOL: 'MACRO';
 MAP_SYMBOL: 'MAP';
@@ -472,9 +518,17 @@ ENUM_SYMBOL: 'ENUM';
 DESTINATION_SYMBOL: 'DESTINATION';
 PROPERTY_SYMBOL: 'PROPERTY';
 GRAPH_SYMBOL: 'GRAPH';
+// GRAPH_TABLE is one token (graph-sql-queries#graph_table_operator), reserved.
+GRAPH_TABLE_SYMBOL: 'GRAPH_TABLE';
 NODE_SYMBOL: 'NODE';
 PROPERTIES_SYMBOL: 'PROPERTIES';
 LABEL_SYMBOL: 'LABEL';
+// Graph (GQL) keywords — non-reserved (also in the identifier set below).
+LABELED_SYMBOL: 'LABELED';
+CHEAPEST_SYMBOL: 'CHEAPEST';
+PER_SYMBOL: 'PER';
+YIELD_SYMBOL: 'YIELD';
+COST_SYMBOL: 'COST';
 EDGE_SYMBOL: 'EDGE';
 NEXT_SYMBOL: 'NEXT';
 ASCENDING_SYMBOL: 'ASCENDING';
@@ -498,9 +552,13 @@ fragment BQTEXT: BQTEXT_0 BACKQUOTE_SYMBOL;
 IDENTIFIER: UNQUOTED_IDENTIFIER | BQTEXT;
 UNCLOSED_ESCAPED_IDENTIFIER: BQTEXT_0;
 
-// White space handling
+// White space handling. GoogleSQL whitespace is ASCII [ \n\r\t\b\f\v] plus the Unicode space
+// separators ZetaSQL recognizes (googlesql.tm whitespace_character): no-break U+00A0, en/em/…
+// U+2000–U+200A, narrow-no-break U+202F, medium-mathematical U+205F, ideographic U+3000. Zero-width
+// spaces (U+200B/U+FEFF), OGHAM (U+1680) and MONGOLIAN VOWEL SEPARATOR (U+180E) are deliberately out.
 WHITESPACE:
-	[ \t\f\r\n] -> channel(HIDDEN); // Ignore whitespaces.
+	[ 	
+  -   　] -> channel(HIDDEN);
 
 // Comments
 fragment BLOCK_COMMENT: ('/**/' | '/*' ~[!] .*? '*/');
@@ -511,3 +569,9 @@ fragment POUND_COMMENT: '#' (~[\r\n])* ('\r' | '\n' | '\r\n')?;
 
 COMMENT:
 	(BLOCK_COMMENT | DASH_COMMENT | POUND_COMMENT) -> channel(HIDDEN);
+// REPLACE / UPDATE immediately after INSERT are the insert mode (ZetaSQL KW_REPLACE_AFTER_INSERT /
+// KW_UPDATE_AFTER_INSERT). These rules never match real input — the patterns are control characters
+// that cannot appear in SQL — they exist only to mint stable token types appended at the end (no
+// renumbering); the token-stream rewrite (src/bigquery/dot-path.ts) retypes REPLACE/UPDATE to them.
+KW_REPLACE_AFTER_INSERT: 'REPLACE_AFTER_INSERT';
+KW_UPDATE_AFTER_INSERT: 'UPDATE_AFTER_INSERT';

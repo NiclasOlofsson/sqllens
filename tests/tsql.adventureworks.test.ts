@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { resolve } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { inferType } from "../src/infer/infer.js";
 import { lineage } from "../src/lineage/lineage.js";
@@ -18,7 +18,7 @@ import { parseAdventureWorks } from "./helpers/adventureworks.js";
 // CROSS/OUTER APPLY or PIVOT (T-SQL `lower()` gaps), so not all 20 parse — the gate locks the
 // portion that does and that the layer handles cleanly, plus concrete spot-checks with teeth.
 
-const FILE = resolve("vendor/adventureworks/instawdb.sql");
+const FILE = corpusPath("vendor/adventureworks/instawdb.sql");
 
 describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (schema + views)", () => {
 	// Read the corpus in beforeAll, not at suite-collection time: vitest still runs the describe

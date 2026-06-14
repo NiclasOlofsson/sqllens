@@ -1,12 +1,13 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join } from "node:path";
+import { corpusPath } from "./helpers/corpus.js";
 import { CharStream, CommonTokenStream, ParserRuleContext, type ParseTree } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { DatabricksLexer } from "../src/generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../src/generated/databricks/DatabricksParser.js";
 
 // Real, proprietary corpus copied locally (gitignored). See harness/local/.
-const CORPUS = resolve("harness/local/databricks");
+const CORPUS = corpusPath("harness/local/databricks");
 
 function parse(sql: string): { errors: number; first?: string; tree: ParseTree } {
 	const lexer = new DatabricksLexer(CharStream.fromString(sql));
