@@ -5,6 +5,10 @@ import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulat
 import { describe, expect, it } from "vitest";
 import { RedshiftLexer } from "../src/generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../src/generated/redshift/RedshiftParser.js";
+import { lower } from "../src/redshift/lower.js";
+import { parseRedshift } from "../src/redshift/parse.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { classifySql } from "./helpers/sql-kind.js";
 import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 
 // Two Redshift conformance corpora, both gitignored and skipped when absent:
@@ -95,5 +99,27 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Redshift grammar vs the bytebase 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs corpus", () => {
 	it("ratchets the in-scope query bucket; reports dml/ddl", { timeout: 1_800_000 }, () => {
 		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE);
+	});
+
+	// lower() + resolveScopes must be TOTAL over every parsed query: a valid parse never throws in
+	// the semantic pipeline (unmodelled forms become `other`/`unsupported`, not exceptions). This is
+	// the contract the shared semantic layer relies on — proven here over the real corpus, not faked.
+	it("lower + resolveScopes never throw over the parsed query corpus", { timeout: 1_800_000 }, () => {
+		const throwers: string[] = [];
+		let parsed = 0;
+		for (const f of sqlFiles(DOCS_CORPUS)) {
+			const sql = readFileSync(f, "utf8");
+			if (classifySql(sql) !== "query") continue;
+			const { tree, errors } = parseRedshift(sql);
+			if (errors > 0) continue; // unparsed — the ratchet covers those
+			parsed++;
+			try {
+				resolveScopes(lower(tree), "redshift");
+			} catch (e) {
+				throwers.push(`${f.slice(DOCS_CORPUS.length + 1).split("\\").join("/")}: ${String(e).slice(0, 120)}`);
+			}
+		}
+		expect(parsed).toBeGreaterThan(0);
+		expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 	});
 });

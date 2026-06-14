@@ -37,9 +37,9 @@ describe("Redshift parser — canonical statements parse with zero errors", () =
 	});
 
 	it("window function", () => {
-		expect(
-			errorsOf("SELECT id, row_number() OVER (PARTITION BY dept ORDER BY salary DESC) AS rn FROM emp"),
-		).toBe(0);
+		expect(errorsOf("SELECT id, row_number() OVER (PARTITION BY dept ORDER BY salary DESC) AS rn FROM emp")).toBe(
+			0,
+		);
 	});
 
 	it(":: cast and Postgres-style operators", () => {
@@ -47,7 +47,9 @@ describe("Redshift parser — canonical statements parse with zero errors", () =
 	});
 
 	it("INSERT … SELECT", () => {
-		expect(errorsOf("INSERT INTO archive (id, total) SELECT id, total FROM orders WHERE status = 'closed'")).toBe(0);
+		expect(errorsOf("INSERT INTO archive (id, total) SELECT id, total FROM orders WHERE status = 'closed'")).toBe(
+			0,
+		);
 	});
 
 	it("CREATE TABLE with DISTKEY/SORTKEY/ENCODE (Redshift-specific)", () => {
@@ -107,14 +109,14 @@ describe("Redshift-specific constructs", () => {
 	});
 
 	it("PIVOT", () => {
-		expect(
-			errorsOf("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A', 'B', 'C'))"),
-		).toBe(0);
+		expect(errorsOf("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A', 'B', 'C'))")).toBe(0);
 	});
 
 	it("UNPIVOT", () => {
 		expect(
-			errorsOf("SELECT * FROM (SELECT red, green, blue FROM count_by_color) UNPIVOT (cnt FOR color IN (red, green, blue))"),
+			errorsOf(
+				"SELECT * FROM (SELECT red, green, blue FROM count_by_color) UNPIVOT (cnt FOR color IN (red, green, blue))",
+			),
 		).toBe(0);
 	});
 
