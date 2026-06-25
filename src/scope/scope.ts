@@ -500,20 +500,28 @@ function baseRelationColumns(scope: Scope): string[] | "unknown" {
 	return "unknown";
 }
 
+// Pure column transforms — applied to a known base column list. Shared by the schema-free scope outputs
+// AND the schema-fed qualify / resolve passes, so the pivot reshape is consistent everywhere (not just
+// in scope.outputs). PIVOT consumes the FOR + aggregate columns and adds the IN-list value columns;
+// UNPIVOT consumes the IN-list columns and adds the name + value columns; both keep the passthrough rest.
+export function applyPivotCols(base: string[], p: PivotInfo): string[] {
+	const consumed = new Set([...p.forColumns, ...p.aggColumns].map(normalizeName));
+	return [...base.filter((c) => !consumed.has(normalizeName(c))), ...p.values];
+}
+
+export function applyUnpivotCols(base: string[], u: UnpivotInfo): string[] {
+	const removed = new Set(u.removed.map(normalizeName));
+	return [...base.filter((c) => !removed.has(normalizeName(c))), u.nameColumn, u.valueColumn];
+}
+
 function unpivotOutputs(scope: Scope, u: UnpivotInfo): string[] | "unknown" {
 	const base = baseRelationColumns(scope);
-	if (base === "unknown") return "unknown"; // pass-through needs the input's columns
-	const removed = new Set(u.removed.map(normalizeName));
-	const passthrough = base.filter((c) => !removed.has(normalizeName(c)));
-	return [...passthrough, u.nameColumn, u.valueColumn];
+	return base === "unknown" ? "unknown" : applyUnpivotCols(base, u);
 }
 
 function pivotOutputs(scope: Scope, p: PivotInfo): string[] | "unknown" {
 	const base = baseRelationColumns(scope);
-	if (base === "unknown") return "unknown";
-	const consumed = new Set([...p.forColumns, ...p.aggColumns].map(normalizeName));
-	const passthrough = base.filter((c) => !consumed.has(normalizeName(c)));
-	return [...passthrough, ...p.values];
+	return base === "unknown" ? "unknown" : applyPivotCols(base, p);
 }
 
 /** `UNION BY NAME` output: left columns in order, then right-only columns appended. */

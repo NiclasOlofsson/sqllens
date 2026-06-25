@@ -1,0 +1,53 @@
+import { describe, expect, it } from "vitest";
+import { lower as lowerBq } from "../src/bigquery/lower.js";
+import { parseBigQuery } from "../src/bigquery/parse.js";
+import { lower as lowerDbx } from "../src/databricks/lower.js";
+import { parseDatabricks } from "../src/databricks/parse.js";
+import { qualify } from "../src/qualify/qualify.js";
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+
+// End-to-end PIVOT/UNPIVOT: the QUALIFIED (schema-fed) output columns must reflect the reshape — not
+// just the extracted PivotInfo, and not just the schema-free scope outputs. This gate is the one that
+// was missing: previously pivot was wired into scope (schema-free) but NOT into qualify/resolve, so a
+// `SELECT * FROM t PIVOT(…)` resolved to the un-pivoted base columns. The reshape is dialect-neutral, so
+// it must hold for both the BigQuery and Databricks (Spark) lowerers onto the shared IR.
+
+const BQ = new Schema({ "proj.ds.t": { product: "STRING", quarter: "STRING", sales: "INT64" } });
+const DBX = new Schema({ t: { product: "STRING", quarter: "STRING", sales: "INT" } });
+
+function bqCols(sql: string): string[] | "unknown" {
+	const r = parseBigQuery(sql);
+	expect(r.errors, sql).toBe(0);
+	const tree = resolveScopes(lowerBq(r.tree), "bigquery");
+	return qualify(tree, BQ).columnsOf(tree.root);
+}
+
+function dbxCols(sql: string): string[] | "unknown" {
+	const r = parseDatabricks(sql);
+	expect(r.errors, sql).toBe(0);
+	const tree = resolveScopes(lowerDbx(r.tree));
+	return qualify(tree, DBX).columnsOf(tree.root);
+}
+
+describe("PIVOT / UNPIVOT — qualified output reflects the reshape (dialect-neutral)", () => {
+	it("BigQuery PIVOT: consumes FOR + aggregate columns, adds the IN-list values", () => {
+		expect(bqCols("SELECT * FROM `proj.ds.t` PIVOT(SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2))")).toEqual([
+			"product",
+			"q1",
+			"q2",
+		]);
+	});
+
+	it("BigQuery UNPIVOT: consumes the IN-list columns, adds name + value", () => {
+		expect(bqCols("SELECT * FROM `proj.ds.t` UNPIVOT(val FOR q IN (sales))")).toEqual(["product", "quarter", "q", "val"]);
+	});
+
+	it("Databricks PIVOT lowers to the same IR and reshapes identically", () => {
+		expect(dbxCols("SELECT * FROM t PIVOT(SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2))")).toEqual([
+			"product",
+			"q1",
+			"q2",
+		]);
+	});
+});

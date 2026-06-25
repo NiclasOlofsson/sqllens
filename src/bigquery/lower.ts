@@ -542,6 +542,23 @@ function unpivotInfoOf(pipeUnpivot: ParserRuleContext): UnpivotInfo {
 	return { valueColumn, nameColumn, removed, alias: asAliasText(directChildrenOfRule(pipeUnpivot, P.RULE_as_alias)[0]) };
 }
 
+// A FROM-clause table source may carry a PIVOT/UNPIVOT suffix (`FROM t PIVOT(…) AS p`). The pivot_clause
+// sits inside the source's `pivot_or_unpivot_clause_and_aliases` / `…_pivot_suffix` wrapper, which (like
+// pipe_pivot) has the clause + an `as_alias?` as direct children — so pivotInfoOf/unpivotInfoOf read it
+// as-is. shallowNodesOfRule stops at parenthesized_query, so a derived table's own pivot isn't pulled
+// up. Lowered Spark-style (alias dropped) so the pivot transforms THIS select's output via pivotOutputs.
+function extractFromPivot(fromContents: ParserRuleContext): PivotInfo | undefined {
+	const pc = shallowNodesOfRule(fromContents, P.RULE_pivot_clause)[0];
+	if (!pc || !(pc.parent instanceof ParserRuleContext)) return undefined;
+	return { ...pivotInfoOf(pc.parent), alias: undefined };
+}
+
+function extractFromUnpivot(fromContents: ParserRuleContext): UnpivotInfo | undefined {
+	const uc = shallowNodesOfRule(fromContents, P.RULE_unpivot_clause)[0];
+	if (!uc || !(uc.parent instanceof ParserRuleContext)) return undefined;
+	return { ...unpivotInfoOf(uc.parent), alias: undefined };
+}
+
 /** Lower one pipe_operator to its faithful PipeStage. Every GoogleSQL pipe operator is handled. */
 function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	const where = directChildrenOfRule(po, P.RULE_pipe_where)[0];
@@ -740,6 +757,8 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 		qualify,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
+		pivot: fromContents ? extractFromPivot(fromContents) : undefined,
+		unpivot: fromContents ? extractFromUnpivot(fromContents) : undefined,
 		unsupported: unsupported.length ? unsupported : undefined,
 		cst: select,
 	};

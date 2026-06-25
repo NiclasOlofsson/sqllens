@@ -1,7 +1,9 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { ColumnRef } from "../ir/ir.js";
 import {
+	applyPivotCols,
 	applyStarModifiers,
+	applyUnpivotCols,
 	mergeByName,
 	resolveColumn,
 	splitColumnRefInScope,
@@ -76,6 +78,17 @@ function resolveColumns(
 		const left = resolved.get(scope.branches.left) ?? "unknown";
 		if (!body.byName) return left;
 		return mergeByName(left, resolved.get(scope.branches.right) ?? "unknown");
+	}
+	// A PIVOT/UNPIVOT that transforms the select directly (Spark/BigQuery — no result alias) reshapes the
+	// FROM relation's columns: expand the sources, then apply the transform. (The T-SQL aliased form is a
+	// synthetic source registered in scope; it expands via the normal star path.)
+	if (body.pivot && !body.pivot.alias) {
+		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
+		return base === undefined ? "unknown" : applyPivotCols(base, body.pivot);
+	}
+	if (body.unpivot && !body.unpivot.alias) {
+		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
+		return base === undefined ? "unknown" : applyUnpivotCols(base, body.unpivot);
 	}
 	return projectionColumns(scope, body.projections, schema, resolved, diagnostics);
 }

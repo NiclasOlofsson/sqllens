@@ -1,6 +1,8 @@
 import type { Schema } from "../qualify/schema.js";
 import {
+	applyPivotCols,
 	applyStarModifiers,
+	applyUnpivotCols,
 	mergeByName,
 	splitColumnRefInScope,
 	type ResolvedSource,
@@ -83,7 +85,27 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 		const merged = mergeByName(left ?? "unknown", outputNames(scope.branches.right, schema, visited) ?? "unknown");
 		return merged === "unknown" ? undefined : merged;
 	}
+	// A PIVOT/UNPIVOT with no result alias reshapes the FROM relation — expand the sources, transform.
+	if (body.pivot && !body.pivot.alias) {
+		const base = sourceColumnsAll(scope, schema, visited);
+		return base ? applyPivotCols(base, body.pivot) : undefined;
+	}
+	if (body.unpivot && !body.unpivot.alias) {
+		const base = sourceColumnsAll(scope, schema, visited);
+		return base ? applyUnpivotCols(base, body.unpivot) : undefined;
+	}
 	return projectionNames(scope, body.projections, schema, visited);
+}
+
+/** All source columns of a scope (the base relation) — used to apply a PIVOT/UNPIVOT transform. */
+function sourceColumnsAll(scope: Scope, schema: Schema, visited: Set<Scope>): string[] | undefined {
+	const out: string[] = [];
+	for (const src of scope.sources.values()) {
+		const cols = columnNamesOf(src, schema, visited);
+		if (!cols) return undefined;
+		out.push(...cols);
+	}
+	return out;
 }
 
 /** Output names of a projection list against a scope's sources (`*`/`t.*` expanded, modifiers applied). */
