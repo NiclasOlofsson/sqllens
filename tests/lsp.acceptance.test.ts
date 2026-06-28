@@ -28,9 +28,11 @@ import {
   HoverRequest,
   DefinitionRequest,
   DocumentSymbolRequest,
+  SemanticTokensRequest,
   PublishDiagnosticsNotification,
   type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
+import { SEMANTIC_LEGEND } from "../src/lsp/features/semantic-tokens.js";
 import { startServer } from "../src/lsp/server.js";
 import { SqlDocument } from "../src/index.js";
 
@@ -235,5 +237,63 @@ describe("LSP acceptance", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+
+  // Decode the LSP semantic-tokens `data` (flat array of 5-int tuples, delta-encoded:
+  // deltaLine, deltaStart, length, tokenType, tokenModifiers) into absolute positioned
+  // tokens with their resolved type name (per SEMANTIC_LEGEND.tokenTypes).
+  function decodeSemanticTokens(data: number[]): {
+    line: number;
+    char: number;
+    length: number;
+    type: string;
+  }[] {
+    const out: { line: number; char: number; length: number; type: string }[] = [];
+    let line = 0;
+    let char = 0;
+    for (let i = 0; i + 4 < data.length; i += 5) {
+      const dLine = data[i];
+      const dStart = data[i + 1];
+      const length = data[i + 2];
+      const typeIdx = data[i + 3];
+      if (dLine === 0) {
+        char += dStart;
+      } else {
+        line += dLine;
+        char = dStart;
+      }
+      out.push({ line, char, length, type: SEMANTIC_LEGEND.tokenTypes[typeIdx] });
+    }
+    return out;
+  }
+
+  it("semantic tokens classify keywords and identifiers at the right positions", async () => {
+    const text = "SELECT amount FROM sales";
+    const uri = open("semtok.sql", text);
+    const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    const toks = decodeSemanticTokens((result as any).data as number[]);
+
+    // SELECT keyword at line 0, col 0.
+    expect(toks.some((t) => t.type === "keyword" && t.line === 0 && t.char === 0)).toBe(true);
+    // FROM keyword at its column.
+    expect(toks.some((t) => t.type === "keyword" && t.line === 0 && t.char === text.indexOf("FROM"))).toBe(true);
+    // `amount` is an identifier → variable.
+    expect(
+      toks.some((t) => t.type === "variable" && t.line === 0 && t.char === text.indexOf("amount")),
+    ).toBe(true);
+  });
+
+  it("semantic tokens emit a block comment as comment", async () => {
+    const text = "/* c */ SELECT 1";
+    const uri = open("semtok-comment.sql", text);
+    const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    const toks = decodeSemanticTokens((result as any).data as number[]);
+    expect(toks.some((t) => t.type === "comment" && t.line === 0 && t.char === 0)).toBe(true);
+  });
+
+  it("semantic tokens are produced on broken input", async () => {
+    const uri = open("semtok-broken.sql", "SELECT amount FORM");
+    const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    expect(((result as any).data as number[]).length).toBeGreaterThan(0);
   });
 });
