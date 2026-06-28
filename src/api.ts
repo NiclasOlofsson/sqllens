@@ -219,3 +219,10 @@ export { exprOriginsOf as originsOfExpr };
 // broken-input case where no parse is wanted.
 export { tokenize } from "./token/tokenize.js";
 export type { Token, TokenRole } from "./token/token.js";
+
+// The persistent, immutable per-document model — the stateful front of these stateless functions.
+// It composes the surface above (parse/toScopes/qualify/deriveSymbols/TypeInfo); the import cycle
+// (api re-exports SqlDocument, document imports from api) is safe because document.ts only calls
+// these at call time, never at module-eval time.
+export { SqlDocument, type DocumentAnalysis } from "./document/document.js";
+export { LineIndex } from "./document/line-index.js";
