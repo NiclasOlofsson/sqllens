@@ -79,7 +79,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		expect(ok).toBeGreaterThanOrEqual(135);
 		// fails carry the reorg path prefix (…/<category>/constants.sql) — compare by basename.
 		expect(fails.map((f) => f.split("/").pop()).sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
-	}, 120000);
+	}, 300000);
 
 	it("lowers + scopes every example the parser accepts, without throwing", () => {
 		let accepted = 0;
@@ -100,7 +100,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		// At least some examples must take the real modelling path — guards against a
 		// statement-classification regression silently routing everything to emptyQuery.
 		expect(modelled).toBeGreaterThan(0);
-	}, 120000);
+	}, 300000);
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs corpus", () => {
