@@ -33,11 +33,17 @@ import type { QueryExpr } from "../ir/ir.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
-import type { Schema } from "../qualify/schema.js";
+import { Schema } from "../qualify/schema.js";
 import type { Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
+
+// A single stable empty schema, used as the analyze() default when no catalog is
+// configured. Sharing ONE instance keeps the schema-keyed analyze() memo working
+// for schema-free calls (cache key = schema ?? EMPTY_SCHEMA), instead of a fresh
+// Schema per call that would defeat the cache.
+const EMPTY_SCHEMA = new Schema({});
 
 /** The schema-dependent analysis tiers, produced by SqlDocument.analyze(schema). */
 export interface DocumentAnalysis {
@@ -118,18 +124,21 @@ export class SqlDocument {
 		return nodeAt(this.scopes, offset, this.ast);
 	}
 
-	/** The schema-dependent tiers, over the cached scopes/ast (no re-parse). Memoized by schema identity. */
-	analyze(schema: Schema): DocumentAnalysis {
-		const cached = this._analysisCache.get(schema);
+	/** The schema-dependent tiers, over the cached scopes/ast (no re-parse). Memoized by schema
+	 *  identity. With no schema the symbols/scopes still resolve structurally and types come back
+	 *  `unknown` where a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
+	analyze(schema?: Schema): DocumentAnalysis {
+		const s = schema ?? EMPTY_SCHEMA;
+		const cached = this._analysisCache.get(s);
 		if (cached) return cached;
-		const qualification = qualify(this.scopes, schema, { dialect: this.dialect });
+		const qualification = qualify(this.scopes, s, { dialect: this.dialect });
 		const analysis: DocumentAnalysis = {
 			qualification,
-			types: new TypeInfo(schema),
-			symbols: deriveSymbols(this.scopes, schema, { dialect: this.dialect }),
+			types: new TypeInfo(s),
+			symbols: deriveSymbols(this.scopes, s, { dialect: this.dialect }),
 			diagnostics: qualification.diagnostics,
 		};
-		this._analysisCache.set(schema, analysis);
+		this._analysisCache.set(s, analysis);
 		return analysis;
 	}
 }

@@ -11,7 +11,7 @@
 // `exports` map only declares `"./node"` (no `"./node.js"` key), so the suffixed
 // form fails to resolve under vitest's Bundler resolution. The bare `"./node"`
 // subpath resolves and matches src/lsp/main.ts — used here.
-import { describe, it, expect, beforeAll, afterAll } from "vitest";
+import { describe, it, expect, beforeAll, afterAll, vi } from "vitest";
 import { Duplex } from "node:stream";
 import { mkdtempSync, writeFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -24,6 +24,7 @@ import {
   StreamMessageWriter,
   InitializeRequest,
   DidOpenTextDocumentNotification,
+  DidChangeTextDocumentNotification,
   HoverRequest,
   DefinitionRequest,
   DocumentSymbolRequest,
@@ -31,6 +32,7 @@ import {
   type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
 import { startServer } from "../src/lsp/server.js";
+import { SqlDocument } from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
 const msg = (m: string | { value: string }): string => (typeof m === "string" ? m : m.value);
@@ -90,6 +92,26 @@ function open(name: string, text: string): string {
     textDocument: { uri, languageId: "sql", version: 1, text },
   });
   return uri;
+}
+
+function change(uri: string, version: number, text: string): void {
+  void client.sendNotification(DidChangeTextDocumentNotification.type, {
+    textDocument: { uri, version },
+    contentChanges: [{ text }], // Full-sync (TextDocumentSyncKind.Full): one change with the whole text.
+  });
+}
+
+/** Wait until the published diagnostics for `uri` satisfy `pred` (the server republishes on change). */
+async function waitForDiagnosticsWhere(
+  uri: string,
+  pred: (d: PublishDiagnosticsParams) => boolean,
+): Promise<PublishDiagnosticsParams> {
+  for (let i = 0; i < 50; i++) {
+    const d = diagnosticsByUri.get(uri);
+    if (d && pred(d)) return d;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  throw new Error("diagnostics never satisfied predicate for " + uri);
 }
 
 async function waitForDiagnostics(uri: string): Promise<PublishDiagnosticsParams> {
@@ -155,5 +177,63 @@ describe("LSP acceptance", () => {
     const uri = open("sym.sql", text);
     const syms = await client.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } });
     expect((syms as any[]).some((s) => s.name === "recent")).toBe(true);
+  });
+
+  it("serves results from the REBUILT document after an edit (not the stale text)", async () => {
+    // Open valid text → diagnostic-clean; then change the SAME document to text with an
+    // unknown column. The server must rebuild its SqlDocument and serve the NEW text:
+    // a semantic diagnostic for the unknown column, and a hover that reflects the new column.
+    const v1 = "SELECT amount FROM sales";
+    const uri = open("edit.sql", v1);
+    await waitForDiagnosticsWhere(uri, (d) => d.diagnostics.length === 0);
+
+    const v2 = "SELECT nope FROM sales";
+    change(uri, 2, v2);
+    const after = await waitForDiagnosticsWhere(uri, (d) =>
+      d.diagnostics.some((x) => /nope|unknown/i.test(msg(x.message))),
+    );
+    expect(after.diagnostics.some((x) => /nope|unknown/i.test(msg(x.message)))).toBe(true);
+
+    // Hover over the NEW column position resolves against the rebuilt doc (id is int per schema).
+    const v3 = "SELECT id FROM sales";
+    change(uri, 3, v3);
+    await waitForDiagnosticsWhere(uri, (d) => d.diagnostics.length === 0);
+    const hover = await client.sendRequest(HoverRequest.type, {
+      textDocument: { uri },
+      position: { line: 0, character: v3.indexOf("id") },
+    });
+    expect(hover).not.toBeNull();
+    expect((hover as any).contents.value as string).toMatch(/int/);
+  });
+
+  it("reuses the cached document across requests on an unchanged version, rebuilds once per edit", async () => {
+    // SqlDocument.create runs on open/change — NOT per request. Assert on DELTAS: once the
+    // document is built and settled, request handlers add zero builds, and one edit adds one.
+    const spy = vi.spyOn(SqlDocument, "create");
+    try {
+      const text = "SELECT amount FROM sales";
+      const uri = open("cache.sql", text);
+      await waitForDiagnostics(uri);
+      // Let any open-time build(s) settle, then snapshot the count.
+      await new Promise((r) => setTimeout(r, 20));
+      const settled = spy.mock.calls.length;
+      expect(settled).toBeGreaterThanOrEqual(1);
+
+      const pos = { line: 0, character: text.indexOf("amount") };
+      await client.sendRequest(HoverRequest.type, { textDocument: { uri }, position: pos });
+      await client.sendRequest(HoverRequest.type, { textDocument: { uri }, position: pos });
+      await client.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } });
+      // Three requests on the unchanged doc: served from cache, zero new builds.
+      expect(spy.mock.calls.length).toBe(settled);
+
+      // One edit rebuilds exactly once. Edit to text whose diagnostics DIFFER from the open-time
+      // state (an unknown column), so the wait can only succeed after the change's rebuild lands —
+      // not on stale open-time diagnostics.
+      change(uri, 2, "SELECT nope FROM sales");
+      await waitForDiagnosticsWhere(uri, (d) => d.diagnostics.some((x) => /nope|unknown/i.test(msg(x.message))));
+      expect(spy.mock.calls.length).toBe(settled + 1);
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

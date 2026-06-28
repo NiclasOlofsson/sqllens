@@ -2,8 +2,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
-import type { Dialect } from "../api.js";
-import { Schema, type SchemaMapping } from "../qualify/schema.js";
+import { Schema, type Dialect, type SchemaMapping } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // Dialect resolution: a document's dialect is configured, never guessed. Reads

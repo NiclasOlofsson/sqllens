@@ -1,27 +1,20 @@
 import type { Hover, Position } from "vscode-languageserver-types";
-import { toAst, TypeInfo, type Dialect } from "../../api.js";
-import { resolveScopes } from "../../scope/scope.js";
-import { Schema } from "../../qualify/schema.js";
-import { formatType } from "../../infer/types.js";
-import { nodeAt } from "../node-at.js";
-import { positionToOffset, rangeFromCst } from "../ranges.js";
+import { formatType, type Schema, type SqlDocument } from "../../index.js";
+import { rangeFromCst } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Hover: the inferred type of the expression under the cursor. Pure translation
-// over the library — node-at finds the expr + its scope, TypeInfo.typeOf infers
-// the type (the library's inference, not ours), formatType renders it.
+// over the cached document model — nodeAt finds the expr + its scope, the cached
+// analyze(schema).types infers the type (the library's inference, not ours),
+// formatType renders it. No re-parse here.
 // ---------------------------------------------------------------------------
 
-export function computeHover(text: string, dialect: Dialect, position: Position, schema?: Schema): Hover | null {
-	const ast = toAst(text, dialect);
-	const tree = resolveScopes(ast, dialect);
-	// Pass `ast` so node-at can also reach query-level ORDER BY / LIMIT exprs (Task B2 fix) —
-	// those live on QueryExpr, outside any Scope.body, so hover would miss them without it.
-	const hit = nodeAt(tree, positionToOffset(text, position), ast);
+export function computeHover(doc: SqlDocument, position: Position, schema?: Schema): Hover | null {
+	const off = doc.lines.offsetAt(position.line, position.character);
+	const hit = doc.nodeAt(off);
 	if (!hit) return null;
 
-	const types = new TypeInfo(schema ?? new Schema({}));
-	const type = types.typeOf(hit.expr, hit.scope);
+	const type = doc.analyze(schema).types.typeOf(hit.expr, hit.scope);
 	if (type.kind === "unknown") return null;
 
 	return {
