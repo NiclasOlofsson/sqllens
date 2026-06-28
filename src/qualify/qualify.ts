@@ -12,6 +12,7 @@ import {
 	type Scope,
 	type ScopeTree,
 } from "../scope/scope.js";
+import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { type Schema } from "./schema.js";
 
@@ -354,16 +355,17 @@ function sourceColumns(
 
 /** Full positioned span of a CST node — 1-based line, 0-based column, endColumn one past the last
  *  char (falls back to the start token when stop is absent). Mirrors symbols.ts `spanOf`, plus a
- *  stop-absent start-fallback (per spec A8); the load-bearing endColumn math is identical, so
- *  rangeFromSpan agrees on both. */
+ *  stop-absent start-fallback (per spec A8); both route the load-bearing end math through the shared
+ *  `endPosition` helper (multi-line-stop-token aware), so rangeFromSpan agrees on both. */
 function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine: number; endColumn: number } {
 	const s = cst.start;
 	const e = cst.stop ?? cst.start;
+	const end = endPosition(e?.line ?? s?.line ?? 0, e?.column ?? 0, e?.text ?? "");
 	return {
 		line: s?.line ?? 0,
 		column: s?.column ?? 0,
-		endLine: e?.line ?? s?.line ?? 0,
-		endColumn: (e?.column ?? 0) + (e?.text?.length ?? 0),
+		endLine: end.endLine,
+		endColumn: end.endColumn,
 	};
 }
 

@@ -15,9 +15,20 @@ function positionFromStartToken(t: Token): Position {
   return { line: Math.max(0, t.line - 1), character: t.column };
 }
 
-/** A token's end position (exclusive) as an LSP Position: column past the last char. */
+/** A token's end position (exclusive) as an LSP Position: column past the last char. When the
+ *  token's text spans newlines (multi-line string/dollar-quoted body/block comment as the last
+ *  token of a node), the end advances by the newline count and the column is the chars after the
+ *  last newline. (Equivalent to the library `endPosition` helper, but this works on an antlr Token
+ *  and emits a 0-based LSP line; ranges.ts is in the application layer the library can't import.) */
 function positionFromStopToken(t: Token): Position {
-  return { line: Math.max(0, t.line - 1), character: t.column + (t.text?.length ?? 0) };
+  const text = t.text ?? "";
+  const lastNl = text.lastIndexOf("\n");
+  if (lastNl === -1) {
+    return { line: Math.max(0, t.line - 1), character: t.column + text.length };
+  }
+  let nl = 0;
+  for (let i = 0; i < text.length; i++) if (text.charCodeAt(i) === 10) nl++;
+  return { line: Math.max(0, t.line - 1 + nl), character: text.length - (lastNl + 1) };
 }
 
 /** CST node → LSP Range, from its first token's start to its last token's end. */

@@ -112,8 +112,8 @@ function escapeDiagAt(tok: Token): SyntaxDiagnostic {
 /**
  * Positioned variant of the literal-escape validation: string/bytes literals and backquoted
  * identifiers in `tokens` whose escape sequences are invalid — each is a parse-time syntax error in
- * GoogleSQL. Detection is identical to the former `countBadLiteralEscapes`; each detection now pushes
- * a diagnostic squiggling the whole offending token rather than incrementing a bare count.
+ * GoogleSQL. Each `badLiteralEscapes` detection pushes a diagnostic squiggling the whole offending
+ * token.
  */
 export function badLiteralEscapes(tokens: Token[]): SyntaxDiagnostic[] {
 	const out: SyntaxDiagnostic[] = [];

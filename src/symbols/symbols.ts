@@ -1,5 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { Expr, Projection } from "../ir/ir.js";
+import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
@@ -359,10 +360,11 @@ function resolvedSourceCst(src: ResolvedSource): ParserRuleContext | undefined {
 function spanOf(cst: ParserRuleContext): Span {
 	const s = cst.start;
 	const e = cst.stop;
+	const end = endPosition(e?.line ?? 0, e?.column ?? 0, e?.text ?? "");
 	return {
 		line: s?.line ?? 0,
 		column: s?.column ?? 0,
-		endLine: e?.line ?? 0,
-		endColumn: (e?.column ?? 0) + (e?.text?.length ?? 0),
+		endLine: end.endLine,
+		endColumn: end.endColumn,
 	};
 }

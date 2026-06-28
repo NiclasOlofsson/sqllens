@@ -25,6 +25,15 @@ describe("ranges", () => {
     });
   });
 
+  it("rangeFromCst: multi-line STOP token — end advances line and uses chars after the last newline", () => {
+    // A single string-literal token `'x\ny\nz'` starting at line 1, col 7 (7 chars total, 2 newlines).
+    const cst = { start: fakeToken(1, 7, "'x\ny\nz'"), stop: fakeToken(1, 7, "'x\ny\nz'") } as any;
+    expect(rangeFromCst(cst)).toEqual({
+      start: { line: 0, character: 7 },
+      end: { line: 2, character: 2 }, // start line 1 + 2 newlines → 0-based line 2; "z'" after last \n → col 2
+    });
+  });
+
   it("rangeFromCst: missing start token → zero range (never throws)", () => {
     const cst = { start: undefined, stop: undefined } as any;
     expect(rangeFromCst(cst)).toEqual({

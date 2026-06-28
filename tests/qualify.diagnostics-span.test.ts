@@ -1,6 +1,17 @@
 import { describe, it, expect } from "vitest";
 import { analyze } from "../src/api.js";
 import { Schema } from "../src/qualify/schema.js";
+import { endPosition } from "../src/ir/span.js";
+
+describe("endPosition multi-line stop-token math", () => {
+	it("single-line token: endLine stays, endColumn = column + length", () => {
+		expect(endPosition(1, 7, "amount")).toEqual({ endLine: 1, endColumn: 13 });
+	});
+	it("multi-line token: endLine += newline count, endColumn = chars after last newline", () => {
+		// `'x\ny\nz'` at line 1, col 7: 2 newlines, "z'" trails the last newline.
+		expect(endPosition(1, 7, "'x\ny\nz'")).toEqual({ endLine: 3, endColumn: 2 });
+	});
+});
 
 describe("semantic diagnostics carry a full span", () => {
 	it("an unknown column's diagnostic spans the whole identifier, not one char", () => {
