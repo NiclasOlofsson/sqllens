@@ -7,8 +7,9 @@ import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 // (googlesql/public/strings.cc). GoogleSQL's lexer — like ours — accepts ANY `\x` escape (the
 // any_escape regex), and defers escape/codepoint validation to the parser, which turns a bad escape
 // into a "Syntax error" at the offending offset (googlesql.tm string_literal_component /
-// bytes_literal_component actions). We replicate that as a post-lex pass that counts invalid literals;
-// the count is added to the parser's syntax-error total so the gate (and any consumer) rejects them.
+// bytes_literal_component actions). We replicate that as a post-lex pass that returns a positioned
+// diagnostic per invalid literal; each is folded into the parser's diagnostics (so consumers get a
+// squiggle on the offending literal, not just a rejection).
 
 const T_STRING = GoogleSQLLexer.STRING_LITERAL;
 const T_BYTES = GoogleSQLLexer.BYTES_LITERAL;
