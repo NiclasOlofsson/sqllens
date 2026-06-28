@@ -291,6 +291,41 @@ describe("LSP acceptance", () => {
     expect(toks.some((t) => t.type === "comment" && t.line === 0 && t.char === 0)).toBe(true);
   });
 
+  it("semantic tokens split a multi-line block comment into one entry per line", async () => {
+    // A block comment spanning two lines must emit TWO `comment` tokens: the first on
+    // its own line at the comment's start column, the second on the next line at column 0
+    // (the multi-line split path). The comment starts at a NON-ZERO column so the
+    // first-line-vs-subsequent-line column logic is genuinely observable: if subsequent
+    // lines wrongly reused the token's start column, the second entry would land at the
+    // start column (>0) instead of 0, failing this test. The trailing SELECT keyword must
+    // still decode at its correct absolute position after the comment closes.
+    const text = "SELECT /* line1\nline2 */ 1";
+    //            line 0: "SELECT /* line1"   (SELECT at col 0; comment starts at col 7)
+    //            line 1: "line2 */ 1"        (comment tail at col 0; literal 1 at col 9)
+    const uri = open("semtok-multiline.sql", text);
+    const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+    const toks = decodeSemanticTokens((result as any).data as number[]);
+
+    const commentStartCol = text.indexOf("/*"); // 7 — the comment's start column on line 0
+    expect(commentStartCol).toBeGreaterThan(0);
+
+    const comments = toks.filter((t) => t.type === "comment");
+    // Exactly two comment entries, on consecutive lines.
+    expect(comments.length).toBe(2);
+    // First segment: line 0, at the comment's start column (7, NOT 0).
+    const first = comments.find((t) => t.line === 0);
+    expect(first).toBeDefined();
+    expect(first!.char).toBe(commentStartCol);
+    // Second segment: next line, at column 0 — the subsequent-line rule, NOT the
+    // first line's start column (this is the assertion that fails on a regression).
+    const second = comments.find((t) => t.line === 1);
+    expect(second).toBeDefined();
+    expect(second!.char).toBe(0);
+
+    // The trailing SELECT keyword still decodes at its absolute position on line 0.
+    expect(toks.some((t) => t.type === "keyword" && t.line === 0 && t.char === 0)).toBe(true);
+  });
+
   it("semantic tokens are produced on broken input", async () => {
     const uri = open("semtok-broken.sql", "SELECT amount FORM");
     const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
