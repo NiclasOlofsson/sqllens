@@ -39,7 +39,7 @@ function isDetectOnly(sql: string): boolean {
 }
 
 // The ZetaSQL PARSER .test corpus (gitignored; rebuild with tools/extract-googlesql-parser-tests.mjs,
-// needs `git -C vendor/googlesql sparse-checkout add googlesql/parser/testdata`). This is a second,
+// needs `git -C "$SQL_CORPUS_DIR/vendor/googlesql" sparse-checkout add googlesql/parser/testdata`). This is a second,
 // stricter two-sided gate alongside bigquery.corpus.test.ts (the analyzer corpus). The parser
 // testdata is pure syntax — every positive is parseable by construction and every negative is a
 // *true* parser syntax error — so it is a cleaner conformance signal than the analyzer corpus.
@@ -51,9 +51,19 @@ function isDetectOnly(sql: string): boolean {
 // productions, some unclosed-literal lexer messages); (2) the positive bucket carries a few
 // parser-emitted "… is not supported" structures our grammar doesn't model. Raise both floors as the
 // grammar closes gaps.
-const CORPUS = corpusPath("harness/local/bigquery-zetasql-parser");
-const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
-const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
+const CORPUS = corpusPath("bigquery/zetasql/parser");
+// positives/negatives now live under <category>/ subdirs (post-reorg), so walk recursively and
+// return full paths.
+function* sqlFiles(dir: string): Generator<string> {
+	if (!existsSync(dir)) return;
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, e.name);
+		if (e.isDirectory()) yield* sqlFiles(p);
+		else if (e.name.endsWith(".sql")) yield p;
+	}
+}
+const positives = () => [...sqlFiles(join(CORPUS, "positive"))];
+const negatives = () => [...sqlFiles(join(CORPUS, "negative"))];
 
 // Baselines: regression floors. Raise as gaps close; the goal is positives at a hard 100% and the
 // negative bucket reduced to genuine syntax errors we reject.
@@ -117,7 +127,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 		let inScopeParsed = 0;
 		let inScopeFailed = 0; // in-scope coverage gaps still to fix
 		for (const f of positives()) {
-			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			const sql = readFileSync(f, "utf8");
 			let errs = 1;
 			let tree: unknown = null;
 			try {
@@ -150,7 +160,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 			let inScopeRejected = 0;
 			let inScopeAccepted = 0; // in-scope over-acceptance still to fix
 			for (const f of negatives()) {
-				const sql = readFileSync(join(CORPUS, "negative", f), "utf8");
+				const sql = readFileSync(f, "utf8");
 				let errs = 0;
 				let tree: unknown = null;
 				try {
@@ -179,7 +189,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 	it("lower + resolveScopes never throw on a parsed positive case", { timeout: 600000 }, () => {
 		const throws: string[] = [];
 		for (const f of positives()) {
-			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			const sql = readFileSync(f, "utf8");
 			let res;
 			try {
 				res = parseBigQuery(sql);

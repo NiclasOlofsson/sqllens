@@ -20,7 +20,7 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 // (KNOWN_BAD) and valid SQL the Spark grammar doesn't accept yet (DEFERRED_GRAMMAR, tracked in
 // issue #4). Triaged file-by-file 2026-06-13.
 
-const CORPUS = corpusPath("harness/local/databricks-docs");
+const CORPUS = corpusPath("databricks/docs");
 const QUERY_BASELINE = 3062; // unused in 100% mode; kept as a documented floor
 
 describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL language manual", () => {

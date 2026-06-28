@@ -79,7 +79,15 @@ describe("BigQuery pipe queries — faithful model + column flow", () => {
 
 // Every GoogleSQL pipe operator is modelled as its own stage kind — the `other` drift guard must never
 // fire for real corpus syntax. This gate proves nothing is silently dropped to `other`.
-const CORPUS = corpusPath("harness/local/bigquery-zetasql");
+const CORPUS = corpusPath("bigquery/zetasql/analyzer");
+function* sqlFiles(dir: string): Generator<string> {
+	if (!existsSync(dir)) return;
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, e.name);
+		if (e.isDirectory()) yield* sqlFiles(p);
+		else if (e.name.endsWith(".sql")) yield p;
+	}
+}
 
 function collectPipeStages(q: QueryExpr, out: PipeStage[]): void {
 	const visitBody = (body: QueryExpr["body"]): void => {
@@ -104,8 +112,8 @@ function collectPipeStages(q: QueryExpr, out: PipeStage[]): void {
 describe.skipIf(!existsSync(CORPUS))("BigQuery pipe — every operator modelled (no `other` stage)", () => {
 	it("no pipe stage falls through to the `other` drift guard across the corpus", { timeout: 600000 }, () => {
 		const stages: PipeStage[] = [];
-		for (const f of readdirSync(join(CORPUS, "positive")).filter((x) => x.endsWith(".sql"))) {
-			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+		for (const f of sqlFiles(join(CORPUS, "positive"))) {
+			const sql = readFileSync(f, "utf8");
 			let q: QueryExpr;
 			try {
 				const r = parseBigQuery(sql);

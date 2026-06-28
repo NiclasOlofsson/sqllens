@@ -4,8 +4,9 @@
 // and ```output (result tables). The corpus is docs-derived, so the output directory is
 // gitignored (like the Oatly + Snowflake corpora); this script rebuilds it.
 //
-// Prereq: a sparse checkout of docs/t-sql from MicrosoftDocs/sql-docs at vendor/sql-docs:
-//   cd vendor && git clone --no-checkout --depth 1 --filter=blob:none \
+// Prereq: a sparse checkout of docs/t-sql from MicrosoftDocs/sql-docs in the corpus repo
+// ($SQL_CORPUS_DIR, see .env), at vendor/sql-docs:
+//   cd "$SQL_CORPUS_DIR/vendor" && git clone --no-checkout --depth 1 --filter=blob:none \
 //       https://github.com/MicrosoftDocs/sql-docs.git
 //   cd sql-docs && git sparse-checkout init --cone && git sparse-checkout set docs/t-sql && git checkout
 //

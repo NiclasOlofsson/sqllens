@@ -12,7 +12,7 @@ import { allPipeStages, stageExprs, stageSubIr } from "./helpers/pipe-walk.js";
 // for constructs the corpus doesn't exercise (so nothing is ever dropped), but a real model
 // hitting it means the IR has a known, named hole to close. This test fails with the exact
 // CST type(s) that leaked, so the gap is never silent. Skips when the corpus is absent.
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 function walkExpr(e: Expr, tally: Map<string, number>, samples: Map<string, string>): void {
 	if (e.kind === "other") {

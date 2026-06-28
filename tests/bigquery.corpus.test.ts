@@ -12,9 +12,19 @@ import { resolveScopes } from "../src/scope/scope.js";
 // also carries semantically-invalid-but-syntactically-valid cases and a few ZetaSQL-only surfaces
 // (pipe `|>`, test-only constructs), so the positive rate is a partial floor that ratchets up as
 // grammar gaps close — not 100%.
-const CORPUS = corpusPath("harness/local/bigquery-zetasql");
-const positives = () => readdirSync(join(CORPUS, "positive")).filter((f) => f.endsWith(".sql"));
-const negatives = () => readdirSync(join(CORPUS, "negative")).filter((f) => f.endsWith(".sql"));
+const CORPUS = corpusPath("bigquery/zetasql/analyzer");
+// positives/negatives now live under <category>/ subdirs (post-reorg), so walk recursively and
+// return full paths.
+function* sqlFiles(dir: string): Generator<string> {
+	if (!existsSync(dir)) return;
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, e.name);
+		if (e.isDirectory()) yield* sqlFiles(p);
+		else if (e.name.endsWith(".sql")) yield p;
+	}
+}
+const positives = () => [...sqlFiles(join(CORPUS, "positive"))];
+const negatives = () => [...sqlFiles(join(CORPUS, "negative"))];
 
 // Detect-only classification — identical to the parser-corpus gate (bigquery.parser-corpus.test.ts).
 // Object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO are recognized and
@@ -62,7 +72,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 		let ddlExcluded = 0;
 		const fails: string[] = [];
 		for (const f of positives()) {
-			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			const sql = readFileSync(f, "utf8");
 			if (isDetectOnly(sql)) {
 				ddlExcluded++;
 				continue;
@@ -88,7 +98,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 		let accepted = 0;
 		let ddlExcluded = 0;
 		for (const f of negatives()) {
-			const sql = readFileSync(join(CORPUS, "negative", f), "utf8");
+			const sql = readFileSync(f, "utf8");
 			if (isDetectOnly(sql)) {
 				ddlExcluded++;
 				continue;
@@ -112,7 +122,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 	it("lower + resolveScopes never throw on a parsed positive case", { timeout: 600000 }, () => {
 		const throws: string[] = [];
 		for (const f of positives()) {
-			const sql = readFileSync(join(CORPUS, "positive", f), "utf8");
+			const sql = readFileSync(f, "utf8");
 			let res;
 			try {
 				res = parseBigQuery(sql);

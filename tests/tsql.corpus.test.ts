@@ -1,5 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, relative } from "node:path";
 import { corpusPath } from "./helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
 import { lower, statementCategories } from "../src/tsql/lower.js";
@@ -18,8 +18,8 @@ import { KNOWN_BAD, OUT_OF_SCOPE } from "./tsql-corpus-known-bad.js";
 // vendor/ is a gitignored sparse clone, so this gate is a no-op (skipped) when the corpus is absent
 // (CI / other machines) — same pattern as the Databricks corpus gate.
 
-const EXAMPLES = corpusPath("vendor/grammars-v4/sql/tsql/examples");
-const DOCS_CORPUS = corpusPath("harness/local/tsql-docs");
+const EXAMPLES = corpusPath("tsql/grammars-v4");
+const DOCS_CORPUS = corpusPath("tsql/docs");
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
 // docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is
@@ -48,9 +48,17 @@ function parseAndClassify(sql: string): { errors: number; kinds: ReturnType<type
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
 	// Read the directory in beforeAll, not at collection time — vitest runs the describe body even
 	// when skipIf is true, so a top-level readdirSync throws ENOENT when the corpus is absent.
+	// Recursive: post-reorg the examples live under <stage>/<validity>/<category>/ subdirs. `files`
+	// holds paths relative to EXAMPLES (forward slashes), so join(EXAMPLES, rel) reads them.
 	let files: string[];
 	beforeAll(() => {
-		files = readdirSync(EXAMPLES).filter((f) => f.endsWith(".sql"));
+		const walk = (dir: string): string[] =>
+			readdirSync(dir, { withFileTypes: true }).flatMap((e) => {
+				const p = join(dir, e.name);
+				if (e.isDirectory()) return walk(p);
+				return e.name.endsWith(".sql") ? [relative(EXAMPLES, p).split("\\").join("/")] : [];
+			});
+		files = walk(EXAMPLES);
 	});
 
 	it("parses the full T-SQL example scripts via tsql_file (>= baseline)", () => {
@@ -69,7 +77,8 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		// 135/137 today; the two failures (constants.sql, keywords_reserved.sql) are upstream
 		// grammars-v4 grammar gaps. Assert no regression below the current pass count.
 		expect(ok).toBeGreaterThanOrEqual(135);
-		expect(fails.sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
+		// fails carry the reorg path prefix (…/<category>/constants.sql) — compare by basename.
+		expect(fails.map((f) => f.split("/").pop()).sort()).toEqual(["constants.sql", "keywords_reserved.sql"]);
 	}, 120000);
 
 	it("lowers + scopes every example the parser accepts, without throwing", () => {

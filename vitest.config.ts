@@ -1,7 +1,12 @@
-import { defineConfig } from "vitest/config";
+import { configDefaults, defineConfig } from "vitest/config";
 
 export default defineConfig({
 	test: {
+		// Git worktrees live under .claude/worktrees/<name>/ INSIDE this repo and carry their own copy
+		// of tests/. Without this exclude, vitest's `**/*.test.ts` glob runs a sibling worktree's tests
+		// as part of this project's suite — they fail against shared state this branch has changed (e.g.
+		// the relocated corpus). A project's test run should cover only this working tree.
+		exclude: [...configDefaults.exclude, ".claude/worktrees/**"],
 		// Use the worker-threads pool, not the default `forks` pool.
 		//
 		// On this toolchain (Windows + Node 24 + vitest 4) the forks pool intermittently dies

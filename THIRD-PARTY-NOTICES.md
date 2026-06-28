@@ -26,7 +26,8 @@ and grammar fixes for Databricks-specific syntax. Details are in the file header
 and git history.
 
 > TODO: Apache-2.0 §4(d) — paste the relevant attribution lines from Apache
-> Spark's `NOTICE` file here (it is in the gitignored `vendor/spark/NOTICE`).
+> Spark's `NOTICE` file here (it is at `vendor/spark/NOTICE` in the corpus repo
+> `$SQL_CORPUS_DIR`, or upstream in apache/spark `NOTICE`).
 
 ### T-SQL grammar — MIT
 

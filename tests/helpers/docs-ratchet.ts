@@ -82,6 +82,11 @@ export function runDocsRatchet(
 ): void {
 	const knownBad = opts.knownBad ?? {};
 	const outOfScope = opts.outOfScope ?? {};
+	// KNOWN_BAD / outOfScope keys are provenance slugs (e.g. "account-usage/5.sql"). After the corpus
+	// reorg the gated file lives at "<stage>/<validity>/<category>/<slug>", so match by slug suffix —
+	// the key as-is, or the tail after a "/". Slugs are full page-paths, so suffix collisions don't occur.
+	const matchKey = (rel: string, map: Record<string, string>): boolean =>
+		rel in map || Object.keys(map).some((k) => rel.endsWith("/" + k));
 	const r: DocsRatchetResult = {
 		query: { pass: 0, total: 0 },
 		dml: { pass: 0, total: 0 },
@@ -129,13 +134,13 @@ export function runDocsRatchet(
 		}
 		const clean = errs === 0;
 
-		if (rel in outOfScope) {
+		if (matchKey(rel, outOfScope)) {
 			// Out-of-scope payload (DDL/admin) behind a query-leading script — never gated.
 			r.ddl.total++;
 			if (clean) r.ddl.pass++;
 			continue;
 		}
-		if (rel in knownBad) {
+		if (matchKey(rel, knownBad)) {
 			knownBadSeen++;
 			if (clean) staleKnownBad.push(rel);
 			continue; // excluded from the gated query bucket
