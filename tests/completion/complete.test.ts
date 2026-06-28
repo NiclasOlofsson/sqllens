@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { complete, type Completion, SqlDocument } from "../../src/api.js";
+import { complete, type Completion, type Dialect, SqlDocument } from "../../src/api.js";
 import { Schema } from "../../src/qualify/schema.js";
 
 // A small catalog the lsp acceptance test also uses: `sales(amount decimal, id int)`.
@@ -7,6 +7,30 @@ const schema = new Schema({ sales: { amount: "decimal", id: "int" } });
 
 const labels = (items: Completion[], kind: Completion["kind"]): string[] =>
 	items.filter((c) => c.kind === kind).map((c) => c.label);
+
+// The core column-completion case is dialect-neutral once each dialect's config is wired: at a
+// value/column position (the empty projection of `SELECT  FROM sales`), the FROM relation's schema
+// columns must be offered. Every dialect parses this same string, so one parametrized case proves
+// the per-dialect parser-factory + config entries discovered by probing each grammar.
+describe.each<Dialect>(["databricks", "tsql", "snowflake", "bigquery", "redshift"])(
+	"complete — column position, %s",
+	(dialect) => {
+		it("offers the FROM relation's columns at an empty-projection caret", () => {
+			const sql = "SELECT  FROM sales";
+			const offset = "SELECT ".length; // the caret in the gap after SELECT
+			const items = complete(SqlDocument.create(sql, dialect), offset, schema);
+			const cols = labels(items, "column");
+			expect(cols).toContain("amount");
+			expect(cols).toContain("id");
+		});
+
+		it("never throws and returns an array on broken input", () => {
+			const sql = "SELECT amount FORM "; // FORM typo — broken parse
+			const items = complete(SqlDocument.create(sql, dialect), sql.length, schema);
+			expect(Array.isArray(items)).toBe(true);
+		});
+	},
+);
 
 describe("complete — databricks, scope + schema aware", () => {
 	it("offers the FROM relation's columns in a SELECT expression position", () => {

@@ -2,6 +2,14 @@ import { Token } from "antlr4ng";
 import type { Dialect } from "../api.js";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
+import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
+import { TSqlParser } from "../generated/tsql/TSqlParser.js";
+import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
+import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
+import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
+import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
+import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
+import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
 
 /**
  * Per-dialect tuning for the ATN candidate walk (`collectCandidates`).
@@ -70,6 +78,49 @@ const DATABRICKS_COLUMN_RULES = new Set<number>([DatabricksParser.RULE_identifie
 const DATABRICKS_RELATION_KEYWORDS = new Set<number>([DatabricksLexer.FROM, DatabricksLexer.JOIN]);
 const DATABRICKS_NAME_TOKENS = new Set<number>([DatabricksLexer.IDENTIFIER, DatabricksLexer.BACKQUOTED_IDENTIFIER]);
 
+// ── T-SQL (grammars-v4 fork) ────────────────────────────────────────────────
+// Probed against the live walk (Task 10's method). Rule split, by generated rule name:
+//   post-FROM (`FROM ‹›`)              → table_source_item (the relation-name slot)
+//   expression (`SELECT ‹›`, `WHERE ‹›`) → expression (the value/column slot)
+// table_name DID surface in SELECT position (the SELECT…INTO target), so tableRules uses
+// table_source_item — which fires ONLY post-FROM — not table_name.
+const TSQL_TABLE_RULES = new Set<number>([TSqlParser.RULE_table_source_item]);
+const TSQL_COLUMN_RULES = new Set<number>([TSqlParser.RULE_expression]);
+const TSQL_PREFERRED = new Set<number>([...TSQL_TABLE_RULES, ...TSQL_COLUMN_RULES]);
+// FROM/JOIN introduce a relation; a relation name is a plain/quoted/bracketed identifier.
+const TSQL_RELATION_KEYWORDS = new Set<number>([TSqlLexer.FROM, TSqlLexer.JOIN]);
+const TSQL_NAME_TOKENS = new Set<number>([TSqlLexer.ID, TSqlLexer.DOUBLE_QUOTE_ID, TSqlLexer.SQUARE_BRACKET_ID]);
+
+// ── Snowflake (grammars-v4 fork) ────────────────────────────────────────────
+//   post-FROM  → object_ref (the relation reference)
+//   SELECT/WHERE → expr (the value/column slot; column_elem also surfaces in SELECT only — expr
+//                  covers both positions, so columnRules uses expr).
+const SNOWFLAKE_TABLE_RULES = new Set<number>([SnowflakeParser.RULE_object_ref]);
+const SNOWFLAKE_COLUMN_RULES = new Set<number>([SnowflakeParser.RULE_expr]);
+const SNOWFLAKE_PREFERRED = new Set<number>([...SNOWFLAKE_TABLE_RULES, ...SNOWFLAKE_COLUMN_RULES]);
+const SNOWFLAKE_RELATION_KEYWORDS = new Set<number>([SnowflakeLexer.FROM, SnowflakeLexer.JOIN]);
+const SNOWFLAKE_NAME_TOKENS = new Set<number>([SnowflakeLexer.ID, SnowflakeLexer.DOUBLE_QUOTE_ID]);
+
+// ── BigQuery / GoogleSQL (Bytebase fork) ────────────────────────────────────
+//   post-FROM   → table_path_expression (the relation path slot)
+//   SELECT/WHERE → identifier (the leaf name slot; fires at BOTH select-list and where positions).
+// The lexer keyword tokens are SYMBOL-suffixed in this grammar: FROM_SYMBOL / JOIN_SYMBOL.
+const BIGQUERY_TABLE_RULES = new Set<number>([GoogleSQLParser.RULE_table_path_expression]);
+const BIGQUERY_COLUMN_RULES = new Set<number>([GoogleSQLParser.RULE_identifier]);
+const BIGQUERY_PREFERRED = new Set<number>([...BIGQUERY_TABLE_RULES, ...BIGQUERY_COLUMN_RULES]);
+const BIGQUERY_RELATION_KEYWORDS = new Set<number>([GoogleSQLLexer.FROM_SYMBOL, GoogleSQLLexer.JOIN_SYMBOL]);
+const BIGQUERY_NAME_TOKENS = new Set<number>([GoogleSQLLexer.IDENTIFIER]);
+
+// ── Redshift (Bytebase/Postgres-derived fork) ───────────────────────────────
+//   post-FROM   → relation_expr (the relation slot; the leaf `identifier` also surfaces post-FROM
+//                  but never in column position, so tableRules uses relation_expr).
+//   SELECT/WHERE → a_expr (the Postgres value-expression slot).
+const REDSHIFT_TABLE_RULES = new Set<number>([RedshiftParser.RULE_relation_expr]);
+const REDSHIFT_COLUMN_RULES = new Set<number>([RedshiftParser.RULE_a_expr]);
+const REDSHIFT_PREFERRED = new Set<number>([...REDSHIFT_TABLE_RULES, ...REDSHIFT_COLUMN_RULES]);
+const REDSHIFT_RELATION_KEYWORDS = new Set<number>([RedshiftLexer.FROM, RedshiftLexer.JOIN]);
+const REDSHIFT_NAME_TOKENS = new Set<number>([RedshiftLexer.Identifier, RedshiftLexer.QuotedIdentifier]);
+
 export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 	databricks: {
 		preferredRules: DATABRICKS_PREFERRED,
@@ -79,20 +130,36 @@ export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 		relationKeywordTokens: DATABRICKS_RELATION_KEYWORDS,
 		nameTokens: DATABRICKS_NAME_TOKENS,
 	},
-	// Task 12 fills these; empty sets keep the type complete and the walk a no-op-ish default.
-	tsql: emptyConfig(),
-	snowflake: emptyConfig(),
-	bigquery: emptyConfig(),
-	redshift: emptyConfig(),
-};
-
-function emptyConfig(): CompletionConfig {
-	return {
-		preferredRules: new Set(),
+	tsql: {
+		preferredRules: TSQL_PREFERRED,
 		ignoredTokens: new Set([Token.EOF]),
-		tableRules: new Set(),
-		columnRules: new Set(),
-		relationKeywordTokens: new Set(),
-		nameTokens: new Set(),
-	};
-}
+		tableRules: TSQL_TABLE_RULES,
+		columnRules: TSQL_COLUMN_RULES,
+		relationKeywordTokens: TSQL_RELATION_KEYWORDS,
+		nameTokens: TSQL_NAME_TOKENS,
+	},
+	snowflake: {
+		preferredRules: SNOWFLAKE_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: SNOWFLAKE_TABLE_RULES,
+		columnRules: SNOWFLAKE_COLUMN_RULES,
+		relationKeywordTokens: SNOWFLAKE_RELATION_KEYWORDS,
+		nameTokens: SNOWFLAKE_NAME_TOKENS,
+	},
+	bigquery: {
+		preferredRules: BIGQUERY_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: BIGQUERY_TABLE_RULES,
+		columnRules: BIGQUERY_COLUMN_RULES,
+		relationKeywordTokens: BIGQUERY_RELATION_KEYWORDS,
+		nameTokens: BIGQUERY_NAME_TOKENS,
+	},
+	redshift: {
+		preferredRules: REDSHIFT_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: REDSHIFT_TABLE_RULES,
+		columnRules: REDSHIFT_COLUMN_RULES,
+		relationKeywordTokens: REDSHIFT_RELATION_KEYWORDS,
+		nameTokens: REDSHIFT_NAME_TOKENS,
+	},
+};

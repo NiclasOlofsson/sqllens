@@ -29,6 +29,7 @@ import {
   DefinitionRequest,
   DocumentSymbolRequest,
   SemanticTokensRequest,
+  CompletionRequest,
   PublishDiagnosticsNotification,
   type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -330,5 +331,20 @@ describe("LSP acceptance", () => {
     const uri = open("semtok-broken.sql", "SELECT amount FORM");
     const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
     expect(((result as any).data as number[]).length).toBeGreaterThan(0);
+  });
+
+  it("completion offers the FROM relation's schema columns at an empty-projection caret", async () => {
+    // Mid-edit: caret in the empty projection of `SELECT  FROM sales`. The completion provider
+    // resolves the FROM relation's columns from the workspace schema (sales: amount, id).
+    const text = "SELECT  FROM sales";
+    const uri = open("complete.sql", text);
+    const items = await client.sendRequest(CompletionRequest.type, {
+      textDocument: { uri },
+      position: { line: 0, character: "SELECT ".length },
+    });
+    const list = Array.isArray(items) ? items : (items as any)?.items ?? [];
+    const labels = (list as { label: string }[]).map((c) => c.label);
+    expect(labels).toContain("amount");
+    expect(labels).toContain("id");
   });
 });

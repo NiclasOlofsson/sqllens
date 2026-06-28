@@ -16,6 +16,7 @@ import { computeHover } from "./features/hover.js";
 import { computeDocumentSymbols } from "./features/symbols.js";
 import { computeDefinition } from "./features/definition.js";
 import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-tokens.js";
+import { computeCompletion } from "./features/completion.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -82,6 +83,7 @@ export function startServer(connection: Connection): void {
         definitionProvider: true,
         documentSymbolProvider: true,
         semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
+        completionProvider: { triggerCharacters: [".", " "] },
       },
     };
   });
@@ -118,6 +120,11 @@ export function startServer(connection: Connection): void {
   connection.languages.semanticTokens.on((params) => {
     const doc = docFor(params.textDocument.uri);
     return doc ? computeSemanticTokens(doc) : { data: [] };
+  });
+
+  connection.onCompletion((params) => {
+    const doc = docFor(params.textDocument.uri);
+    return doc ? computeCompletion(doc, params.position, config.schema) : [];
   });
 
   documents.listen(connection);
