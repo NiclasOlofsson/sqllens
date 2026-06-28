@@ -1000,7 +1000,116 @@ git add src/api.ts tests/api.diagnostics.test.ts
 git commit -m "feat(api): parse() surfaces positioned syntax diagnostics, closes #6"
 ```
 
-> **▶ CHECKPOINT (harness):** Phase A complete. Stop, present the diff (the #6 engine change across all four dialects + api.ts), and wait for Niclas's sign-off before Phase B.
+### Task A7: BigQuery escape + post-parse errors become POSITIONED diagnostics
+
+**Files:**
+- Modify: `src/bigquery/literal-escapes.ts` (add a positioned variant)
+- Modify: `src/bigquery/post-validate.ts` (return positioned diagnostics)
+- Modify: `src/bigquery/dot-path.ts` (return `escapeDiagnostics`, not a count)
+- Modify: `src/bigquery/parse.ts` (fold both into `diagnostics`; `errors = diagnostics.length`)
+- Test: `tests/bigquery.diagnostics.test.ts` (extend)
+
+**Why (Niclas, 2026-06-28):** A bare error *count* is useless to an editor — you can't draw a squiggle. BigQuery's two non-antlr error sources (invalid literal escapes, post-parse structural rules) were count-only; this makes them positioned like every other syntax error, so `errors === diagnostics.length` for BigQuery too. This supersedes the A5 "errors ≥ diagnostics.length is intentional" note.
+
+**Hard invariant — detection unchanged:** Do NOT change WHICH inputs are flagged. The number of diagnostics for any input must equal the old `errors` total (so `bigquery.corpus` + `bigquery.parser-corpus` stay green — same positives accepted, same negatives rejected). You are only attaching positions, never adding/removing a detection.
+
+**Positioning granularity:** literal-granular for escapes (squiggle the whole offending literal token — honest and useful; char-exact offset within the literal is a future refinement, NOT a gap), node-granular for post-parse (the violating CST node's span).
+
+**Interfaces:**
+- `src/parse-diagnostics.ts` `SyntaxDiagnostic` is reused (import it).
+- `literal-escapes.ts` adds `badLiteralEscapes(tokens: Token[]): SyntaxDiagnostic[]` (keep or remove the old `countBadLiteralEscapes` — nothing else should use it after this; remove it if unused to avoid dead code).
+- `post-validate.ts` `countPostParseErrors(tree): number` → `postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[]`.
+- `dot-path.ts` `dotPathTokenSource` returns `{ source, escapeDiagnostics: SyntaxDiagnostic[] }` (was `escapeErrors: number`).
+
+- [ ] **Step 1: Write the failing tests (extend `tests/bigquery.diagnostics.test.ts`)**
+
+```ts
+// Replace the old "errors >= diagnostics.length (extras)" test with this stronger contract,
+// and add positioned cases for the two non-antlr error sources.
+it("every BigQuery syntax error is positioned: errors === diagnostics.length", () => {
+  for (const sql of ["SELECT a b c FROM", "SELECT '\\q'", "SELECT a b c FROM t"]) {
+    const r = parseBigQuery(sql);
+    expect(r.errors, sql).toBe(r.diagnostics.length); // no count-only errors anymore
+  }
+});
+
+it("an invalid string escape yields a positioned diagnostic on the literal", () => {
+  const sql = "SELECT '\\q' AS x";
+  const r = parseBigQuery(sql);
+  expect(r.diagnostics.length).toBeGreaterThanOrEqual(1);
+  const d = r.diagnostics.find((x) => /escape/i.test(x.message));
+  expect(d, "an escape diagnostic").toBeDefined();
+  expect(d!.line).toBe(1);
+  // points at the literal, not column 0 / end-of-input
+  expect(d!.column).toBeGreaterThanOrEqual(sql.indexOf("'"));
+  expect(d!.length).toBeGreaterThanOrEqual(1);
+});
+```
+
+(If `'\\q'` happens to be accepted, pick any escape `literalEscapesValid` rejects — e.g. a `\u` with too few hex digits `"SELECT '\\u12'"`; verify against `literal-escapes.ts`. For the post-parse case, reuse an input already known to trip a `post-validate.ts` rule from the BigQuery corpus if `'\\q'` doesn't also exercise post-parse — the `errors === diagnostics.length` loop already covers post-parse indirectly.)
+
+- [ ] **Step 2: Run to verify RED**
+
+Run: `npx vitest run tests/bigquery.diagnostics.test.ts`
+Expected: the new tests FAIL — escape errors are currently count-only (absent from `diagnostics`), so `errors > diagnostics.length` and no escape diagnostic is found.
+
+- [ ] **Step 3: Implement**
+
+1. **`literal-escapes.ts`** — add `badLiteralEscapes(tokens: Token[]): SyntaxDiagnostic[]`, mirroring `countBadLiteralEscapes`'s detection exactly, but at each point it would have done `bad++`, push:
+   ```ts
+   out.push({
+     message: "invalid escape sequence in literal",
+     line: tok.line,
+     column: tok.column,
+     offset: tok.start,
+     length: tok.text?.length ?? 1,
+   });
+   ```
+   Import `type { SyntaxDiagnostic } from "../parse-diagnostics.js"`. Remove `countBadLiteralEscapes` if nothing else references it.
+
+2. **`post-validate.ts`** — change `countPostParseErrors` to `postParseDiagnostics(tree): SyntaxDiagnostic[]`. Add a helper:
+   ```ts
+   import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
+   function diagAt(ctx: ParserRuleContext, message: string): SyntaxDiagnostic {
+     const s = ctx.start;
+     const e = ctx.stop ?? ctx.start;
+     return {
+       message,
+       line: s?.line ?? 1,
+       column: s?.column ?? 0,
+       offset: s?.start,
+       length: s && e ? e.stop - s.start + 1 : 1,
+     };
+   }
+   ```
+   Replace every `errors++` with `out.push(diagAt(<most-specific in-scope node>, "<rule-specific message>"))`, keeping the surrounding detection condition byte-for-byte. Use the node the rule is about (e.g. the `node`, `base`, `suffix`, or the `a`/`b` operand in scope at that site) so the span lands on the offending construct. Return `out`. Do NOT alter any detection condition.
+
+3. **`dot-path.ts`** — `dotPathTokenSource` returns `{ source, escapeDiagnostics: badLiteralEscapes(tokens) }`.
+
+4. **`bigquery/parse.ts`** — replace the count arithmetic. Keep the A5 lexer-diagnostic snapshot/re-push. At each return:
+   ```ts
+   const tree = parser.root();
+   const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
+   return { tree, errors: diagnostics.length, diagnostics };
+   ```
+   where `const { source, escapeDiagnostics } = dotPathTokenSource(sql, lexer);` is computed once before parsing (escape diagnostics are token-derived, stable across the SLL→LL retry — like lexer diagnostics).
+
+- [ ] **Step 4: Run to verify GREEN + no detection drift**
+
+Run: `npx vitest run tests/bigquery.diagnostics.test.ts` (new tests pass)
+Then the BigQuery corpus gates (the detection-invariant guard): `npx vitest run tests/bigquery.corpus.test.ts tests/bigquery.parser-corpus.test.ts` — must be UNCHANGED (same positives accepted, same negatives rejected). If any corpus number moved, a detection condition changed — revert and redo without touching conditions.
+Then `npm run typecheck`.
+
+- [ ] **Step 5: Full suite + commit**
+
+Run: `npm test` (expect still green, 0 skips if corpus present).
+
+```bash
+git add src/bigquery/literal-escapes.ts src/bigquery/post-validate.ts src/bigquery/dot-path.ts src/bigquery/parse.ts tests/bigquery.diagnostics.test.ts
+git commit -m "feat(bigquery): position escape + post-parse syntax errors (#6)"
+```
+
+> **▶ CHECKPOINT (harness):** Phase A complete (all five dialects positioned, BigQuery included). Stop, present the diff, and wait for Niclas's sign-off before Phase B.
 
 ---
 
@@ -2397,6 +2506,6 @@ Then: full `npm test` + `npm run typecheck` green → **branch-ready**, notify N
 
 ## Open Gaps (tracked, not descoped)
 
-- **BigQuery escape / post-parse errors have no positioned diagnostic** — they contribute to `parse().errors` (count) but not to `diagnostics` (the positioned subset), because `dotPathTokenSource`'s escape validation and `countPostParseErrors` produce counts without spans. Honest divergence: `errors >= diagnostics.length` for BigQuery only. Closing it means threading spans out of those two validators — a separate change.
+- ~~BigQuery escape / post-parse errors have no positioned diagnostic~~ — **CLOSED by Task A7** (2026-06-28). A bare count is useless to an editor; both validators now return positioned `SyntaxDiagnostic[]`, folded into `diagnostics`, so `errors === diagnostics.length` for BigQuery like the other four. (Escape positioning is literal-granular — squiggles the offending literal token; char-exact offset within the literal is a possible future refinement, not a gap.)
 - **Completion + the SQL-debugger adapter** — deliberately deferred per the design spec (not dropped); both reuse this server's `node-at`/scope plumbing.
 - **Semantic-diagnostic ranges are single-token-width** — `qualify`'s `Diagnostic` carries `line`/`column` but no length, so the squiggle is a 1-char range at the column. Widening needs a length on the library `Diagnostic`.
