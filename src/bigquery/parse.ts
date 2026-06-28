@@ -10,12 +10,16 @@ import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";
 import { countPostParseErrors } from "./post-validate.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `root` (`stmts EOF`). */
 	tree: ParserRuleContext;
-	/** Count of lexer + parser syntax errors. */
+	/** Count of lexer + parser + escape + post-parse syntax errors. */
 	errors: number;
+	/** Positioned syntax diagnostics (listener-captured subset; escape/post-parse extras are
+	 *  count-only and not represented here). */
+	diagnostics: SyntaxDiagnostic[];
 }
 
 /**
@@ -24,49 +28,37 @@ export interface ParseResult {
  * only when SLL fails — same result LL alone would give, just faster on valid input.
  */
 export function parseBigQuery(sql: string): ParseResult {
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
+	const collector = makeErrorCollector();
 
-	// Lex once (the GoogleSQL DOT_IDENTIFIER rewrite needs the full token list), counting lexer
-	// errors. The rewritten token source is buffered, so the SLL→LL retry reseeks without re-lexing;
-	// we keep the lexer-error count across the reset and only re-zero the parser errors.
 	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
+	lexer.addErrorListener(collector.listener as never);
 	const { source, escapeErrors } = dotPathTokenSource(sql, lexer);
 	const tokens = new CommonTokenStream(source);
-	// Invalid string/bytes/identifier escapes are parse-time syntax errors in GoogleSQL (validated in
-	// the parser, not the lexer). Fold them into the baseline so both parse attempts report them.
-	errors += escapeErrors;
-	const lexErrors = errors;
+	const lexExtras = escapeErrors; // positionless extras folded into `errors` only
 
 	const parser = new GoogleSQLParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
+	parser.addErrorListener(collector.listener as never);
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.root();
-		return { tree, errors: errors + countPostParseErrors(tree) };
+		const errors = collector.diagnostics.length + lexExtras + countPostParseErrors(tree);
+		return { tree, errors, diagnostics: collector.diagnostics };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		errors = lexErrors;
+		collector.reset(); // discount the SLL attempt's parser diagnostics; lexer ones are already buffered-source stable
 		parser.removeErrorListeners();
-		parser.addErrorListener(listener as never);
+		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
-		return { tree, errors: errors + countPostParseErrors(tree) };
+		const errors = collector.diagnostics.length + lexExtras + countPostParseErrors(tree);
+		return { tree, errors, diagnostics: collector.diagnostics };
 	}
 }
