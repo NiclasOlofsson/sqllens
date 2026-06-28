@@ -1846,7 +1846,7 @@ git commit -m "feat(infer): formatType — render a Type to a display string (#9
 
 **Interfaces:**
 - Consumes: `parse`, `analyze`, `Dialect` from `../../api.js`; `Schema` from `../../qualify/schema.js`; `rangeFromSyntaxDiagnostic`, `rangeFromSpan` from `../ranges.js`; `Diagnostic as LspDiagnostic`, `DiagnosticSeverity` from `vscode-languageserver-types`.
-- Produces: `function computeDiagnostics(text: string, dialect: Dialect, schema?: Schema): LspDiagnostic[]` — syntax diagnostics (from `parse().diagnostics`, severity Error) merged with semantic diagnostics (from `analyze().diagnostics`, severity Error/Warning). The semantic `Diagnostic` carries `line`/`column` (1-based/0-based); a single-token range is built via `rangeFromSpan` with `endColumn = column` widened to at least column+1.
+- Produces: `function computeDiagnostics(text: string, dialect: Dialect, schema?: Schema): LspDiagnostic[]` — syntax diagnostics (from `parse().diagnostics`, severity Error) merged with semantic diagnostics (from `analyze().diagnostics`, severity Error/Warning). The semantic `Diagnostic` carries a FULL span (`line`/`column`/`endLine`/`endColumn`, via Task A8); the LSP range is built with `rangeFromSpan(d)` directly — it squiggles the whole identifier.
 
 **Note on semantic diagnostic ranges:** after Task A8, `qualify`'s `Diagnostic` carries a full span (`line`/`column`/`endLine`/`endColumn`, same convention as the symbols `Span`). Build the LSP range with `rangeFromSpan(d)` directly — it squiggles the whole offending identifier. (No 1-char hack.)
 
