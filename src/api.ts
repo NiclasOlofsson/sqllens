@@ -21,6 +21,8 @@ import { parseSnowflake } from "./snowflake/parse.js";
 import { lower as lowerSnowflake } from "./snowflake/lower.js";
 import { parseBigQuery } from "./bigquery/parse.js";
 import { lower as lowerBigQuery } from "./bigquery/lower.js";
+import { parseRedshift } from "./redshift/parse.js";
+import { lower as lowerRedshift } from "./redshift/lower.js";
 import type { Expr, QueryExpr } from "./ir/ir.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
 import { qualify as qualifyScopes, type Qualification } from "./qualify/qualify.js";
@@ -36,8 +38,8 @@ import {
 import { deriveSymbols as deriveSymbolsScopes, type Sym } from "./symbols/symbols.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
- *  parse+lower pair; everything after lower() runs unchanged on all four. */
-export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery";
+ *  parse+lower pair; everything after lower() runs unchanged on all five. */
+export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
 
 interface DialectFns {
 	parse(sql: string): { tree: ParserRuleContext; errors: number };
@@ -49,6 +51,7 @@ const DIALECTS: Record<Dialect, DialectFns> = {
 	tsql: { parse: parseTSql, lower: lowerTSql },
 	snowflake: { parse: parseSnowflake, lower: lowerSnowflake },
 	bigquery: { parse: parseBigQuery, lower: lowerBigQuery },
+	redshift: { parse: parseRedshift, lower: lowerRedshift },
 };
 
 /** Options carrying the dialect, needed only when a lift helper enters from a raw string. */
