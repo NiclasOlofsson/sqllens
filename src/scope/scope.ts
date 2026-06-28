@@ -73,7 +73,11 @@ export type ResolvedSource =
 	| { kind: "relation"; scope: Scope }
 	/** A GRAPH_TABLE(…) relation — its own scope binds the graph element variables; its output columns
 	 *  are the COLUMNS / RETURN list. Behaves like a derived (subquery) relation to the enclosing query. */
-	| { kind: "graphtable"; scope: Scope; source: GraphTableSource };
+	| { kind: "graphtable"; scope: Scope; source: GraphTableSource }
+	/** An aliased `PIVOT(…) AS p` / `UNPIVOT(…) AS p` relation — the base relation(s) are consumed; this
+	 *  source exposes the reshaped column set (base passthrough + produced columns) under `p`. Columns are
+	 *  computed from `base` and applied via applyPivotCols/applyUnpivotCols (schema-fed in qualify). */
+	| { kind: "pivot"; alias: string; base: ResolvedSource[]; pivot?: PivotInfo; unpivot?: UnpivotInfo };
 
 export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
 	return { root: buildQueryScope(query, undefined, dialect), statement: query.statement ?? "other" };
@@ -254,7 +258,23 @@ function fillScope(scope: Scope): void {
 		return;
 	}
 
-	for (const source of body.from) registerSource(scope, source);
+	// An ALIASED PIVOT/UNPIVOT (`FROM t PIVOT(…) AS p`) consumes the base relation and exposes a single
+	// named relation `p` whose columns are the reshape applied to the base — computed schema-fed later, so
+	// `p.col` / a value column / `SELECT *` resolve against the pivoted set, not the base. Build the base
+	// sources (their child scopes survive) but keep them inside the pivot source rather than visible.
+	const pivotAlias = body.pivot?.alias ?? body.unpivot?.alias;
+	if (pivotAlias) {
+		const base = body.from.map((source) => resolveSource(scope, source));
+		scope.sources.set(normalizeName(pivotAlias), {
+			kind: "pivot",
+			alias: pivotAlias,
+			base,
+			pivot: body.pivot?.alias ? body.pivot : undefined,
+			unpivot: body.unpivot?.alias ? body.unpivot : undefined,
+		});
+	} else {
+		for (const source of body.from) registerSource(scope, source);
+	}
 
 	// Scalar / IN / EXISTS subqueries in expressions become child scopes (parent set for correlation).
 	for (const sub of body.subqueries ?? []) {
@@ -262,7 +282,6 @@ function fillScope(scope: Scope): void {
 	}
 
 	scope.outputs = computeOutputs(scope, body);
-	registerPivotAliasSource(scope, body);
 }
 
 // --- pipe scopes -----------------------------------------------------------------
@@ -330,20 +349,25 @@ function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): S
 
 /** Register a FROM/JOIN source on a scope (table / CTE-ref / subquery / lateral / graph-table). */
 function registerSource(scope: Scope, source: Source): void {
-	const key = sourceKey(source);
+	scope.sources.set(sourceKey(source), resolveSource(scope, source));
+}
+
+/** Resolve a Source to a ResolvedSource (building child scopes for subqueries / graph tables) WITHOUT
+ *  registering it visibly — used for both registerSource and the consumed base of an aliased pivot. */
+function resolveSource(scope: Scope, source: Source): ResolvedSource {
 	if (source.kind === "subquery") {
 		const child = buildQueryScope(source.query, scope);
 		scope.children.push(child);
-		scope.sources.set(key, { kind: "subquery", scope: child, source });
+		return { kind: "subquery", scope: child, source };
 	} else if (source.kind === "lateral") {
-		scope.sources.set(key, { kind: "lateral", source });
+		return { kind: "lateral", source };
 	} else if (source.kind === "graphtable") {
 		const child = buildGraphScope(scope, source);
 		scope.children.push(child);
-		scope.sources.set(key, { kind: "graphtable", scope: child, source });
+		return { kind: "graphtable", scope: child, source };
 	} else {
 		const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
-		scope.sources.set(key, cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source });
+		return cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source };
 	}
 }
 
@@ -481,17 +505,6 @@ function computeOutputs(scope: Scope, body: SelectExpr): string[] | "unknown" {
 	return outputsOf(body);
 }
 
-/** T-SQL: a `… PIVOT/UNPIVOT (…) AS x` is a named relation. Expose it under `x` as a synthetic
- *  source whose columns are the passthrough + produced columns, so later `x.col` refs resolve. */
-function registerPivotAliasSource(scope: Scope, body: SelectExpr): void {
-	const alias = body.pivot?.alias ?? body.unpivot?.alias;
-	if (!alias) return;
-	const cols = body.unpivot ? unpivotOutputs(scope, body.unpivot) : pivotOutputs(scope, body.pivot!);
-	if (cols === "unknown") return;
-	const source: TableSource = { kind: "table", name: [alias], alias, columnAliases: cols, cst: body.cst };
-	scope.sources.set(normalizeName(alias), { kind: "table", name: [alias], source });
-}
-
 /** The columns of the relation being pivoted/unpivoted — the first non-lateral source. */
 function baseRelationColumns(scope: Scope): string[] | "unknown" {
 	for (const src of scope.sources.values()) {
@@ -597,7 +610,24 @@ function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return src.scope.outputs; // a prior pipe stage's relation
 	if (src.kind === "graphtable") return src.scope.outputs;
+	if (src.kind === "pivot") return pivotSourceOutputs(src, (s) => sourceOutputs(s));
 	return src.scope.outputs; // subquery
+}
+
+/** The reshaped columns of an aliased PIVOT/UNPIVOT source: its base columns (via `cols`) with the
+ *  pivot/unpivot transform applied. "unknown" if any base relation's columns need a schema we lack.
+ *  Shared by the schema-free scope path and the schema-fed qualify / resolve / lineage passes (each
+ *  passes its own column resolver), so an aliased pivot exposes the same reshaped set everywhere. */
+export function pivotSourceOutputs(
+	src: Extract<ResolvedSource, { kind: "pivot" }>,
+	cols: (s: ResolvedSource) => string[] | "unknown",
+): string[] | "unknown" {
+	const parts = src.base.map(cols);
+	if (parts.some((p) => p === "unknown")) return "unknown";
+	const base = (parts as string[][]).flat();
+	if (src.pivot) return applyPivotCols(base, src.pivot);
+	if (src.unpivot) return applyUnpivotCols(base, src.unpivot);
+	return "unknown";
 }
 
 /** Databricks identifiers are case-insensitive; strip surrounding backticks too. */

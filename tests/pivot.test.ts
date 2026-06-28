@@ -3,6 +3,8 @@ import { lower as lowerBq } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
 import { lower as lowerDbx } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
+import { lower as lowerTsql } from "../src/tsql/lower.js";
+import { parseTSql } from "../src/tsql/parse.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
@@ -49,5 +51,38 @@ describe("PIVOT / UNPIVOT — qualified output reflects the reshape (dialect-neu
 			"q1",
 			"q2",
 		]);
+	});
+});
+
+// The ALIASED form `PIVOT(…) AS p` consumes the base relation and exposes a single named relation `p`
+// whose columns are the reshaped set — computed schema-fed. So `SELECT *`, an unqualified value column,
+// and a `p.col` reference all resolve against the pivoted columns (no false unknown-column), and the base
+// table is no longer independently visible.
+describe("aliased PIVOT … AS p — the named pivoted relation resolves schema-fed", () => {
+	const T = new Schema({ t: { product: "STRING", quarter: "STRING", sales: "INT" } });
+	function tsql(sql: string) {
+		const r = parseTSql(sql);
+		expect(r.errors, sql).toBe(0);
+		const tree = resolveScopes(lowerTsql(r.tree), "tsql");
+		return qualify(tree, T);
+	}
+	const P = "FROM t PIVOT (SUM(sales) FOR quarter IN ([Q1], [Q2])) AS p";
+
+	it("SELECT * exposes the pivoted columns (base consumed)", () => {
+		const tree = resolveScopes(lowerTsql(parseTSql(`SELECT * ${P}`).tree), "tsql");
+		expect(qualify(tree, T).columnsOf(tree.root)).toEqual(["product", "Q1", "Q2"]);
+	});
+
+	it("a qualified p.col and an unqualified value column both resolve (no false diagnostics)", () => {
+		expect(tsql(`SELECT p.Q1 ${P}`).diagnostics).toEqual([]);
+		expect(tsql(`SELECT Q1 ${P}`).diagnostics).toEqual([]);
+	});
+
+	it("BigQuery aliased PIVOT resolves identically", () => {
+		expect(
+			bqCols(
+				"SELECT * FROM `proj.ds.t` PIVOT(SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2)) AS p",
+			),
+		).toEqual(["product", "q1", "q2"]);
 	});
 });

@@ -263,6 +263,7 @@ function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
 /** An alias declaration symbol for a source written `… AS x`, or undefined when unaliased. */
 function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
 	if (src.kind === "relation") return undefined; // the implicit pipe-stage relation has no alias
+	if (src.kind === "pivot") return undefined; // PivotInfo carries no alias span; the relation symbol names it
 	if (src.kind === "graphtable") {
 		return src.source.alias
 			? { kind: "alias", modifiers: ["declaration"], name: src.source.alias, span: spanOf(src.source.aliasCst ?? src.source.cst), frame }
@@ -324,6 +325,10 @@ function relationSymbol(src: ResolvedSource, frame: string): Sym {
 	if (src.kind === "lateral") {
 		return { kind: "lateral", modifiers: ref, name: src.source.alias ?? "", span: spanOf(src.source.cst), frame };
 	}
+	if (src.kind === "pivot") {
+		const cst = src.base[0] ? resolvedSourceCst(src.base[0]) : undefined;
+		return { kind: "subquery", modifiers: ref, name: src.alias, span: cst ? spanOf(cst) : ZERO_SPAN, frame };
+	}
 	return {
 		kind: "subquery",
 		modifiers: ref,
@@ -331,6 +336,24 @@ function relationSymbol(src: ResolvedSource, frame: string): Sym {
 		span: spanOf(src.source.cst),
 		frame,
 	};
+}
+
+const ZERO_SPAN: Span = { line: 0, column: 0, endLine: 0, endColumn: 0 };
+
+/** A representative CST node for a resolved source (for span fallbacks). */
+function resolvedSourceCst(src: ResolvedSource): ParserRuleContext | undefined {
+	switch (src.kind) {
+		case "table":
+		case "cte":
+		case "subquery":
+		case "lateral":
+		case "graphtable":
+			return src.source.cst;
+		case "relation":
+			return src.scope.body.cst;
+		case "pivot":
+			return src.base[0] ? resolvedSourceCst(src.base[0]) : undefined;
+	}
 }
 
 function spanOf(cst: ParserRuleContext): Span {

@@ -5,6 +5,7 @@ import {
 	applyStarModifiers,
 	applyUnpivotCols,
 	mergeByName,
+	pivotSourceOutputs,
 	resolveColumn,
 	splitColumnRefInScope,
 	type ResolvedSource,
@@ -228,6 +229,9 @@ function columnsOfSource(
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return known(resolved.get(src.scope));
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
+	if (src.kind === "pivot") {
+		return known(pivotSourceOutputs(src, (s) => columnsOfSource(s, schema, resolved, diagnostics) ?? "unknown"));
+	}
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
@@ -339,6 +343,7 @@ function sourceColumns(
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return known(resolved.get(src.scope));
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
+	if (src.kind === "pivot") return known(pivotSourceOutputs(src, (s) => sourceColumns(s, schema, resolved) ?? "unknown"));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
