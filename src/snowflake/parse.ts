@@ -33,6 +33,12 @@ export function parseSnowflake(sql: string): ParseResult {
 
 	const collector = makeErrorCollector();
 	attachErrorCounter(lexer, parser, collector.listener);
+	// Force a full lex now so every lexer error fires eagerly (CommonTokenStream lexes lazily, and the
+	// SLL→LL retry reseeks the SAME buffered tokens without re-lexing — so lexer errors are NOT
+	// re-emitted on the LL path). Snapshot them so they can be re-pushed after the retry's
+	// collector.reset(), which clears parser AND lexer diagnostics.
+	tokens.fill();
+	const lexDiags = [...collector.diagnostics];
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
@@ -46,6 +52,7 @@ export function parseSnowflake(sql: string): ParseResult {
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
 		collector.reset(); // discount anything the SLL attempt may have reported
+		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
 		const tree = parser.snowflake_file();
 		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
