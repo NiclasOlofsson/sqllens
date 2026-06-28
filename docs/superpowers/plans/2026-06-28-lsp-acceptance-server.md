@@ -2002,7 +2002,9 @@ import { positionToOffset, rangeFromCst } from "../ranges.js";
 export function computeHover(text: string, dialect: Dialect, position: Position, schema?: Schema): Hover | null {
   const ast = toAst(text, dialect);
   const tree = resolveScopes(ast, dialect);
-  const hit = nodeAt(tree, positionToOffset(text, position));
+  // Pass `ast` so node-at can also reach query-level ORDER BY / LIMIT exprs (Task B2 fix) —
+  // those live on QueryExpr, outside any Scope.body, so hover would miss them without it.
+  const hit = nodeAt(tree, positionToOffset(text, position), ast);
   if (!hit) return null;
 
   const types = new TypeInfo(schema ?? new Schema({}));
