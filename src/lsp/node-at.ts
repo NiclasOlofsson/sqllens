@@ -60,7 +60,7 @@ function childExprs(expr: Expr): Expr[] {
 		case "unary":
 			return [expr.operand];
 		case "function":
-			return expr.args;
+			return [...expr.args, ...(expr.window ? [...expr.window.partitionBy, ...expr.window.orderBy] : [])];
 		case "case":
 			return [...expr.whens.flatMap((w) => [w.when, w.then]), ...(expr.elseExpr ? [expr.elseExpr] : [])];
 		case "cast":

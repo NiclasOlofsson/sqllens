@@ -37,6 +37,14 @@ describe("nodeAt", () => {
 		expect(nodeAt(tree, sql.indexOf("FROM"))).toBeUndefined();
 	});
 
+	it("reaches a column inside a window OVER clause", () => {
+		const sql = "SELECT rank() OVER (PARTITION BY region ORDER BY ts) AS r FROM t";
+		const tree = scopesFor(sql);
+		const hit = nodeAt(tree, sql.indexOf("region"))!;
+		expect(hit.expr.kind).toBe("column");
+		expect((hit.expr as any).parts).toEqual(["region"]);
+	});
+
 	it("resolves a column inside a subquery to the subquery's scope", () => {
 		const sql = "SELECT x FROM (SELECT b AS x FROM t) s";
 		const tree = scopesFor(sql);
