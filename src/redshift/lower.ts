@@ -14,6 +14,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
@@ -72,8 +73,12 @@ const AGGREGATES = new Set([
 
 /** Lower a parsed Redshift file (root: stmtblock of `;`-separated statements) into the IR.
  *  A single SELECT statement lowers fully; anything else (DDL, DML, multi-statement batches)
- *  becomes a flagged non-query body — a valid parse never throws. */
+ *  becomes a flagged non-query body — a valid parse never throws. Frozen — immutable after lower(). */
 export function lower(tree: ParserRuleContext): QueryExpr {
+	return freezeIR(lowerImpl(tree));
+}
+
+function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const stmts = collectOfRule(tree, P.RULE_stmt);
 	const statement = statementCategory(stmts);
 	if (stmts.length !== 1) {
