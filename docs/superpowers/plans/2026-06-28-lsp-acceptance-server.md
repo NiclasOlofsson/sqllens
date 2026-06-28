@@ -21,11 +21,302 @@
 
 ---
 
+## Phase 0 — wire Redshift into the uniform surface
+
+Redshift has `parseRedshift` + `lower` + corpus gates but is absent from `src/api.ts`, the infer registry, and the barrel — so `parse()`/`analyze()` and the LSP can't reach it. Niclas chose to wire it **first** (2026-06-28) so the acceptance server covers all five dialects. Three small tasks; 0a and 0b are independent, 0c follows 0b. `lower`'s export name is `lower` (verify in `src/redshift/lower.ts`; mirror the other dialects' `lower as lower<Dialect>` import).
+
+### Task 0a: Redshift inference knowledge
+
+**Files:**
+- Create: `src/infer/redshift.ts`
+- Modify: `src/infer/dialect.ts`
+- Test: `tests/redshift.infer.test.ts`
+
+**Interfaces:**
+- Consumes: `parseType`, `scalar`, `UNKNOWN`, `Type` from `./types.js`; `FnRule` from `./functions.js`; `databricksLiteral` from `./literals.js` (Redshift literals follow standard SQL forms — same classification as Spark's, reused rather than duplicated).
+- Produces: `REDSHIFT_ALIASES`, `redshiftParseType`, `REDSHIFT_FUNCTION_RETURNS` in `src/infer/redshift.ts`; a `redshift` `InferDialect` entry added to `DIALECTS` in `src/infer/dialect.ts`.
+
+**Division semantics (verified against AWS docs):** Redshift `INT4 / INT4 → INT4` — integer division truncates (table at `r_numeric_computations201`). So `division: "integer"` (same strategy as T-SQL).
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/redshift.infer.test.ts
+import { describe, it, expect } from "vitest";
+import { parseRedshift } from "../src/redshift/parse.js";
+import { lower } from "../src/redshift/lower.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { inferType } from "../src/infer/infer.js";
+import { Schema } from "../src/qualify/schema.js";
+import { redshiftParseType, REDSHIFT_ALIASES } from "../src/infer/redshift.js";
+
+describe("redshift inference", () => {
+  it("maps Postgres scalar names to canonical types", () => {
+    expect(redshiftParseType("int4")).toEqual({ kind: "scalar", name: "int" });
+    expect(redshiftParseType("int8")).toEqual({ kind: "scalar", name: "bigint" });
+    expect(redshiftParseType("float8")).toEqual({ kind: "scalar", name: "double" });
+    expect(redshiftParseType("numeric(10,2)")).toEqual({ kind: "scalar", name: "decimal" });
+    expect(redshiftParseType("character varying")).toEqual({ kind: "scalar", name: "string" });
+    expect(REDSHIFT_ALIASES.int2).toBe("smallint");
+  });
+
+  it("integer/integer divides to int (Redshift truncates)", () => {
+    const sql = "SELECT a / b AS r FROM t";
+    const scopes = resolveScopes(lower(parseRedshift(sql).tree), "redshift");
+    const schema = new Schema({ t: { a: "int4", b: "int4" } });
+    // locate the division expr in the root select's projection
+    const body = scopes.root.body as any;
+    const div = body.projections[0].expr;
+    expect(inferType(div, scopes.root, schema)).toEqual({ kind: "scalar", name: "int" });
+  });
+
+  it("a known base-table column infers its schema type", () => {
+    const sql = "SELECT amount FROM sales";
+    const scopes = resolveScopes(lower(parseRedshift(sql).tree), "redshift");
+    const schema = new Schema({ sales: { amount: "numeric(10,2)" } });
+    const col = (scopes.root.body as any).projections[0].expr;
+    expect(inferType(col, scopes.root, schema)).toEqual({ kind: "scalar", name: "decimal" });
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/redshift.infer.test.ts`
+Expected: FAIL — `Cannot find module '../src/infer/redshift.js'`.
+
+- [ ] **Step 3: Write minimal implementation**
+
+```ts
+// src/infer/redshift.ts
+import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
+import type { FnRule } from "./functions.js";
+
+// ---------------------------------------------------------------------------
+// Redshift (Postgres-derived) inference knowledge. Scalar-name aliases map the
+// Postgres/Redshift type vocabulary onto the shared canonical names; division
+// truncates integers (verified: AWS r_numeric_computations201). The function
+// registry is a doc-cited starter — a missing entry safely yields `unknown`
+// (the inference contract), and it grows over time like the other dialects'.
+// ---------------------------------------------------------------------------
+
+export const REDSHIFT_ALIASES: Record<string, string> = {
+  int2: "smallint",
+  int4: "int",
+  integer: "int",
+  int8: "bigint",
+  numeric: "decimal",
+  dec: "decimal",
+  float4: "float",
+  real: "float",
+  float8: "double",
+  float: "double", // bare FLOAT is double precision in Redshift
+  "double precision": "double",
+  bool: "boolean",
+  char: "string",
+  character: "string",
+  bpchar: "string",
+  nchar: "string",
+  varchar: "string",
+  "character varying": "string",
+  nvarchar: "string",
+  text: "string",
+  timestamptz: "timestamp",
+  "timestamp without time zone": "timestamp",
+  "timestamp with time zone": "timestamp",
+  timetz: "time",
+  varbyte: "binary",
+  varbinary: "binary",
+};
+
+export function redshiftParseType(text: string): Type {
+  return parseType(text, REDSHIFT_ALIASES);
+}
+
+/** Doc-cited starter set of common Redshift scalar/aggregate functions. Grows over time;
+ *  anything absent yields `unknown` (never a wrong type). Modeled on FUNCTION_RETURNS. */
+export const REDSHIFT_FUNCTION_RETURNS: Record<string, FnRule> = {
+  // string
+  upper: () => scalar("string"),
+  lower: () => scalar("string"),
+  trim: () => scalar("string"),
+  btrim: () => scalar("string"),
+  lpad: () => scalar("string"),
+  rpad: () => scalar("string"),
+  substring: () => scalar("string"),
+  left: () => scalar("string"),
+  right: () => scalar("string"),
+  replace: () => scalar("string"),
+  concat: () => scalar("string"),
+  to_char: () => scalar("string"),
+  // numeric / position
+  length: () => scalar("int"),
+  len: () => scalar("int"),
+  char_length: () => scalar("int"),
+  strpos: () => scalar("int"),
+  position: () => scalar("int"),
+  // date/time
+  to_date: () => scalar("date"),
+  to_timestamp: () => scalar("timestamp"),
+  current_date: () => scalar("date"),
+  sysdate: () => scalar("timestamp"),
+  getdate: () => scalar("timestamp"),
+  current_timestamp: () => scalar("timestamp"),
+  // passthrough / aggregate
+  coalesce: (args) => args.find((a) => a.kind !== "unknown") ?? UNKNOWN,
+  nvl: (args) => args.find((a) => a.kind !== "unknown") ?? UNKNOWN,
+  abs: (args) => args[0] ?? UNKNOWN,
+  count: () => scalar("bigint"),
+};
+```
+
+Then in `src/infer/dialect.ts`:
+1. Import: `import { REDSHIFT_FUNCTION_RETURNS, redshiftParseType } from "./redshift.js";`
+2. (Reuse the standard literal classifier — `databricksLiteral` is already imported.) Add the entry:
+   ```ts
+   const redshift: InferDialect = {
+     functions: REDSHIFT_FUNCTION_RETURNS,
+     literal: databricksLiteral,
+     parseType: redshiftParseType,
+     division: "integer", // Redshift: INT4 / INT4 → INT4 (truncates) — AWS r_numeric_computations201
+   };
+   ```
+3. Add to the table: `const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery, redshift };`
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/redshift.infer.test.ts`
+Expected: PASS (3 tests). (If `inferType` for the division expr does not see `division: "integer"`, confirm `resolveScopes(…, "redshift")` tagged the scope's `dialect` as `"redshift"` and that `inferDialect("redshift")` now resolves the new entry.)
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/infer/redshift.ts src/infer/dialect.ts tests/redshift.infer.test.ts
+git commit -m "feat(infer): Redshift inference entry (aliases, division=integer, starter registry)"
+```
+
+---
+
+### Task 0b: Redshift in the uniform parse()/analyze()
+
+**Files:**
+- Modify: `src/api.ts`
+- Test: `tests/api.redshift.test.ts`
+
+**Interfaces:**
+- Consumes: `parseRedshift` from `./redshift/parse.js`; `lower as lowerRedshift` from `./redshift/lower.js`.
+- Produces: `Dialect` union gains `"redshift"`; `DIALECTS` gains the `redshift` entry; `parse(sql, "redshift")` and `analyze(sql, "redshift", …)` work.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/api.redshift.test.ts
+import { describe, it, expect } from "vitest";
+import { parse, analyze } from "../src/api.js";
+import { Schema } from "../src/qualify/schema.js";
+
+describe("redshift through the uniform surface", () => {
+  it("parse() accepts the redshift dialect and lowers to the IR", () => {
+    const r = parse("SELECT amount FROM sales", "redshift");
+    expect(r.ast.kind).toBe("query");
+    expect(r.errors).toBe(0);
+  });
+
+  it("analyze() resolves a redshift query and flags an unknown column with a schema", () => {
+    const schema = new Schema({ sales: { amount: "numeric(10,2)" } });
+    const a = analyze("SELECT nope FROM sales", "redshift", { schema });
+    expect(a.diagnostics.some((d) => /nope|unknown/i.test(d.message))).toBe(true);
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/api.redshift.test.ts`
+Expected: FAIL — `"redshift"` not assignable to `Dialect` (typecheck) / `DIALECTS["redshift"]` undefined.
+
+- [ ] **Step 3: Write minimal implementation**
+
+In `src/api.ts`:
+1. Add imports next to the other dialect imports:
+   ```ts
+   import { parseRedshift } from "./redshift/parse.js";
+   import { lower as lowerRedshift } from "./redshift/lower.js";
+   ```
+2. Extend the union: `export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";`
+3. Add to `DIALECTS`: `redshift: { parse: parseRedshift, lower: lowerRedshift },`
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/api.redshift.test.ts && npm run typecheck`
+Expected: PASS (2 tests); typecheck clean.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/api.ts tests/api.redshift.test.ts
+git commit -m "feat(api): wire Redshift into the uniform parse()/analyze()"
+```
+
+---
+
+### Task 0c: Redshift in the public barrel
+
+**Files:**
+- Modify: `src/index.ts`
+- Test: `tests/index.redshift.test.ts`
+
+**Interfaces:**
+- Produces: `parseRedshift` and `lowerRedshift` re-exported from `src/index.ts`.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/index.redshift.test.ts
+import { describe, it, expect } from "vitest";
+import { parseRedshift, lowerRedshift } from "../src/index.js";
+
+describe("barrel exports redshift", () => {
+  it("re-exports parseRedshift + lowerRedshift", () => {
+    expect(typeof parseRedshift).toBe("function");
+    expect(typeof lowerRedshift).toBe("function");
+    expect(lowerRedshift(parseRedshift("SELECT 1").tree).kind).toBe("query");
+  });
+});
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `npx vitest run tests/index.redshift.test.ts`
+Expected: FAIL — `parseRedshift`/`lowerRedshift` not exported.
+
+- [ ] **Step 3: Write minimal implementation**
+
+Add to `src/index.ts` (the per-dialect building-blocks block):
+```ts
+export { parseRedshift } from "./redshift/parse.js";
+export { lower as lowerRedshift } from "./redshift/lower.js";
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `npx vitest run tests/index.redshift.test.ts`
+Expected: PASS.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/index.ts tests/index.redshift.test.ts
+git commit -m "feat(api): export Redshift building blocks from the barrel"
+```
+
+---
+
 ## Phase A — issue #6: parse() surfaces positioned syntax diagnostics
 
 Closes #6. Engine change across all **five** dialect parse wrappers + `src/api.ts`. The five dialect wirings (A2–A5, A5b) are independent and parallelizable; A6 (`api.ts`) is serialized after them.
 
-> **Note — five dialects, not four.** Redshift (`src/redshift/parse.ts`, `parseRedshift`) is a fully-built dialect on this branch and on master, with the same count-only error pattern. #6 says "each per-dialect parse\* building block", so Redshift is wired too (Task A5b). It is, however, **not** in `src/api.ts`'s `Dialect` union / `DIALECTS` table, so the unified `parse()`/`analyze()` and therefore the LSP cannot reach it — that is a pre-existing gap, out of scope for #9. The LSP stays on the four api.ts dialects.
+> **Note — five dialects.** Redshift (`src/redshift/parse.ts`, `parseRedshift`) is a fully-built dialect on this branch and on master, with the same count-only error pattern. #6 says "each per-dialect parse\* building block", so Redshift is wired too (Task A5b). Phase 0 wires Redshift into `src/api.ts`, the infer registry, and the barrel, so by the time #6 lands the unified `parse()`/`analyze()` — and the LSP — cover **all five** dialects (A6 and the LSP dialect-config both include `redshift`).
 
 ### Task A1: Shared syntax-diagnostic collector
 
@@ -643,7 +934,7 @@ describe("parse() positioned diagnostics", () => {
   });
 
   it("carries positioned diagnostics for broken SQL on every dialect", () => {
-    for (const d of ["databricks", "tsql", "snowflake", "bigquery"] as const) {
+    for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
       const r = parse("SELECT FROM", d);
       expect(r.errors, d).toBeGreaterThan(0);
       expect(r.diagnostics.length, d).toBeGreaterThanOrEqual(1);
@@ -1169,7 +1460,7 @@ import { Schema, type SchemaMapping } from "../qualify/schema.js";
 // by the server) — loading never throws.
 // ---------------------------------------------------------------------------
 
-const KNOWN_DIALECTS: ReadonlySet<string> = new Set(["databricks", "tsql", "snowflake", "bigquery"]);
+const KNOWN_DIALECTS: ReadonlySet<string> = new Set(["databricks", "tsql", "snowflake", "bigquery", "redshift"]);
 
 interface Rule {
   files: string;
