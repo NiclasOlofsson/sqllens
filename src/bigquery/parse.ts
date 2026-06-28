@@ -9,16 +9,16 @@ import {
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";
-import { countPostParseErrors } from "./post-validate.js";
+import { postParseDiagnostics } from "./post-validate.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `root` (`stmts EOF`). */
 	tree: ParserRuleContext;
-	/** Count of lexer + parser + escape + post-parse syntax errors. */
+	/** Count of lexer + parser + escape + post-parse syntax errors; equals `diagnostics.length`. */
 	errors: number;
-	/** Positioned syntax diagnostics (listener-captured subset; escape/post-parse extras are
-	 *  count-only and not represented here). */
+	/** Positioned syntax diagnostics — lexer/parser (listener-captured) plus escape and post-parse
+	 *  errors, all carrying a source span. `errors === diagnostics.length`. */
 	diagnostics: SyntaxDiagnostic[];
 }
 
@@ -33,9 +33,10 @@ export function parseBigQuery(sql: string): ParseResult {
 	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
 	lexer.removeErrorListeners();
 	lexer.addErrorListener(collector.listener as never);
-	const { source, escapeErrors } = dotPathTokenSource(sql, lexer);
+	const { source, escapeDiagnostics } = dotPathTokenSource(sql, lexer);
 	const tokens = new CommonTokenStream(source);
-	const lexExtras = escapeErrors; // positionless extras folded into `errors` only
+	// Escape diagnostics are token-derived, so (like lexer diagnostics) they are stable across the
+	// SLL→LL retry and are appended once at each return rather than going through the collector.
 	// The lexer runs once eagerly above; the SLL→LL retry reseeks the buffered token source and never
 	// re-lexes, so lexer diagnostics are NOT re-emitted on the LL path. Snapshot them now so they can
 	// be re-pushed after the retry's collector.reset() (which clears everything — parser AND lexer).
@@ -51,8 +52,8 @@ export function parseBigQuery(sql: string): ParseResult {
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.root();
-		const errors = collector.diagnostics.length + lexExtras + countPostParseErrors(tree);
-		return { tree, errors, diagnostics: collector.diagnostics };
+		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
+		return { tree, errors: diagnostics.length, diagnostics };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -63,7 +64,7 @@ export function parseBigQuery(sql: string): ParseResult {
 		parser.removeErrorListeners();
 		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
-		const errors = collector.diagnostics.length + lexExtras + countPostParseErrors(tree);
-		return { tree, errors, diagnostics: collector.diagnostics };
+		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
+		return { tree, errors: diagnostics.length, diagnostics };
 	}
 }

@@ -17,9 +17,23 @@ describe("parseBigQuery diagnostics", () => {
 		expect(r.diagnostics[0].length).toBeGreaterThanOrEqual(1);
 	});
 
-	it("errors count is >= positioned diagnostics (extras: escape/post-parse have no span)", () => {
-		const r = parseBigQuery("SELECT FROM");
-		expect(r.errors).toBeGreaterThanOrEqual(r.diagnostics.length);
+	it("every BigQuery syntax error is positioned: errors === diagnostics.length", () => {
+		for (const sql of ["SELECT a b c FROM", "SELECT '\\q'", "SELECT a b c FROM t"]) {
+			const r = parseBigQuery(sql);
+			expect(r.errors, sql).toBe(r.diagnostics.length); // no count-only errors anymore
+		}
+	});
+
+	it("an invalid string escape yields a positioned diagnostic on the literal", () => {
+		const sql = "SELECT '\\q' AS x";
+		const r = parseBigQuery(sql);
+		expect(r.diagnostics.length).toBeGreaterThanOrEqual(1);
+		const d = r.diagnostics.find((x) => /escape/i.test(x.message));
+		expect(d, "an escape diagnostic").toBeDefined();
+		expect(d!.line).toBe(1);
+		// points at the literal, not column 0 / end-of-input
+		expect(d!.column).toBeGreaterThanOrEqual(sql.indexOf("'"));
+		expect(d!.length).toBeGreaterThanOrEqual(1);
 	});
 
 	it("keeps the lexer diagnostic across the SLL->LL fallback", () => {

@@ -15,6 +15,21 @@ import {
 	Shift_operatorContext,
 	StmtsContext,
 } from "../generated/bigquery/GoogleSQLParser.js";
+import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
+
+// A positioned diagnostic spanning a CST node — node-granular per the A7 spec. antlr tokens carry a
+// 1-based line / 0-based column; offset/length are 0-based inclusive char indices.
+function diagAt(ctx: ParserRuleContext, message: string): SyntaxDiagnostic {
+	const s = ctx.start;
+	const e = ctx.stop ?? ctx.start;
+	return {
+		message,
+		line: s?.line ?? 1,
+		column: s?.column ?? 0,
+		offset: s?.start,
+		length: s && e ? e.stop - s.start + 1 : 1,
+	};
+}
 
 // A graph endpoint predicate `expr IS [NOT] SOURCE|DESTINATION [OF] expr`. Duck-typed: the alt appears
 // in both expression_higher_prec_than_and and expression_maybe_parenthesized_not_a_query.
@@ -98,7 +113,7 @@ function hasTopLevelBinaryOp(text: string): boolean {
 }
 
 /**
- * Count post-parse syntax violations in the CST. Each counts as one syntax error.
+ * Collect post-parse syntax violations in the CST as positioned diagnostics. Each is one syntax error.
  *
  * - select_column_dot_star: googlesql.tm binds `.*` at `.` precedence (`%prec "."`), so the base must be
  *   a postfix expression (`t.*`, `(a+b).*`, `f(x).*`), not a binary one — `a+b.*` parses as `a + (b.*)`
@@ -129,18 +144,18 @@ function hasTopLevelBinaryOp(text: string): boolean {
  *   not a query (`(SELECT 1) -> …`) — "Expecting lambda argument list". The grammar's getText()-based
  *   check misses keyword boundaries; re-validated here on spaced text.
  */
-export function countPostParseErrors(tree: ParserRuleContext): number {
-	let errors = 0;
+export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[] {
+	const out: SyntaxDiagnostic[] = [];
 	const visit = (node: ParserRuleContext): void => {
 		if (node instanceof Select_column_dot_starContext) {
 			const base = node.expression_higher_prec_than_and()?.getText() ?? "";
-			if (hasTopLevelBinaryOp(base)) errors++;
+			if (hasTopLevelBinaryOp(base)) out.push(diagAt(node, "dot-star base must be a postfix expression, not a binary one"));
 		} else if (node instanceof Shift_operatorContext) {
 			const gts = node.GT_OPERATOR();
 			if (gts.length === 2) {
 				const a = gts[0].symbol;
 				const b = gts[1].symbol;
-				if (a.stop + 1 !== b.start) errors++; // `> >` (spaced) is not the `>>` shift operator
+				if (a.stop + 1 !== b.start) out.push(diagAt(node, "unexpected '>' (spaced '> >' is not the '>>' shift operator)")); // `> >` (spaced) is not the `>>` shift operator
 			}
 		} else if (node instanceof Select_clauseContext) {
 			// `SELECT WITH kind OPTIONS(…)` with the OPTIONS bound (by ZetaSQL) to the with-clause and NO
@@ -156,11 +171,11 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// genuine select item (x is the list), so exclude that (first.identifier()).
 			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier()) {
 				const expr = first.select_column_expr_with_as_alias()?.expression() ?? first.expression();
-				if (/^OPTIONS\s*\(.*\)$/is.test(expr?.getText() ?? "")) errors++;
+				if (/^OPTIONS\s*\(.*\)$/is.test(expr?.getText() ?? "")) out.push(diagAt(node, "SELECT list must not be empty"));
 			}
 		} else if (node instanceof Pipe_callContext) {
 			const suffix = node.tvf_with_suffixes().pivot_or_unpivot_clause_and_aliases();
-			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) errors++; // pipe CALL takes no PIVOT/UNPIVOT
+			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) out.push(diagAt(node, "pipe CALL takes no PIVOT/UNPIVOT")); // pipe CALL takes no PIVOT/UNPIVOT
 		} else if (node instanceof Graph_element_pattern_fillerContext) {
 			// `[cost 12]` — a leading `cost` is the element NAME, not the COST keyword (which only trails a
 			// name/label/where). A filler that is ONLY a COST clause means `cost` was misread as the keyword
@@ -172,45 +187,56 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 				!node.graph_property_specification() &&
 				!node.where_clause()
 			) {
-				errors++;
+				out.push(diagAt(node, "unexpected expression after 'cost' (read as the element name)"));
 			}
 		} else if (node instanceof Graph_call_operator_coreContext) {
-			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) errors++; // graph CALL takes a bare tvf
+			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) out.push(diagAt(node, "graph CALL takes a bare tvf")); // graph CALL takes a bare tvf
 		} else if (node instanceof Graph_linear_operator_listContext) {
 			// After `FOR x IN expr`, a `WITH` binds to the FOR's offset clause — it must be `WITH OFFSET`.
 			// A FOR with no offset directly followed by a WITH operator is "Expected keyword OFFSET …".
 			const ops = node.graph_linear_operator();
 			for (let k = 0; k < ops.length - 1; k++) {
 				const forOp = ops[k].graph_for_operator();
-				if (forOp && !forOp.opt_with_offset_and_alias_with_required_as() && ops[k + 1].graph_with_operator()) errors++;
+				if (forOp && !forOp.opt_with_offset_and_alias_with_required_as() && ops[k + 1].graph_with_operator())
+					out.push(diagAt(ops[k], "expected keyword OFFSET after FOR"));
 			}
 		} else if (node instanceof Pipe_aggregate_itemContext) {
-			if (node.opt_selection_item_order() && node.pipe_selection_item().select_column_dot_star()) errors++; // no ASC/DESC on a dot-star
+			if (node.opt_selection_item_order() && node.pipe_selection_item().select_column_dot_star())
+				out.push(diagAt(node, "ASC/DESC order is not allowed on a dot-star")); // no ASC/DESC on a dot-star
 		} else if (node instanceof Expression_higher_prec_than_andContext) {
 			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
-			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0))) errors++;
-			else if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))) errors++;
+			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0)))
+				out.push(diagAt(node, "expression to the left of LIKE must be parenthesized"));
+			else if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0)))
+				out.push(diagAt(node, "graph endpoint predicate cannot be chained"));
 			// A hint on an IN value list (`IN @{…} (a, b)` / `IN @{…} (x)`) is rejected; a hint on an IN
 			// SUBQUERY (`IN @{…} (SELECT …)`) is allowed, as is the IN-UNNEST form (caught in-grammar).
 			const inRhs = node.parenthesized_in_rhs();
-			if (node.in_operator() && node.hint() && inRhs && !inRhs.parenthesized_query()) errors++;
+			if (node.in_operator() && node.hint() && inRhs && !inRhs.parenthesized_query())
+				out.push(diagAt(node, "HINTs cannot be specified on IN clause with value list"));
 		} else if (node instanceof Lambda_argumentContext) {
 			// Flag only what the grammar's getText()-based check let through: valid when flattened (keyword
 			// boundary lost) but invalid on spaced text — e.g. `(SELECT 1) -> …`.
 			const e = node.lambda_argument_list().expression();
-			if (e && lambdaArgListValid(e.getText()) && !lambdaArgListValid(spacedText(e))) errors++;
+			if (e && lambdaArgListValid(e.getText()) && !lambdaArgListValid(spacedText(e)))
+				out.push(diagAt(node, "expecting lambda argument list"));
 		} else if (node instanceof Expression_maybe_parenthesized_not_a_queryContext) {
 			// A graph endpoint predicate (IS SOURCE/DESTINATION OF) cannot be chained — its LHS may not be
 			// another endpoint predicate (`a IS SOURCE OF e IS DESTINATION OF d`).
-			if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))) errors++;
+			if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0)))
+				out.push(diagAt(node, "graph endpoint predicate cannot be chained"));
 		} else if (node instanceof Analyze_statementContext) {
 			// A bare `OPTIONS` table name is really the OPTIONS keyword (which requires `(...)`).
 			const firstTable = node.table_and_column_info_list()?.table_and_column_info(0);
-			if (!node.opt_options_list() && /^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? "")) errors++;
+			if (!node.opt_options_list() && /^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? ""))
+				out.push(diagAt(node, "OPTIONS requires '(...)'"));
 		} else if (node instanceof StmtsContext) {
 			// A standalone subpipeline (`|> …`) must be the only statement — it can't be `;`-chained.
 			const tops = node.top_statement();
-			if (tops.length > 1 && tops.some((t) => t.getText().startsWith("|>"))) errors++;
+			if (tops.length > 1 && tops.some((t) => t.getText().startsWith("|>"))) {
+				const offender = tops.find((t) => t.getText().startsWith("|>")) ?? node;
+				out.push(diagAt(offender, "a standalone subpipeline must be the only statement"));
+			}
 		} else if (node instanceof Braced_constructor_prefixContext) {
 			// An extension field `(pkg.Ext)…` that is not the first field needs a preceding comma —
 			// `{ foo: "bar" (ext){…} }` is "Function call cannot be applied to this expression" (ZetaSQL
@@ -218,7 +244,8 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 			// `(ext)` is absorbed as the call's args, so no comma-less extension field arises there.
 			const inner = node.braced_constructor_prefix();
 			const next = node.braced_constructor_field();
-			if (inner && next && !node.COMMA_SYMBOL() && next.braced_constructor_lhs().braced_constructor_extension()) errors++;
+			if (inner && next && !node.COMMA_SYMBOL() && next.braced_constructor_lhs().braced_constructor_extension())
+				out.push(diagAt(next, "extension field must be preceded by a comma"));
 		}
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
@@ -229,5 +256,5 @@ export function countPostParseErrors(tree: ParserRuleContext): number {
 		}
 	};
 	visit(tree);
-	return errors;
+	return out;
 }
