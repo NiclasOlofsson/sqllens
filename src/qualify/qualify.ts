@@ -25,8 +25,13 @@ import { type Schema } from "./schema.js";
 export interface Diagnostic {
 	kind: "unknown-table" | "unknown-column" | "ambiguous-column" | "unknown-field";
 	message: string;
+	/** Start of the offending node: 1-based line, 0-based column. */
 	line: number;
 	column: number;
+	/** End of the offending node (one past the last char): 1-based line, 0-based column.
+	 *  Same convention as `Span` in src/symbols/symbols.ts, so rangeFromSpan works on it. */
+	endLine: number;
+	endColumn: number;
 }
 
 export interface Qualification {
@@ -347,9 +352,21 @@ function sourceColumns(
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
+/** Full positioned span of a CST node — 1-based line, 0-based column, endColumn one past the last
+ *  char (falls back to the start token when stop is absent). Mirrors symbols.ts `spanOf` exactly. */
+function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine: number; endColumn: number } {
+	const s = cst.start;
+	const e = cst.stop ?? cst.start;
+	return {
+		line: s?.line ?? 0,
+		column: s?.column ?? 0,
+		endLine: e?.line ?? s?.line ?? 0,
+		endColumn: (e?.column ?? 0) + (e?.text?.length ?? 0),
+	};
+}
+
 function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): Diagnostic {
-	const tok = ref.cst.start;
-	return { kind, message, line: tok?.line ?? 0, column: tok?.column ?? 0 };
+	return { kind, message, ...spanOf(ref.cst) };
 }
 
 function normalizeName(name: string): string {
@@ -358,11 +375,5 @@ function normalizeName(name: string): string {
 }
 
 function unknownTable(name: string[], cst: ParserRuleContext): Diagnostic {
-	const tok = cst.start;
-	return {
-		kind: "unknown-table",
-		message: `Unknown table: ${name.join(".")}`,
-		line: tok?.line ?? 0,
-		column: tok?.column ?? 0,
-	};
+	return { kind: "unknown-table", message: `Unknown table: ${name.join(".")}`, ...spanOf(cst) };
 }
