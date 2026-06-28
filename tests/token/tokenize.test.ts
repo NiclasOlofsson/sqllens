@@ -44,6 +44,21 @@ describe("tokenize — per dialect", () => {
 				expect(byText(tokens, "'str'")?.role).toBe("string");
 			});
 
+			// Regression: VARCHAR/CHAR are keywords whose symbolic names contain a
+			// default-regex substring ("CHAR"/"STRING"). The literal-name heuristic
+			// must run before the symbolic-name rules, or they classify as "string".
+			// (bigquery/GoogleSQL treats them as identifiers, not keywords, so it is
+			// excluded — it has no fixed literal name for them.)
+			if (dialect !== "bigquery") {
+				it("classifies VARCHAR/CHAR keywords as keyword, not string", () => {
+					const tokens = tokenize("CAST(x AS VARCHAR(10))", dialect);
+					expect(byText(tokens, "VARCHAR")?.role, "VARCHAR").toBe("keyword");
+
+					const charTokens = tokenize("CAST(x AS CHAR(10))", dialect);
+					expect(byText(charTokens, "CHAR")?.role, "CHAR").toBe("keyword");
+				});
+			}
+
 			it("is total on broken and empty input", () => {
 				expect(() => tokenize("(((", dialect)).not.toThrow();
 				expect(Array.isArray(tokenize("(((", dialect))).toBe(true);

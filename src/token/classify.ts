@@ -8,10 +8,12 @@
 // the classifier a pure function of the lexer's static type table.
 //
 // Order of decision:
-//   1. per-dialect override map (regex over the symbolic name), shared default
-//      first, then the dialect's own entries;
-//   2. literal-name heuristic (alphabetic literal -> keyword; bracket/comma/etc.
-//      -> punctuation; other symbols -> operator);
+//   1. literal-name heuristic (alphabetic literal -> keyword; bracket/comma/etc.
+//      -> punctuation; other symbols -> operator). Keyword/punctuation/operator
+//      tokens carry a fixed literal name; the lexical tokens (string/identifier/
+//      number/comment/whitespace) have none and fall through;
+//   2. symbolic-name rules: per-dialect override map (regex over the symbolic
+//      name) first, then the shared defaults;
 //   3. fallback -> "other".
 // ---------------------------------------------------------------------------
 
@@ -92,10 +94,23 @@ const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);
  * Pure over the lexer's static vocabulary; does not look at any token instance.
  */
 export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): TokenRole {
-	const symbolic = lexer.vocabulary.getSymbolicName(type);
+	// 1. Literal-name heuristic first. Keyword/punctuation/operator tokens carry a
+	//    fixed literal name (e.g. "'SELECT'" or "'('"); the lexical tokens
+	//    (string/identifier/number/comment/whitespace) are rule-defined and have NO
+	//    literal name, so they fall through to the symbolic-name rules below. Doing
+	//    this first prevents keywords like VARCHAR/CHAR/SUBSTRING from being grabbed
+	//    by a default regex that matches a substring of their symbolic name.
+	const literal = lexer.vocabulary.getLiteralName(type);
+	if (literal) {
+		const text = literal.replace(/^'|'$/g, "");
+		if (/^[A-Za-z_]/.test(text)) return "keyword";
+		if (PUNCTUATION.has(text)) return "punctuation";
+		return "operator";
+	}
 
-	// 1. Per-dialect overrides first, then the shared defaults — both keyed by
-	//    a regex over the symbolic name.
+	// 2. Symbolic-name rules: per-dialect overrides first, then the shared
+	//    defaults — both keyed by a regex over the symbolic name.
+	const symbolic = lexer.vocabulary.getSymbolicName(type);
 	if (symbolic) {
 		for (const rule of DIALECT_RULES[dialect]) {
 			if (rule.pattern.test(symbolic)) return rule.role;
@@ -103,16 +118,6 @@ export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): Tok
 		for (const rule of DEFAULT_RULES) {
 			if (rule.pattern.test(symbolic)) return rule.role;
 		}
-	}
-
-	// 2. Literal-name heuristic. The literal carries surrounding single quotes,
-	//    e.g. "'SELECT'" or "'('"; strip them, then classify by shape.
-	const literal = lexer.vocabulary.getLiteralName(type);
-	if (literal) {
-		const text = literal.replace(/^'|'$/g, "");
-		if (/^[A-Za-z_]/.test(text)) return "keyword";
-		if (PUNCTUATION.has(text)) return "punctuation";
-		return "operator";
 	}
 
 	// 3. Fallback.
