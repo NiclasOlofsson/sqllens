@@ -1,13 +1,15 @@
 import type { Token } from "antlr4ng";
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
+import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 // Escape validation for string/bytes literals and backquoted identifiers, ported faithfully from
 // ZetaSQL's CUnescapeInternal / ParseStringLiteral / ParseBytesLiteral / ParseIdentifier
 // (googlesql/public/strings.cc). GoogleSQL's lexer — like ours — accepts ANY `\x` escape (the
 // any_escape regex), and defers escape/codepoint validation to the parser, which turns a bad escape
 // into a "Syntax error" at the offending offset (googlesql.tm string_literal_component /
-// bytes_literal_component actions). We replicate that as a post-lex pass that counts invalid literals;
-// the count is added to the parser's syntax-error total so the gate (and any consumer) rejects them.
+// bytes_literal_component actions). We replicate that as a post-lex pass that returns a positioned
+// diagnostic per invalid literal; each is folded into the parser's diagnostics (so consumers get a
+// squiggle on the offending literal, not just a rejection).
 
 const T_STRING = GoogleSQLLexer.STRING_LITERAL;
 const T_BYTES = GoogleSQLLexer.BYTES_LITERAL;
@@ -96,28 +98,41 @@ function literalParts(text: string): { content: string; isRaw: boolean; isBytes:
 	return { content: body.slice(quote.length, body.length - quote.length), isRaw, isBytes };
 }
 
+/** A positioned escape diagnostic on the offending literal/identifier token. */
+function escapeDiagAt(tok: Token): SyntaxDiagnostic {
+	return {
+		message: "invalid escape sequence in literal",
+		line: tok.line,
+		column: tok.column,
+		offset: tok.start,
+		length: tok.text?.length ?? 1,
+	};
+}
+
 /**
- * Count string/bytes literals and backquoted identifiers in `tokens` whose escape sequences are
- * invalid — each is a parse-time syntax error in GoogleSQL.
+ * Positioned variant of the literal-escape validation: string/bytes literals and backquoted
+ * identifiers in `tokens` whose escape sequences are invalid — each is a parse-time syntax error in
+ * GoogleSQL. Each `badLiteralEscapes` detection pushes a diagnostic squiggling the whole offending
+ * token.
  */
-export function countBadLiteralEscapes(tokens: Token[]): number {
-	let bad = 0;
+export function badLiteralEscapes(tokens: Token[]): SyntaxDiagnostic[] {
+	const out: SyntaxDiagnostic[] = [];
 	for (const tok of tokens) {
 		const type = tok.type;
 		const text = tok.text ?? "";
 		if (type === T_STRING || type === T_BYTES) {
 			const parts = literalParts(text);
-			if (parts && !literalEscapesValid(parts.content, parts.isRaw, parts.isBytes)) bad++;
+			if (parts && !literalEscapesValid(parts.content, parts.isRaw, parts.isBytes)) out.push(escapeDiagAt(tok));
 			// String literals (not bytes) must be well-formed UTF-8 (ZetaSQL SpanWellFormedUTF8). The
 			// testdata's invalid-UTF-8 bytes were normalized to U+FFFD on extraction; its presence in a
 			// non-bytes string marks the original as structurally invalid. Bytes literals hold arbitrary
 			// octets and are exempt.
-			else if (parts && !parts.isBytes && parts.content.includes("�")) bad++;
+			else if (parts && !parts.isBytes && parts.content.includes("�")) out.push(escapeDiagAt(tok));
 		} else if (type === T_IDENTIFIER && text.startsWith("`") && text.endsWith("`") && text.length >= 2) {
 			// Backquoted identifier — must be non-empty, same escape rules as a non-raw, non-bytes string.
 			const inner = text.slice(1, -1);
-			if (inner === "" || inner.includes("�") || !literalEscapesValid(inner, false, false)) bad++;
+			if (inner === "" || inner.includes("�") || !literalEscapesValid(inner, false, false)) out.push(escapeDiagAt(tok));
 		}
 	}
-	return bad;
+	return out;
 }

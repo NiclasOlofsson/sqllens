@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `compoundOrSingleStatement` (one statement, or a BEGIN…END
@@ -16,6 +17,8 @@ export interface ParseResult {
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
+	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
+	diagnostics: SyntaxDiagnostic[];
 }
 
 /**
@@ -30,32 +33,33 @@ export function parseDatabricks(sql: string): ParseResult {
 	const parser = new DatabricksParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
-	attachErrorCounter(lexer, parser, listener);
+	const collector = makeErrorCollector();
+	attachErrorCounter(lexer, parser, collector.listener);
+	// Force a full lex now so every lexer error fires eagerly (CommonTokenStream lexes lazily, and the
+	// SLL→LL retry reseeks the SAME buffered tokens without re-lexing — so lexer errors are NOT
+	// re-emitted on the LL path). Snapshot them so they can be re-pushed after the retry's
+	// collector.reset(), which clears parser AND lexer diagnostics.
+	tokens.fill();
+	const lexDiags = [...collector.diagnostics];
 
 	// Stage 1: SLL, bail on the first error (no recovery, no listener noise).
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		return { tree: parser.compoundOrSingleStatement(), errors };
+		const tree = parser.compoundOrSingleStatement();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	} catch {
 		// Stage 2: full LL with the normal error strategy (reports + recovers).
 		tokens.seek(0);
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		errors = 0; // discount anything the SLL attempt may have reported
-		attachErrorCounter(lexer, parser, listener);
-		return { tree: parser.compoundOrSingleStatement(), errors };
+		collector.reset(); // discount anything the SLL attempt may have reported
+		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
+		attachErrorCounter(lexer, parser, collector.listener);
+		const tree = parser.compoundOrSingleStatement();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	}
 }
 

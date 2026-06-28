@@ -9,13 +9,17 @@ import {
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";
-import { countPostParseErrors } from "./post-validate.js";
+import { postParseDiagnostics } from "./post-validate.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `root` (`stmts EOF`). */
 	tree: ParserRuleContext;
-	/** Count of lexer + parser syntax errors. */
+	/** Count of lexer + parser + escape + post-parse syntax errors; equals `diagnostics.length`. */
 	errors: number;
+	/** Positioned syntax diagnostics — lexer/parser (listener-captured) plus escape and post-parse
+	 *  errors, all carrying a source span. `errors === diagnostics.length`. */
+	diagnostics: SyntaxDiagnostic[];
 }
 
 /**
@@ -24,49 +28,43 @@ export interface ParseResult {
  * only when SLL fails — same result LL alone would give, just faster on valid input.
  */
 export function parseBigQuery(sql: string): ParseResult {
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
+	const collector = makeErrorCollector();
 
-	// Lex once (the GoogleSQL DOT_IDENTIFIER rewrite needs the full token list), counting lexer
-	// errors. The rewritten token source is buffered, so the SLL→LL retry reseeks without re-lexing;
-	// we keep the lexer-error count across the reset and only re-zero the parser errors.
 	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
-	const { source, escapeErrors } = dotPathTokenSource(sql, lexer);
+	lexer.addErrorListener(collector.listener as never);
+	const { source, escapeDiagnostics } = dotPathTokenSource(sql, lexer);
 	const tokens = new CommonTokenStream(source);
-	// Invalid string/bytes/identifier escapes are parse-time syntax errors in GoogleSQL (validated in
-	// the parser, not the lexer). Fold them into the baseline so both parse attempts report them.
-	errors += escapeErrors;
-	const lexErrors = errors;
+	// Escape diagnostics are token-derived, so (like lexer diagnostics) they are stable across the
+	// SLL→LL retry and are appended once at each return rather than going through the collector.
+	// The lexer runs once eagerly above; the SLL→LL retry reseeks the buffered token source and never
+	// re-lexes, so lexer diagnostics are NOT re-emitted on the LL path. Snapshot them now so they can
+	// be re-pushed after the retry's collector.reset() (which clears everything — parser AND lexer).
+	const lexDiags = [...collector.diagnostics];
 
 	const parser = new GoogleSQLParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
+	parser.addErrorListener(collector.listener as never);
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.root();
-		return { tree, errors: errors + countPostParseErrors(tree) };
+		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
+		return { tree, errors: diagnostics.length, diagnostics };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		errors = lexErrors;
+		collector.reset(); // discount the SLL attempt's parser diagnostics
+		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		parser.removeErrorListeners();
-		parser.addErrorListener(listener as never);
+		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
-		return { tree, errors: errors + countPostParseErrors(tree) };
+		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
+		return { tree, errors: diagnostics.length, diagnostics };
 	}
 }

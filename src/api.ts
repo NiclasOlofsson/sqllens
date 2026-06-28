@@ -21,7 +21,10 @@ import { parseSnowflake } from "./snowflake/parse.js";
 import { lower as lowerSnowflake } from "./snowflake/lower.js";
 import { parseBigQuery } from "./bigquery/parse.js";
 import { lower as lowerBigQuery } from "./bigquery/lower.js";
+import { parseRedshift } from "./redshift/parse.js";
+import { lower as lowerRedshift } from "./redshift/lower.js";
 import type { Expr, QueryExpr } from "./ir/ir.js";
+import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
 import { qualify as qualifyScopes, type Qualification } from "./qualify/qualify.js";
 import { Schema } from "./qualify/schema.js";
@@ -36,11 +39,11 @@ import {
 import { deriveSymbols as deriveSymbolsScopes, type Sym } from "./symbols/symbols.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
- *  parse+lower pair; everything after lower() runs unchanged on all four. */
-export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery";
+ *  parse+lower pair; everything after lower() runs unchanged on all five. */
+export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
 
 interface DialectFns {
-	parse(sql: string): { tree: ParserRuleContext; errors: number };
+	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[] };
 	lower(tree: ParserRuleContext): QueryExpr;
 }
 
@@ -49,6 +52,7 @@ const DIALECTS: Record<Dialect, DialectFns> = {
 	tsql: { parse: parseTSql, lower: lowerTSql },
 	snowflake: { parse: parseSnowflake, lower: lowerSnowflake },
 	bigquery: { parse: parseBigQuery, lower: lowerBigQuery },
+	redshift: { parse: parseRedshift, lower: lowerRedshift },
 };
 
 /** Options carrying the dialect, needed only when a lift helper enters from a raw string. */
@@ -61,6 +65,8 @@ export interface ParseResultIR {
 	ast: QueryExpr;
 	/** Count of lexer + parser syntax errors (a valid parse is still returned). */
 	errors: number;
+	/** Positioned syntax diagnostics (message + line/column/offset/length). */
+	diagnostics: SyntaxDiagnostic[];
 	/** The raw antlr CST root — the escape hatch for tokens/exact spans. */
 	cst: ParserRuleContext;
 }
@@ -73,9 +79,9 @@ export interface ParseResultIR {
  */
 export function parse(sql: string, dialect: Dialect): ParseResultIR {
 	const fns = DIALECTS[dialect];
-	const { tree, errors } = fns.parse(sql);
+	const { tree, errors, diagnostics } = fns.parse(sql);
 	// lower() already freezes the IR — it is immutable from here on.
-	return { ast: fns.lower(tree), errors, cst: tree };
+	return { ast: fns.lower(tree), errors, diagnostics, cst: tree };
 }
 
 export interface Analysis {
