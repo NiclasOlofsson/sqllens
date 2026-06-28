@@ -23,6 +23,7 @@
 	"author": "Niclas Olofsson",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
+		"lsp": "node --import tsx src/lsp/main.ts",
 		"typecheck": "tsgo -p tsconfig.json",
 		"test": "vitest run",
 		"format": "prettier --write .",
@@ -35,6 +36,7 @@
 		"@typescript/native-preview": "^7.0.0-dev.20260605.1",
 		"antlr-ng": "^1.0.10",
 		"prettier": "^3.8.3",
+		"tsx": "^4.22.4",
 		"typescript": "^6.0.3",
 		"vitest": "^4.1.8"
 	},

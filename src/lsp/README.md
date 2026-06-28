@@ -1,0 +1,94 @@
+# SQL Language Server (`src/lsp`)
+
+A thin Language Server Protocol (LSP) adapter over the sqllens parser and analysis
+library. It maps editor requests to the library's existing passes (`parse → lower →
+resolveScopes → qualify → infer → symbols`) and translates the results into LSP
+shapes. It holds no analysis logic of its own — diagnostics, types, definitions, and
+output columns all come from the library.
+
+This is an **application, not part of the published library.** Nothing under
+`src/lsp/` is exported from `src/index.ts`; the barrel ships the parser and analysis
+API only. The server is here as the editor consumer that drives that API.
+
+## Features
+
+All four features carry real source positions (no count-only or point-only output).
+
+- **Diagnostics** — syntax errors from the parser plus semantic diagnostics from
+  `qualify` (unknown table/column/field), each as a positioned range.
+- **Hover** — the inferred type of the expression under the cursor, ranged to the
+  covering expression's source span.
+- **Go-to-definition** — jumps to a symbol's definition span (CTE, alias, derived
+  column).
+- **Document symbols** — the symbol tree (sources, CTEs, output columns) with each
+  symbol's span.
+
+Completion and the SQL-debugger adapter are out of this version by scope decision
+(issue #9). They will reuse the same `node-at` and scope plumbing when built.
+
+## Dialect and schema config: `.sqllens.json`
+
+A document's dialect is configured, never guessed. On initialize, the server reads
+`.sqllens.json` from the workspace root. It holds an ordered list of glob rules
+(first match wins), an optional default, and an optional `schema` catalog. A missing
+or malformed config is non-fatal: every file falls back to the `databricks` dialect
+and a warning is logged over the LSP `window/logMessage` channel.
+
+Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`.
+
+Example `.sqllens.json`:
+
+```json
+{
+  "dialects": [
+    { "files": "warehouse/snowflake/**/*.sql", "dialect": "snowflake" },
+    { "files": "edw/**/*.sql", "dialect": "tsql" }
+  ],
+  "default": "databricks",
+  "schema": "schema.json"
+}
+```
+
+`schema` points at a JSON catalog (a `SchemaMapping` — `{ table: { column: type } }`)
+resolved relative to the workspace root. The catalog feeds the semantic-diagnostics
+and hover tiers; without it those tiers degrade gracefully (syntax diagnostics and
+structural symbols still work).
+
+Example `schema.json`:
+
+```json
+{
+  "sales": { "id": "bigint", "amount": "decimal(10,2)", "region": "string" }
+}
+```
+
+## Running
+
+```bash
+npm run lsp
+```
+
+The server speaks LSP over **stdio**. It is meant to be launched by an editor / LSP
+client, not used interactively from a terminal.
+
+## Attaching a client
+
+Point any LSP client at the stdio launch command. For VS Code, a generic LSP-client
+extension configured with a stdio server:
+
+- command: `node`
+- args: `["--import", "tsx", "src/lsp/main.ts"]` (or run `npm run lsp`)
+- working directory: the workspace root that holds `.sqllens.json`
+
+The client sends `initialize` with the workspace `rootUri`; the server reads
+`.sqllens.json` from there.
+
+## Proof
+
+The repeatable proof is the in-memory acceptance suite,
+[`tests/lsp.acceptance.test.ts`](../../tests/lsp.acceptance.test.ts). It drives the
+real server over an in-memory JSON-RPC duplex pair and asserts positioned results for
+all four features against a temp workspace with `.sqllens.json` + `schema.json`. It
+exercises `startServer` — the same function `src/lsp/main.ts` runs over stdio — so the
+tested code path is the shipped one. The stdio binary is that same path wired to real
+stdio for eyeballing in an editor.
