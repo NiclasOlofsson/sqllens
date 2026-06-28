@@ -23,10 +23,17 @@ export interface CompletionConfig {
 //                          name slot reached in expressions and projections.
 //   errorCapturingIdentifier → the single name part, `DatabricksParser.g4:1726`; the leaf name
 //                          slot (alias names, single identifiers).
+//   identifier           → the column/name slot *inside expressions*: `primaryExpression`'s
+//                          `#columnReference: identifier` (`DatabricksParser.g4:1358`) and
+//                          `#dereference` go through `identifier`, NOT identifierReference (which
+//                          is the FROM/DDL relation reference) — so a column ref typed in SELECT /
+//                          WHERE / projection positions is found here. Without it the walk has no
+//                          preferred rule to record in expression position and dumps raw tokens.
 const DATABRICKS_PREFERRED = new Set<number>([
 	DatabricksParser.RULE_identifierReference,
 	DatabricksParser.RULE_multipartIdentifier,
 	DatabricksParser.RULE_errorCapturingIdentifier,
+	DatabricksParser.RULE_identifier,
 ]);
 
 // EOF is never a typeable candidate. Keep this set small and justified.

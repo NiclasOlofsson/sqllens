@@ -26,16 +26,15 @@ export interface Candidates {
 
 /**
  * Our own ATN candidate-collection walk — a reimplementation of antlr4-c3's
- * `CodeCompletionCore` (`collectCandidates` / `processRule` / the transition `process`),
+ * `CodeCompletionCore` (`collectCandidates` / `processRule` / `translateStackToRuleIndex`),
  * in our own naming/structure, over the antlr4ng ATN API. No `antlr4-c3` dependency.
  *
  * The idea: ANTLR compiles each parser rule into an ATN (a state graph). Starting at the entry
  * rule's start state we DFS the graph, threading a `tokenListIndex` (how many of the real input
  * tokens before the caret we have consumed) so impossible paths get pruned. At the caret
- * (`tokenListIndex === caretTokenIndex`) every terminal transition's label contributes its token
- * types as candidates, and entering a preferred rule records that rule.
- *
- * Correctness over cleverness for now; this is hot-path code we will optimize later.
+ * (`tokenListIndex === caretListIndex`) every terminal transition's label contributes its token
+ * types as candidates — unless the current rule call stack is inside a preferred (name/column)
+ * rule, in which case we record that rule and suppress the raw tokens it subsumes.
  */
 export function collectCandidates(
 	parser: Parser,
@@ -54,15 +53,33 @@ interface PipelineEntry {
 	tokenListIndex: number;
 }
 
+/** One frame of the rule call stack: the rule we are inside and the input position it started at. */
+interface RuleStackEntry {
+	ruleIndex: number;
+	startTokenIndex: number;
+}
+
+/**
+ * The result of processing a rule at an input position: the set of token-list indices the rule
+ * can advance the input to (its `RuleStopState` positions — c3's "follow positions"). Mirrors
+ * c3's `RuleEndStatus`.
+ */
+type RuleEndStatus = Set<number>;
+
 class CandidateWalk {
 	private readonly tokens: Candidates = { tokens: new Set(), rules: new Set() };
 	/** The on-channel input token TYPES from index 0 up to (and including) the caret token. */
 	private readonly inputTypes: number[] = [];
 	/** The caret position within `inputTypes` (the last entry; "at caret" means index === this). */
 	private readonly caretListIndex: number;
-	/** Cross-rule recursion guard: `${ruleIndex}:${tokenListIndex}` frames currently on the stack —
-	 *  re-entering the same rule at the same input position is unbounded left recursion. */
-	private readonly activeFrames = new Set<string>();
+	/**
+	 * Persistent per-`(ruleIndex, tokenListIndex)` cache of follow positions — c3's `shortcutMap`.
+	 * It is BOTH the memoization table (a left-recursive grammar revisits the same subproblem on
+	 * every call path; without this it is exponential) AND the recursion guard: an in-progress or
+	 * completed `(rule, position)` is found here and returned without recomputing. Never cleared
+	 * during a walk — that persistence is what kills the blowup.
+	 */
+	private readonly shortcutMap = new Map<number, Map<number, RuleEndStatus>>();
 
 	constructor(
 		private readonly parser: Parser,
@@ -86,7 +103,7 @@ class CandidateWalk {
 
 	run(startRuleIndex: number): Candidates {
 		const startState = this.parser.atn.ruleToStartState[startRuleIndex];
-		if (startState) this.processRule(startState, 0);
+		if (startState) this.processRule(startState, 0, []);
 		return this.tokens;
 	}
 
@@ -94,14 +111,33 @@ class CandidateWalk {
 	 * Walk one rule's ATN starting at its `RuleStartState`. Returns the set of token-list indices
 	 * at which this rule can complete (its `RuleStopState` positions) — the caller resumes its own
 	 * walk at the rule's `followState` for each returned position. Mirrors c3's `processRule`.
+	 *
+	 * `callStack` is the chain of rules currently being processed (each with the input position it
+	 * started at). It is threaded down into sub-rules and used at the caret to detect that we are
+	 * inside a preferred rule.
 	 */
-	private processRule(startState: ATNState, tokenListIndex: number): Set<number> {
-		const result = new Set<number>();
-		// Cross-rule guard: if this exact (rule, position) frame is already on the stack we are in
-		// unbounded left recursion (A → … → A with no token consumed) — bail with no completions.
-		const frameKey = `${startState.ruleIndex}:${tokenListIndex}`;
-		if (this.activeFrames.has(frameKey)) return result;
-		this.activeFrames.add(frameKey);
+	private processRule(startState: ATNState, tokenListIndex: number, callStack: RuleStackEntry[]): RuleEndStatus {
+		const ruleIndex = startState.ruleIndex;
+
+		// shortcutMap lookup (memoization + recursion guard). A hit means this exact
+		// (rule, position) was already computed (or is in progress) — all of its candidate
+		// positions were collected into `this.tokens` during that first computation, so we just
+		// return the cached follow-set without recomputing or re-collecting.
+		let positionMap = this.shortcutMap.get(ruleIndex);
+		if (!positionMap) {
+			positionMap = new Map();
+			this.shortcutMap.set(ruleIndex, positionMap);
+		} else {
+			const cached = positionMap.get(tokenListIndex);
+			if (cached) return cached;
+		}
+
+		const result: RuleEndStatus = new Set<number>();
+		// Seed the cache BEFORE recursing so a re-entry of this same (rule, position) — left
+		// recursion — hits the (initially empty) cached set and bails instead of looping forever.
+		positionMap.set(tokenListIndex, result);
+
+		callStack.push({ ruleIndex, startTokenIndex: tokenListIndex });
 
 		// Within-rule guard: a `${stateNumber}:${tokenListIndex}` pair already processed on this
 		// frame is an epsilon cycle — skip it.
@@ -126,17 +162,11 @@ class CandidateWalk {
 
 			for (const transition of state.transitions) {
 				if (transition instanceof RuleTransition) {
-					const subRule = transition.ruleIndex;
-					// Entering a preferred (name) rule right at the caret: record the rule and do
-					// NOT descend — the name slot itself is the candidate (c3 behavior).
-					if (atCaret && this.preferredRules.has(subRule)) {
-						this.tokens.rules.add(subRule);
-						continue;
-					}
-					// Otherwise descend into the sub-rule, then resume at its followState for each
-					// position the sub-rule can complete at.
+					// Descend into the sub-rule, then resume at its followState for each position
+					// the sub-rule can complete at. The sub-rule's own start-state caret handling
+					// records a preferred rule via the call stack if it is one.
 					const subStart = transition.target as ATNState;
-					const ends = this.processRule(asRuleStart(subStart), idx);
+					const ends = this.processRule(asRuleStart(subStart), idx, callStack);
 					for (const endIdx of ends) {
 						pipeline.push({ state: transition.followState, tokenListIndex: endIdx });
 					}
@@ -151,7 +181,12 @@ class CandidateWalk {
 
 				// Terminal transition (Atom/Set/Range/NotSet/Wildcard).
 				if (atCaret) {
-					this.collectTerminal(transition);
+					// At the caret, before enumerating raw tokens, check whether the current call
+					// stack is inside a preferred (name/column) rule. If so, record that rule and
+					// suppress the tokens it subsumes — c3's `translateStackToRuleIndex` gate.
+					if (!this.translateStackToRuleIndex(callStack)) {
+						this.collectTerminal(transition);
+					}
 				} else {
 					const inputType = this.inputTypes[idx];
 					if (inputType !== undefined && this.transitionMatches(transition, inputType)) {
@@ -162,8 +197,26 @@ class CandidateWalk {
 			}
 		}
 
-		this.activeFrames.delete(frameKey);
+		callStack.pop();
 		return result;
+	}
+
+	/**
+	 * At the caret: if any rule currently on the call stack is a preferred rule, record the
+	 * OUTERMOST one (scan bottom-up, matching c3's default `translateRulesTopDown === false`) into
+	 * `this.tokens.rules` and return true so the caller suppresses the raw token candidates that
+	 * the preferred rule subsumes. Mirrors c3's `translateStackToRuleIndex`.
+	 */
+	private translateStackToRuleIndex(callStack: RuleStackEntry[]): boolean {
+		if (this.preferredRules.size === 0) return false;
+		for (let i = 0; i < callStack.length; i++) {
+			const ruleIndex = callStack[i]!.ruleIndex;
+			if (this.preferredRules.has(ruleIndex)) {
+				this.tokens.rules.add(ruleIndex);
+				return true;
+			}
+		}
+		return false;
 	}
 
 	/** Does a terminal transition admit `type` as the next input token? */

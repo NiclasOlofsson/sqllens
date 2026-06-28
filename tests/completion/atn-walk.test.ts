@@ -9,6 +9,7 @@ const FROM = DatabricksLexer.FROM; // 158
 const ASTERISK = DatabricksLexer.ASTERISK; // 447
 const ID_REF = DatabricksParser.RULE_identifierReference; // 82 — table/name reference (relationPrimary)
 const MULTIPART = DatabricksParser.RULE_multipartIdentifier; // 163
+const IDENT = DatabricksParser.RULE_identifier; // 251 — the column/name slot inside expressions
 
 /**
  * Caret token index = index in tokenStream.getTokens() of the first token whose
@@ -58,5 +59,30 @@ describe("collectCandidates — databricks ATN walk", () => {
 		const c = collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
 		expect(c.tokens).toBeInstanceOf(Set);
 		expect(c.rules).toBeInstanceOf(Set);
+	});
+
+	it("completes quickly on a long left-recursive expression (no exponential blowup)", () => {
+		// 25 terms of `a + a + … + a` exercise Spark's left-recursive valueExpression chain;
+		// without the persistent (rule, tokenIndex) cache this recomputes subproblems across
+		// every call path and takes ~60s. With the cache it is a few ms — 500ms is a generous
+		// ceiling that still fails hard against the blowup.
+		const sql = `SELECT ${Array(25).fill("a").join(" + ")} `;
+		const start = performance.now();
+		const c = candidatesAtEnd(sql);
+		const elapsed = performance.now() - start;
+		expect(c.rules).toBeInstanceOf(Set);
+		expect(elapsed).toBeLessThan(500);
+	});
+
+	it("offers a column/identifier rule in SELECT and WHERE expression positions", () => {
+		// The column/name slot here sits deep inside the left-recursive valueExpression chain
+		// (`primaryExpression > #columnReference: identifier`), not as a direct RuleTransition at
+		// the caret — the stack-walk preferred-rule detection must find it. In expression context
+		// the rule is `identifier` (251), NOT identifierReference (82, the FROM/relation reference);
+		// each position must offer a column/identifier preferred-rule index.
+		for (const sql of ["SELECT ", "SELECT a, ", "SELECT a FROM t WHERE "]) {
+			const c = candidatesAtEnd(sql);
+			expect(c.rules.has(IDENT) || c.rules.has(ID_REF) || c.rules.has(MULTIPART)).toBe(true);
+		}
 	});
 });
