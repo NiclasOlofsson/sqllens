@@ -9,12 +9,15 @@ import {
 } from "antlr4ng";
 import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `snowflake_file` (a semicolon-separated batch of statements). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
+	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
+	diagnostics: SyntaxDiagnostic[];
 }
 
 /**
@@ -28,30 +31,24 @@ export function parseSnowflake(sql: string): ParseResult {
 	const parser = new SnowflakeParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
-	attachErrorCounter(lexer, parser, listener);
+	const collector = makeErrorCollector();
+	attachErrorCounter(lexer, parser, collector.listener);
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		return { tree: parser.snowflake_file(), errors };
+		const tree = parser.snowflake_file();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		errors = 0;
-		attachErrorCounter(lexer, parser, listener);
-		return { tree: parser.snowflake_file(), errors };
+		collector.reset(); // discount anything the SLL attempt may have reported
+		attachErrorCounter(lexer, parser, collector.listener);
+		const tree = parser.snowflake_file();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	}
 }
 
