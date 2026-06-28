@@ -50,4 +50,46 @@ describe("loadDialectConfig", () => {
     expect(c.warnings.length).toBeGreaterThan(0);
     rmSync(empty, { recursive: true, force: true });
   });
+
+  it("malformed JSON: never throws, defaults databricks + a JSON warning", () => {
+    const bad = mkdtempSync(join(tmpdir(), "sqllens-badjson-"));
+    writeFileSync(join(bad, ".sqllens.json"), "{ this is not json");
+    const c = loadDialectConfig(bad); // a throw here fails the test
+    expect(c.dialectFor("x.sql")).toBe("databricks");
+    expect(c.warnings.some((w) => /valid JSON/i.test(w))).toBe(true);
+    rmSync(bad, { recursive: true, force: true });
+  });
+
+  it("bad schema file: never throws, schema undefined + a schema warning", () => {
+    const badSchema = mkdtempSync(join(tmpdir(), "sqllens-badschema-"));
+    writeFileSync(
+      join(badSchema, ".sqllens.json"),
+      JSON.stringify({ dialects: [{ files: "**/*.sql", dialect: "databricks" }], schema: "nope.json" }),
+    );
+    const c = loadDialectConfig(badSchema);
+    expect(c.schema).toBeUndefined();
+    expect(c.warnings.some((w) => /nope\.json/.test(w))).toBe(true);
+    rmSync(badSchema, { recursive: true, force: true });
+  });
+
+  it("unknown dialect in a rule: never throws, rule skipped, warning mentions it", () => {
+    const unk = mkdtempSync(join(tmpdir(), "sqllens-unkdialect-"));
+    writeFileSync(
+      join(unk, ".sqllens.json"),
+      JSON.stringify({ dialects: [{ files: "**/*.sql", dialect: "oracle" }] }),
+    );
+    const c = loadDialectConfig(unk);
+    expect(c.dialectFor("x.sql")).toBe("databricks"); // bad rule skipped → default
+    expect(c.warnings.some((w) => /oracle/.test(w))).toBe(true);
+    rmSync(unk, { recursive: true, force: true });
+  });
+
+  it("unknown default: never throws, falls back to databricks + a warning", () => {
+    const unkDef = mkdtempSync(join(tmpdir(), "sqllens-unkdefault-"));
+    writeFileSync(join(unkDef, ".sqllens.json"), JSON.stringify({ default: "oracle" }));
+    const c = loadDialectConfig(unkDef);
+    expect(c.dialectFor("x.sql")).toBe("databricks");
+    expect(c.warnings.some((w) => /oracle/.test(w))).toBe(true);
+    rmSync(unkDef, { recursive: true, force: true });
+  });
 });
