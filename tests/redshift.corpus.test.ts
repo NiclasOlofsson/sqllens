@@ -24,8 +24,8 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 //    platform DDL is cleared Out (CLAUDE.md). Regex bucketing (sql-kind.ts) until Redshift lower()
 //    exposes parse-derived statement kinds — same as Snowflake/Databricks.
 
-const VENDOR_EXAMPLES = corpusPath("vendor/bytebase-parser/redshift/examples");
-const DOCS_CORPUS = corpusPath("harness/local/redshift-docs");
+const VENDOR_EXAMPLES = corpusPath("redshift/bytebase");
+const DOCS_CORPUS = corpusPath("redshift/docs");
 
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it

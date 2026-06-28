@@ -7,7 +7,7 @@ import { DatabricksLexer } from "../src/generated/databricks/DatabricksLexer.js"
 import { DatabricksParser } from "../src/generated/databricks/DatabricksParser.js";
 
 // Real, proprietary corpus copied locally (gitignored). See harness/local/.
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 function parse(sql: string): { errors: number; first?: string; tree: ParseTree } {
 	const lexer = new DatabricksLexer(CharStream.fromString(sql));

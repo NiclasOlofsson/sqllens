@@ -8,7 +8,7 @@ import { parseDatabricks } from "../src/databricks/parse.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 function origins(sql: string, output: string, schema = new Schema({})): string[] {
 	const tree = resolveScopes(lower(parseDatabricks(sql).tree));

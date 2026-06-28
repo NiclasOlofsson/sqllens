@@ -12,7 +12,7 @@ function symbolsOf(sql: string) {
 	return deriveSymbols(resolveScopes(lower(parseDatabricks(sql).tree)));
 }
 
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 describe("deriveSymbols — relations", () => {
 	it("emits a table source as a relation reference", () => {

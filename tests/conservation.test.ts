@@ -117,7 +117,7 @@ describe("CST <-> IR clause conservation", () => {
 	});
 });
 
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 describe.skipIf(!existsSync(CORPUS))("CST <-> IR conservation over the Oatly corpus", () => {
 	it("the IR drops no clause the CST contains, across all 1558 models", () => {

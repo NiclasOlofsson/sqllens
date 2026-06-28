@@ -15,7 +15,16 @@ import { resolveScopes } from "../src/scope/scope.js";
 // types/lineage, and the broad pass is a ratchet (harvest covers only referenced columns, so a query
 // using a real-but-unharvested column legitimately shows "unknown" — the floor tracks coverage, not 100%).
 const SCHEMA_JSON = corpusPath("harness/local/googlesql-schema.json");
-const POS = corpusPath("harness/local/bigquery-zetasql/positive");
+const POS = corpusPath("bigquery/zetasql/analyzer/positive");
+// post-reorg the positives live under <category>/ subdirs, so walk recursively for full paths.
+function* sqlFiles(dir: string): Generator<string> {
+	if (!existsSync(dir)) return;
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, e.name);
+		if (e.isDirectory()) yield* sqlFiles(p);
+		else if (e.name.endsWith(".sql")) yield p;
+	}
+}
 const BROAD_SAMPLE = 3000; // bound the corpus pass for speed
 
 // Floor for the broad ratchet — measured 2026-06-14. Raise as harvest coverage / the resolver improve.
@@ -49,13 +58,11 @@ describe.skipIf(!existsSync(SCHEMA_JSON))("BigQuery resolver vs harvested Google
 		"agrees with the catalog across the corpus (ratchet; no throws)",
 		{ timeout: 600000 },
 		() => {
-			const files = readdirSync(POS)
-				.filter((f) => f.endsWith(".sql"))
-				.slice(0, BROAD_SAMPLE);
+			const files = [...sqlFiles(POS)].slice(0, BROAD_SAMPLE);
 			let fullyResolved = 0;
 			const threw: string[] = [];
 			for (const f of files) {
-				const sql = readFileSync(join(POS, f), "utf8");
+				const sql = readFileSync(f, "utf8");
 				try {
 					const d = diagsFor(sql);
 					// "fully resolved against the catalog" = parsed + zero unknown-table/column/field diagnostics.

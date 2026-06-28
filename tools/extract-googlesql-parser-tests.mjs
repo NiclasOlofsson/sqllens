@@ -35,7 +35,7 @@ const MAX_VARIANTS = 8; // cap `{{a|b|…}}` expansion per block (matches the an
 if (!existsSync(SRC)) {
 	console.error(
 		`missing ${SRC} — add it to the sparse clone first:\n` +
-			`  git -C vendor/googlesql sparse-checkout add googlesql/parser/testdata`,
+			`  git -C "$SQL_CORPUS_DIR/vendor/googlesql" sparse-checkout add googlesql/parser/testdata`,
 	);
 	process.exit(1);
 }

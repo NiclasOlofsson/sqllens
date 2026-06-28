@@ -160,7 +160,7 @@ function walkBody(body: QueryBody, acc: Stats): void {
 // it gates the grammar. lower + resolveScopes must run over every compiled model
 // without throwing. (Correctness of the IR shape is covered by the unit tests; this
 // is the stability + coverage signal at scale.) Skips when the corpus is absent.
-const CORPUS = corpusPath("harness/local/databricks");
+const CORPUS = corpusPath("databricks/oatly");
 
 function clusterKey(msg: string): string {
 	return msg
