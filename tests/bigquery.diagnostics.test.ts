@@ -21,4 +21,17 @@ describe("parseBigQuery diagnostics", () => {
     const r = parseBigQuery("SELECT FROM");
     expect(r.errors).toBeGreaterThanOrEqual(r.diagnostics.length);
   });
+
+  it("keeps the lexer diagnostic across the SLL->LL fallback", () => {
+    // U+0001 is a lexer-level token-recognition error, and this shape also bails SLL and forces
+    // the LL retry. The lexer runs once eagerly (dotPathTokenSource); the LL retry reseeks the
+    // buffered token source and never re-lexes, so the lexer diagnostic must survive the
+    // collector.reset() done before the retry. Guards the snapshot/re-push refinement: without it
+    // the lexer diagnostic is dropped from both `diagnostics` and the `errors` total on the LL path.
+    const r = parseBigQuery(`SELECT a, ${String.fromCharCode(1)} b FROM`);
+    expect(r.errors).toBeGreaterThanOrEqual(1);
+    expect(r.diagnostics.some((d) => /token recognition/i.test(d.message))).toBe(true);
+    expect(r.diagnostics[0].line).toBe(1);
+    expect(r.errors).toBeGreaterThanOrEqual(r.diagnostics.length);
+  });
 });

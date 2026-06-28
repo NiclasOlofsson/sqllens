@@ -36,6 +36,10 @@ export function parseBigQuery(sql: string): ParseResult {
 	const { source, escapeErrors } = dotPathTokenSource(sql, lexer);
 	const tokens = new CommonTokenStream(source);
 	const lexExtras = escapeErrors; // positionless extras folded into `errors` only
+	// The lexer runs once eagerly above; the SLL→LL retry reseeks the buffered token source and never
+	// re-lexes, so lexer diagnostics are NOT re-emitted on the LL path. Snapshot them now so they can
+	// be re-pushed after the retry's collector.reset() (which clears everything — parser AND lexer).
+	const lexDiags = [...collector.diagnostics];
 
 	const parser = new GoogleSQLParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
@@ -54,7 +58,8 @@ export function parseBigQuery(sql: string): ParseResult {
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		collector.reset(); // discount the SLL attempt's parser diagnostics; lexer ones are already buffered-source stable
+		collector.reset(); // discount the SLL attempt's parser diagnostics
+		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		parser.removeErrorListeners();
 		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
