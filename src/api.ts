@@ -37,13 +37,14 @@ import {
 	type Origin,
 } from "./lineage/lineage.js";
 import { deriveSymbols as deriveSymbolsScopes, type Sym } from "./symbols/symbols.js";
+import type { Token } from "./token/token.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
  *  parse+lower pair; everything after lower() runs unchanged on all five. */
 export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
 
 interface DialectFns {
-	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[] };
+	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[]; tokens: Token[] };
 	lower(tree: ParserRuleContext): QueryExpr;
 }
 
@@ -69,6 +70,9 @@ export interface ParseResultIR {
 	diagnostics: SyntaxDiagnostic[];
 	/** The raw antlr CST root — the escape hatch for tokens/exact spans. */
 	cst: ParserRuleContext;
+	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans —
+	 *  the always-available token stream for editor features, present even when `errors > 0`. */
+	tokens: Token[];
 }
 
 /**
@@ -79,9 +83,9 @@ export interface ParseResultIR {
  */
 export function parse(sql: string, dialect: Dialect): ParseResultIR {
 	const fns = DIALECTS[dialect];
-	const { tree, errors, diagnostics } = fns.parse(sql);
+	const { tree, errors, diagnostics, tokens } = fns.parse(sql);
 	// lower() already freezes the IR — it is immutable from here on.
-	return { ast: fns.lower(tree), errors, diagnostics, cst: tree };
+	return { ast: fns.lower(tree), errors, diagnostics, cst: tree, tokens };
 }
 
 export interface Analysis {
@@ -209,3 +213,9 @@ export class Lineage {
 // Re-export the single-expression origin walk under its building-block name (distinct from the
 // Lineage wrapper) so consumers can trace one expression without a full query lineage.
 export { exprOriginsOf as originsOfExpr };
+
+// The token-stream front end: the always-available lexer-only token list (tokenize) plus the
+// neutral token types. parse() now carries the same tokens on its result; tokenize() serves the
+// broken-input case where no parse is wanted.
+export { tokenize } from "./token/tokenize.js";
+export type { Token, TokenRole } from "./token/token.js";

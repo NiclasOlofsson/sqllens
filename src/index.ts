@@ -22,10 +22,13 @@ export {
 	TypeInfo,
 	Lineage,
 	originsOfExpr,
+	tokenize,
 	type Dialect,
 	type DialectOpts,
 	type ParseResultIR,
 	type Analysis,
+	type Token,
+	type TokenRole,
 } from "./api.js";
 
 // --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---

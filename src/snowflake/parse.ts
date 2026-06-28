@@ -10,6 +10,8 @@ import {
 import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { mapTokens } from "../token/map.js";
+import type { Token } from "../token/token.js";
 
 export interface ParseResult {
 	/** The CST rooted at `snowflake_file` (a semicolon-separated batch of statements). */
@@ -18,6 +20,8 @@ export interface ParseResult {
 	errors: number;
 	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
 	diagnostics: SyntaxDiagnostic[];
+	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans. */
+	tokens: Token[];
 }
 
 /**
@@ -39,13 +43,15 @@ export function parseSnowflake(sql: string): ParseResult {
 	// collector.reset(), which clears parser AND lexer diagnostics.
 	tokens.fill();
 	const lexDiags = [...collector.diagnostics];
+	// The token list is stable once filled — the SLL→LL retry reseeks the same buffer, never re-lexes.
+	const tokenList = mapTokens(lexer, tokens.getTokens(), "snowflake");
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.snowflake_file();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -55,7 +61,7 @@ export function parseSnowflake(sql: string): ParseResult {
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
 		const tree = parser.snowflake_file();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	}
 }
 
