@@ -147,3 +147,20 @@ function stripComment(type: string): string {
 function unquote(name: string): string {
 	return name.startsWith("`") && name.endsWith("`") ? name.slice(1, -1).toLowerCase() : name.toLowerCase();
 }
+
+/** Render a Type as a display string (scalar name, array<…>, map<…,…>, struct<f:…>, unknown).
+ *  Pure formatting — used by the LSP hover feature so the adapter never walks the Type union. */
+export function formatType(t: Type): string {
+	switch (t.kind) {
+		case "scalar":
+			return t.name;
+		case "array":
+			return `array<${formatType(t.element)}>`;
+		case "map":
+			return `map<${formatType(t.key)},${formatType(t.value)}>`;
+		case "struct":
+			return `struct<${t.fields.map((f) => `${f.name}:${formatType(f.type)}`).join(",")}>`;
+		case "unknown":
+			return "unknown";
+	}
+}
