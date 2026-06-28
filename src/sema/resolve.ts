@@ -4,6 +4,7 @@ import {
 	applyStarModifiers,
 	applyUnpivotCols,
 	mergeByName,
+	pivotSourceOutputs,
 	splitColumnRefInScope,
 	type ResolvedSource,
 	type Scope,
@@ -63,6 +64,10 @@ export function columnNamesOf(
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);
 	if (src.kind === "relation") return outputNames(src.scope, schema, visited); // a prior pipe stage
 	if (src.kind === "graphtable") return outputNames(src.scope, schema, visited);
+	if (src.kind === "pivot") {
+		const r = pivotSourceOutputs(src, (s) => columnNamesOf(s, schema, visited) ?? "unknown");
+		return r === "unknown" ? undefined : r;
+	}
 	return src.source.columns; // lateral
 }
 

@@ -550,13 +550,13 @@ function unpivotInfoOf(pipeUnpivot: ParserRuleContext): UnpivotInfo {
 function extractFromPivot(fromContents: ParserRuleContext): PivotInfo | undefined {
 	const pc = shallowNodesOfRule(fromContents, P.RULE_pivot_clause)[0];
 	if (!pc || !(pc.parent instanceof ParserRuleContext)) return undefined;
-	return { ...pivotInfoOf(pc.parent), alias: undefined };
+	return pivotInfoOf(pc.parent); // keeps the `AS p` result alias when present (aliased-pivot path)
 }
 
 function extractFromUnpivot(fromContents: ParserRuleContext): UnpivotInfo | undefined {
 	const uc = shallowNodesOfRule(fromContents, P.RULE_unpivot_clause)[0];
 	if (!uc || !(uc.parent instanceof ParserRuleContext)) return undefined;
-	return { ...unpivotInfoOf(uc.parent), alias: undefined };
+	return unpivotInfoOf(uc.parent);
 }
 
 /** Lower one pipe_operator to its faithful PipeStage. Every GoogleSQL pipe operator is handled. */
