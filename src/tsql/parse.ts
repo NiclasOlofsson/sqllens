@@ -9,12 +9,15 @@ import {
 } from "antlr4ng";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { TSqlParser } from "../generated/tsql/TSqlParser.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 export interface ParseResult {
 	/** The CST rooted at `tsql_file` (`batch* EOF` — the full statement range). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
+	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
+	diagnostics: SyntaxDiagnostic[];
 }
 
 /**
@@ -30,30 +33,26 @@ export function parseTSql(sql: string): ParseResult {
 	const parser = new TSqlParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 
-	let errors = 0;
-	const listener = {
-		syntaxError() {
-			errors++;
-		},
-		reportAmbiguity() {},
-		reportAttemptingFullContext() {},
-		reportContextSensitivity() {},
-	};
-	attachErrorCounter(lexer, parser, listener);
+	const collector = makeErrorCollector();
+	attachErrorCounter(lexer, parser, collector.listener);
 
+	// Stage 1: SLL, bail on the first error (no recovery, no listener noise).
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		return { tree: parser.tsql_file(), errors };
+		const tree = parser.tsql_file();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	} catch {
+		// Stage 2: full LL with the normal error strategy (reports + recovers).
 		tokens.seek(0);
 		parser.reset();
 		parser.errorHandler = defaultErrorHandler;
 		sim.predictionMode = PredictionMode.LL;
-		errors = 0;
-		attachErrorCounter(lexer, parser, listener);
-		return { tree: parser.tsql_file(), errors };
+		collector.reset(); // discount anything the SLL attempt may have reported
+		attachErrorCounter(lexer, parser, collector.listener);
+		const tree = parser.tsql_file();
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
 	}
 }
 
