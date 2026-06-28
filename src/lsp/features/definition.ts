@@ -1,7 +1,7 @@
 import type { Location, Position } from "vscode-languageserver-types";
 import { deriveSymbols, type Dialect } from "../../api.js";
 import type { Span, Sym } from "../../symbols/symbols.js";
-import { rangeFromSpan } from "../ranges.js";
+import { rangeFromSpan, positionToOffset } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Go-to-definition: reuse the library's symbol model. deriveSymbols already
@@ -29,28 +29,15 @@ export function computeDefinition(
   return { uri, range: rangeFromSpan(best.definition) };
 }
 
-/** 0-based char offset of an LSP position into `text`. */
-function offsetOf(text: string, position: Position): number {
-  let line = 0;
-  let off = 0;
-  while (line < position.line && off < text.length) {
-    const nl = text.indexOf("\n", off);
-    if (nl === -1) break;
-    off = nl + 1;
-    line++;
-  }
-  return off + position.character;
-}
-
 /** Char offset of a span's start: line is 1-based, column 0-based. */
 function spanStartOffset(text: string, span: Span): number {
-  return offsetOf(text, { line: span.line - 1, character: span.column });
+  return positionToOffset(text, { line: span.line - 1, character: span.column });
 }
 function spanEndOffset(text: string, span: Span): number {
-  return offsetOf(text, { line: span.endLine - 1, character: span.endColumn });
+  return positionToOffset(text, { line: span.endLine - 1, character: span.endColumn });
 }
 function spanCoversCursor(text: string, span: Span, position: Position): boolean {
-  const cur = offsetOf(text, position);
+  const cur = positionToOffset(text, position);
   return spanStartOffset(text, span) <= cur && cur <= spanEndOffset(text, span);
 }
 function spanLength(text: string, span: Span): number {
