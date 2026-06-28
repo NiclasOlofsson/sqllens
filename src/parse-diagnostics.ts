@@ -15,54 +15,54 @@ import type { Token } from "antlr4ng";
 // ---------------------------------------------------------------------------
 
 export interface SyntaxDiagnostic {
-  /** The parser's human-readable message (e.g. "mismatched input 'WHERE'"). */
-  message: string;
-  /** 1-based line of the offending token. */
-  line: number;
-  /** 0-based column of the offending token. */
-  column: number;
-  /** 0-based char offset of the offending token start; absent for lexer errors. */
-  offset?: number;
-  /** Offending token text length; 1 when unknown (lexer error / no token). */
-  length: number;
+	/** The parser's human-readable message (e.g. "mismatched input 'WHERE'"). */
+	message: string;
+	/** 1-based line of the offending token. */
+	line: number;
+	/** 0-based column of the offending token. */
+	column: number;
+	/** 0-based char offset of the offending token start; absent for lexer errors. */
+	offset?: number;
+	/** Offending token text length; 1 when unknown (lexer error / no token). */
+	length: number;
 }
 
 export interface ErrorCollector {
-  /** Attach to both the lexer and the parser via addErrorListener. */
-  listener: object;
-  /** Captured diagnostics, in report order. */
-  readonly diagnostics: SyntaxDiagnostic[];
-  /** Clear captured diagnostics — called before the LL retry to discount the SLL attempt. */
-  reset(): void;
+	/** Attach to both the lexer and the parser via addErrorListener. */
+	listener: object;
+	/** Captured diagnostics, in report order. */
+	readonly diagnostics: SyntaxDiagnostic[];
+	/** Clear captured diagnostics — called before the LL retry to discount the SLL attempt. */
+	reset(): void;
 }
 
 export function makeErrorCollector(): ErrorCollector {
-  const diagnostics: SyntaxDiagnostic[] = [];
-  const listener = {
-    syntaxError(
-      _recognizer: unknown,
-      offendingSymbol: Token | null,
-      line: number,
-      charPositionInLine: number,
-      msg: string,
-    ): void {
-      diagnostics.push({
-        message: msg,
-        line,
-        column: charPositionInLine,
-        offset: offendingSymbol?.start,
-        length: offendingSymbol?.text?.length ?? 1,
-      });
-    },
-    reportAmbiguity(): void {},
-    reportAttemptingFullContext(): void {},
-    reportContextSensitivity(): void {},
-  };
-  return {
-    listener,
-    diagnostics,
-    reset(): void {
-      diagnostics.length = 0;
-    },
-  };
+	const diagnostics: SyntaxDiagnostic[] = [];
+	const listener = {
+		syntaxError(
+			_recognizer: unknown,
+			offendingSymbol: Token | null,
+			line: number,
+			charPositionInLine: number,
+			msg: string,
+		): void {
+			diagnostics.push({
+				message: msg,
+				line,
+				column: charPositionInLine,
+				offset: offendingSymbol?.start,
+				length: offendingSymbol?.text?.length ?? 1,
+			});
+		},
+		reportAmbiguity(): void {},
+		reportAttemptingFullContext(): void {},
+		reportContextSensitivity(): void {},
+	};
+	return {
+		listener,
+		diagnostics,
+		reset(): void {
+			diagnostics.length = 0;
+		},
+	};
 }
