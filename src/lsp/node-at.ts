@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { Expr, PipeStage, Projection, SelectExpr } from "../ir/ir.js";
+import type { Expr, PipeStage, Projection, QueryBody, QueryExpr, SelectExpr } from "../ir/ir.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
 
 // ---------------------------------------------------------------------------
@@ -34,7 +34,7 @@ function span(cst: ParserRuleContext): number {
 	return r ? r.to - r.from : Number.MAX_SAFE_INTEGER;
 }
 
-export function nodeAt(tree: ScopeTree, offset: number): NodeHit | undefined {
+export function nodeAt(tree: ScopeTree, offset: number, ast?: QueryExpr): NodeHit | undefined {
 	let best: NodeHit | undefined;
 	const consider = (expr: Expr, scope: Scope): void => {
 		if (!covers(expr.cst, offset)) return;
@@ -49,7 +49,55 @@ export function nodeAt(tree: ScopeTree, offset: number): NodeHit | undefined {
 		for (const child of scope.children) walkScope(child);
 	};
 	walkScope(tree.root);
+
+	// QueryExpr.orderBy / limit exprs live on QueryExpr, not in any Scope.body (a QueryBody),
+	// so the scope-body walk above can't reach them. When the AST is supplied, attribute each
+	// QueryExpr's orderBy + limit exprs to its owning scope (matched by body object identity) and
+	// run them through the same smallest-covering machinery. Additive — the walk above is unchanged.
+	if (ast) {
+		const bodyToScope = new Map<QueryBody, Scope>();
+		const indexScopes = (scope: Scope): void => {
+			bodyToScope.set(scope.body, scope);
+			for (const child of scope.children) indexScopes(child);
+		};
+		indexScopes(tree.root);
+		for (const qe of allQueryExprs(ast)) {
+			const scope = bodyToScope.get(qe.body) ?? tree.root;
+			for (const e of qe.orderBy ?? []) walkExpr(e, scope);
+			const lim = qe.limit;
+			if (lim) for (const e of [lim.top, lim.offset, lim.fetch]) if (e) walkExpr(e, scope);
+		}
+	}
 	return best;
+}
+
+/** Every QueryExpr reachable in the IR (the AST and its nested query blocks). */
+function allQueryExprs(root: QueryExpr): QueryExpr[] {
+	const out: QueryExpr[] = [];
+	const visitQuery = (qe: QueryExpr): void => {
+		out.push(qe);
+		for (const cte of qe.ctes) visitQuery(cte.body);
+		visitBody(qe.body);
+	};
+	const visitBody = (body: QueryBody): void => {
+		if (body.kind === "select") {
+			for (const s of body.from) if (s.kind === "subquery") visitQuery(s.query);
+			for (const sub of body.subqueries ?? []) visitQuery(sub);
+		} else if (body.kind === "setop") {
+			visitBody(body.left);
+			visitBody(body.right);
+		} else {
+			// pipe
+			visitBody(body.input);
+			for (const stage of body.stages) {
+				if (stage.op === "setop") for (const q of stage.operands) visitQuery(q);
+				if (stage.op === "recursiveUnion") visitQuery(stage.operand);
+				if (stage.op === "with") for (const cte of stage.ctes) visitQuery(cte.body);
+			}
+		}
+	};
+	visitQuery(root);
+	return out;
 }
 
 /** Sub-expressions reachable WITHOUT crossing a scope boundary (no subquery/exists descent). */

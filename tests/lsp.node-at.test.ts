@@ -7,6 +7,11 @@ function scopesFor(sql: string) {
 	return resolveScopes(parse(sql, "databricks").ast, "databricks");
 }
 
+function astAndScopes(sql: string) {
+	const ast = parse(sql, "databricks").ast;
+	return { ast, tree: resolveScopes(ast, "databricks") };
+}
+
 describe("nodeAt", () => {
 	it("finds the column expression under the cursor", () => {
 		const sql = "SELECT amount + 1 FROM sales";
@@ -51,6 +56,34 @@ describe("nodeAt", () => {
 		const hit = nodeAt(tree, sql.indexOf("b AS"))!;
 		expect(hit.expr.kind).toBe("column");
 		// owning scope is the subquery, not the root
+		expect(hit.scope).not.toBe(tree.root);
+	});
+
+	it("reaches a top-level ORDER BY column (when given the ast)", () => {
+		const sql = "SELECT a FROM t ORDER BY a";
+		const { ast, tree } = astAndScopes(sql);
+		// the trailing 'a' (the ORDER BY key), not the projection 'a'
+		const off = sql.lastIndexOf("a");
+		const hit = nodeAt(tree, off, ast)!;
+		expect(hit.expr.kind).toBe("column");
+		expect((hit.expr as any).parts).toEqual(["a"]);
+	});
+
+	it("reaches column and function inside ORDER BY upper(x)", () => {
+		const sql = "SELECT x FROM t ORDER BY upper(x)";
+		const { ast, tree } = astAndScopes(sql);
+		const onArg = nodeAt(tree, sql.lastIndexOf("x"), ast)!;
+		expect(onArg.expr.kind).toBe("column");
+		expect((onArg.expr as any).parts).toEqual(["x"]);
+		const onFn = nodeAt(tree, sql.indexOf("upper"), ast)!;
+		expect(onFn.expr.kind).toBe("function");
+	});
+
+	it("resolves a subquery's own ORDER BY to the subquery scope", () => {
+		const sql = "SELECT * FROM (SELECT b FROM t ORDER BY b) s";
+		const { ast, tree } = astAndScopes(sql);
+		const hit = nodeAt(tree, sql.lastIndexOf("b"), ast)!;
+		expect(hit.expr.kind).toBe("column");
 		expect(hit.scope).not.toBe(tree.root);
 	});
 });
