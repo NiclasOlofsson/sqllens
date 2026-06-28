@@ -23,9 +23,9 @@ function positionFromStopToken(t: Token): Position {
 /** CST node → LSP Range, from its first token's start to its last token's end. */
 export function rangeFromCst(cst: ParserRuleContext): Range {
   const start = cst.start;
-  const stop = cst.stop ?? cst.start;
   if (!start) return { start: { line: 0, character: 0 }, end: { line: 0, character: 0 } };
-  return { start: positionFromStartToken(start), end: positionFromStopToken(stop ?? start) };
+  const stop = cst.stop ?? start;
+  return { start: positionFromStartToken(start), end: positionFromStopToken(stop) };
 }
 
 /** A symbols `Span` (1-based line, 0-based column, endColumn already past the last char) → Range. */
