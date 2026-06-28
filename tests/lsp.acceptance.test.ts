@@ -30,6 +30,7 @@ import {
   DocumentSymbolRequest,
   SemanticTokensRequest,
   CompletionRequest,
+  SignatureHelpRequest,
   PublishDiagnosticsNotification,
   type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -346,5 +347,20 @@ describe("LSP acceptance", () => {
     const labels = (list as { label: string }[]).map((c) => c.label);
     expect(labels).toContain("amount");
     expect(labels).toContain("id");
+  });
+
+  it("signature help shows the active parameter inside a curated call's parens", async () => {
+    // Mid-typing the 2nd arg of date_add: caret just after the comma. The signature provider names
+    // date_add and reports activeParameter 1 (the comma at the call's depth advanced the index).
+    const text = "SELECT date_add(x, ";
+    const uri = open("sig.sql", text);
+    const help = await client.sendRequest(SignatureHelpRequest.type, {
+      textDocument: { uri },
+      position: { line: 0, character: text.length },
+    });
+    expect(help).not.toBeNull();
+    const h = help as any;
+    expect(h.activeParameter).toBe(1);
+    expect(h.signatures[0].label).toContain("date_add");
   });
 });

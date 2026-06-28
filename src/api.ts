@@ -230,3 +230,9 @@ export { LineIndex } from "./document/line-index.js";
 // Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
 // tables/columns + function names at the caret). Total: never throws.
 export { complete, type Completion } from "./completion/complete.js";
+
+// Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
+// while typing inside a call's parens, from a curated per-dialect signature table (name-only
+// fallback for the long tail). A pure token scan; total: never throws.
+export { signatureAt, type SignatureInfo } from "./signature/signature.js";
+export { FUNCTION_SIGNATURES, type FnSignature, type ParamSig } from "./signature/signatures.js";
