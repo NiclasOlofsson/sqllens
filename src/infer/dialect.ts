@@ -2,6 +2,7 @@ import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType } from ".
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
+import { REDSHIFT_FUNCTION_RETURNS, redshiftParseType } from "./redshift.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -49,7 +50,14 @@ const bigquery: InferDialect = {
 	division: "float", // BigQuery: INT64 / INT64 → FLOAT64
 };
 
-const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery };
+const redshift: InferDialect = {
+	functions: REDSHIFT_FUNCTION_RETURNS,
+	literal: databricksLiteral,
+	parseType: redshiftParseType,
+	division: "integer", // Redshift: INT4 / INT4 → INT4 (truncates) — AWS r_numeric_computations201
+};
+
+const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery, redshift };
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */
 export function inferDialect(name: string | undefined): InferDialect {
