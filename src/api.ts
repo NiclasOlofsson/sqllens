@@ -226,3 +226,7 @@ export type { Token, TokenRole } from "./token/token.js";
 // these at call time, never at module-eval time.
 export { SqlDocument, type DocumentAnalysis } from "./document/document.js";
 export { LineIndex } from "./document/line-index.js";
+
+// Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
+// tables/columns + function names at the caret). Total: never throws.
+export { complete, type Completion } from "./completion/complete.js";

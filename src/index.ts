@@ -25,6 +25,8 @@ export {
 	tokenize,
 	SqlDocument,
 	LineIndex,
+	complete,
+	type Completion,
 	type Dialect,
 	type DialectOpts,
 	type ParseResultIR,

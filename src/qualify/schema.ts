@@ -31,6 +31,12 @@ export class Schema {
 		return this.byPath.get(full) ?? this.byTable.get(normalizeName(parts[parts.length - 1] ?? ""));
 	}
 
+	/** The bare names of every table in the catalog — the table-name candidate list for completion.
+	 *  (Names are the normalized last path part; a fully-qualified path resolves via columnsFor.) */
+	tables(): string[] {
+		return [...this.byTable.keys()];
+	}
+
 	private ingest(node: SchemaMapping, path: string[]): void {
 		const entries = Object.entries(node);
 		// A table node: every value is a column type (string).
