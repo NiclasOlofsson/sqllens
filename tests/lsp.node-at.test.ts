@@ -86,4 +86,16 @@ describe("nodeAt", () => {
 		expect(hit.expr.kind).toBe("column");
 		expect(hit.scope).not.toBe(tree.root);
 	});
+
+	it("reaches the ORDER BY inside a pipe JOIN subquery source", () => {
+		const sql = "FROM t |> JOIN (SELECT a FROM u ORDER BY a) v ON t.id = v.a";
+		const { ast, tree } = astAndScopes(sql);
+		expect(parse(sql, "databricks").errors).toBe(0); // shape parses cleanly
+		const off = sql.indexOf("ORDER BY a") + "ORDER BY ".length; // the inner ORDER BY key
+		const hit = nodeAt(tree, off, ast)!;
+		expect(hit.expr.kind).toBe("column");
+		expect((hit.expr as any).parts).toEqual(["a"]);
+		// owned by the JOIN subquery's scope, not the root pipe
+		expect(hit.scope).not.toBe(tree.root);
+	});
 });

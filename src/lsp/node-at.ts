@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { Expr, PipeStage, Projection, QueryBody, QueryExpr, SelectExpr } from "../ir/ir.js";
+import type { Expr, PipeStage, Projection, QueryBody, QueryExpr, SelectExpr, Source } from "../ir/ir.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
 
 // ---------------------------------------------------------------------------
@@ -79,9 +79,23 @@ function allQueryExprs(root: QueryExpr): QueryExpr[] {
 		for (const cte of qe.ctes) visitQuery(cte.body);
 		visitBody(qe.body);
 	};
+	const visitSource = (source: Source): void => {
+		if (source.kind === "subquery") visitQuery(source.query);
+	};
+	// One pipe stage's directly-carried QueryExprs + nested sub-pipelines (if/fork/tee/log).
+	const visitStage = (stage: PipeStage): void => {
+		if (stage.op === "setop") for (const q of stage.operands) visitQuery(q);
+		if (stage.op === "recursiveUnion") visitQuery(stage.operand);
+		if (stage.op === "with") for (const cte of stage.ctes) visitQuery(cte.body);
+		if (stage.op === "join") visitSource(stage.source);
+		if (stage.op === "if") for (const arm of stage.arms) for (const s of arm.pipeline) visitStage(s);
+		if (stage.op === "fork" || stage.op === "tee")
+			for (const branch of stage.branches) for (const s of branch) visitStage(s);
+		if (stage.op === "log" && stage.pipeline) for (const s of stage.pipeline) visitStage(s);
+	};
 	const visitBody = (body: QueryBody): void => {
 		if (body.kind === "select") {
-			for (const s of body.from) if (s.kind === "subquery") visitQuery(s.query);
+			for (const s of body.from) visitSource(s);
 			for (const sub of body.subqueries ?? []) visitQuery(sub);
 		} else if (body.kind === "setop") {
 			visitBody(body.left);
@@ -89,11 +103,7 @@ function allQueryExprs(root: QueryExpr): QueryExpr[] {
 		} else {
 			// pipe
 			visitBody(body.input);
-			for (const stage of body.stages) {
-				if (stage.op === "setop") for (const q of stage.operands) visitQuery(q);
-				if (stage.op === "recursiveUnion") visitQuery(stage.operand);
-				if (stage.op === "with") for (const cte of stage.ctes) visitQuery(cte.body);
-			}
+			for (const stage of body.stages) visitStage(stage);
 		}
 	};
 	visitQuery(root);
