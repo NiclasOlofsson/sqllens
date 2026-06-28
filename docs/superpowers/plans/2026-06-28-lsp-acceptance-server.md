@@ -1109,7 +1109,106 @@ git add src/bigquery/literal-escapes.ts src/bigquery/post-validate.ts src/bigque
 git commit -m "feat(bigquery): position escape + post-parse syntax errors (#6)"
 ```
 
-> **▶ CHECKPOINT (harness):** Phase A complete (all five dialects positioned, BigQuery included). Stop, present the diff, and wait for Niclas's sign-off before Phase B.
+### Task A8: Semantic diagnostics carry a full positioned span
+
+**Files:**
+- Modify: `src/qualify/qualify.ts` (the `Diagnostic` interface + the two builders)
+- Modify: `src/index.ts` (the `Diagnostic` type is already re-exported — no change unless the shape export needs it; verify)
+- Test: `tests/qualify.diagnostics-span.test.ts` (new)
+
+**Why (Niclas, 2026-06-28):** Position drives everything; a 1-char squiggle on a multi-char identifier is a half-position. `qualify`'s `Diagnostic` carries only `line`/`column` (a point). Both builders (`columnDiag`, `unknownTable`) already hold the offending node's full CST (`ref.cst`, `src.source.cst`) — they just read `.start`. Give the diagnostic a full span (`endLine`/`endColumn`) so the LSP squiggles the whole offending table/column/field. This is a fix, not a gap.
+
+**Interfaces:**
+- `Diagnostic` (in `src/qualify/qualify.ts`) gains `endLine: number` and `endColumn: number` (same convention as the symbols `Span`: 1-based line, 0-based column, `endColumn` one past the last char). Existing `line`/`column` keep their meaning (the start). Additive — existing consumers/tests still compile.
+- Both `columnDiag(kind, ref, message)` and `unknownTable(name, cst)` compute the end from the node's `stop` token: `endLine = stop.line`, `endColumn = stop.column + (stop.text?.length ?? 0)`; fall back to the start token when `stop` is absent.
+
+- [ ] **Step 1: Write the failing test**
+
+```ts
+// tests/qualify.diagnostics-span.test.ts
+import { describe, it, expect } from "vitest";
+import { analyze } from "../src/api.js";
+import { Schema } from "../src/qualify/schema.js";
+
+describe("semantic diagnostics carry a full span", () => {
+  it("an unknown column's diagnostic spans the whole identifier, not one char", () => {
+    const schema = new Schema({ sales: { amount: "decimal" } });
+    const sql = "SELECT unknown_col FROM sales";
+    const d = analyze(sql, "databricks", { schema }).diagnostics.find((x) => x.kind === "unknown-column");
+    expect(d, "unknown-column diagnostic").toBeDefined();
+    expect(d!.line).toBe(1);
+    expect(d!.column).toBe(sql.indexOf("unknown_col")); // 0-based start
+    // full span: end is past the last char of "unknown_col"
+    expect(d!.endLine).toBe(1);
+    expect(d!.endColumn).toBe(sql.indexOf("unknown_col") + "unknown_col".length);
+  });
+
+  it("an unknown table's diagnostic spans the table name", () => {
+    const sql = "SELECT x FROM no_such_table";
+    const d = analyze(sql, "databricks", { schema: new Schema({}) }).diagnostics.find(
+      (x) => x.kind === "unknown-table",
+    );
+    expect(d).toBeDefined();
+    expect(d!.endColumn).toBeGreaterThan(d!.column); // a real width, not a point
+  });
+});
+```
+
+- [ ] **Step 2: Run to verify RED**
+
+Run: `npx vitest run tests/qualify.diagnostics-span.test.ts`
+Expected: FAIL — `endLine`/`endColumn` are `undefined`.
+
+- [ ] **Step 3: Implement**
+
+In `src/qualify/qualify.ts`:
+1. Extend the interface:
+   ```ts
+   export interface Diagnostic {
+     kind: "unknown-table" | "unknown-column" | "ambiguous-column" | "unknown-field";
+     message: string;
+     line: number;
+     column: number;
+     endLine: number;
+     endColumn: number;
+   }
+   ```
+2. Add a span helper and use it in both builders:
+   ```ts
+   function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine: number; endColumn: number } {
+     const s = cst.start;
+     const e = cst.stop ?? cst.start;
+     return {
+       line: s?.line ?? 0,
+       column: s?.column ?? 0,
+       endLine: e?.line ?? s?.line ?? 0,
+       endColumn: (e?.column ?? 0) + (e?.text?.length ?? 0),
+     };
+   }
+   ```
+   `columnDiag`: `return { kind, message, ...spanOf(ref.cst) };`
+   `unknownTable`: `return { kind: "unknown-table", message: …, ...spanOf(cst) };`
+
+(This mirrors `spanOf` in `src/symbols/symbols.ts` exactly — same convention, so `ranges.rangeFromSpan` works on it unchanged.)
+
+- [ ] **Step 4: Run to verify GREEN + no regression**
+
+Run: `npx vitest run tests/qualify.diagnostics-span.test.ts` (pass)
+Then any existing qualify/diagnostics tests: `npx vitest run tests/qualify.test.ts` (if present) — additive fields, must still pass.
+Then `npm run typecheck`.
+
+- [ ] **Step 5: Full suite + commit**
+
+Run: `npm test`.
+
+```bash
+git add src/qualify/qualify.ts tests/qualify.diagnostics-span.test.ts
+git commit -m "feat(qualify): semantic diagnostics carry a full positioned span (#6)"
+```
+
+> **Note for Task C2 (diagnostics feature):** with A8, the semantic `Diagnostic` carries a full span, so C2 must build its LSP range with `rangeFromSpan({ line: d.line, column: d.column, endLine: d.endLine, endColumn: d.endColumn })` — NOT the old 1-char `endColumn: column + 1` hack. Every diagnostic the server emits is a real range.
+
+> **▶ CHECKPOINT (harness):** Phase A complete — every syntax AND semantic diagnostic across all five dialects is positioned with a full span (nothing count-only, nothing point-only). Stop, present the diff, and wait for Niclas's sign-off before Phase B.
 
 ---
 
@@ -1749,7 +1848,7 @@ git commit -m "feat(infer): formatType — render a Type to a display string (#9
 - Consumes: `parse`, `analyze`, `Dialect` from `../../api.js`; `Schema` from `../../qualify/schema.js`; `rangeFromSyntaxDiagnostic`, `rangeFromSpan` from `../ranges.js`; `Diagnostic as LspDiagnostic`, `DiagnosticSeverity` from `vscode-languageserver-types`.
 - Produces: `function computeDiagnostics(text: string, dialect: Dialect, schema?: Schema): LspDiagnostic[]` — syntax diagnostics (from `parse().diagnostics`, severity Error) merged with semantic diagnostics (from `analyze().diagnostics`, severity Error/Warning). The semantic `Diagnostic` carries `line`/`column` (1-based/0-based); a single-token range is built via `rangeFromSpan` with `endColumn = column` widened to at least column+1.
 
-**Note on semantic diagnostic ranges:** `qualify`'s `Diagnostic` has `line`/`column` only (no length). Build a 1-char-minimum range: `rangeFromSpan({ line, column, endLine: line, endColumn: column + 1 })`.
+**Note on semantic diagnostic ranges:** after Task A8, `qualify`'s `Diagnostic` carries a full span (`line`/`column`/`endLine`/`endColumn`, same convention as the symbols `Span`). Build the LSP range with `rangeFromSpan(d)` directly — it squiggles the whole offending identifier. (No 1-char hack.)
 
 - [ ] **Step 1: Write the failing test**
 
@@ -1816,7 +1915,7 @@ export function computeDiagnostics(text: string, dialect: Dialect, schema?: Sche
   if (schema) {
     for (const d of analyze(text, dialect, { schema }).diagnostics) {
       out.push({
-        range: rangeFromSpan({ line: d.line, column: d.column, endLine: d.line, endColumn: d.column + 1 }),
+        range: rangeFromSpan(d), // full span from qualify (Task A8) — squiggles the whole identifier
         severity: d.kind === "ambiguous-column" ? DiagnosticSeverity.Warning : DiagnosticSeverity.Error,
         source: "sqllens",
         message: d.message,
@@ -2504,8 +2603,18 @@ Multi-agent review over the whole branch diff, three lenses:
 
 Then: full `npm test` + `npm run typecheck` green → **branch-ready**, notify Niclas. No push/PR/merge without sign-off.
 
-## Open Gaps (tracked, not descoped)
+## Positional completeness (the bar: every editor-facing output has a real span)
 
-- ~~BigQuery escape / post-parse errors have no positioned diagnostic~~ — **CLOSED by Task A7** (2026-06-28). A bare count is useless to an editor; both validators now return positioned `SyntaxDiagnostic[]`, folded into `diagnostics`, so `errors === diagnostics.length` for BigQuery like the other four. (Escape positioning is literal-granular — squiggles the offending literal token; char-exact offset within the literal is a possible future refinement, not a gap.)
-- **Completion + the SQL-debugger adapter** — deliberately deferred per the design spec (not dropped); both reuse this server's `node-at`/scope plumbing.
-- **Semantic-diagnostic ranges are single-token-width** — `qualify`'s `Diagnostic` carries `line`/`column` but no length, so the squiggle is a 1-char range at the column. Widening needs a length on the library `Diagnostic`.
+Niclas (2026-06-28): position drives everything; nothing count-only, nothing point-only, no deferred "didn't implement position" anywhere. Each editor-facing output and its span source:
+
+- **Syntax diagnostics** (all five dialects, incl. BigQuery escape + post-parse via A7) — `SyntaxDiagnostic` `{line, column, offset, length}` = a real range. ✅
+- **Semantic diagnostics** (`qualify`) — full span `{line, column, endLine, endColumn}` via A8. ✅
+- **Hover** — range from the covering expr's CST (`rangeFromCst`). ✅
+- **Go-to-definition** — `Sym.definition` full `Span`. ✅
+- **Document symbols** — `Sym.span` full `Span`. ✅
+
+No count-only or point-only path remains. If any new output is added, it carries a span or it isn't done.
+
+## Explicit v1 scope (Niclas-set in the approved design spec — NOT deferred gaps)
+
+- **Completion** and the **SQL-debugger adapter** are out of v1 *by the design spec's own scope decision* (issue #9 / the design doc), not a leftover. They reuse this server's `node-at`/scope plumbing when built. (Recorded as scope, not as an unfinished task.)
