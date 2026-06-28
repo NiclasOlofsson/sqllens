@@ -353,7 +353,9 @@ function sourceColumns(
 }
 
 /** Full positioned span of a CST node — 1-based line, 0-based column, endColumn one past the last
- *  char (falls back to the start token when stop is absent). Mirrors symbols.ts `spanOf` exactly. */
+ *  char (falls back to the start token when stop is absent). Mirrors symbols.ts `spanOf`, plus a
+ *  stop-absent start-fallback (per spec A8); the load-bearing endColumn math is identical, so
+ *  rangeFromSpan agrees on both. */
 function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine: number; endColumn: number } {
 	const s = cst.start;
 	const e = cst.stop ?? cst.start;
