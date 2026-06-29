@@ -3,8 +3,13 @@
 A thin Language Server Protocol (LSP) adapter over the sqllens parser and analysis
 library. It maps editor requests to the library's existing passes (`parse → lower →
 resolveScopes → qualify → infer → symbols`) and translates the results into LSP
-shapes. It holds no analysis logic of its own — diagnostics, types, definitions, and
-output columns all come from the library.
+shapes. It holds no analysis logic of its own — diagnostics, types, definitions,
+output columns, tokens, completions, and signatures all come from the library.
+
+The server holds **one `SqlDocument` per open file** (rebuilt on edit) and serves
+every feature from that cached document. It consumes **only** the public library
+surface (`src/api.ts` / `src/index.ts`) plus `vscode-languageserver-*` and local
+presentation helpers — the seam that lets the server be lifted into its own repo.
 
 This is an **application, not part of the published library.** Nothing under
 `src/lsp/` is exported from `src/index.ts`; the barrel ships the parser and analysis
@@ -12,7 +17,7 @@ API only. The server is here as the editor consumer that drives that API.
 
 ## Features
 
-All four features carry real source positions (no count-only or point-only output).
+Every feature carries real source positions (no count-only or point-only output).
 
 - **Diagnostics** — syntax errors from the parser plus semantic diagnostics from
   `qualify` (unknown table/column/field), each as a positioned range.
@@ -22,9 +27,17 @@ All four features carry real source positions (no count-only or point-only outpu
   column).
 - **Document symbols** — the symbol tree (sources, CTEs, output columns) with each
   symbol's span.
+- **Semantic tokens** — semantic highlighting from the document's token stream
+  (`doc.tokens`), each with its exact span and role.
+- **Completion** — scope-aware suggestions at the caret (keywords, schema
+  tables/columns, function names), driven by the library's own ATN candidate walk.
+  Works on mid-edit / invalid input.
+- **Signature help** — parameter hints while typing inside a call's parens, from a
+  curated per-dialect signature table (name + active-argument fallback for the long
+  tail).
 
-Completion and the SQL-debugger adapter are out of this version by scope decision
-(issue #9). They will reuse the same `node-at` and scope plumbing when built.
+The SQL-debugger adapter is out of this version by scope decision. It will reuse the
+same `SqlDocument` and scope plumbing when built.
 
 ## Dialect and schema config: `.sqllens.json`
 

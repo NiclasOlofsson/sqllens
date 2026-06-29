@@ -1,0 +1,140 @@
+import {
+	CharStream,
+	CommonTokenStream,
+	DefaultErrorStrategy,
+	type Lexer,
+	type Parser,
+	type ParserRuleContext,
+} from "antlr4ng";
+import type { Dialect } from "../api.js";
+import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
+import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
+import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
+import { TSqlParser } from "../generated/tsql/TSqlParser.js";
+import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
+import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
+import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
+import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
+import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
+import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
+
+/**
+ * A ready-to-walk parser for the completion engine: the lexer, the token stream, the entry
+ * rule's index (for `atn.ruleToStartState[...]`), and a `runEntry()` that drives the parse far
+ * enough to fill the token stream and leave the parser ATN-ready.
+ *
+ * Unlike `src/<dialect>/parse.ts` (two-stage SLL→LL that bails/recovers and produces a CST for
+ * the *valid-parse* pipeline), this is the always-available, error-tolerant front end the
+ * interactive editor features need: it keeps the default recovering error strategy so a broken /
+ * mid-edit statement still yields a usable tree and a complete token stream.
+ */
+export interface MadeParser {
+	parser: Parser;
+	lexer: Lexer;
+	tokenStream: CommonTokenStream;
+	/** The RULE_ index of the entry rule (index into `parser.atn.ruleToStartState`). */
+	entryRuleIndex: number;
+	/** Invoke the entry rule. Recovers on error (never throws on broken input). */
+	runEntry: () => ParserRuleContext;
+}
+
+type Factory = (sql: string) => MadeParser;
+
+function databricksFactory(sql: string): MadeParser {
+	const lexer = new DatabricksLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new DatabricksParser(tokenStream);
+	// Error-tolerant: the recovering strategy (the parser's default) keeps the walk usable on
+	// broken input. Silence the console error listeners — the completion path reports nothing.
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: DatabricksParser.RULE_compoundOrSingleStatement,
+		runEntry: () => parser.compoundOrSingleStatement(),
+	};
+}
+
+function tsqlFactory(sql: string): MadeParser {
+	const lexer = new TSqlLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new TSqlParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: TSqlParser.RULE_tsql_file,
+		runEntry: () => parser.tsql_file(),
+	};
+}
+
+function snowflakeFactory(sql: string): MadeParser {
+	const lexer = new SnowflakeLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new SnowflakeParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: SnowflakeParser.RULE_snowflake_file,
+		runEntry: () => parser.snowflake_file(),
+	};
+}
+
+// BigQuery's parse.ts wraps the lexer in a `dotPathTokenSource` (rewrites reserved keywords after a
+// dot into DOT_IDENTIFIER) before the parser. That rewrite only matters for resolving dotted paths;
+// the completion ATN walk just needs an enumerated token stream and an ATN-ready parser, so a plain
+// lexer→CommonTokenStream→parser is sufficient. The dot-path rewrite is intentionally skipped here.
+function bigqueryFactory(sql: string): MadeParser {
+	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new GoogleSQLParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: GoogleSQLParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
+function redshiftFactory(sql: string): MadeParser {
+	const lexer = new RedshiftLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new RedshiftParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: RedshiftParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
+const FACTORIES: Record<Dialect, Factory> = {
+	databricks: databricksFactory,
+	tsql: tsqlFactory,
+	snowflake: snowflakeFactory,
+	bigquery: bigqueryFactory,
+	redshift: redshiftFactory,
+};
+
+/** Build a fresh error-tolerant parser for `dialect`, lexing `sql`. */
+export function makeParser(sql: string, dialect: Dialect): MadeParser {
+	return FACTORIES[dialect](sql);
+}

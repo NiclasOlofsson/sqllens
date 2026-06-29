@@ -22,10 +22,23 @@ export {
 	TypeInfo,
 	Lineage,
 	originsOfExpr,
+	tokenize,
+	SqlDocument,
+	LineIndex,
+	complete,
+	type Completion,
+	signatureAt,
+	FUNCTION_SIGNATURES,
+	type SignatureInfo,
+	type FnSignature,
+	type ParamSig,
 	type Dialect,
 	type DialectOpts,
 	type ParseResultIR,
 	type Analysis,
+	type Token,
+	type TokenRole,
+	type DocumentAnalysis,
 } from "./api.js";
 
 // --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---
@@ -57,6 +70,10 @@ export type {
 
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
 
+// The positioned syntax diagnostic carried on parse()/SqlDocument — surfaced here so the LSP
+// presentation layer can map it without reaching into the internal parse-diagnostics module.
+export type { SyntaxDiagnostic } from "./parse-diagnostics.js";
+
 // --- Shared passes as building blocks (raw forms) + their typed result interfaces ---
 export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
@@ -67,7 +84,7 @@ export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 
 export { inferType } from "./infer/infer.js";
-export { parseType, type Type } from "./infer/types.js";
+export { parseType, formatType, type Type } from "./infer/types.js";
 
 // Raw lineage building blocks (the wrapper `Lineage` + composable `lineage` come from ./api.js).
 export { type ColumnLineage, type Origin } from "./lineage/lineage.js";

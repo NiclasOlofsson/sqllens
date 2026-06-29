@@ -193,7 +193,20 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
 	// The main body is this query's own queryTerm — NOT the querySpecifications inside
 	// the CTE bodies (which sit under `ctes`, earlier in the tree).
 	const queryTerm = directChildrenOfRule(query, P.RULE_queryTerm)[0];
-	if (!queryTerm) throw new Error("lower: query has no queryTerm body");
+	// A broken / partial query CST may have no queryTerm child (e.g. "(((" mid-edit). Degrade to the
+	// same flagged empty body the unmodeled-body branch produces — lower() never throws.
+	if (!queryTerm) {
+		const body: SelectExpr = {
+			kind: "select",
+			projections: [],
+			from: [],
+			columns: [],
+			aggregated: false,
+			unsupported: ["query-body"],
+			cst: query,
+		};
+		return { kind: "query", ctes, body, cst: query };
+	}
 	const body = lowerQueryTerm(queryTerm);
 	const orderBy = extractOrderBy(query);
 	// ORDER BY references the body's output (a select's scope, or a set-op's left branch),
@@ -510,11 +523,28 @@ function hasAllQuantifier(queryTerm: ParserRuleContext): boolean {
 function lowerNamedQuery(namedQuery: ParserRuleContext): CteDef {
 	const name = directChildrenOfRule(namedQuery, P.RULE_errorCapturingIdentifier)[0]?.getText() ?? "";
 	const innerQuery = firstOfRule(namedQuery, P.RULE_query);
-	if (!innerQuery) throw new Error("lower: CTE without a query body");
+	// A broken / partial CTE may have no query body (e.g. "WITH x AS ( SELECT" mid-edit). Emit the CTE
+	// with a flagged empty body so the enclosing query still lowers — lower() never throws.
+	const body: QueryExpr = innerQuery
+		? lowerQuery(innerQuery)
+		: {
+				kind: "query",
+				ctes: [],
+				body: {
+					kind: "select",
+					projections: [],
+					from: [],
+					columns: [],
+					aggregated: false,
+					unsupported: ["query-body"],
+					cst: namedQuery,
+				},
+				cst: namedQuery,
+			};
 	return {
 		name,
 		columnAliases: columnAliasList(namedQuery),
-		body: lowerQuery(innerQuery),
+		body,
 		cst: namedQuery,
 	};
 }

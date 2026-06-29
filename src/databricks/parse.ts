@@ -10,6 +10,8 @@ import {
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { mapTokens } from "../token/map.js";
+import type { Token } from "../token/token.js";
 
 export interface ParseResult {
 	/** The CST rooted at `compoundOrSingleStatement` (one statement, or a BEGIN…END
@@ -19,6 +21,8 @@ export interface ParseResult {
 	errors: number;
 	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
 	diagnostics: SyntaxDiagnostic[];
+	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans. */
+	tokens: Token[];
 }
 
 /**
@@ -41,6 +45,8 @@ export function parseDatabricks(sql: string): ParseResult {
 	// collector.reset(), which clears parser AND lexer diagnostics.
 	tokens.fill();
 	const lexDiags = [...collector.diagnostics];
+	// The token list is stable once filled — the SLL→LL retry reseeks the same buffer, never re-lexes.
+	const tokenList = mapTokens(lexer, tokens.getTokens(), "databricks");
 
 	// Stage 1: SLL, bail on the first error (no recovery, no listener noise).
 	const defaultErrorHandler = parser.errorHandler;
@@ -48,7 +54,7 @@ export function parseDatabricks(sql: string): ParseResult {
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.compoundOrSingleStatement();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	} catch {
 		// Stage 2: full LL with the normal error strategy (reports + recovers).
 		tokens.seek(0);
@@ -59,7 +65,7 @@ export function parseDatabricks(sql: string): ParseResult {
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
 		const tree = parser.compoundOrSingleStatement();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics };
+		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	}
 }
 
