@@ -18,6 +18,7 @@ import { computeDefinition } from "./features/definition.js";
 import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-tokens.js";
 import { computeCompletion } from "./features/completion.js";
 import { computeSignatureHelp } from "./features/signature.js";
+import { computeReferences, computeDocumentHighlight } from "./features/references.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -82,6 +83,8 @@ export function startServer(connection: Connection): void {
 				textDocumentSync: TextDocumentSyncKind.Full,
 				hoverProvider: true,
 				definitionProvider: true,
+				referencesProvider: true,
+				documentHighlightProvider: true,
 				documentSymbolProvider: true,
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
 				completionProvider: { triggerCharacters: [".", " "] },
@@ -111,6 +114,24 @@ export function startServer(connection: Connection): void {
 		const doc = docFor(params.textDocument.uri);
 		if (!doc) return null;
 		return computeDefinition(doc, params.position, params.textDocument.uri);
+	});
+
+	connection.onReferences((params) => {
+		const doc = docFor(params.textDocument.uri);
+		if (!doc) return [];
+		return computeReferences(
+			doc,
+			params.position,
+			params.context.includeDeclaration,
+			params.textDocument.uri,
+			config.schema,
+		);
+	});
+
+	connection.onDocumentHighlight((params) => {
+		const doc = docFor(params.textDocument.uri);
+		if (!doc) return [];
+		return computeDocumentHighlight(doc, params.position, config.schema);
 	});
 
 	connection.onDocumentSymbol((params) => {

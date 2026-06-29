@@ -31,6 +31,8 @@ import {
 	SemanticTokensRequest,
 	CompletionRequest,
 	SignatureHelpRequest,
+	ReferencesRequest,
+	DocumentHighlightRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -360,5 +362,57 @@ describe("LSP acceptance", () => {
 		const h = help as any;
 		expect(h.activeParameter).toBe(1);
 		expect(h.signatures[0].label).toContain("date_add");
+	});
+
+	it("references returns every occurrence of a CTE-projected column", async () => {
+		// `id` is projected by the CTE `recent` and re-selected from it. The final `id`
+		// reference, the CTE's projected `id`, and the base `id` all share identity (schema
+		// unifies them via sales.id). references must return ≥2 Locations, deduped, with
+		// ranges that actually cover an `id` occurrence in the source.
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("refs.sql", text);
+		const locs = await client.sendRequest(ReferencesRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.lastIndexOf("id") },
+			context: { includeDeclaration: true },
+		});
+		const list = (locs as any[]) ?? [];
+		expect(list.length).toBeGreaterThanOrEqual(2);
+		// Every range, sliced from the source, is the symbol `id`.
+		for (const l of list) {
+			const r = l.range;
+			expect(r.start.line).toBe(0);
+			expect(text.slice(r.start.character, r.end.character)).toBe("id");
+		}
+		// Deduped: no two Locations share the same range.
+		const keys = list.map((l) => `${l.range.start.character}:${l.range.end.character}`);
+		expect(new Set(keys).size).toBe(keys.length);
+	});
+
+	it("documentHighlight marks the declaration Write and references Read", async () => {
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("hl.sql", text);
+		const hls = await client.sendRequest(DocumentHighlightRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.lastIndexOf("id") },
+		});
+		const list = (hls as any[]) ?? [];
+		expect(list.length).toBeGreaterThanOrEqual(2);
+		// DocumentHighlightKind: 2 = Read, 3 = Write. The CTE-projected `id` is the declaration (Write);
+		// at least one occurrence is a Read reference.
+		const kinds = list.map((h) => h.kind);
+		expect(kinds).toContain(2); // Read
+		expect(kinds).toContain(3); // Write
+		for (const h of list) expect(text.slice(h.range.start.character, h.range.end.character)).toBe("id");
+	});
+
+	it("references on broken input returns an empty array, no error", async () => {
+		const uri = open("refs-broken.sql", "SELECT * FORM x");
+		const locs = await client.sendRequest(ReferencesRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: 0 },
+			context: { includeDeclaration: true },
+		});
+		expect(locs).toEqual([]);
 	});
 });
