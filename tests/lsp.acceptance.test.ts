@@ -36,6 +36,7 @@ import {
 	CodeLensRequest,
 	FoldingRangeRequest,
 	SelectionRangeRequest,
+	InlayHintRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -514,6 +515,69 @@ describe("LSP acceptance", () => {
 		const outer = ranges[ranges.length - 1];
 		expect(outer.start.character).toBe(0);
 		expect(outer.end.character).toBe(text.length);
+	});
+
+	it("inlayHint shows the inferred type at the end of a SELECT output column", async () => {
+		// `amount` is decimal per the workspace schema; the inlay hint annotates the projection
+		// end with its inferred type. The hint must land at the end of the `amount` token.
+		const text = "SELECT amount FROM sales";
+		const uri = open("inlay.sql", text);
+		const fullRange = {
+			start: { line: 0, character: 0 },
+			end: { line: 0, character: text.length },
+		};
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: fullRange,
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		expect(hints.length).toBeGreaterThanOrEqual(1);
+		const label = (h: any): string => (typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join(""));
+		const amountHint = hints.find((h) => /decimal/.test(label(h)));
+		expect(amountHint).toBeDefined();
+		// The hint anchors at the end of the `amount` token.
+		const amountEnd = text.indexOf("amount") + "amount".length;
+		expect(amountHint.position.line).toBe(0);
+		expect(amountHint.position.character).toBe(amountEnd);
+	});
+
+	it("inlayHint without a typed column emits no hint, no error", async () => {
+		// `1` projects no schema-resolvable column; with EMPTY-schema inference a bare literal still
+		// resolves to a scalar, but a column with no schema match yields `unknown` → skipped. Use an
+		// unknown column ref so the projection's type is `unknown` and no hint is emitted for it.
+		const text = "SELECT mystery FROM nowhere";
+		const uri = open("inlay-none.sql", text);
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } },
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		const label = (h: any): string => (typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join(""));
+		// No hint covers the `mystery` projection (its type is unknown).
+		const myEnd = text.indexOf("mystery") + "mystery".length;
+		expect(hints.some((h) => h.position.character === myEnd)).toBe(false);
+	});
+
+	it("inlayHint only emits hints inside the requested range", async () => {
+		// Two statements on two lines; request hints for line 1 only. The line-0 projection's hint
+		// must be excluded (LSP sends the visible range).
+		const text = "SELECT amount FROM sales;\nSELECT id FROM sales";
+		const uri = open("inlay-range.sql", text);
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 1, character: 0 }, end: { line: 1, character: 100 } },
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		for (const h of hints) expect(h.position.line).toBe(1);
+	});
+
+	it("inlayHint on broken input returns an empty array, no error", async () => {
+		const uri = open("inlay-broken.sql", "SELECT * FORM x");
+		const hints = await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
+		});
+		expect(Array.isArray(hints)).toBe(true);
 	});
 
 	it("selectionRange on broken input returns a range, no error", async () => {

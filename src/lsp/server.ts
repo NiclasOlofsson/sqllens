@@ -22,6 +22,7 @@ import { computeReferences, computeDocumentHighlight } from "./features/referenc
 import { computeCodeLens } from "./features/code-lens.js";
 import { computeFoldingRanges } from "./features/folding.js";
 import { computeSelectionRanges } from "./features/selection.js";
+import { computeInlayHints } from "./features/inlay-hints.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -92,6 +93,7 @@ export function startServer(connection: Connection): void {
 				foldingRangeProvider: true,
 				selectionRangeProvider: true,
 				codeLensProvider: { resolveProvider: false },
+				inlayHintProvider: true,
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
 				completionProvider: { triggerCharacters: [".", " "] },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
@@ -159,6 +161,11 @@ export function startServer(connection: Connection): void {
 	connection.onCodeLens((params) => {
 		const doc = docFor(params.textDocument.uri);
 		return doc ? computeCodeLens(doc, config.schema) : [];
+	});
+
+	connection.languages.inlayHint.on((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeInlayHints(doc, params.range, config.schema) : [];
 	});
 
 	connection.languages.semanticTokens.on((params) => {
