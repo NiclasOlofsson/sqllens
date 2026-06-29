@@ -12,6 +12,7 @@ import { relative } from "node:path";
 import { SqlDocument } from "../index.js";
 import { loadDialectConfig, type DialectConfig } from "./dialect-config.js";
 import { computeDiagnostics } from "./features/diagnostics.js";
+import { computeDocumentDiagnostics } from "./features/pull-diagnostics.js";
 import { computeHover } from "./features/hover.js";
 import { computeDocumentSymbols } from "./features/symbols.js";
 import { computeDefinition } from "./features/definition.js";
@@ -103,6 +104,7 @@ export function startServer(connection: Connection): void {
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, range: true, full: { delta: true } },
 				completionProvider: { triggerCharacters: [".", " "], resolveProvider: true },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
+				diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
 			},
 		};
 	});
@@ -117,6 +119,13 @@ export function startServer(connection: Connection): void {
 	documents.onDidOpen((e) => publish(e.document.uri));
 	documents.onDidChangeContent((e) => publish(e.document.uri));
 	documents.onDidClose((e) => docs.delete(e.document.uri));
+
+	// Pull diagnostics (textDocument/diagnostic): same items as the push path, on demand.
+	// Push (above) and pull coexist; the client picks whichever it supports.
+	connection.languages.diagnostics.on((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeDocumentDiagnostics(doc, config.schema) : { kind: "full", items: [] };
+	});
 
 	connection.onHover((params) => {
 		const doc = docFor(params.textDocument.uri);

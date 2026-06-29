@@ -40,6 +40,7 @@ import {
 	FoldingRangeRequest,
 	SelectionRangeRequest,
 	InlayHintRequest,
+	DocumentDiagnosticRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -668,6 +669,31 @@ describe("LSP acceptance", () => {
 			range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
 		});
 		expect(Array.isArray(hints)).toBe(true);
+	});
+
+	it("pull diagnostics (textDocument/diagnostic) returns a full report flagging an unknown column", async () => {
+		// Pull model: the client asks for diagnostics on demand. The full report's `items` carry the
+		// same diagnostics the push path would publish — here, the unknown column `nope`.
+		const uri = open("pull-bad.sql", "SELECT nope FROM sales");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(Array.isArray(report.items)).toBe(true);
+		expect(report.items.some((x: any) => /nope|unknown/i.test(msg(x.message)))).toBe(true);
+	});
+
+	it("pull diagnostics returns an empty full report for valid SQL", async () => {
+		const uri = open("pull-ok.sql", "SELECT amount FROM sales");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(report.items).toEqual([]);
+	});
+
+	it("pull diagnostics returns the syntax diagnostic on broken input", async () => {
+		const uri = open("pull-broken.sql", "SELECT * FORM x");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(report.items.length).toBeGreaterThanOrEqual(1);
+		expect(report.items[0].range.start.line).toBe(0);
 	});
 
 	it("selectionRange on broken input returns a range, no error", async () => {
