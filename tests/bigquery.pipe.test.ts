@@ -59,9 +59,9 @@ describe("BigQuery pipe queries — faithful model + column flow", () => {
 		const ok = pipeOf("FROM `proj.ds.t` |> WHERE id > 0 |> SELECT name");
 		expect(qualify(ok.tree, T).diagnostics).toEqual([]);
 		const bad = pipeOf("FROM `proj.ds.t` |> WHERE nope > 0");
-		expect(qualify(bad.tree, T).diagnostics.some((d) => d.kind === "unknown-column" && d.message.includes("nope"))).toBe(
-			true,
-		);
+		expect(
+			qualify(bad.tree, T).diagnostics.some((d) => d.kind === "unknown-column" && d.message.includes("nope")),
+		).toBe(true);
 	});
 
 	it("a stage SELECT after EXTEND sees the extended column", () => {

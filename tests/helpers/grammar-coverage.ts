@@ -8,7 +8,14 @@
 // numbers as a change-detector. NOTE: a flagged count is NOT itself a gap list — flags can come from
 // malformed combinations the grammar accepts; confirm a real gap by reducing to a clean repro.
 
-import { BailErrorStrategy, CharStream, CommonTokenStream, type Lexer, type ParserATNSimulator, PredictionMode } from "antlr4ng";
+import {
+	BailErrorStrategy,
+	CharStream,
+	CommonTokenStream,
+	type Lexer,
+	type ParserATNSimulator,
+	PredictionMode,
+} from "antlr4ng";
 
 interface ParserStatics {
 	_ATN: any;
@@ -53,7 +60,8 @@ export interface CoverageResult {
 
 /** Default exclusion: DDL / DML / graph(GQL) / column-schema rules that the query entry can reach
  *  (e.g. via pipe `|> CREATE/INSERT` and the GQL subgraph) but that aren't query constructs. */
-export const DEFAULT_EXCLUDE = /^(insert|delete|update|merge|create|alter|drop|truncate|grant|revoke)_|^gql_|^graph_|_column_schema|_column_info|column_attribute|foreign_key|_constraint|^opt_(maxvalue|minvalue|cycle|increment|start_with)|sequence_arg/i;
+export const DEFAULT_EXCLUDE =
+	/^(insert|delete|update|merge|create|alter|drop|truncate|grant|revoke)_|^gql_|^graph_|_column_schema|_column_info|column_attribute|foreign_key|_constraint|^opt_(maxvalue|minvalue|cycle|increment|start_with)|sequence_arg/i;
 
 function mulberry32(seed: number) {
 	return () => {

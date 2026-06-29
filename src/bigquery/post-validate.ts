@@ -33,7 +33,9 @@ function diagAt(ctx: ParserRuleContext, message: string): SyntaxDiagnostic {
 
 // A graph endpoint predicate `expr IS [NOT] SOURCE|DESTINATION [OF] expr`. Duck-typed: the alt appears
 // in both expression_higher_prec_than_and and expression_maybe_parenthesized_not_a_query.
-function isGraphEndpointPredicate(ctx: { IS_SYMBOL?(): unknown; SOURCE_SYMBOL?(): unknown; DESTINATION_SYMBOL?(): unknown } | null): boolean {
+function isGraphEndpointPredicate(
+	ctx: { IS_SYMBOL?(): unknown; SOURCE_SYMBOL?(): unknown; DESTINATION_SYMBOL?(): unknown } | null,
+): boolean {
 	return !!(ctx?.IS_SYMBOL?.() && (ctx.SOURCE_SYMBOL?.() || ctx.DESTINATION_SYMBOL?.()));
 }
 
@@ -149,13 +151,15 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 	const visit = (node: ParserRuleContext): void => {
 		if (node instanceof Select_column_dot_starContext) {
 			const base = node.expression_higher_prec_than_and()?.getText() ?? "";
-			if (hasTopLevelBinaryOp(base)) out.push(diagAt(node, "dot-star base must be a postfix expression, not a binary one"));
+			if (hasTopLevelBinaryOp(base))
+				out.push(diagAt(node, "dot-star base must be a postfix expression, not a binary one"));
 		} else if (node instanceof Shift_operatorContext) {
 			const gts = node.GT_OPERATOR();
 			if (gts.length === 2) {
 				const a = gts[0].symbol;
 				const b = gts[1].symbol;
-				if (a.stop + 1 !== b.start) out.push(diagAt(node, "unexpected '>' (spaced '> >' is not the '>>' shift operator)")); // `> >` (spaced) is not the `>>` shift operator
+				if (a.stop + 1 !== b.start)
+					out.push(diagAt(node, "unexpected '>' (spaced '> >' is not the '>>' shift operator)")); // `> >` (spaced) is not the `>>` shift operator
 			}
 		} else if (node instanceof Select_clauseContext) {
 			// `SELECT WITH kind OPTIONS(…)` with the OPTIONS bound (by ZetaSQL) to the with-clause and NO
@@ -171,11 +175,13 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 			// genuine select item (x is the list), so exclude that (first.identifier()).
 			if (w && !w.OPTIONS_SYMBOL() && !node.all_or_distinct() && first && !first.identifier()) {
 				const expr = first.select_column_expr_with_as_alias()?.expression() ?? first.expression();
-				if (/^OPTIONS\s*\(.*\)$/is.test(expr?.getText() ?? "")) out.push(diagAt(node, "SELECT list must not be empty"));
+				if (/^OPTIONS\s*\(.*\)$/is.test(expr?.getText() ?? ""))
+					out.push(diagAt(node, "SELECT list must not be empty"));
 			}
 		} else if (node instanceof Pipe_callContext) {
 			const suffix = node.tvf_with_suffixes().pivot_or_unpivot_clause_and_aliases();
-			if (suffix?.pivot_clause() || suffix?.unpivot_clause()) out.push(diagAt(node, "pipe CALL takes no PIVOT/UNPIVOT")); // pipe CALL takes no PIVOT/UNPIVOT
+			if (suffix?.pivot_clause() || suffix?.unpivot_clause())
+				out.push(diagAt(node, "pipe CALL takes no PIVOT/UNPIVOT")); // pipe CALL takes no PIVOT/UNPIVOT
 		} else if (node instanceof Graph_element_pattern_fillerContext) {
 			// `[cost 12]` — a leading `cost` is the element NAME, not the COST keyword (which only trails a
 			// name/label/where). A filler that is ONLY a COST clause means `cost` was misread as the keyword
@@ -190,7 +196,8 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 				out.push(diagAt(node, "unexpected expression after 'cost' (read as the element name)"));
 			}
 		} else if (node instanceof Graph_call_operator_coreContext) {
-			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases()) out.push(diagAt(node, "graph CALL takes a bare tvf")); // graph CALL takes a bare tvf
+			if (node.tvf_with_suffixes()?.pivot_or_unpivot_clause_and_aliases())
+				out.push(diagAt(node, "graph CALL takes a bare tvf")); // graph CALL takes a bare tvf
 		} else if (node instanceof Graph_linear_operator_listContext) {
 			// After `FOR x IN expr`, a `WITH` binds to the FOR's offset clause — it must be `WITH OFFSET`.
 			// A FOR with no offset directly followed by a WITH operator is "Expected keyword OFFSET …".
@@ -205,9 +212,16 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 				out.push(diagAt(node, "ASC/DESC order is not allowed on a dot-star")); // no ASC/DESC on a dot-star
 		} else if (node instanceof Expression_higher_prec_than_andContext) {
 			// LIKE ANY/SOME/ALL with a comparison-family LHS must be parenthesized.
-			if (node.like_operator() && node.any_some_all() && isComparisonFamily(node.expression_higher_prec_than_and(0)))
+			if (
+				node.like_operator() &&
+				node.any_some_all() &&
+				isComparisonFamily(node.expression_higher_prec_than_and(0))
+			)
 				out.push(diagAt(node, "expression to the left of LIKE must be parenthesized"));
-			else if (isGraphEndpointPredicate(node) && isGraphEndpointPredicate(node.expression_higher_prec_than_and(0)))
+			else if (
+				isGraphEndpointPredicate(node) &&
+				isGraphEndpointPredicate(node.expression_higher_prec_than_and(0))
+			)
 				out.push(diagAt(node, "graph endpoint predicate cannot be chained"));
 			// A hint on an IN value list (`IN @{…} (a, b)` / `IN @{…} (x)`) is rejected; a hint on an IN
 			// SUBQUERY (`IN @{…} (SELECT …)`) is allowed, as is the IN-UNNEST form (caught in-grammar).
@@ -228,7 +242,10 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 		} else if (node instanceof Analyze_statementContext) {
 			// A bare `OPTIONS` table name is really the OPTIONS keyword (which requires `(...)`).
 			const firstTable = node.table_and_column_info_list()?.table_and_column_info(0);
-			if (!node.opt_options_list() && /^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? ""))
+			if (
+				!node.opt_options_list() &&
+				/^OPTIONS$/i.test(firstTable?.maybe_dashed_path_expression()?.getText() ?? "")
+			)
 				out.push(diagAt(node, "OPTIONS requires '(...)'"));
 		} else if (node instanceof StmtsContext) {
 			// A standalone subpipeline (`|> …`) must be the only statement — it can't be `;`-chained.

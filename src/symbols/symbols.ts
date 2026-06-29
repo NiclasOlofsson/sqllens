@@ -267,7 +267,13 @@ function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
 	if (src.kind === "pivot") return undefined; // PivotInfo carries no alias span; the relation symbol names it
 	if (src.kind === "graphtable") {
 		return src.source.alias
-			? { kind: "alias", modifiers: ["declaration"], name: src.source.alias, span: spanOf(src.source.aliasCst ?? src.source.cst), frame }
+			? {
+					kind: "alias",
+					modifiers: ["declaration"],
+					name: src.source.alias,
+					span: spanOf(src.source.aliasCst ?? src.source.cst),
+					frame,
+				}
 			: undefined;
 	}
 	const s = src.source;

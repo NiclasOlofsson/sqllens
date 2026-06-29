@@ -42,7 +42,12 @@ describe("PIVOT / UNPIVOT — qualified output reflects the reshape (dialect-neu
 	});
 
 	it("BigQuery UNPIVOT: consumes the IN-list columns, adds name + value", () => {
-		expect(bqCols("SELECT * FROM `proj.ds.t` UNPIVOT(val FOR q IN (sales))")).toEqual(["product", "quarter", "q", "val"]);
+		expect(bqCols("SELECT * FROM `proj.ds.t` UNPIVOT(val FOR q IN (sales))")).toEqual([
+			"product",
+			"quarter",
+			"q",
+			"val",
+		]);
 	});
 
 	it("Databricks PIVOT lowers to the same IR and reshapes identically", () => {
@@ -80,9 +85,7 @@ describe("aliased PIVOT … AS p — the named pivoted relation resolves schema-
 
 	it("BigQuery aliased PIVOT resolves identically", () => {
 		expect(
-			bqCols(
-				"SELECT * FROM `proj.ds.t` PIVOT(SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2)) AS p",
-			),
+			bqCols("SELECT * FROM `proj.ds.t` PIVOT(SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2)) AS p"),
 		).toEqual(["product", "q1", "q2"]);
 	});
 });

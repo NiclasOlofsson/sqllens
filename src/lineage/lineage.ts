@@ -92,7 +92,11 @@ function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): Colum
 			const aggs = projectionLineage(scope, stage.aggregates, schema, seen);
 			const keys: ColumnLineage[] = [];
 			for (const g of stage.groupBy) {
-				if (g.kind === "column") keys.push({ output: g.parts[g.parts.length - 1], origins: dedup(exprOrigins(g, scope, schema, seen)) });
+				if (g.kind === "column")
+					keys.push({
+						output: g.parts[g.parts.length - 1],
+						origins: dedup(exprOrigins(g, scope, schema, seen)),
+					});
 			}
 			return [...aggs, ...keys];
 		}
@@ -102,7 +106,10 @@ function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): Colum
 		}
 		case "rename": {
 			const map = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
-			return passthrough().map((l) => ({ output: map.get(normalizeName(l.output)) ?? l.output, origins: l.origins }));
+			return passthrough().map((l) => ({
+				output: map.get(normalizeName(l.output)) ?? l.output,
+				origins: l.origins,
+			}));
 		}
 		case "set": {
 			const set = new Map(stage.assignments.map((a) => [normalizeName(a.column), a.expr]));

@@ -6,7 +6,11 @@ describe("formatType", () => {
 		expect(formatType({ kind: "scalar", name: "decimal" })).toBe("decimal");
 		expect(formatType({ kind: "array", element: { kind: "scalar", name: "string" } })).toBe("array<string>");
 		expect(
-			formatType({ kind: "map", key: { kind: "scalar", name: "string" }, value: { kind: "scalar", name: "int" } }),
+			formatType({
+				kind: "map",
+				key: { kind: "scalar", name: "string" },
+				value: { kind: "scalar", name: "int" },
+			}),
 		).toBe("map<string,int>");
 		expect(
 			formatType({

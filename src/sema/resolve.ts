@@ -166,7 +166,9 @@ function pipeStageNames(scope: Scope, schema: Schema, visited: Set<Scope>): stri
 			return [...aggs, ...keys];
 		}
 		case "drop":
-			return incoming ? incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c))) : undefined;
+			return incoming
+				? incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c)))
+				: undefined;
 		case "rename": {
 			if (!incoming) return undefined;
 			const m = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));

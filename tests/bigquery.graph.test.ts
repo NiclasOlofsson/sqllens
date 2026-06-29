@@ -33,7 +33,8 @@ describe("BigQuery graph (GQL) — faithful GraphTableSource model", () => {
 	});
 
 	it("exposes the COLUMNS list as the relation's output to the enclosing query", () => {
-		const sql = "SELECT * FROM GRAPH_TABLE(fg MATCH (a:Person)-[e:Knows]->(b:Person) COLUMNS(a.name AS src, b.name AS dst))";
+		const sql =
+			"SELECT * FROM GRAPH_TABLE(fg MATCH (a:Person)-[e:Knows]->(b:Person) COLUMNS(a.name AS src, b.name AS dst))";
 		const tree = resolveScopes(lower(parseBigQuery(sql).tree), "bigquery");
 		expect(qualify(tree, new Schema({})).columnsOf(tree.root)).toEqual(["src", "dst"]);
 	});

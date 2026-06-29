@@ -33,7 +33,10 @@ import { lower as lowerRedshift } from "../src/redshift/lower.js";
 
 type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
 
-const PARSERS: Record<Dialect, { parse: (s: string) => { tree: any; errors: number }; lower: (t: any) => { statement?: string } }> = {
+const PARSERS: Record<
+	Dialect,
+	{ parse: (s: string) => { tree: any; errors: number }; lower: (t: any) => { statement?: string } }
+> = {
 	databricks: { parse: parseDatabricks, lower: lowerDatabricks },
 	tsql: { parse: parseTSql, lower: lowerTSql },
 	snowflake: { parse: parseSnowflake, lower: lowerSnowflake },
@@ -68,16 +71,70 @@ interface Corpus {
 }
 
 const CORPORA: Corpus[] = [
-	{ srcRel: "harness/local/databricks", dialect: "databricks", source: "oatly", stage: "parser", validity: "positive" },
-	{ srcRel: "harness/local/databricks-docs", dialect: "databricks", source: "docs", stage: "parser", validity: "positive" },
-	{ srcRel: "harness/local/snowflake-docs", dialect: "snowflake", source: "docs", stage: "parser", validity: "positive" },
+	{
+		srcRel: "harness/local/databricks",
+		dialect: "databricks",
+		source: "oatly",
+		stage: "parser",
+		validity: "positive",
+	},
+	{
+		srcRel: "harness/local/databricks-docs",
+		dialect: "databricks",
+		source: "docs",
+		stage: "parser",
+		validity: "positive",
+	},
+	{
+		srcRel: "harness/local/snowflake-docs",
+		dialect: "snowflake",
+		source: "docs",
+		stage: "parser",
+		validity: "positive",
+	},
 	{ srcRel: "harness/local/tsql-docs", dialect: "tsql", source: "docs", stage: "parser", validity: "positive" },
-	{ srcRel: "harness/local/redshift-docs", dialect: "redshift", source: "docs", stage: "parser", validity: "positive" },
-	{ srcRel: "harness/local/bigquery-zetasql", dialect: "bigquery", source: "zetasql", stage: "analyzer", validity: "byDir" },
-	{ srcRel: "harness/local/bigquery-zetasql-parser", dialect: "bigquery", source: "zetasql", stage: "parser", validity: "byDir" },
-	{ srcRel: "vendor/grammars-v4/sql/tsql/examples", dialect: "tsql", source: "grammars-v4", stage: "parser", validity: "positive" },
-	{ srcRel: "vendor/grammars-v4/sql/snowflake/examples", dialect: "snowflake", source: "grammars-v4", stage: "parser", validity: "positive" },
-	{ srcRel: "vendor/bytebase-parser/redshift/examples", dialect: "redshift", source: "bytebase", stage: "parser", validity: "positive" },
+	{
+		srcRel: "harness/local/redshift-docs",
+		dialect: "redshift",
+		source: "docs",
+		stage: "parser",
+		validity: "positive",
+	},
+	{
+		srcRel: "harness/local/bigquery-zetasql",
+		dialect: "bigquery",
+		source: "zetasql",
+		stage: "analyzer",
+		validity: "byDir",
+	},
+	{
+		srcRel: "harness/local/bigquery-zetasql-parser",
+		dialect: "bigquery",
+		source: "zetasql",
+		stage: "parser",
+		validity: "byDir",
+	},
+	{
+		srcRel: "vendor/grammars-v4/sql/tsql/examples",
+		dialect: "tsql",
+		source: "grammars-v4",
+		stage: "parser",
+		validity: "positive",
+	},
+	{
+		srcRel: "vendor/grammars-v4/sql/snowflake/examples",
+		dialect: "snowflake",
+		source: "grammars-v4",
+		stage: "parser",
+		validity: "positive",
+	},
+	{
+		srcRel: "vendor/bytebase-parser/redshift/examples",
+		dialect: "redshift",
+		source: "bytebase",
+		stage: "parser",
+		validity: "positive",
+	},
 ];
 
 function sqlFiles(root: string): string[] {
@@ -100,58 +157,55 @@ function pruneEmpty(root: string): void {
 }
 
 describe.skipIf(!process.env.ORGANIZE)("organize-corpus (one-time migration)", () => {
-	it(
-		"reorganizes the corpus into <dialect>/<source>/<stage>/<validity>/<category>/…",
-		{ timeout: 1_800_000 },
-		() => {
-			const only = process.env.ONLY;
-			const counts = new Map<string, number>();
-			let moved = 0;
-			let skipped = 0;
+	it("reorganizes the corpus into <dialect>/<source>/<stage>/<validity>/<category>/…", { timeout: 1_800_000 }, () => {
+		const only = process.env.ONLY;
+		const counts = new Map<string, number>();
+		let moved = 0;
+		let skipped = 0;
 
-			for (const c of CORPORA) {
-				if (only && c.srcRel !== only) continue;
-				const root = corpusPath(c.srcRel);
-				if (!existsSync(root)) {
-					console.log(`(absent) ${c.srcRel}`);
+		for (const c of CORPORA) {
+			if (only && c.srcRel !== only) continue;
+			const root = corpusPath(c.srcRel);
+			if (!existsSync(root)) {
+				console.log(`(absent) ${c.srcRel}`);
+				continue;
+			}
+			for (const file of sqlFiles(root)) {
+				const rel = relative(root, file).split(sep).join("/"); // e.g. positive/agg_4.sql or account-usage/1.sql
+				let validity: string;
+				let sub: string;
+				if (c.validity === "byDir") {
+					const i = rel.indexOf("/");
+					validity = rel.slice(0, i); // positive | negative
+					sub = rel.slice(i + 1);
+				} else {
+					validity = "positive";
+					sub = rel;
+				}
+				const sql = readFile(file);
+				const category =
+					validity === "negative" && c.stage === "parser" ? "unparsed" : classify(c.dialect, sql);
+				const targetRel = [c.dialect, c.source, c.stage, validity, category, sub].join("/");
+				const target = corpusPath(targetRel);
+				if (existsSync(target)) {
+					skipped++;
 					continue;
 				}
-				for (const file of sqlFiles(root)) {
-					const rel = relative(root, file).split(sep).join("/"); // e.g. positive/agg_4.sql or account-usage/1.sql
-					let validity: string;
-					let sub: string;
-					if (c.validity === "byDir") {
-						const i = rel.indexOf("/");
-						validity = rel.slice(0, i); // positive | negative
-						sub = rel.slice(i + 1);
-					} else {
-						validity = "positive";
-						sub = rel;
-					}
-					const sql = readFile(file);
-					const category = validity === "negative" && c.stage === "parser" ? "unparsed" : classify(c.dialect, sql);
-					const targetRel = [c.dialect, c.source, c.stage, validity, category, sub].join("/");
-					const target = corpusPath(targetRel);
-					if (existsSync(target)) {
-						skipped++;
-						continue;
-					}
-					mkdirSync(dirname(target), { recursive: true });
-					renameSync(file, target);
-					moved++;
-					const key = [c.dialect, c.source, c.stage, validity, category].join("/");
-					counts.set(key, (counts.get(key) ?? 0) + 1);
-				}
-				pruneEmpty(root);
+				mkdirSync(dirname(target), { recursive: true });
+				renameSync(file, target);
+				moved++;
+				const key = [c.dialect, c.source, c.stage, validity, category].join("/");
+				counts.set(key, (counts.get(key) ?? 0) + 1);
 			}
+			pruneEmpty(root);
+		}
 
-			const lines = [`moved ${moved} files (${skipped} skipped — target existed)`, ""];
-			for (const key of [...counts.keys()].sort()) lines.push(`  ${String(counts.get(key)).padStart(6)}  ${key}`);
-			const summary = lines.join("\n");
-			console.log("\n" + summary);
-			writeFileSync(corpusPath("_organize-summary.txt"), summary + "\n");
-		},
-	);
+		const lines = [`moved ${moved} files (${skipped} skipped — target existed)`, ""];
+		for (const key of [...counts.keys()].sort()) lines.push(`  ${String(counts.get(key)).padStart(6)}  ${key}`);
+		const summary = lines.join("\n");
+		console.log("\n" + summary);
+		writeFileSync(corpusPath("_organize-summary.txt"), summary + "\n");
+	});
 });
 
 import { readFileSync } from "node:fs";

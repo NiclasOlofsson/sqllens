@@ -131,7 +131,8 @@ export function badLiteralEscapes(tokens: Token[]): SyntaxDiagnostic[] {
 		} else if (type === T_IDENTIFIER && text.startsWith("`") && text.endsWith("`") && text.length >= 2) {
 			// Backquoted identifier — must be non-empty, same escape rules as a non-raw, non-bytes string.
 			const inner = text.slice(1, -1);
-			if (inner === "" || inner.includes("�") || !literalEscapesValid(inner, false, false)) out.push(escapeDiagAt(tok));
+			if (inner === "" || inner.includes("�") || !literalEscapesValid(inner, false, false))
+				out.push(escapeDiagAt(tok));
 		}
 	}
 	return out;

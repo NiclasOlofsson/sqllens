@@ -22,14 +22,16 @@ export function cleanQuery(raw) {
 	// that itself begins with `--` or `==` (which would collide with the input/expected `--` and block
 	// `==` separators) by prefixing a backslash; unescape those so the real comment line is recovered
 	// (`\--comment` → `--comment`).
-	return raw
-		.split("\n")
-		// A directive line may itself carry an alternation (`[{{|no_}}qualify_reserved]`); test with the
-		// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array).
-		.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*#/.test(l))
-		.map((l) => l.replace(/^\\(--|==)/, "$1"))
-		.join("\n")
-		.trim();
+	return (
+		raw
+			.split("\n")
+			// A directive line may itself carry an alternation (`[{{|no_}}qualify_reserved]`); test with the
+			// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array).
+			.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*#/.test(l))
+			.map((l) => l.replace(/^\\(--|==)/, "$1"))
+			.join("\n")
+			.trim()
+	);
 }
 
 // Strip leading test-directive lines from an EXPANDED variant. cleanQuery drops directive lines before
@@ -174,7 +176,8 @@ export function featureOffExpected(expectedSection, query = "") {
 	// Consecutive ON/USING inside a PARENTHESIZED join is the ALLOW_CONSECUTIVE_ON feature we implement;
 	// ZetaSQL with it off reports "Expected end of input but got ON/USING". The `JOIN (` guard keeps the
 	// genuine pipe-direct form (`|> JOIN t ON a ON b`, single-clause only) a negative.
-	if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query)) return true;
+	if (/Expected end of input but got keyword (ON|USING)\b/.test(expectedSection) && /\bjoin\s*\(/i.test(query))
+		return true;
 	return false;
 }
 
@@ -208,7 +211,12 @@ export function isSingleStmtModeBoundary(expectedSection, query) {
 		return false;
 	}
 	const afterSemi = query.split(";").slice(1).join(";");
-	return /\S/.test(afterSemi.replace(/--[^\n]*/g, "").replace(/#[^\n]*/g, "").replace(/\/\*[\s\S]*?\*\//g, ""));
+	return /\S/.test(
+		afterSemi
+			.replace(/--[^\n]*/g, "")
+			.replace(/#[^\n]*/g, "")
+			.replace(/\/\*[\s\S]*?\*\//g, ""),
+	);
 }
 
 /**
@@ -236,7 +244,10 @@ function buildLabelMap(expectedSection, isNeg) {
 				if (lines[i].trim()) labels.push(lines[i].trim());
 				i++;
 			}
-			expectedText = lines.slice(i).join("\n").replace(/^[\r\n]*--[\r\n]*/, "");
+			expectedText = lines
+				.slice(i)
+				.join("\n")
+				.replace(/^[\r\n]*--[\r\n]*/, "");
 		} else {
 			labels.push(heads[h][2].trim());
 			const ci = body.indexOf("--");

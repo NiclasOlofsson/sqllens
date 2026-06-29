@@ -12,7 +12,9 @@ describe("computeHover", () => {
 		const h = computeHover(doc(sql), { line: 0, character: sql.indexOf("amount") }, schema);
 		expect(h).not.toBeNull();
 		const value =
-			typeof h!.contents === "object" && "value" in h!.contents ? (h!.contents as any).value : String(h!.contents);
+			typeof h!.contents === "object" && "value" in h!.contents
+				? (h!.contents as any).value
+				: String(h!.contents);
 		expect(value).toMatch(/decimal/);
 	});
 

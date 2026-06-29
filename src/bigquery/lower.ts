@@ -352,7 +352,12 @@ function lowerSubqueryOrSubpipeline(node: ParserRuleContext | undefined, fallbac
 	if (paren) return lowerParenthesizedQuery(paren);
 	const sp = directChildrenOfRule(node, P.RULE_subpipeline)[0];
 	if (sp) {
-		const body: PipeExpr = { kind: "pipe", input: emptyBody(sp, "non-query"), stages: lowerSubpipeline(sp), cst: sp };
+		const body: PipeExpr = {
+			kind: "pipe",
+			input: emptyBody(sp, "non-query"),
+			stages: lowerSubpipeline(sp),
+			cst: sp,
+		};
 		return { kind: "query", ctes: [], body, cst: sp };
 	}
 	return emptyQuery(node, "non-query");
@@ -390,9 +395,10 @@ function lowerPipeAggregate(agg: ParserRuleContext, cst: ParserRuleContext): Pip
 		: [];
 	const gbClause = directChildrenOfRule(agg, P.RULE_pipe_group_by_clause)[0];
 	const groupBy: Expr[] = [];
-	if (gbClause) for (const gi of directChildrenOfRule(gbClause, P.RULE_grouping_item_in_pipe)) {
-		for (const e of collectOfRule(gi, P.RULE_expression)) groupBy.push(lowerExpr(e));
-	}
+	if (gbClause)
+		for (const gi of directChildrenOfRule(gbClause, P.RULE_grouping_item_in_pipe)) {
+			for (const e of collectOfRule(gi, P.RULE_expression)) groupBy.push(lowerExpr(e));
+		}
 	const columns: ColumnRef[] = projectionColumns(aggregates);
 	for (const g of groupBy) columnsOf(g, columns, "groupBy");
 	return { op: "aggregate", aggregates, groupBy, columns, cst };
@@ -537,9 +543,16 @@ function unpivotInfoOf(pipeUnpivot: ParserRuleContext): UnpivotInfo {
 		const forPath = directChildrenOfRule(uc, P.RULE_path_expression)[0];
 		if (forPath) nameColumn = pathParts(forPath).slice(-1)[0] ?? "";
 		const inList = directChildrenOfRule(uc, P.RULE_unpivot_in_item_list)[0];
-		if (inList) for (const p of collectOfRule(inList, P.RULE_path_expression)) removed.push(pathParts(p).slice(-1)[0] ?? "");
+		if (inList)
+			for (const p of collectOfRule(inList, P.RULE_path_expression))
+				removed.push(pathParts(p).slice(-1)[0] ?? "");
 	}
-	return { valueColumn, nameColumn, removed, alias: asAliasText(directChildrenOfRule(pipeUnpivot, P.RULE_as_alias)[0]) };
+	return {
+		valueColumn,
+		nameColumn,
+		removed,
+		alias: asAliasText(directChildrenOfRule(pipeUnpivot, P.RULE_as_alias)[0]),
+	};
 }
 
 // A FROM-clause table source may carry a PIVOT/UNPIVOT suffix (`FROM t PIVOT(…) AS p`). The pivot_clause
@@ -576,7 +589,9 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	}
 	const extend = directChildrenOfRule(po, P.RULE_pipe_extend)[0];
 	if (extend) {
-		const projections = projectionsOfSelectionList(directChildrenOfRule(extend, P.RULE_pipe_selection_item_list)[0]);
+		const projections = projectionsOfSelectionList(
+			directChildrenOfRule(extend, P.RULE_pipe_selection_item_list)[0],
+		);
 		return { op: "extend", projections, columns: projectionColumns(projections), cst: po };
 	}
 	const set = directChildrenOfRule(po, P.RULE_pipe_set)[0];
@@ -617,7 +632,9 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	if (directChildrenOfRule(po, P.RULE_pipe_distinct)[0]) return { op: "distinct", cst: po };
 	const window = directChildrenOfRule(po, P.RULE_pipe_window)[0];
 	if (window) {
-		const projections = projectionsOfSelectionList(directChildrenOfRule(window, P.RULE_pipe_selection_item_list)[0]);
+		const projections = projectionsOfSelectionList(
+			directChildrenOfRule(window, P.RULE_pipe_selection_item_list)[0],
+		);
 		return { op: "window", projections, columns: projectionColumns(projections), cst: po };
 	}
 	const join = directChildrenOfRule(po, P.RULE_pipe_join)[0];
@@ -643,7 +660,10 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	if (recUnion) {
 		const meta = directChildrenOfRule(recUnion, P.RULE_set_operation_metadata)[0];
 		const all = meta !== undefined && hasTokenDeep(meta, P.ALL_SYMBOL);
-		const operand = lowerSubqueryOrSubpipeline(directChildrenOfRule(recUnion, P.RULE_subquery_or_subpipeline)[0], recUnion);
+		const operand = lowerSubqueryOrSubpipeline(
+			directChildrenOfRule(recUnion, P.RULE_subquery_or_subpipeline)[0],
+			recUnion,
+		);
 		const aliasId = firstOfRule(recUnion, P.RULE_identifier);
 		return { op: "recursiveUnion", all, operand, alias: aliasId ? identText(aliasId) : undefined, cst: po };
 	}
@@ -680,9 +700,11 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	const ifOp = directChildrenOfRule(po, P.RULE_pipe_if)[0];
 	if (ifOp) return lowerPipeIf(ifOp, po);
 	const fork = directChildrenOfRule(po, P.RULE_pipe_fork)[0];
-	if (fork) return { op: "fork", branches: directChildrenOfRule(fork, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
+	if (fork)
+		return { op: "fork", branches: directChildrenOfRule(fork, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
 	const tee = directChildrenOfRule(po, P.RULE_pipe_tee)[0];
-	if (tee) return { op: "tee", branches: directChildrenOfRule(tee, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
+	if (tee)
+		return { op: "tee", branches: directChildrenOfRule(tee, P.RULE_subpipeline).map(lowerSubpipeline), cst: po };
 	const mr = directChildrenOfRule(po, P.RULE_pipe_match_recognize)[0];
 	if (mr) return lowerPipeMatchRecognize(mr, po);
 	if (directChildrenOfRule(po, P.RULE_pipe_export_data)[0]) return { op: "exportData", cst: po };

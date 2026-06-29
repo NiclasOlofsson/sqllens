@@ -394,7 +394,13 @@ function lowerSparkPipeRhs(rhs: ParserRuleContext): PipeStage {
 			joinConditions.push(e);
 			columnsOf(e, columns, "join");
 		}
-		return { op: "join", source, joinConditions: joinConditions.length ? joinConditions : undefined, columns, cst: rhs };
+		return {
+			op: "join",
+			source,
+			joinConditions: joinConditions.length ? joinConditions : undefined,
+			columns,
+			cst: rhs,
+		};
 	}
 	const setTok = directTokenType(rhs, [P.UNION, P.EXCEPT, P.SETMINUS, P.INTERSECT]);
 	const qp = directChildrenOfRule(rhs, P.RULE_queryPrimary)[0];
@@ -434,7 +440,8 @@ function lowerPipeQueryOrg(qo: ParserRuleContext, cst: ParserRuleContext): PipeS
 			else if (t === P.LIMIT) {
 				inOrder = false;
 				const nx = qo.getChild(i + 1);
-				if (nx instanceof ParserRuleContext && nx.ruleIndex === P.RULE_expression) limitExpr = lowerExpression(nx);
+				if (nx instanceof ParserRuleContext && nx.ruleIndex === P.RULE_expression)
+					limitExpr = lowerExpression(nx);
 			}
 			continue;
 		}

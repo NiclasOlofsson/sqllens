@@ -388,7 +388,12 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 	const scope = newScope(body, parent, parent.dialect);
 	for (const el of src.elements) {
 		if (!el.variable) continue;
-		const ts: TableSource = { kind: "table", name: [el.variable], alias: el.variable, cst: el.variableCst ?? el.cst };
+		const ts: TableSource = {
+			kind: "table",
+			name: [el.variable],
+			alias: el.variable,
+			cst: el.variableCst ?? el.cst,
+		};
 		scope.sources.set(normalizeName(el.variable), { kind: "table", name: [el.variable], source: ts });
 	}
 	scope.outputs = outputsOf(body);
@@ -598,7 +603,8 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
  *  since Databricks identifiers are case-insensitive (so `U.col` binds to a source aliased `u`). */
 function sourceKey(source: Source): string {
 	if (source.kind === "lateral") return normalizeName(source.alias ?? "");
-	if (source.kind === "graphtable") return normalizeName(source.alias ?? source.graph[source.graph.length - 1] ?? "graph_table");
+	if (source.kind === "graphtable")
+		return normalizeName(source.alias ?? source.graph[source.graph.length - 1] ?? "graph_table");
 	const raw = source.alias ?? (source.kind === "table" ? source.name[source.name.length - 1] : "");
 	return normalizeName(raw ?? "");
 }

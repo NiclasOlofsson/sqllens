@@ -261,9 +261,7 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const unsupported: string[] = [];
 
 	const targetList = firstShallow(node, P.RULE_target_list);
-	const projections = targetList
-		? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection)
-		: [];
+	const projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
 
 	// SELECT * EXCLUDE (cols) — attach to the star projection.
 	const exclude = directChildrenOfRule(node, P.RULE_exclude_clause)[0];
@@ -278,7 +276,10 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const from: Source[] = [];
 	const joinConditions: Expr[] = [];
 	if (fromClause) {
-		for (const tr of directChildrenOfRule(directChildrenOfRule(fromClause, P.RULE_from_list)[0] ?? fromClause, P.RULE_table_ref)) {
+		for (const tr of directChildrenOfRule(
+			directChildrenOfRule(fromClause, P.RULE_from_list)[0] ?? fromClause,
+			P.RULE_table_ref,
+		)) {
 			collectTableRef(tr, from, joinConditions, unsupported);
 		}
 	}
@@ -288,7 +289,10 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 
 	const groupClause = directChildrenOfRule(node, P.RULE_group_clause)[0];
 	const groupBy = groupClause ? extractGroupBy(groupClause) : undefined;
-	const groupByAll = groupClause !== undefined && firstShallow(groupClause, P.RULE_group_by_item) === undefined && hasTokenShallow(groupClause, P.ALL);
+	const groupByAll =
+		groupClause !== undefined &&
+		firstShallow(groupClause, P.RULE_group_by_item) === undefined &&
+		hasTokenShallow(groupClause, P.ALL);
 
 	const having = directChildrenOfRule(node, P.RULE_having_clause)[0];
 	const havingExpr = having ? lowerExpr(firstAExpr(having)) : undefined;
@@ -704,8 +708,10 @@ function lowerUnaryNot(node: ParserRuleContext): Expr {
 function lowerIsNull(node: ParserRuleContext): Expr {
 	const operand = directChildrenOfRule(node, P.RULE_a_expr_is_not)[0];
 	const inner = operand ? lowerExpr(operand) : otherExpr(node);
-	if (hasDirectToken(node, P.ISNULL)) return { kind: "predicate", op: "null", negated: false, operand: inner, args: [], cst: node };
-	if (hasDirectToken(node, P.NOTNULL)) return { kind: "predicate", op: "null", negated: true, operand: inner, args: [], cst: node };
+	if (hasDirectToken(node, P.ISNULL))
+		return { kind: "predicate", op: "null", negated: false, operand: inner, args: [], cst: node };
+	if (hasDirectToken(node, P.NOTNULL))
+		return { kind: "predicate", op: "null", negated: true, operand: inner, args: [], cst: node };
 	return inner;
 }
 
@@ -726,7 +732,13 @@ function lowerIsNot(node: ParserRuleContext): Expr {
 			cst: node,
 		};
 	}
-	const op = hasDirectToken(node, P.TRUE_P) ? "true" : hasDirectToken(node, P.FALSE_P) ? "false" : hasDirectToken(node, P.UNKNOWN) ? "unknown" : "null";
+	const op = hasDirectToken(node, P.TRUE_P)
+		? "true"
+		: hasDirectToken(node, P.FALSE_P)
+			? "false"
+			: hasDirectToken(node, P.UNKNOWN)
+				? "unknown"
+				: "null";
 	return { kind: "predicate", op, negated, operand: inner, args: [], cst: node };
 }
 
@@ -758,7 +770,13 @@ function lowerCompare(node: ParserRuleContext): Expr {
 			};
 		}
 		const a = directChildrenOfRule(node, P.RULE_a_expr)[0];
-		return { kind: "binary", op: textOrEmpty(directChildrenOfRule(node, P.RULE_subquery_Op)[0]), left, right: a ? lowerExpr(a) : otherExpr(node), cst: node };
+		return {
+			kind: "binary",
+			op: textOrEmpty(directChildrenOfRule(node, P.RULE_subquery_Op)[0]),
+			left,
+			right: a ? lowerExpr(a) : otherExpr(node),
+			cst: node,
+		};
 	}
 	return passthrough(node);
 }
@@ -837,8 +855,27 @@ function lowerBExpr(node: ParserRuleContext): Expr {
 	if (cexpr) return lowerExpr(cexpr);
 	const sub = directChildrenOfRule(node, P.RULE_b_expr);
 	if (sub.length === 2) {
-		const op = directTokenType(node, [P.PLUS, P.MINUS, P.STAR, P.SLASH, P.PERCENT, P.CARET, P.LT, P.GT, P.EQUAL, P.LESS_EQUALS, P.GREATER_EQUALS, P.NOT_EQUALS]);
-		return { kind: "binary", op: op !== undefined ? (tokenText(node, op) ?? "") : "", left: lowerExpr(sub[0]), right: lowerExpr(sub[1]), cst: node };
+		const op = directTokenType(node, [
+			P.PLUS,
+			P.MINUS,
+			P.STAR,
+			P.SLASH,
+			P.PERCENT,
+			P.CARET,
+			P.LT,
+			P.GT,
+			P.EQUAL,
+			P.LESS_EQUALS,
+			P.GREATER_EQUALS,
+			P.NOT_EQUALS,
+		]);
+		return {
+			kind: "binary",
+			op: op !== undefined ? (tokenText(node, op) ?? "") : "",
+			left: lowerExpr(sub[0]),
+			right: lowerExpr(sub[1]),
+			cst: node,
+		};
 	}
 	if (sub.length === 1) return lowerExpr(sub[0]);
 	return otherExpr(node);
@@ -851,7 +888,9 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 	if (hasDirectToken(node, P.EXISTS)) {
 		const sw = directChildrenOfRule(node, P.RULE_select_with_parens)[0];
 		const inner = sw ? innerSelect(sw) : undefined;
-		return sw ? { kind: "exists", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: node } : otherExpr(node);
+		return sw
+			? { kind: "exists", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: node }
+			: otherExpr(node);
 	}
 	// columnref — a column / qualified column / qualified star / subscripted column
 	const colref = directChildrenOfRule(node, P.RULE_columnref)[0];
@@ -901,7 +940,8 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 	if (plsqlvar) return { kind: "column", parts: [plsqlvar.getText()], cst: node };
 	// row constructors / OVERLAPS — not modelled structurally.
 	const exprs = collectOfRule(node, P.RULE_a_expr).map(lowerExpr);
-	if (exprs.length) return { kind: "function", name: "row", args: exprs, aggregate: false, distinct: false, cst: node };
+	if (exprs.length)
+		return { kind: "function", name: "row", args: exprs, aggregate: false, distinct: false, cst: node };
 	return otherExpr(node);
 }
 
@@ -926,7 +966,10 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 			} else {
 				const attr = firstShallow(el, P.RULE_attr_name);
 				const part = attr ? textOf(attr) : el.getText().replace(/^\./, "");
-				expr = expr.kind === "column" ? { kind: "column", parts: [...expr.parts, part], cst } : { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
+				expr =
+					expr.kind === "column"
+						? { kind: "column", parts: [...expr.parts, part], cst }
+						: { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
 			}
 		} else {
 			// '[' a_expr ']' or '[' lo? : hi? ']' subscript
@@ -963,7 +1006,7 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const app = directChildrenOfRule(node, P.RULE_func_application)[0];
 	if (!app) return otherExpr(node);
 	const fname = firstShallow(app, P.RULE_func_name);
-	const name = (fname ? lastName(fname) : leftmostToken(app) ?? "").toLowerCase();
+	const name = (fname ? lastName(fname) : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
 	// WITHIN GROUP (ORDER BY …) keys feed the aggregate — include as args.
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];
@@ -1011,7 +1054,13 @@ function lowerCommonFunc(node: ParserRuleContext): Expr {
 		for (const a of directChildrenOfRule(list, P.RULE_a_expr)) args.push(lowerExpr(a));
 	}
 	for (const a of directChildrenOfRule(node, P.RULE_a_expr)) args.push(lowerExpr(a));
-	for (const sub of [P.RULE_extract_list, P.RULE_substr_list, P.RULE_overlay_list, P.RULE_trim_list, P.RULE_position_list]) {
+	for (const sub of [
+		P.RULE_extract_list,
+		P.RULE_substr_list,
+		P.RULE_overlay_list,
+		P.RULE_trim_list,
+		P.RULE_position_list,
+	]) {
 		for (const wrap of directChildrenOfRule(node, sub)) {
 			for (const a of collectOfRule(wrap, P.RULE_a_expr)) args.push(lowerExpr(a));
 			for (const b of collectOfRule(wrap, P.RULE_b_expr)) args.push(lowerExpr(b));
@@ -1026,9 +1075,9 @@ function lowerOver(over: ParserRuleContext): WindowSpec {
 	if (!spec) return { partitionBy: [], orderBy: [], cst: over }; // OVER namedWindow
 	const part = directChildrenOfRule(spec, P.RULE_opt_partition_clause)[0];
 	const partitionBy = part
-		? (directChildrenOfRule(part, P.RULE_expr_list)[0]
+		? directChildrenOfRule(part, P.RULE_expr_list)[0]
 			? directChildrenOfRule(directChildrenOfRule(part, P.RULE_expr_list)[0], P.RULE_a_expr).map(lowerExpr)
-			: [])
+			: []
 		: [];
 	const sort = directChildrenOfRule(spec, P.RULE_opt_sort_clause)[0] ?? firstShallow(spec, P.RULE_sort_clause);
 	const orderBy = sort ? (extractSortKeys(firstShallow(sort, P.RULE_sort_clause) ?? sort) ?? []) : [];
@@ -1228,7 +1277,11 @@ function hasTokenShallow(node: ParseTree, type: number): boolean {
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const child = node.getChild(i);
 		if (child instanceof TerminalNode && child.symbol.type === type) return true;
-		if (child instanceof ParserRuleContext && child.ruleIndex !== P.RULE_select_with_parens && hasTokenShallow(child, type)) {
+		if (
+			child instanceof ParserRuleContext &&
+			child.ruleIndex !== P.RULE_select_with_parens &&
+			hasTokenShallow(child, type)
+		) {
 			return true;
 		}
 	}
@@ -1272,7 +1325,11 @@ function nameParts(node: ParserRuleContext): string[] {
 		}
 	}
 	if (parts.length) return parts;
-	return node.getText().split(".").map(stripQuotes).filter((p) => p.length > 0);
+	return node
+		.getText()
+		.split(".")
+		.map(stripQuotes)
+		.filter((p) => p.length > 0);
 }
 
 /** Last component of a (possibly dotted) func_name / name. */
@@ -1291,7 +1348,8 @@ function textOrEmpty(node: ParserRuleContext | undefined): string {
 }
 
 function stripQuotes(text: string): string {
-	if (text.length >= 2 && text[0] === '"' && text[text.length - 1] === '"') return text.slice(1, -1).replace(/""/g, '"');
+	if (text.length >= 2 && text[0] === '"' && text[text.length - 1] === '"')
+		return text.slice(1, -1).replace(/""/g, '"');
 	return text;
 }
 
@@ -1300,7 +1358,15 @@ function otherExpr(node: ParserRuleContext): Expr {
 }
 
 function emptyBody(cst: ParserRuleContext): SelectExpr {
-	return { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: ["unparsed"], cst };
+	return {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["unparsed"],
+		cst,
+	};
 }
 
 function emptyQuery(cst: ParserRuleContext): QueryExpr {

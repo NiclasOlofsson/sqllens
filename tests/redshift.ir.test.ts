@@ -160,7 +160,7 @@ describe("Redshift lower — clauses", () => {
 	it("subquery source", () => {
 		const b = selectBody("SELECT s.a FROM (SELECT a FROM t) s");
 		expect(b.from[0]).toMatchObject({ kind: "subquery", alias: "s" });
-		const sub = b.from[0] as Extract<typeof b.from[0], { kind: "subquery" }>;
+		const sub = b.from[0] as Extract<(typeof b.from)[0], { kind: "subquery" }>;
 		expect(sub.query.body.kind).toBe("select");
 	});
 });

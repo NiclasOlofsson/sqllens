@@ -156,9 +156,9 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 
 	it("SUPER object UNPIVOT in FROM (UNPIVOT expr AS val AT attr)", () => {
 		// query-super.html#unpivoting — "UNPIVOT expression AS value_alias [ AT attribute_alias ]".
-		expect(
-			errorsOf("SELECT attr, val FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr"),
-		).toBe(0);
+		expect(errorsOf("SELECT attr, val FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr")).toBe(
+			0,
+		);
 		expect(
 			errorsOf("SELECT attr, val FROM customer_orders_lineitem c, c.c_orders AS o, UNPIVOT o AS val AT attr"),
 		).toBe(0);
@@ -171,9 +171,9 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 				"select first_value(venuename) ignore nulls over (partition by venuestate order by venueseats desc rows between unbounded preceding and unbounded following) from venue",
 			),
 		).toBe(0);
-		expect(errorsOf("select nth_value(venueseats, 3) ignore nulls over (order by venueseats desc) from venue")).toBe(
-			0,
-		);
+		expect(
+			errorsOf("select nth_value(venueseats, 3) ignore nulls over (order by venueseats desc) from venue"),
+		).toBe(0);
 		expect(errorsOf("select last_value(x) respect nulls over (order by y) from t")).toBe(0);
 	});
 
@@ -188,9 +188,9 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 	it("UNNEST(array) WITH OFFSET AS alias(col[, idx])", () => {
 		// r_FROM_clause-unnest-examples.html.
 		expect(errorsOf("SELECT up.product FROM orders o, UNNEST(o.products) WITH OFFSET AS up(product)")).toBe(0);
-		expect(errorsOf("SELECT up.product, up.idx FROM orders o, UNNEST(o.products) WITH OFFSET AS up(product, idx)")).toBe(
-			0,
-		);
+		expect(
+			errorsOf("SELECT up.product, up.idx FROM orders o, UNNEST(o.products) WITH OFFSET AS up(product, idx)"),
+		).toBe(0);
 	});
 
 	it("FILE / QUOTA / DISTSTYLE usable as column identifiers (non-reserved)", () => {

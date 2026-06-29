@@ -47,8 +47,7 @@ const KNOWN_BAD: Record<string, string> = {
 		"AWS doc typo — missing comma between col2 and sum(col3): `SELECT col1, col2 sum(col3) … GROUP BY ALL`. (GROUP BY ALL itself parses — see redshift.test.ts.)",
 	"r_SET_CONFIG/2.sql":
 		"AWS doc uses typographic smart quotes (‘…’) around the SET_CONFIG arguments — not valid SQL string delimiters.",
-	"SYS_DATASHARE_USAGE_PRODUCER/1.sql":
-		"AWS doc typo — `SELECT DISTINCT` with an empty select list before FROM.",
+	"SYS_DATASHARE_USAGE_PRODUCER/1.sql": "AWS doc typo — `SELECT DISTINCT` with an empty select list before FROM.",
 	"tutorial_multi-class_classification/7.sql":
 		"AWS doc has unbalanced parentheses — the first SELECT closes with ) but has no opening ( before UNION.",
 };
@@ -120,11 +119,15 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Redshift grammar vs the bytebase 
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs corpus", () => {
-	it("parses 100% of the in-scope query bucket (minus verified known-bad); reports dml/ddl", { timeout: 1_800_000 }, () => {
-		// No-other policy: every in-scope query example parses, or it is a documented-broken example
-		// listed (and justified) in KNOWN_BAD. There is no silently-tolerated failing tail.
-		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
-	});
+	it(
+		"parses 100% of the in-scope query bucket (minus verified known-bad); reports dml/ddl",
+		{ timeout: 1_800_000 },
+		() => {
+			// No-other policy: every in-scope query example parses, or it is a documented-broken example
+			// listed (and justified) in KNOWN_BAD. There is no silently-tolerated failing tail.
+			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
+		},
+	);
 
 	// lower() + resolveScopes must be TOTAL over every parsed query: a valid parse never throws in
 	// the semantic pipeline (unmodelled forms become `other`/`unsupported`, not exceptions). This is
@@ -141,7 +144,12 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 			try {
 				resolveScopes(lower(tree), "redshift");
 			} catch (e) {
-				throwers.push(`${f.slice(DOCS_CORPUS.length + 1).split("\\").join("/")}: ${String(e).slice(0, 120)}`);
+				throwers.push(
+					`${f
+						.slice(DOCS_CORPUS.length + 1)
+						.split("\\")
+						.join("/")}: ${String(e).slice(0, 120)}`,
+				);
 			}
 		}
 		expect(parsed).toBeGreaterThan(0);
