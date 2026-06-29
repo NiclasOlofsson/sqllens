@@ -134,10 +134,11 @@ protocol translation.
 
 LSP is a large protocol — roughly thirty request types across document-sync,
 language, and workspace features — so "supports LSP" is not one bit but a long
-checklist. A SQL server needs a subset: several features have no meaning for SQL
-(call hierarchy, document color, inline values, monikers), and a few are
-deliberately deferred (formatting, project-wide navigation). The coverage,
-feature by feature:
+checklist. A SQL server needs a subset, but more of it maps to SQL than it first
+looks — a CTE / view / model is the SQL analog of a definition, and the
+dependency graph between them is a call hierarchy. A few features genuinely don't
+apply (type hierarchy, document color, monikers); a few are deliberately deferred
+(formatting, project-wide navigation). The coverage, feature by feature:
 
 **Language features**
 
@@ -157,16 +158,17 @@ feature by feature:
 | Code lens | ✅ (no resolve) |
 | Go to declaration | ◻️ not yet |
 | Go to type definition | ◻️ not yet |
+| Go to implementation | ◻️ not yet — name → its defining query (view / model); needs the project model |
+| Call hierarchy | ◻️ not yet — the CTE / dbt-model dependency graph |
 | Document link | ◻️ not yet |
+| Linked editing range | ◻️ not yet — live alias / name sync-edit |
 | Code action (quick fixes) | ◻️ next phase |
 | Rename (+ prepare) | ◻️ next phase |
 | Formatting / range / on-type | ◻️ deferred (external formatter) |
-| Go to implementation | — n/a for SQL |
-| Call hierarchy | — n/a for SQL |
-| Type hierarchy | — n/a for SQL |
-| Linked editing range | — n/a for SQL |
-| Inline values | ◻️ (debugger surface) |
-| Moniker | — n/a for SQL |
+| Inline values | ◻️ debugger surface |
+| Type hierarchy | — n/a — SQL has no type-inheritance relation |
+| Document color | — n/a — no color literals |
+| Moniker | — n/a — LSIF / cross-repo indexing concern |
 
 **Diagnostics & document sync**
 
