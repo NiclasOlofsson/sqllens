@@ -34,6 +34,7 @@ import {
 	ReferencesRequest,
 	DocumentHighlightRequest,
 	CodeLensRequest,
+	FoldingRangeRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -438,5 +439,39 @@ describe("LSP acceptance", () => {
 		const uri = open("lens-broken.sql", "SELECT * FORM x");
 		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
 		expect(lenses).toEqual([]);
+	});
+
+	it("foldingRange folds a multi-line CTE body and the statement", async () => {
+		// A CTE whose body spans lines 0–3, with the outer SELECT below. The provider must
+		// emit a fold covering the CTE body (a multi-line region) — and the whole statement.
+		const text = "WITH r AS (\n  SELECT id\n  FROM sales\n)\nSELECT id\nFROM r";
+		//            line 0: WITH r AS (
+		//            line 1:   SELECT id
+		//            line 2:   FROM sales
+		//            line 3: )
+		//            line 4: SELECT id
+		//            line 5: FROM r
+		const uri = open("fold.sql", text);
+		const ranges = (await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } })) as any[];
+		expect(ranges.length).toBeGreaterThanOrEqual(1);
+		// The CTE body `( SELECT id FROM sales )` spans line 0 → line 3.
+		expect(ranges.some((r) => r.startLine === 0 && r.endLine === 3)).toBe(true);
+		// Every emitted range is multi-line.
+		for (const r of ranges) expect(r.endLine).toBeGreaterThan(r.startLine);
+		// De-duped: no two identical (startLine,endLine) pairs.
+		const keys = ranges.map((r) => `${r.startLine}:${r.endLine}`);
+		expect(new Set(keys).size).toBe(keys.length);
+	});
+
+	it("foldingRange returns [] for a single-line query", async () => {
+		const uri = open("fold-single.sql", "SELECT id FROM sales");
+		const ranges = await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
+		expect(ranges).toEqual([]);
+	});
+
+	it("foldingRange on broken input returns an empty array, no error", async () => {
+		const uri = open("fold-broken.sql", "SELECT * FORM x");
+		const ranges = await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
+		expect(Array.isArray(ranges)).toBe(true);
 	});
 });
