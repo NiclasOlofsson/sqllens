@@ -112,6 +112,9 @@ that run on incomplete, mid-edit text — they never need a clean parse:
   own, no third-party dependency).
 - **`signatureAt(doc, offset)`** — parameter hints from a curated per-dialect
   function-signature table; the long tail degrades to name + active-argument.
+- **`referencesAt(scopes, offset, schema?)`** — every occurrence (plus the
+  declaration) of the symbol under the cursor; backs find-references, document
+  highlight, and code-lens reference counts.
 
 ```ts
 import { SqlDocument, Schema } from "sqllens";
@@ -123,8 +126,10 @@ const next = doc.withText("SELECT amount, id FROM sales", 2); // immutable edit 
 ```
 
 The LSP server (`src/lsp/`) holds one `SqlDocument` per open file and serves
-diagnostics, hover, go-to-definition, document symbols, semantic tokens,
-completion, and signature help — reaching the library only through this public
+diagnostics (push + pull), hover, go-to-definition, find-references, document
+highlight, document symbols, code lens, folding ranges, selection
+ranges, inlay type hints, semantic tokens (full/range/delta), completion (with
+resolve), and signature help — reaching the library only through this public
 surface, so it can move to its own package later.
 
 ## Generating the parsers
