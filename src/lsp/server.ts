@@ -19,6 +19,7 @@ import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-toke
 import { computeCompletion } from "./features/completion.js";
 import { computeSignatureHelp } from "./features/signature.js";
 import { computeReferences, computeDocumentHighlight } from "./features/references.js";
+import { computeCodeLens } from "./features/code-lens.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -86,6 +87,7 @@ export function startServer(connection: Connection): void {
 				referencesProvider: true,
 				documentHighlightProvider: true,
 				documentSymbolProvider: true,
+				codeLensProvider: { resolveProvider: false },
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
 				completionProvider: { triggerCharacters: [".", " "] },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
@@ -138,6 +140,11 @@ export function startServer(connection: Connection): void {
 		const doc = docFor(params.textDocument.uri);
 		if (!doc) return [];
 		return computeDocumentSymbols(doc);
+	});
+
+	connection.onCodeLens((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeCodeLens(doc, config.schema) : [];
 	});
 
 	connection.languages.semanticTokens.on((params) => {

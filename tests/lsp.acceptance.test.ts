@@ -33,6 +33,7 @@ import {
 	SignatureHelpRequest,
 	ReferencesRequest,
 	DocumentHighlightRequest,
+	CodeLensRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -414,5 +415,26 @@ describe("LSP acceptance", () => {
 			context: { includeDeclaration: true },
 		});
 		expect(locs).toEqual([]);
+	});
+
+	it("codeLens shows a reference count over a CTE declaration", async () => {
+		// `recent` is declared as a CTE and referenced once in the FROM. A lens lands on the
+		// CTE declaration, at the declaration's position, with a count in its title.
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("lens.sql", text);
+		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
+		const list = (lenses as any[]) ?? [];
+		// A lens whose range covers the CTE declaration `recent` (the one before the reference).
+		const declCol = text.indexOf("recent");
+		const lens = list.find((l) => l.range.start.line === 0 && l.range.start.character === declCol);
+		expect(lens).toBeDefined();
+		expect(lens.range.start.character).toBeLessThan(text.lastIndexOf("recent"));
+		expect(lens.command.title).toMatch(/\d+ references?/);
+	});
+
+	it("codeLens on broken input returns an empty array, no error", async () => {
+		const uri = open("lens-broken.sql", "SELECT * FORM x");
+		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
+		expect(lenses).toEqual([]);
 	});
 });
