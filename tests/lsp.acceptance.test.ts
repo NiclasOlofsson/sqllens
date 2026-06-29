@@ -418,8 +418,9 @@ describe("LSP acceptance", () => {
 	});
 
 	it("codeLens shows a reference count over a CTE declaration", async () => {
-		// `recent` is declared as a CTE and referenced once in the FROM. A lens lands on the
-		// CTE declaration, at the declaration's position, with a count in its title.
+		// `recent` is declared as a CTE and referenced exactly once in the FROM. The count is
+		// references only (excludes the declaration occurrence), so a CTE used once reads
+		// "1 reference". A lens lands on the CTE declaration, at the declaration's position.
 		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
 		const uri = open("lens.sql", text);
 		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
@@ -429,7 +430,8 @@ describe("LSP acceptance", () => {
 		const lens = list.find((l) => l.range.start.line === 0 && l.range.start.character === declCol);
 		expect(lens).toBeDefined();
 		expect(lens.range.start.character).toBeLessThan(text.lastIndexOf("recent"));
-		expect(lens.command.title).toMatch(/\d+ references?/);
+		// One use of `recent` → references-only count is 1, with singular wording.
+		expect(lens.command.title).toBe("1 reference");
 	});
 
 	it("codeLens on broken input returns an empty array, no error", async () => {

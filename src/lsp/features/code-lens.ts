@@ -24,7 +24,7 @@ export function computeCodeLens(doc: SqlDocument, schema?: Schema): CodeLens[] {
 			const offset = doc.lines.offsetAt(s.span.line - 1, s.span.column);
 			const occ = referencesAt(doc.scopes, offset, schema, doc.ast);
 			if (!occ) continue;
-			const n = occ.occurrences.length;
+			const n = occ.occurrences.filter((o) => o.role === "reference").length;
 			out.push({
 				range: rangeFromSpan(s.span),
 				command: { title: `${n} reference${n === 1 ? "" : "s"}`, command: "" },
