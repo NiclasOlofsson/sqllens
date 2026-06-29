@@ -236,3 +236,8 @@ export { complete, type Completion } from "./completion/complete.js";
 // fallback for the long tail). A pure token scan; total: never throws.
 export { signatureAt, type SignatureInfo } from "./signature/signature.js";
 export { FUNCTION_SIGNATURES, type FnSignature, type ParamSig } from "./signature/signatures.js";
+
+// References / occurrence engine — find the declaration + every occurrence of the symbol under a
+// cursor offset. The core primitive behind LSP references / documentHighlight / codeLens / rename.
+// Total: never throws; returns null off-symbol.
+export { referencesAt, type Occurrence, type Occurrences } from "./references/references.js";
