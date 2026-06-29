@@ -128,12 +128,70 @@ const next = doc.withText("SELECT amount, id FROM sales", 2); // immutable edit 
 ## Language server
 
 An LSP (Language Server Protocol) server built on the library, in `src/lsp/`. It
-holds one `SqlDocument` per open file (rebuilt on edit) and serves diagnostics
-(push + pull), hover, go-to-definition, find-references, document highlight,
-document symbols, code lens, folding ranges, selection ranges, inlay type hints,
-semantic tokens (full/range/delta), completion (with resolve), and signature
-help. It reaches the library only through the public API surface above — it adds
-no analysis of its own, only the protocol translation.
+holds one `SqlDocument` per open file (rebuilt on edit) and reaches the library
+only through the public API surface above — it adds no analysis of its own, only
+protocol translation.
+
+LSP is a large protocol — roughly thirty request types across document-sync,
+language, and workspace features — so "supports LSP" is not one bit but a long
+checklist. A SQL server needs a subset: several features have no meaning for SQL
+(call hierarchy, document color, inline values, monikers), and a few are
+deliberately deferred (formatting, project-wide navigation). The coverage,
+feature by feature:
+
+**Language features**
+
+| Feature | Status |
+| --- | --- |
+| Completion (+ resolve) | ✅ |
+| Hover | ✅ |
+| Signature help | ✅ |
+| Go to definition | ✅ |
+| Find references | ✅ |
+| Document highlight | ✅ |
+| Document symbols | ✅ |
+| Folding range | ✅ |
+| Selection range | ✅ |
+| Semantic tokens (full / range / delta) | ✅ all three |
+| Inlay hints | ✅ (no resolve) |
+| Code lens | ✅ (no resolve) |
+| Go to declaration | ◻️ not yet |
+| Go to type definition | ◻️ not yet |
+| Document link | ◻️ not yet |
+| Code action (quick fixes) | ◻️ next phase |
+| Rename (+ prepare) | ◻️ next phase |
+| Formatting / range / on-type | ◻️ deferred (external formatter) |
+| Go to implementation | — n/a for SQL |
+| Call hierarchy | — n/a for SQL |
+| Type hierarchy | — n/a for SQL |
+| Linked editing range | — n/a for SQL |
+| Inline values | ◻️ (debugger surface) |
+| Moniker | — n/a for SQL |
+
+**Diagnostics & document sync**
+
+| Feature | Status |
+| --- | --- |
+| Diagnostics — push (`publishDiagnostics`) | ✅ |
+| Diagnostics — pull (document) | ✅ |
+| Diagnostics — pull (workspace) | ◻️ not yet |
+| Text sync — open / change / close | ✅ (full-document) |
+| Incremental sync | ◻️ full-document only (fine at SQL file sizes) |
+| Save notifications (`didSave` / `willSave`) | ◻️ not yet |
+
+**Workspace features**
+
+| Feature | Status |
+| --- | --- |
+| Workspace symbols | ◻️ needs a project / multi-file model |
+| Execute command | ◻️ not yet |
+| Configuration / watched-files | ◻️ not yet |
+| File operations (create / rename / delete) | ◻️ not yet |
+
+Legend: ✅ implemented · ◻️ not yet / deferred · — not applicable to SQL. The
+deferred items map to tracked drivers in [docs/PLAN.md](docs/PLAN.md): rename and
+code actions are the next LSP phase, workspace symbols need the project model,
+and formatting is expected to wrap an existing external formatter.
 
 ## Generating the parsers
 
