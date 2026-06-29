@@ -30,6 +30,7 @@ import {
 	DocumentSymbolRequest,
 	SemanticTokensRequest,
 	CompletionRequest,
+	CompletionResolveRequest,
 	SignatureHelpRequest,
 	ReferencesRequest,
 	DocumentHighlightRequest,
@@ -351,6 +352,45 @@ describe("LSP acceptance", () => {
 		const labels = (list as { label: string }[]).map((c) => c.label);
 		expect(labels).toContain("amount");
 		expect(labels).toContain("id");
+	});
+
+	it("completionItem/resolve fills a function item's detail with its parameter signature", async () => {
+		// At a column slot, completion offers dialect functions (no detail eagerly). Resolving a
+		// curated function item (date_add) must lazily fill `detail` with the rendered param list.
+		const text = "SELECT  FROM sales";
+		const uri = open("complete-fn.sql", text);
+		const items = await client.sendRequest(CompletionRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: "SELECT ".length },
+		});
+		const list = Array.isArray(items) ? items : ((items as any)?.items ?? []);
+		const fnItem = (list as any[]).find((c) => c.label === "date_add");
+		expect(fnItem).toBeDefined();
+		// Not eagerly filled — detail arrives only on resolve.
+		expect(fnItem.detail).toBeUndefined();
+
+		const resolved = (await client.sendRequest(CompletionResolveRequest.type, fnItem)) as any;
+		expect(resolved.detail).toBeDefined();
+		// The rendered signature names the function and its parameters.
+		expect(resolved.detail).toContain("date_add");
+		expect(resolved.detail).toContain("(");
+		expect(resolved.detail).toContain("start_date");
+	});
+
+	it("completionItem/resolve leaves a non-function item unchanged", async () => {
+		const text = "SELECT  FROM sales";
+		const uri = open("complete-col.sql", text);
+		const items = await client.sendRequest(CompletionRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: "SELECT ".length },
+		});
+		const list = Array.isArray(items) ? items : ((items as any)?.items ?? []);
+		const colItem = (list as any[]).find((c) => c.label === "amount");
+		expect(colItem).toBeDefined();
+		const resolved = (await client.sendRequest(CompletionResolveRequest.type, colItem)) as any;
+		// A column item carries its own detail (the type) and is returned unchanged by resolve.
+		expect(resolved.label).toBe("amount");
+		expect(resolved.kind).toBe(colItem.kind);
 	});
 
 	it("signature help shows the active parameter inside a curated call's parens", async () => {

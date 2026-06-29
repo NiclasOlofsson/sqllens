@@ -17,6 +17,7 @@ import { computeDocumentSymbols } from "./features/symbols.js";
 import { computeDefinition } from "./features/definition.js";
 import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-tokens.js";
 import { computeCompletion } from "./features/completion.js";
+import { resolveCompletion } from "./features/completion-resolve.js";
 import { computeSignatureHelp } from "./features/signature.js";
 import { computeReferences, computeDocumentHighlight } from "./features/references.js";
 import { computeCodeLens } from "./features/code-lens.js";
@@ -95,7 +96,7 @@ export function startServer(connection: Connection): void {
 				codeLensProvider: { resolveProvider: false },
 				inlayHintProvider: true,
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
-				completionProvider: { triggerCharacters: [".", " "] },
+				completionProvider: { triggerCharacters: [".", " "], resolveProvider: true },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
 			},
 		};
@@ -177,6 +178,10 @@ export function startServer(connection: Connection): void {
 		const doc = docFor(params.textDocument.uri);
 		return doc ? computeCompletion(doc, params.position, config.schema) : [];
 	});
+
+	// completionItem/resolve receives ONLY the item (no doc/position); resolveCompletion reads its
+	// `data` payload to fill a function's signature lazily. Total — never throws.
+	connection.onCompletionResolve((item) => resolveCompletion(item));
 
 	connection.onSignatureHelp((params) => {
 		const doc = docFor(params.textDocument.uri);
