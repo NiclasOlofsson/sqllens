@@ -595,8 +595,7 @@ describe("LSP acceptance", () => {
 		for (let i = 1; i < ranges.length; i++) {
 			const child = ranges[i - 1];
 			const parent = ranges[i];
-			const wider =
-				parent.start.character < child.start.character || parent.end.character > child.end.character;
+			const wider = parent.start.character < child.start.character || parent.end.character > child.end.character;
 			const notNarrower =
 				parent.start.character <= child.start.character && parent.end.character >= child.end.character;
 			expect(wider && notNarrower).toBe(true);
@@ -623,7 +622,8 @@ describe("LSP acceptance", () => {
 		})) as any[];
 		expect(Array.isArray(hints)).toBe(true);
 		expect(hints.length).toBeGreaterThanOrEqual(1);
-		const label = (h: any): string => (typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join(""));
+		const label = (h: any): string =>
+			typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join("");
 		const amountHint = hints.find((h) => /decimal/.test(label(h)));
 		expect(amountHint).toBeDefined();
 		// The hint anchors at the end of the `amount` token.
@@ -643,7 +643,8 @@ describe("LSP acceptance", () => {
 			range: { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } },
 		})) as any[];
 		expect(Array.isArray(hints)).toBe(true);
-		const label = (h: any): string => (typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join(""));
+		const label = (h: any): string =>
+			typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join("");
 		// No hint covers the `mystery` projection (its type is unknown).
 		const myEnd = text.indexOf("mystery") + "mystery".length;
 		expect(hints.some((h) => h.position.character === myEnd)).toBe(false);

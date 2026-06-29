@@ -1,14 +1,5 @@
 import { type FoldingRange, FoldingRangeKind } from "vscode-languageserver-types";
-import type {
-	CteDef,
-	Expr,
-	QueryBody,
-	QueryExpr,
-	SelectExpr,
-	SetOpExpr,
-	Source,
-	SqlDocument,
-} from "../../index.js";
+import type { CteDef, Expr, QueryBody, QueryExpr, SelectExpr, SetOpExpr, Source, SqlDocument } from "../../index.js";
 import { rangeFromCst } from "../ranges.js";
 
 // ---------------------------------------------------------------------------

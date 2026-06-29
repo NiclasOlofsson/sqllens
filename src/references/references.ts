@@ -4,12 +4,7 @@ import { endPosition } from "../ir/span.js";
 import type { ColumnRef, Expr, QueryExpr } from "../ir/ir.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
-import {
-	resolveColumn,
-	type ResolvedSource,
-	type Scope,
-	type ScopeTree,
-} from "../scope/scope.js";
+import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { normalizeName, resolveColumnSource } from "../sema/resolve.js";
 import type { Span, SymbolKind } from "../symbols/symbols.js";
 
@@ -62,12 +57,7 @@ const originKey = (o: Origin): string => `${o.table.map(normalizeName).join(".")
  * needs the schema (without it, only the in-query occurrences are returned). Returns null when
  * the cursor is not on a resolvable symbol. Never throws.
  */
-export function referencesAt(
-	scopes: ScopeTree,
-	offset: number,
-	schema?: Schema,
-	ast?: QueryExpr,
-): Occurrences | null {
+export function referencesAt(scopes: ScopeTree, offset: number, schema?: Schema, ast?: QueryExpr): Occurrences | null {
 	try {
 		return compute(scopes, offset, schema ?? new Schema({}), ast);
 	} catch {
@@ -204,7 +194,10 @@ interface NameHit {
 function nameUnderCursor(scopes: ScopeTree, offset: number): NameHit | undefined {
 	let best: NameHit | undefined;
 	let bestLen = Number.MAX_SAFE_INTEGER;
-	const consider = (cst: ParserRuleContext | undefined, hit: Omit<NameHit, "declCst"> & { declCst?: ParserRuleContext }) => {
+	const consider = (
+		cst: ParserRuleContext | undefined,
+		hit: Omit<NameHit, "declCst"> & { declCst?: ParserRuleContext },
+	) => {
 		if (!cst) return;
 		const r = range(cst);
 		if (!r || offset < r.from || offset > r.to) return;
@@ -227,7 +220,8 @@ function nameUnderCursor(scopes: ScopeTree, offset: number): NameHit | undefined
 			const skind = sourceKind(src);
 			consider(sourceCst(src), { scope, name: sname, kind: skind, declCst: declCstFor(scope, src) });
 			const aliasCst = sourceAliasCst(src);
-			if (aliasCst) consider(aliasCst, { scope, name: aliasName(src) ?? sname, kind: "alias", declCst: aliasCst });
+			if (aliasCst)
+				consider(aliasCst, { scope, name: aliasName(src) ?? sname, kind: "alias", declCst: aliasCst });
 		}
 		for (const c of scope.children) visit(c);
 	};
