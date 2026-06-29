@@ -125,12 +125,15 @@ doc.tokenAt(7);                   // token under an offset
 const next = doc.withText("SELECT amount, id FROM sales", 2); // immutable edit → new doc
 ```
 
-The LSP server (`src/lsp/`) holds one `SqlDocument` per open file and serves
-diagnostics (push + pull), hover, go-to-definition, find-references, document
-highlight, document symbols, code lens, folding ranges, selection
-ranges, inlay type hints, semantic tokens (full/range/delta), completion (with
-resolve), and signature help — reaching the library only through this public
-surface, so it can move to its own package later.
+## Language server
+
+An LSP (Language Server Protocol) server built on the library, in `src/lsp/`. It
+holds one `SqlDocument` per open file (rebuilt on edit) and serves diagnostics
+(push + pull), hover, go-to-definition, find-references, document highlight,
+document symbols, code lens, folding ranges, selection ranges, inlay type hints,
+semantic tokens (full/range/delta), completion (with resolve), and signature
+help. It reaches the library only through the public API surface above — it adds
+no analysis of its own, only the protocol translation.
 
 ## Generating the parsers
 
