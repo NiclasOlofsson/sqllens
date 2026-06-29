@@ -29,6 +29,8 @@ import {
 	DefinitionRequest,
 	DocumentSymbolRequest,
 	SemanticTokensRequest,
+	SemanticTokensRangeRequest,
+	SemanticTokensDeltaRequest,
 	CompletionRequest,
 	CompletionResolveRequest,
 	SignatureHelpRequest,
@@ -337,6 +339,54 @@ describe("LSP acceptance", () => {
 		const uri = open("semtok-broken.sql", "SELECT amount FORM");
 		const result = await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
 		expect(((result as any).data as number[]).length).toBeGreaterThan(0);
+	});
+
+	it("semantic tokens range returns only the requested line's tokens", async () => {
+		// Two statements on two lines; request semantic tokens for line 1 only. Every decoded
+		// token must land on line 1 — the line-0 tokens are filtered out by the offset window.
+		const text = "SELECT amount FROM sales\nSELECT id FROM sales";
+		const uri = open("semtok-range.sql", text);
+		const result = await client.sendRequest(SemanticTokensRangeRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 1, character: 0 }, end: { line: 1, character: 100 } },
+		});
+		const toks = decodeSemanticTokens((result as any).data as number[]);
+		expect(toks.length).toBeGreaterThan(0);
+		for (const t of toks) expect(t.line).toBe(1);
+		// The line-1 SELECT keyword is present; nothing from line 0 leaks in.
+		expect(toks.some((t) => t.type === "keyword" && t.line === 1 && t.char === 0)).toBe(true);
+	});
+
+	it("semantic tokens delta returns empty edits when nothing changed", async () => {
+		// Full request seeds a resultId; a delta with that SAME id over UNCHANGED text yields a
+		// delta result whose edits are empty (no token moved).
+		const text = "SELECT amount FROM sales";
+		const uri = open("semtok-delta.sql", text);
+		const full = (await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } })) as any;
+		expect(full.resultId).toBeDefined();
+		const delta = (await client.sendRequest(SemanticTokensDeltaRequest.type, {
+			textDocument: { uri },
+			previousResultId: full.resultId,
+		})) as any;
+		// A delta result carries `edits`; with no change the edit list is empty.
+		expect(Array.isArray(delta.edits)).toBe(true);
+		expect(delta.edits.length).toBe(0);
+	});
+
+	it("semantic tokens delta with an unknown previousResultId falls back to a full token set", async () => {
+		const text = "SELECT amount FROM sales";
+		const uri = open("semtok-delta-stale.sql", text);
+		// Seed a full result so the uri is known, then ask for a delta against a bogus id.
+		await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+		const delta = (await client.sendRequest(SemanticTokensDeltaRequest.type, {
+			textDocument: { uri },
+			previousResultId: "definitely-not-a-real-id",
+		})) as any;
+		// Fallback: a full SemanticTokens (has `data`, no `edits`), with the line-0 SELECT keyword.
+		expect(Array.isArray(delta.data)).toBe(true);
+		expect(delta.edits).toBeUndefined();
+		const toks = decodeSemanticTokens(delta.data as number[]);
+		expect(toks.some((t) => t.type === "keyword" && t.line === 0 && t.char === 0)).toBe(true);
 	});
 
 	it("completion offers the FROM relation's schema columns at an empty-projection caret", async () => {

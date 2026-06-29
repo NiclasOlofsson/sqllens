@@ -15,7 +15,12 @@ import { computeDiagnostics } from "./features/diagnostics.js";
 import { computeHover } from "./features/hover.js";
 import { computeDocumentSymbols } from "./features/symbols.js";
 import { computeDefinition } from "./features/definition.js";
-import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-tokens.js";
+import {
+	computeSemanticTokens,
+	computeSemanticTokensRange,
+	computeSemanticTokensDelta,
+	SEMANTIC_LEGEND,
+} from "./features/semantic-tokens.js";
 import { computeCompletion } from "./features/completion.js";
 import { resolveCompletion } from "./features/completion-resolve.js";
 import { computeSignatureHelp } from "./features/signature.js";
@@ -95,7 +100,7 @@ export function startServer(connection: Connection): void {
 				selectionRangeProvider: true,
 				codeLensProvider: { resolveProvider: false },
 				inlayHintProvider: true,
-				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
+				semanticTokensProvider: { legend: SEMANTIC_LEGEND, range: true, full: { delta: true } },
 				completionProvider: { triggerCharacters: [".", " "], resolveProvider: true },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
 			},
@@ -170,8 +175,20 @@ export function startServer(connection: Connection): void {
 	});
 
 	connection.languages.semanticTokens.on((params) => {
+		const uri = params.textDocument.uri;
+		const doc = docFor(uri);
+		return doc ? computeSemanticTokens(doc, uri) : { data: [] };
+	});
+
+	connection.languages.semanticTokens.onRange((params) => {
 		const doc = docFor(params.textDocument.uri);
-		return doc ? computeSemanticTokens(doc) : { data: [] };
+		return doc ? computeSemanticTokensRange(doc, params.range) : { data: [] };
+	});
+
+	connection.languages.semanticTokens.onDelta((params) => {
+		const uri = params.textDocument.uri;
+		const doc = docFor(uri);
+		return doc ? computeSemanticTokensDelta(doc, uri, params.previousResultId) : { data: [] };
 	});
 
 	connection.onCompletion((params) => {
