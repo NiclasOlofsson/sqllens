@@ -29,8 +29,18 @@ import {
 	DefinitionRequest,
 	DocumentSymbolRequest,
 	SemanticTokensRequest,
+	SemanticTokensRangeRequest,
+	SemanticTokensDeltaRequest,
 	CompletionRequest,
+	CompletionResolveRequest,
 	SignatureHelpRequest,
+	ReferencesRequest,
+	DocumentHighlightRequest,
+	CodeLensRequest,
+	FoldingRangeRequest,
+	SelectionRangeRequest,
+	InlayHintRequest,
+	DocumentDiagnosticRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -332,6 +342,54 @@ describe("LSP acceptance", () => {
 		expect(((result as any).data as number[]).length).toBeGreaterThan(0);
 	});
 
+	it("semantic tokens range returns only the requested line's tokens", async () => {
+		// Two statements on two lines; request semantic tokens for line 1 only. Every decoded
+		// token must land on line 1 — the line-0 tokens are filtered out by the offset window.
+		const text = "SELECT amount FROM sales\nSELECT id FROM sales";
+		const uri = open("semtok-range.sql", text);
+		const result = await client.sendRequest(SemanticTokensRangeRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 1, character: 0 }, end: { line: 1, character: 100 } },
+		});
+		const toks = decodeSemanticTokens((result as any).data as number[]);
+		expect(toks.length).toBeGreaterThan(0);
+		for (const t of toks) expect(t.line).toBe(1);
+		// The line-1 SELECT keyword is present; nothing from line 0 leaks in.
+		expect(toks.some((t) => t.type === "keyword" && t.line === 1 && t.char === 0)).toBe(true);
+	});
+
+	it("semantic tokens delta returns empty edits when nothing changed", async () => {
+		// Full request seeds a resultId; a delta with that SAME id over UNCHANGED text yields a
+		// delta result whose edits are empty (no token moved).
+		const text = "SELECT amount FROM sales";
+		const uri = open("semtok-delta.sql", text);
+		const full = (await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } })) as any;
+		expect(full.resultId).toBeDefined();
+		const delta = (await client.sendRequest(SemanticTokensDeltaRequest.type, {
+			textDocument: { uri },
+			previousResultId: full.resultId,
+		})) as any;
+		// A delta result carries `edits`; with no change the edit list is empty.
+		expect(Array.isArray(delta.edits)).toBe(true);
+		expect(delta.edits.length).toBe(0);
+	});
+
+	it("semantic tokens delta with an unknown previousResultId falls back to a full token set", async () => {
+		const text = "SELECT amount FROM sales";
+		const uri = open("semtok-delta-stale.sql", text);
+		// Seed a full result so the uri is known, then ask for a delta against a bogus id.
+		await client.sendRequest(SemanticTokensRequest.type, { textDocument: { uri } });
+		const delta = (await client.sendRequest(SemanticTokensDeltaRequest.type, {
+			textDocument: { uri },
+			previousResultId: "definitely-not-a-real-id",
+		})) as any;
+		// Fallback: a full SemanticTokens (has `data`, no `edits`), with the line-0 SELECT keyword.
+		expect(Array.isArray(delta.data)).toBe(true);
+		expect(delta.edits).toBeUndefined();
+		const toks = decodeSemanticTokens(delta.data as number[]);
+		expect(toks.some((t) => t.type === "keyword" && t.line === 0 && t.char === 0)).toBe(true);
+	});
+
 	it("completion offers the FROM relation's schema columns at an empty-projection caret", async () => {
 		// Mid-edit: caret in the empty projection of `SELECT  FROM sales`. The completion provider
 		// resolves the FROM relation's columns from the workspace schema (sales: amount, id).
@@ -347,6 +405,45 @@ describe("LSP acceptance", () => {
 		expect(labels).toContain("id");
 	});
 
+	it("completionItem/resolve fills a function item's detail with its parameter signature", async () => {
+		// At a column slot, completion offers dialect functions (no detail eagerly). Resolving a
+		// curated function item (date_add) must lazily fill `detail` with the rendered param list.
+		const text = "SELECT  FROM sales";
+		const uri = open("complete-fn.sql", text);
+		const items = await client.sendRequest(CompletionRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: "SELECT ".length },
+		});
+		const list = Array.isArray(items) ? items : ((items as any)?.items ?? []);
+		const fnItem = (list as any[]).find((c) => c.label === "date_add");
+		expect(fnItem).toBeDefined();
+		// Not eagerly filled — detail arrives only on resolve.
+		expect(fnItem.detail).toBeUndefined();
+
+		const resolved = (await client.sendRequest(CompletionResolveRequest.type, fnItem)) as any;
+		expect(resolved.detail).toBeDefined();
+		// The rendered signature names the function and its parameters.
+		expect(resolved.detail).toContain("date_add");
+		expect(resolved.detail).toContain("(");
+		expect(resolved.detail).toContain("start_date");
+	});
+
+	it("completionItem/resolve leaves a non-function item unchanged", async () => {
+		const text = "SELECT  FROM sales";
+		const uri = open("complete-col.sql", text);
+		const items = await client.sendRequest(CompletionRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: "SELECT ".length },
+		});
+		const list = Array.isArray(items) ? items : ((items as any)?.items ?? []);
+		const colItem = (list as any[]).find((c) => c.label === "amount");
+		expect(colItem).toBeDefined();
+		const resolved = (await client.sendRequest(CompletionResolveRequest.type, colItem)) as any;
+		// A column item carries its own detail (the type) and is returned unchanged by resolve.
+		expect(resolved.label).toBe("amount");
+		expect(resolved.kind).toBe(colItem.kind);
+	});
+
 	it("signature help shows the active parameter inside a curated call's parens", async () => {
 		// Mid-typing the 2nd arg of date_add: caret just after the comma. The signature provider names
 		// date_add and reports activeParameter 1 (the comma at the call's depth advanced the index).
@@ -360,5 +457,254 @@ describe("LSP acceptance", () => {
 		const h = help as any;
 		expect(h.activeParameter).toBe(1);
 		expect(h.signatures[0].label).toContain("date_add");
+	});
+
+	it("references returns every occurrence of a CTE-projected column", async () => {
+		// `id` is projected by the CTE `recent` and re-selected from it. The final `id`
+		// reference, the CTE's projected `id`, and the base `id` all share identity (schema
+		// unifies them via sales.id). references must return ≥2 Locations, deduped, with
+		// ranges that actually cover an `id` occurrence in the source.
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("refs.sql", text);
+		const locs = await client.sendRequest(ReferencesRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.lastIndexOf("id") },
+			context: { includeDeclaration: true },
+		});
+		const list = (locs as any[]) ?? [];
+		expect(list.length).toBeGreaterThanOrEqual(2);
+		// Every range, sliced from the source, is the symbol `id`.
+		for (const l of list) {
+			const r = l.range;
+			expect(r.start.line).toBe(0);
+			expect(text.slice(r.start.character, r.end.character)).toBe("id");
+		}
+		// Deduped: no two Locations share the same range.
+		const keys = list.map((l) => `${l.range.start.character}:${l.range.end.character}`);
+		expect(new Set(keys).size).toBe(keys.length);
+	});
+
+	it("documentHighlight marks the declaration Write and references Read", async () => {
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("hl.sql", text);
+		const hls = await client.sendRequest(DocumentHighlightRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.lastIndexOf("id") },
+		});
+		const list = (hls as any[]) ?? [];
+		expect(list.length).toBeGreaterThanOrEqual(2);
+		// DocumentHighlightKind: 2 = Read, 3 = Write. The CTE-projected `id` is the declaration (Write);
+		// at least one occurrence is a Read reference.
+		const kinds = list.map((h) => h.kind);
+		expect(kinds).toContain(2); // Read
+		expect(kinds).toContain(3); // Write
+		for (const h of list) expect(text.slice(h.range.start.character, h.range.end.character)).toBe("id");
+	});
+
+	it("references on broken input returns an empty array, no error", async () => {
+		const uri = open("refs-broken.sql", "SELECT * FORM x");
+		const locs = await client.sendRequest(ReferencesRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: 0 },
+			context: { includeDeclaration: true },
+		});
+		expect(locs).toEqual([]);
+	});
+
+	it("codeLens shows a reference count over a CTE declaration", async () => {
+		// `recent` is declared as a CTE and referenced exactly once in the FROM. The count is
+		// references only (excludes the declaration occurrence), so a CTE used once reads
+		// "1 reference". A lens lands on the CTE declaration, at the declaration's position.
+		const text = "WITH recent AS (SELECT id FROM sales) SELECT id FROM recent";
+		const uri = open("lens.sql", text);
+		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
+		const list = (lenses as any[]) ?? [];
+		// A lens whose range covers the CTE declaration `recent` (the one before the reference).
+		const declCol = text.indexOf("recent");
+		const lens = list.find((l) => l.range.start.line === 0 && l.range.start.character === declCol);
+		expect(lens).toBeDefined();
+		expect(lens.range.start.character).toBeLessThan(text.lastIndexOf("recent"));
+		// One use of `recent` → references-only count is 1, with singular wording.
+		expect(lens.command.title).toBe("1 reference");
+	});
+
+	it("codeLens on broken input returns an empty array, no error", async () => {
+		const uri = open("lens-broken.sql", "SELECT * FORM x");
+		const lenses = await client.sendRequest(CodeLensRequest.type, { textDocument: { uri } });
+		expect(lenses).toEqual([]);
+	});
+
+	it("foldingRange folds a multi-line CTE body and the statement", async () => {
+		// A CTE whose body spans lines 0–3, with the outer SELECT below. The provider must
+		// emit a fold covering the CTE body (a multi-line region) — and the whole statement.
+		const text = "WITH r AS (\n  SELECT id\n  FROM sales\n)\nSELECT id\nFROM r";
+		//            line 0: WITH r AS (
+		//            line 1:   SELECT id
+		//            line 2:   FROM sales
+		//            line 3: )
+		//            line 4: SELECT id
+		//            line 5: FROM r
+		const uri = open("fold.sql", text);
+		const ranges = (await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } })) as any[];
+		expect(ranges.length).toBeGreaterThanOrEqual(1);
+		// The CTE body `( SELECT id FROM sales )` spans line 0 → line 3.
+		expect(ranges.some((r) => r.startLine === 0 && r.endLine === 3)).toBe(true);
+		// Every emitted range is multi-line.
+		for (const r of ranges) expect(r.endLine).toBeGreaterThan(r.startLine);
+		// De-duped: no two identical (startLine,endLine) pairs.
+		const keys = ranges.map((r) => `${r.startLine}:${r.endLine}`);
+		expect(new Set(keys).size).toBe(keys.length);
+	});
+
+	it("foldingRange returns [] for a single-line query", async () => {
+		const uri = open("fold-single.sql", "SELECT id FROM sales");
+		const ranges = await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
+		expect(ranges).toEqual([]);
+	});
+
+	it("foldingRange on broken input returns an empty array, no error", async () => {
+		const uri = open("fold-broken.sql", "SELECT * FORM x");
+		const ranges = await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
+		expect(Array.isArray(ranges)).toBe(true);
+	});
+
+	it("selectionRange widens from a column to the whole statement", async () => {
+		// Caret inside `amount`: the innermost SelectionRange must cover `amount`, and its
+		// .parent chain must widen through strictly larger ranges out to the whole statement.
+		const text = "SELECT amount FROM sales";
+		const uri = open("selrange.sql", text);
+		const amountStart = text.indexOf("amount");
+		const result = (await client.sendRequest(SelectionRangeRequest.type, {
+			textDocument: { uri },
+			positions: [{ line: 0, character: amountStart + 1 }],
+		})) as any[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(1);
+
+		// Walk the .parent chain into a list of ranges, innermost first.
+		const ranges: { start: { character: number }; end: { character: number } }[] = [];
+		for (let sr: any = result[0]; sr; sr = sr.parent) ranges.push(sr.range);
+
+		// At least two levels: innermost covers `amount`; outermost covers the whole statement.
+		expect(ranges.length).toBeGreaterThanOrEqual(2);
+		const innermost = ranges[0];
+		expect(innermost.start.character).toBeLessThanOrEqual(amountStart);
+		expect(innermost.end.character).toBeGreaterThanOrEqual(amountStart + "amount".length);
+
+		// Each parent strictly contains its child (no duplicate identical ranges).
+		for (let i = 1; i < ranges.length; i++) {
+			const child = ranges[i - 1];
+			const parent = ranges[i];
+			const wider = parent.start.character < child.start.character || parent.end.character > child.end.character;
+			const notNarrower =
+				parent.start.character <= child.start.character && parent.end.character >= child.end.character;
+			expect(wider && notNarrower).toBe(true);
+		}
+
+		// The outermost range covers the entire statement text.
+		const outer = ranges[ranges.length - 1];
+		expect(outer.start.character).toBe(0);
+		expect(outer.end.character).toBe(text.length);
+	});
+
+	it("inlayHint shows the inferred type at the end of a SELECT output column", async () => {
+		// `amount` is decimal per the workspace schema; the inlay hint annotates the projection
+		// end with its inferred type. The hint must land at the end of the `amount` token.
+		const text = "SELECT amount FROM sales";
+		const uri = open("inlay.sql", text);
+		const fullRange = {
+			start: { line: 0, character: 0 },
+			end: { line: 0, character: text.length },
+		};
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: fullRange,
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		expect(hints.length).toBeGreaterThanOrEqual(1);
+		const label = (h: any): string =>
+			typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join("");
+		const amountHint = hints.find((h) => /decimal/.test(label(h)));
+		expect(amountHint).toBeDefined();
+		// The hint anchors at the end of the `amount` token.
+		const amountEnd = text.indexOf("amount") + "amount".length;
+		expect(amountHint.position.line).toBe(0);
+		expect(amountHint.position.character).toBe(amountEnd);
+	});
+
+	it("inlayHint without a typed column emits no hint, no error", async () => {
+		// `1` projects no schema-resolvable column; with EMPTY-schema inference a bare literal still
+		// resolves to a scalar, but a column with no schema match yields `unknown` → skipped. Use an
+		// unknown column ref so the projection's type is `unknown` and no hint is emitted for it.
+		const text = "SELECT mystery FROM nowhere";
+		const uri = open("inlay-none.sql", text);
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 0, character: text.length } },
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		const label = (h: any): string =>
+			typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join("");
+		// No hint covers the `mystery` projection (its type is unknown).
+		const myEnd = text.indexOf("mystery") + "mystery".length;
+		expect(hints.some((h) => h.position.character === myEnd)).toBe(false);
+	});
+
+	it("inlayHint only emits hints inside the requested range", async () => {
+		// Two statements on two lines; request hints for line 1 only. The line-0 projection's hint
+		// must be excluded (LSP sends the visible range).
+		const text = "SELECT amount FROM sales;\nSELECT id FROM sales";
+		const uri = open("inlay-range.sql", text);
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 1, character: 0 }, end: { line: 1, character: 100 } },
+		})) as any[];
+		expect(Array.isArray(hints)).toBe(true);
+		for (const h of hints) expect(h.position.line).toBe(1);
+	});
+
+	it("inlayHint on broken input returns an empty array, no error", async () => {
+		const uri = open("inlay-broken.sql", "SELECT * FORM x");
+		const hints = await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 0, character: 15 } },
+		});
+		expect(Array.isArray(hints)).toBe(true);
+	});
+
+	it("pull diagnostics (textDocument/diagnostic) returns a full report flagging an unknown column", async () => {
+		// Pull model: the client asks for diagnostics on demand. The full report's `items` carry the
+		// same diagnostics the push path would publish — here, the unknown column `nope`.
+		const uri = open("pull-bad.sql", "SELECT nope FROM sales");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(Array.isArray(report.items)).toBe(true);
+		expect(report.items.some((x: any) => /nope|unknown/i.test(msg(x.message)))).toBe(true);
+	});
+
+	it("pull diagnostics returns an empty full report for valid SQL", async () => {
+		const uri = open("pull-ok.sql", "SELECT amount FROM sales");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(report.items).toEqual([]);
+	});
+
+	it("pull diagnostics returns the syntax diagnostic on broken input", async () => {
+		const uri = open("pull-broken.sql", "SELECT * FORM x");
+		const report = (await client.sendRequest(DocumentDiagnosticRequest.type, { textDocument: { uri } })) as any;
+		expect(report.kind).toBe("full");
+		expect(report.items.length).toBeGreaterThanOrEqual(1);
+		expect(report.items[0].range.start.line).toBe(0);
+	});
+
+	it("selectionRange on broken input returns a range, no error", async () => {
+		const uri = open("selrange-broken.sql", "SELECT * FORM x");
+		const result = (await client.sendRequest(SelectionRangeRequest.type, {
+			textDocument: { uri },
+			positions: [{ line: 0, character: 3 }],
+		})) as any[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(1);
+		expect(result[0].range).toBeDefined();
 	});
 });

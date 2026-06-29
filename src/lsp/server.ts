@@ -12,12 +12,25 @@ import { relative } from "node:path";
 import { SqlDocument } from "../index.js";
 import { loadDialectConfig, type DialectConfig } from "./dialect-config.js";
 import { computeDiagnostics } from "./features/diagnostics.js";
+import { computeDocumentDiagnostics } from "./features/pull-diagnostics.js";
 import { computeHover } from "./features/hover.js";
 import { computeDocumentSymbols } from "./features/symbols.js";
 import { computeDefinition } from "./features/definition.js";
-import { computeSemanticTokens, SEMANTIC_LEGEND } from "./features/semantic-tokens.js";
+import {
+	computeSemanticTokens,
+	computeSemanticTokensRange,
+	computeSemanticTokensDelta,
+	forgetSemanticTokens,
+	SEMANTIC_LEGEND,
+} from "./features/semantic-tokens.js";
 import { computeCompletion } from "./features/completion.js";
+import { resolveCompletion } from "./features/completion-resolve.js";
 import { computeSignatureHelp } from "./features/signature.js";
+import { computeReferences, computeDocumentHighlight } from "./features/references.js";
+import { computeCodeLens } from "./features/code-lens.js";
+import { computeFoldingRanges } from "./features/folding.js";
+import { computeSelectionRanges } from "./features/selection.js";
+import { computeInlayHints } from "./features/inlay-hints.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -82,10 +95,17 @@ export function startServer(connection: Connection): void {
 				textDocumentSync: TextDocumentSyncKind.Full,
 				hoverProvider: true,
 				definitionProvider: true,
+				referencesProvider: true,
+				documentHighlightProvider: true,
 				documentSymbolProvider: true,
-				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
-				completionProvider: { triggerCharacters: [".", " "] },
+				foldingRangeProvider: true,
+				selectionRangeProvider: true,
+				codeLensProvider: { resolveProvider: false },
+				inlayHintProvider: true,
+				semanticTokensProvider: { legend: SEMANTIC_LEGEND, range: true, full: { delta: true } },
+				completionProvider: { triggerCharacters: [".", " "], resolveProvider: true },
 				signatureHelpProvider: { triggerCharacters: ["(", ","] },
+				diagnosticProvider: { interFileDependencies: false, workspaceDiagnostics: false },
 			},
 		};
 	});
@@ -99,7 +119,17 @@ export function startServer(connection: Connection): void {
 
 	documents.onDidOpen((e) => publish(e.document.uri));
 	documents.onDidChangeContent((e) => publish(e.document.uri));
-	documents.onDidClose((e) => docs.delete(e.document.uri));
+	documents.onDidClose((e) => {
+		docs.delete(e.document.uri);
+		forgetSemanticTokens(e.document.uri);
+	});
+
+	// Pull diagnostics (textDocument/diagnostic): same items as the push path, on demand.
+	// Push (above) and pull coexist; the client picks whichever it supports.
+	connection.languages.diagnostics.on((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeDocumentDiagnostics(doc, config.schema) : { kind: "full", items: [] };
+	});
 
 	connection.onHover((params) => {
 		const doc = docFor(params.textDocument.uri);
@@ -113,21 +143,75 @@ export function startServer(connection: Connection): void {
 		return computeDefinition(doc, params.position, params.textDocument.uri);
 	});
 
+	connection.onReferences((params) => {
+		const doc = docFor(params.textDocument.uri);
+		if (!doc) return [];
+		return computeReferences(
+			doc,
+			params.position,
+			params.context.includeDeclaration,
+			params.textDocument.uri,
+			config.schema,
+		);
+	});
+
+	connection.onDocumentHighlight((params) => {
+		const doc = docFor(params.textDocument.uri);
+		if (!doc) return [];
+		return computeDocumentHighlight(doc, params.position, config.schema);
+	});
+
 	connection.onDocumentSymbol((params) => {
 		const doc = docFor(params.textDocument.uri);
 		if (!doc) return [];
 		return computeDocumentSymbols(doc);
 	});
 
-	connection.languages.semanticTokens.on((params) => {
+	connection.onFoldingRanges((params) => {
 		const doc = docFor(params.textDocument.uri);
-		return doc ? computeSemanticTokens(doc) : { data: [] };
+		return doc ? computeFoldingRanges(doc) : [];
+	});
+
+	connection.onSelectionRanges((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeSelectionRanges(doc, params.positions) : [];
+	});
+
+	connection.onCodeLens((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeCodeLens(doc, config.schema) : [];
+	});
+
+	connection.languages.inlayHint.on((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeInlayHints(doc, params.range, config.schema) : [];
+	});
+
+	connection.languages.semanticTokens.on((params) => {
+		const uri = params.textDocument.uri;
+		const doc = docFor(uri);
+		return doc ? computeSemanticTokens(doc, uri) : { data: [] };
+	});
+
+	connection.languages.semanticTokens.onRange((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeSemanticTokensRange(doc, params.range) : { data: [] };
+	});
+
+	connection.languages.semanticTokens.onDelta((params) => {
+		const uri = params.textDocument.uri;
+		const doc = docFor(uri);
+		return doc ? computeSemanticTokensDelta(doc, uri, params.previousResultId) : { data: [] };
 	});
 
 	connection.onCompletion((params) => {
 		const doc = docFor(params.textDocument.uri);
 		return doc ? computeCompletion(doc, params.position, config.schema) : [];
 	});
+
+	// completionItem/resolve receives ONLY the item (no doc/position); resolveCompletion reads its
+	// `data` payload to fill a function's signature lazily. Total — never throws.
+	connection.onCompletionResolve((item) => resolveCompletion(item));
 
 	connection.onSignatureHelp((params) => {
 		const doc = docFor(params.textDocument.uri);

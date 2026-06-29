@@ -1,6 +1,6 @@
 import { CompletionItemKind } from "vscode-languageserver-types";
 import type { CompletionItem, Position } from "vscode-languageserver-types";
-import { complete, type Completion, type Schema, type SqlDocument } from "../../index.js";
+import { complete, type Completion, type Dialect, type Schema, type SqlDocument } from "../../index.js";
 
 // ---------------------------------------------------------------------------
 // Completion: the interactive editor feature that lives in the BROKEN-input
@@ -25,6 +25,17 @@ export function computeCompletion(doc: SqlDocument, position: Position, schema?:
 	return items.map((c) => {
 		const item: CompletionItem = { label: c.label, kind: KIND[c.kind] };
 		if (c.detail !== undefined) item.detail = c.detail;
+		// Everything completionItem/resolve needs, since resolve receives ONLY the item (no
+		// doc/position): the kind, the label, and the document's dialect for the signature lookup.
+		item.data = { kind: c.kind, label: c.label, dialect: doc.dialect } satisfies CompletionItemData;
 		return item;
 	});
+}
+
+/** The `data` payload carried on each CompletionItem so completionItem/resolve — which gets only the
+ *  item — can fill a function's signature lazily. */
+export interface CompletionItemData {
+	kind: Completion["kind"];
+	label: string;
+	dialect: Dialect;
 }
