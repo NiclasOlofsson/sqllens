@@ -21,6 +21,7 @@ import { computeSignatureHelp } from "./features/signature.js";
 import { computeReferences, computeDocumentHighlight } from "./features/references.js";
 import { computeCodeLens } from "./features/code-lens.js";
 import { computeFoldingRanges } from "./features/folding.js";
+import { computeSelectionRanges } from "./features/selection.js";
 
 // ---------------------------------------------------------------------------
 // The server: connection wiring only. It holds ONE SqlDocument per open file,
@@ -89,6 +90,7 @@ export function startServer(connection: Connection): void {
 				documentHighlightProvider: true,
 				documentSymbolProvider: true,
 				foldingRangeProvider: true,
+				selectionRangeProvider: true,
 				codeLensProvider: { resolveProvider: false },
 				semanticTokensProvider: { legend: SEMANTIC_LEGEND, full: true },
 				completionProvider: { triggerCharacters: [".", " "] },
@@ -147,6 +149,11 @@ export function startServer(connection: Connection): void {
 	connection.onFoldingRanges((params) => {
 		const doc = docFor(params.textDocument.uri);
 		return doc ? computeFoldingRanges(doc) : [];
+	});
+
+	connection.onSelectionRanges((params) => {
+		const doc = docFor(params.textDocument.uri);
+		return doc ? computeSelectionRanges(doc, params.positions) : [];
 	});
 
 	connection.onCodeLens((params) => {

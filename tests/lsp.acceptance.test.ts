@@ -35,6 +35,7 @@ import {
 	DocumentHighlightRequest,
 	CodeLensRequest,
 	FoldingRangeRequest,
+	SelectionRangeRequest,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -473,5 +474,56 @@ describe("LSP acceptance", () => {
 		const uri = open("fold-broken.sql", "SELECT * FORM x");
 		const ranges = await client.sendRequest(FoldingRangeRequest.type, { textDocument: { uri } });
 		expect(Array.isArray(ranges)).toBe(true);
+	});
+
+	it("selectionRange widens from a column to the whole statement", async () => {
+		// Caret inside `amount`: the innermost SelectionRange must cover `amount`, and its
+		// .parent chain must widen through strictly larger ranges out to the whole statement.
+		const text = "SELECT amount FROM sales";
+		const uri = open("selrange.sql", text);
+		const amountStart = text.indexOf("amount");
+		const result = (await client.sendRequest(SelectionRangeRequest.type, {
+			textDocument: { uri },
+			positions: [{ line: 0, character: amountStart + 1 }],
+		})) as any[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(1);
+
+		// Walk the .parent chain into a list of ranges, innermost first.
+		const ranges: { start: { character: number }; end: { character: number } }[] = [];
+		for (let sr: any = result[0]; sr; sr = sr.parent) ranges.push(sr.range);
+
+		// At least two levels: innermost covers `amount`; outermost covers the whole statement.
+		expect(ranges.length).toBeGreaterThanOrEqual(2);
+		const innermost = ranges[0];
+		expect(innermost.start.character).toBeLessThanOrEqual(amountStart);
+		expect(innermost.end.character).toBeGreaterThanOrEqual(amountStart + "amount".length);
+
+		// Each parent strictly contains its child (no duplicate identical ranges).
+		for (let i = 1; i < ranges.length; i++) {
+			const child = ranges[i - 1];
+			const parent = ranges[i];
+			const wider =
+				parent.start.character < child.start.character || parent.end.character > child.end.character;
+			const notNarrower =
+				parent.start.character <= child.start.character && parent.end.character >= child.end.character;
+			expect(wider && notNarrower).toBe(true);
+		}
+
+		// The outermost range covers the entire statement text.
+		const outer = ranges[ranges.length - 1];
+		expect(outer.start.character).toBe(0);
+		expect(outer.end.character).toBe(text.length);
+	});
+
+	it("selectionRange on broken input returns a range, no error", async () => {
+		const uri = open("selrange-broken.sql", "SELECT * FORM x");
+		const result = (await client.sendRequest(SelectionRangeRequest.type, {
+			textDocument: { uri },
+			positions: [{ line: 0, character: 3 }],
+		})) as any[];
+		expect(Array.isArray(result)).toBe(true);
+		expect(result.length).toBe(1);
+		expect(result[0].range).toBeDefined();
 	});
 });
