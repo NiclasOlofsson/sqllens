@@ -1,10 +1,5 @@
 import { SemanticTokensBuilder } from "vscode-languageserver";
-import type {
-	Range,
-	SemanticTokens,
-	SemanticTokensDelta,
-	SemanticTokensLegend,
-} from "vscode-languageserver-types";
+import type { Range, SemanticTokens, SemanticTokensDelta, SemanticTokensLegend } from "vscode-languageserver-types";
 import type { SqlDocument, Token, TokenRole } from "../../index.js";
 
 // ---------------------------------------------------------------------------
@@ -85,6 +80,12 @@ export function computeSemanticTokensRange(doc: SqlDocument, range: Range): Sema
 	const builder = new SemanticTokensBuilder();
 	pushTokens(builder, inRange);
 	return builder.build();
+}
+
+// Drop the retained builder for `uri` on document close, so this map stays bounded
+// by the open-doc set (the server calls this from documents.onDidClose).
+export function forgetSemanticTokens(uri: string): void {
+	fullBuilders.delete(uri);
 }
 
 export function computeSemanticTokensDelta(

@@ -25,16 +25,31 @@ Every feature carries real source positions (no count-only or point-only output)
   covering expression's source span.
 - **Go-to-definition** — jumps to a symbol's definition span (CTE, alias, derived
   column).
+- **References** — find-all-occurrences plus the declaration of the symbol under the
+  cursor, from the `referencesAt` occurrence engine.
+- **Document highlight** — the same occurrences scoped to the open document, for
+  in-editor highlight of the symbol under the cursor.
 - **Document symbols** — the symbol tree (sources, CTEs, output columns) with each
   symbol's span.
+- **Code lens** — a reference-count lens over each declared symbol (counts come from
+  the occurrence engine).
+- **Folding ranges** — foldable regions for statements, CTEs, and subqueries.
+- **Selection ranges** — expand/shrink selection following the syntax tree from the
+  caret outward.
+- **Inlay hints** — inline output-column types from `infer`, shown at each projection.
 - **Semantic tokens** — semantic highlighting from the document's token stream
-  (`doc.tokens`), each with its exact span and role.
+  (`doc.tokens`), each with its exact span and role; serves full, range, and delta
+  requests.
 - **Completion** — scope-aware suggestions at the caret (keywords, schema
   tables/columns, function names), driven by the library's own ATN candidate walk.
   Works on mid-edit / invalid input.
+- **Completion resolve** — lazily fills a completion item's signature detail for
+  function candidates.
 - **Signature help** — parameter hints while typing inside a call's parens, from a
   curated per-dialect signature table (name + active-argument fallback for the long
   tail).
+- **Pull diagnostics** (`textDocument/diagnostic`) — the same items as the push path,
+  served on demand; push and pull coexist and the client picks whichever it supports.
 
 The SQL-debugger adapter is out of this version by scope decision. It will reuse the
 same `SqlDocument` and scope plumbing when built.
@@ -101,7 +116,7 @@ The client sends `initialize` with the workspace `rootUri`; the server reads
 The repeatable proof is the in-memory acceptance suite,
 [`tests/lsp.acceptance.test.ts`](../../tests/lsp.acceptance.test.ts). It drives the
 real server over an in-memory JSON-RPC duplex pair and asserts positioned results for
-all four features against a temp workspace with `.sqllens.json` + `schema.json`. It
+every feature against a temp workspace with `.sqllens.json` + `schema.json`. It
 exercises `startServer` — the same function `src/lsp/main.ts` runs over stdio — so the
 tested code path is the shipped one. The stdio binary is that same path wired to real
 stdio for eyeballing in an editor.

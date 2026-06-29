@@ -20,6 +20,7 @@ import {
 	computeSemanticTokens,
 	computeSemanticTokensRange,
 	computeSemanticTokensDelta,
+	forgetSemanticTokens,
 	SEMANTIC_LEGEND,
 } from "./features/semantic-tokens.js";
 import { computeCompletion } from "./features/completion.js";
@@ -118,7 +119,10 @@ export function startServer(connection: Connection): void {
 
 	documents.onDidOpen((e) => publish(e.document.uri));
 	documents.onDidChangeContent((e) => publish(e.document.uri));
-	documents.onDidClose((e) => docs.delete(e.document.uri));
+	documents.onDidClose((e) => {
+		docs.delete(e.document.uri);
+		forgetSemanticTokens(e.document.uri);
+	});
 
 	// Pull diagnostics (textDocument/diagnostic): same items as the push path, on demand.
 	// Push (above) and pull coexist; the client picks whichever it supports.
