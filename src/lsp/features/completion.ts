@@ -13,18 +13,18 @@ import { complete, type Completion, type Schema, type SqlDocument } from "../../
 
 // Our coarse completion kind → the standard LSP CompletionItemKind.
 const KIND: Record<Completion["kind"], CompletionItemKind> = {
-  keyword: CompletionItemKind.Keyword,
-  column: CompletionItemKind.Field,
-  table: CompletionItemKind.Class,
-  function: CompletionItemKind.Function,
+	keyword: CompletionItemKind.Keyword,
+	column: CompletionItemKind.Field,
+	table: CompletionItemKind.Class,
+	function: CompletionItemKind.Function,
 };
 
 export function computeCompletion(doc: SqlDocument, position: Position, schema?: Schema): CompletionItem[] {
-  const off = doc.lines.offsetAt(position.line, position.character);
-  const items = complete(doc, off, schema);
-  return items.map((c) => {
-    const item: CompletionItem = { label: c.label, kind: KIND[c.kind] };
-    if (c.detail !== undefined) item.detail = c.detail;
-    return item;
-  });
+	const off = doc.lines.offsetAt(position.line, position.character);
+	const items = complete(doc, off, schema);
+	return items.map((c) => {
+		const item: CompletionItem = { label: c.label, kind: KIND[c.kind] };
+		if (c.detail !== undefined) item.detail = c.detail;
+		return item;
+	});
 }

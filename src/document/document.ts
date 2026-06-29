@@ -21,14 +21,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ParserRuleContext } from "antlr4ng";
-import {
-	parse,
-	qualify,
-	deriveSymbols,
-	toScopes,
-	TypeInfo,
-	type Dialect,
-} from "../api.js";
+import { parse, qualify, deriveSymbols, toScopes, TypeInfo, type Dialect } from "../api.js";
 import type { QueryExpr } from "../ir/ir.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";

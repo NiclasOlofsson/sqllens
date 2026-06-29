@@ -146,7 +146,8 @@ function curated(sig: FnSignature, active: number): SignatureInfo {
 	const activeParameter = sig.variadic && lastIdx >= 0 ? Math.min(active, lastIdx) : active;
 	const inner = sig.params.map(paramLabel);
 	// Variadic: render the repeating param with a trailing "…" so the popup shows it repeats.
-	const rendered = sig.variadic && inner.length > 0 ? [...inner.slice(0, -1), `${inner[inner.length - 1]}, …`] : inner;
+	const rendered =
+		sig.variadic && inner.length > 0 ? [...inner.slice(0, -1), `${inner[inner.length - 1]}, …`] : inner;
 	return {
 		label: `${sig.name}(${rendered.join(", ")})`,
 		parameters,

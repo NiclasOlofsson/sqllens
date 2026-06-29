@@ -15,45 +15,45 @@ import type { SqlDocument, TokenRole } from "../../index.js";
 const TOKEN_TYPES = ["keyword", "string", "number", "comment", "operator", "variable"] as const;
 
 export const SEMANTIC_LEGEND: SemanticTokensLegend = {
-  tokenTypes: [...TOKEN_TYPES],
-  tokenModifiers: [],
+	tokenTypes: [...TOKEN_TYPES],
+	tokenModifiers: [],
 };
 
 // role → index into SEMANTIC_LEGEND.tokenTypes. Roles with no entry (punctuation,
 // whitespace, other) are skipped, not emitted.
 const ROLE_TO_TYPE = new Map<TokenRole, number>([
-  ["keyword", TOKEN_TYPES.indexOf("keyword")],
-  ["string", TOKEN_TYPES.indexOf("string")],
-  ["number", TOKEN_TYPES.indexOf("number")],
-  ["comment", TOKEN_TYPES.indexOf("comment")],
-  ["operator", TOKEN_TYPES.indexOf("operator")],
-  ["identifier", TOKEN_TYPES.indexOf("variable")],
+	["keyword", TOKEN_TYPES.indexOf("keyword")],
+	["string", TOKEN_TYPES.indexOf("string")],
+	["number", TOKEN_TYPES.indexOf("number")],
+	["comment", TOKEN_TYPES.indexOf("comment")],
+	["operator", TOKEN_TYPES.indexOf("operator")],
+	["identifier", TOKEN_TYPES.indexOf("variable")],
 ]);
 
 export function computeSemanticTokens(doc: SqlDocument): SemanticTokens {
-  const builder = new SemanticTokensBuilder();
-  for (const token of doc.tokens) {
-    const typeIndex = ROLE_TO_TYPE.get(token.role);
-    if (typeIndex === undefined) continue; // punctuation/whitespace/other — not highlighted
+	const builder = new SemanticTokensBuilder();
+	for (const token of doc.tokens) {
+		const typeIndex = ROLE_TO_TYPE.get(token.role);
+		if (typeIndex === undefined) continue; // punctuation/whitespace/other — not highlighted
 
-    // antlr token.line is 1-based, token.column 0-based; LSP wants 0-based line.
-    const startLine = token.line - 1;
-    const text = token.text;
-    if (!text.includes("\n")) {
-      builder.push(startLine, token.column, text.length, typeIndex, 0);
-      continue;
-    }
-    // Multi-line token (e.g. a block comment spanning lines): the builder expects
-    // single-line tokens, so emit one push per covered line. The first line runs
-    // from the token's column; subsequent lines start at column 0.
-    const segments = text.split("\n");
-    for (let i = 0; i < segments.length; i++) {
-      const length = segments[i].length;
-      if (length === 0) continue; // empty trailing segment after a final newline
-      const line = startLine + i;
-      const column = i === 0 ? token.column : 0;
-      builder.push(line, column, length, typeIndex, 0);
-    }
-  }
-  return builder.build();
+		// antlr token.line is 1-based, token.column 0-based; LSP wants 0-based line.
+		const startLine = token.line - 1;
+		const text = token.text;
+		if (!text.includes("\n")) {
+			builder.push(startLine, token.column, text.length, typeIndex, 0);
+			continue;
+		}
+		// Multi-line token (e.g. a block comment spanning lines): the builder expects
+		// single-line tokens, so emit one push per covered line. The first line runs
+		// from the token's column; subsequent lines start at column 0.
+		const segments = text.split("\n");
+		for (let i = 0; i < segments.length; i++) {
+			const length = segments[i].length;
+			if (length === 0) continue; // empty trailing segment after a final newline
+			const line = startLine + i;
+			const column = i === 0 ? token.column : 0;
+			builder.push(line, column, length, typeIndex, 0);
+		}
+	}
+	return builder.build();
 }

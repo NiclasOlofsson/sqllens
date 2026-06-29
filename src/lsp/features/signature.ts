@@ -11,17 +11,17 @@ import { signatureAt, type Schema, type SqlDocument } from "../../index.js";
 // ---------------------------------------------------------------------------
 
 export function computeSignatureHelp(doc: SqlDocument, position: Position, schema?: Schema): SignatureHelp | null {
-  const off = doc.lines.offsetAt(position.line, position.character);
-  const info = signatureAt(doc, off, schema);
-  if (!info) return null;
-  return {
-    signatures: [
-      {
-        label: info.label,
-        parameters: info.parameters.map((p) => ({ label: p.label })),
-      },
-    ],
-    activeSignature: 0,
-    activeParameter: info.activeParameter,
-  };
+	const off = doc.lines.offsetAt(position.line, position.character);
+	const info = signatureAt(doc, off, schema);
+	if (!info) return null;
+	return {
+		signatures: [
+			{
+				label: info.label,
+				parameters: info.parameters.map((p) => ({ label: p.label })),
+			},
+		],
+		activeSignature: 0,
+		activeParameter: info.activeParameter,
+	};
 }
