@@ -128,6 +128,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 			const tally = new Map<string, number>();
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
+			let scoped = 0;
 			runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
 				outOfScope: OUT_OF_SCOPE,
@@ -137,6 +138,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
 						deriveSymbols(resolveScopes(ir, "tsql"));
+						scoped++;
 					} catch (e) {
 						throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
 					}
@@ -148,7 +150,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 				.slice(0, 10)
 				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
 				.join("\n");
-			console.log(`\n  tsql: ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`);
+			console.log(
+				`\n  tsql: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+			);
+			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `pipeline threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,

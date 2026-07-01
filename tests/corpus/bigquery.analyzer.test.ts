@@ -81,28 +81,30 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 
 			for (const f of positives()) {
 				const sql = readFileSync(f, "utf8");
-				if (isDetectOnly(sql)) {
-					ddlExcluded++;
-					continue;
-				}
+				const detectOnly = isDetectOnly(sql);
+				if (detectOnly) ddlExcluded++;
+
 				let res;
 				try {
 					res = parseBigQuery(sql);
 				} catch {
-					fails.push(f);
+					if (!detectOnly) fails.push(f);
 					continue;
 				}
 				if (res.errors !== 0) {
-					fails.push(f);
+					if (!detectOnly) fails.push(f);
 					continue;
 				}
-				pass++;
-				// Clean, in-scope positive → lower ONCE and run every downstream concern off that one IR.
+				if (!detectOnly) pass++;
+				// Clean parse (in-scope or detect-only) → lower ONCE and run the full-domain sweep. detect-only
+				// (object DDL/macro) stays out of the ratchet counters and the `other` tally, but its clean parse
+				// still feeds the totality sweep and the pipe drift-guard — the domain the deleted pre-
+				// consolidation suites (bigquery.corpus/bigquery.pipe) swept.
 				try {
 					const ir = lower(res.tree);
-					walkIr(ir, tally, samples); // `other` expr-count (baseline 234)
-					collectPipeStages(ir, stages); // pipe-stage drift guard (0 `other` op)
-					deriveSymbols(resolveScopes(ir, "bigquery")); // scope+symbols must not throw
+					if (!detectOnly) walkIr(ir, tally, samples); // `other` expr-count (baseline 234), in-scope only
+					collectPipeStages(ir, stages); // pipe-stage drift guard (0 `other` op) — full domain
+					deriveSymbols(resolveScopes(ir, "bigquery")); // scope+symbols must not throw — full domain
 				} catch (e) {
 					throws.push(`${f}: ${(e as Error).message}`);
 				}
