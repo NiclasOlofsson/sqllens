@@ -164,7 +164,7 @@ export function startServer(connection: Connection): void {
 	connection.onDocumentSymbol((params) => {
 		const doc = docFor(params.textDocument.uri);
 		if (!doc) return [];
-		return computeDocumentSymbols(doc);
+		return computeDocumentSymbols(doc, config.schema);
 	});
 
 	connection.onFoldingRanges((params) => {
