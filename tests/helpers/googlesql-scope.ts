@@ -12,7 +12,7 @@ export function* sqlFiles(dir: string): Generator<string> {
 	}
 }
 
-// Detect-only classification — identical to the parser-corpus gate (bigquery.parser-corpus.test.ts).
+// Detect-only classification — identical to the parser-corpus gate (tests/corpus/bigquery.parser.test.ts).
 // Object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO are recognized and
 // flagged but not parsed/validated, by cleared scope, so they are out of BOTH gates symmetrically: a
 // malformed one we accept is not an over-acceptance bug, and a valid one we don't fully parse is not a

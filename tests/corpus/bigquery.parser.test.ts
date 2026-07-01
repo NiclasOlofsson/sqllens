@@ -1,10 +1,10 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { describe, expect, it } from "vitest";
-import { lower } from "../src/bigquery/lower.js";
-import { parseBigQuery } from "../src/bigquery/parse.js";
-import { resolveScopes } from "../src/scope/scope.js";
+import { lower } from "../../src/bigquery/lower.js";
+import { parseBigQuery } from "../../src/bigquery/parse.js";
+import { resolveScopes } from "../../src/scope/scope.js";
 
 // Is this case DETECT-ONLY — recognized and flagged but not parsed/validated, by cleared scope?
 // Two families: object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO
@@ -40,7 +40,7 @@ function isDetectOnly(sql: string): boolean {
 
 // The ZetaSQL PARSER .test corpus (gitignored; rebuild with tools/extract-googlesql-parser-tests.mjs,
 // needs `git -C "$SQL_CORPUS_DIR/vendor/googlesql" sparse-checkout add googlesql/parser/testdata`). This is a second,
-// stricter two-sided gate alongside bigquery.corpus.test.ts (the analyzer corpus). The parser
+// stricter two-sided gate alongside bigquery.analyzer.test.ts (the analyzer corpus). The parser
 // testdata is pure syntax — every positive is parseable by construction and every negative is a
 // *true* parser syntax error — so it is a cleaner conformance signal than the analyzer corpus.
 //

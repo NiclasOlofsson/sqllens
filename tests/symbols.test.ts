@@ -1,6 +1,3 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
@@ -11,8 +8,6 @@ import { deriveSymbols } from "../src/symbols/symbols.js";
 function symbolsOf(sql: string) {
 	return deriveSymbols(resolveScopes(lower(parseDatabricks(sql).tree)));
 }
-
-const CORPUS = corpusPath("databricks/oatly");
 
 describe("deriveSymbols — relations", () => {
 	it("emits a table source as a relation reference", () => {
@@ -145,22 +140,5 @@ describe("deriveSymbols — column types (inference wired in)", () => {
 	});
 });
 
-describe.skipIf(!existsSync(CORPUS))("deriveSymbols over the Oatly corpus", () => {
-	it("derives symbols for every model without throwing; each has a frame and a span", () => {
-		const files = readdirSync(CORPUS, { recursive: true }).filter(
-			(f): f is string => typeof f === "string" && f.endsWith(".sql"),
-		);
-		let total = 0;
-		for (const rel of files) {
-			const syms = deriveSymbols(
-				resolveScopes(lower(parseDatabricks(readFileSync(join(CORPUS, rel), "utf8")).tree)),
-			);
-			for (const s of syms) {
-				if (!s.frame || s.span.line < 0) throw new Error(`bad symbol in ${rel}: ${JSON.stringify(s)}`);
-			}
-			total += syms.length;
-		}
-		expect(total).toBeGreaterThan(0);
-		console.log(`\nderiveSymbols: ${total} symbols across ${files.length} models`);
-	}, 120000);
-});
+// The corpus-scale deriveSymbols gate moved to tests/corpus/databricks.oatly.test.ts (one pass over
+// the Oatly corpus, shared with the other Databricks pipeline gates). The unit cases stay here.

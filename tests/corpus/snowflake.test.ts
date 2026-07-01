@@ -1,12 +1,17 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
-import { SnowflakeLexer } from "../src/generated/snowflake/SnowflakeLexer.js";
-import { SnowflakeParser } from "../src/generated/snowflake/SnowflakeParser.js";
-import { runDocsRatchet } from "./helpers/docs-ratchet.js";
-import { KNOWN_BAD } from "./snowflake-corpus-known-bad.js";
+import { SnowflakeLexer } from "../../src/generated/snowflake/SnowflakeLexer.js";
+import { SnowflakeParser } from "../../src/generated/snowflake/SnowflakeParser.js";
+import { lower } from "../../src/snowflake/lower.js";
+import { parseSnowflake } from "../../src/snowflake/parse.js";
+import { resolveScopes } from "../../src/scope/scope.js";
+import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { walkIr } from "../helpers/ir-walk.js";
+import { KNOWN_BAD } from "../snowflake-corpus-known-bad.js";
 
 // Two Snowflake conformance corpora, both gitignored and skipped when absent:
 //
@@ -26,6 +31,12 @@ const DOCS_CORPUS = corpusPath("snowflake/docs");
 // The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
 // the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 2942;
+
+// The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
+// in-scope, cleanly-parsed docs query bucket and ratchet the total (it may only fall; drive to 0 like
+// Databricks). This rides the SAME single parse the docs ratchet makes (onCleanQuery gets its tree),
+// so no file is parsed twice.
+const OTHER_BASELINE = 10; // measured 2026-07-01 over the parsed Snowflake docs query bucket; may only fall
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
@@ -89,7 +100,43 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Snowflake grammar vs the grammars
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs corpus", () => {
-	it("parses 100% of in-scope query examples (KNOWN_BAD excluded); reports dml/ddl", { timeout: 1_800_000 }, () => {
-		runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
-	});
+	it(
+		"parses 100% of in-scope query examples (KNOWN_BAD excluded); reports dml/ddl; `other` ratchet",
+		{ timeout: 1_800_000 },
+		() => {
+			// One pass: the docs ratchet parses each file once (via parse, which also yields the tree);
+			// the clean query-bucket tree feeds onCleanQuery, which lowers → walks → resolves → derives
+			// symbols. The pipeline must never throw and the `other` count must stay at/under baseline.
+			const tally = new Map<string, number>();
+			const samples = new Map<string, string>();
+			const throwers: string[] = [];
+			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
+				knownBad: KNOWN_BAD,
+				parse: (sql) => {
+					const r = parseSnowflake(sql);
+					return { errors: r.errors, tree: r.tree };
+				},
+				onCleanQuery: (rel, tree) => {
+					try {
+						const ir = lower(tree);
+						walkIr(ir, tally, samples);
+						deriveSymbols(resolveScopes(ir, "snowflake"));
+					} catch (e) {
+						throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
+					}
+				},
+			});
+			const total = [...tally.values()].reduce((s, n) => s + n, 0);
+			const top = [...tally.entries()]
+				.sort((a, b) => b[1] - a[1])
+				.slice(0, 10)
+				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
+				.join("\n");
+			console.log(`\n  snowflake: ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`);
+			expect(throwers, `pipeline threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
+			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
+				OTHER_BASELINE,
+			);
+		},
+	);
 });

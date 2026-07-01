@@ -1,14 +1,9 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
-
-const CORPUS = corpusPath("databricks/oatly");
 
 function origins(sql: string, output: string, schema = new Schema({})): string[] {
 	const tree = resolveScopes(lower(parseDatabricks(sql).tree));
@@ -66,16 +61,5 @@ describe("lineage", () => {
 	});
 });
 
-describe.skipIf(!existsSync(CORPUS))("lineage over the Oatly corpus", () => {
-	it("runs over every model without throwing", () => {
-		const files = readdirSync(CORPUS, { recursive: true }).filter(
-			(f): f is string => typeof f === "string" && f.endsWith(".sql"),
-		);
-		let outputs = 0;
-		for (const rel of files) {
-			const tree = resolveScopes(lower(parseDatabricks(readFileSync(join(CORPUS, rel), "utf8")).tree));
-			outputs += lineage(tree, new Schema({})).length;
-		}
-		expect(outputs).toBeGreaterThan(0);
-	}, 120000);
-});
+// The corpus-scale lineage gate moved to tests/corpus/databricks.oatly.test.ts (one pass over the
+// Oatly corpus, shared with the other Databricks pipeline gates). The unit cases stay here.

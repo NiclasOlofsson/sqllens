@@ -1,6 +1,3 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
 import { ParserRuleContext, type ParseTree } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
@@ -117,47 +114,5 @@ describe("CST <-> IR clause conservation", () => {
 	});
 });
 
-const CORPUS = corpusPath("databricks/oatly");
-
-describe.skipIf(!existsSync(CORPUS))("CST <-> IR conservation over the Oatly corpus", () => {
-	it("the IR drops no clause the CST contains, across all 1558 models", () => {
-		const files = readdirSync(CORPUS, { recursive: true }).filter(
-			(f): f is string => typeof f === "string" && f.endsWith(".sql"),
-		);
-
-		const cstTotal: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
-		const irTotal: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
-		const offenders: Record<string, string> = {};
-
-		for (const rel of files) {
-			const tree = parseDatabricks(readFileSync(join(CORPUS, rel), "utf8")).tree;
-			const cst = cstCounts(tree);
-			const ir: Counts = { where: 0, groupBy: 0, having: 0, qualify: 0, pivot: 0, unpivot: 0, orderBy: 0 };
-			irCounts(lower(tree), ir);
-			for (const k of Object.keys(cst)) {
-				cstTotal[k] += cst[k];
-				irTotal[k] += ir[k];
-				if (cst[k] > ir[k] && !offenders[k]) offenders[k] = `${rel} (CST ${cst[k]} > IR ${ir[k]})`;
-			}
-		}
-
-		console.log(
-			[
-				"",
-				"CST vs IR clause counts over the corpus:",
-				...Object.keys(cstTotal).map((k) => `  ${k.padEnd(8)} CST ${cstTotal[k]}  IR ${irTotal[k]}`),
-				...(Object.keys(offenders).length
-					? ["dropped (first offender):", ...Object.entries(offenders).map(([k, v]) => `  ${k}: ${v}`)]
-					: []),
-			].join("\n"),
-		);
-
-		// The IR must not DROP a clause the CST has. (IR >= CST is fine; IR < CST is a dropped construct.)
-		for (const k of Object.keys(cstTotal)) {
-			expect(
-				irTotal[k],
-				`IR dropped some ${k} (CST ${cstTotal[k]} > IR ${irTotal[k]}) e.g. ${offenders[k]}`,
-			).toBeGreaterThanOrEqual(cstTotal[k]);
-		}
-	}, 180000);
-});
+// The corpus-scale CST↔IR conservation gate moved to tests/corpus/databricks.oatly.test.ts (one pass
+// over the Oatly corpus, shared with the other Databricks pipeline gates). The unit cases stay here.

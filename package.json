@@ -26,6 +26,8 @@
 		"lsp": "node --import tsx src/lsp/main.ts",
 		"typecheck": "tsgo -p tsconfig.json",
 		"test": "vitest run",
+		"test:corpus": "vitest run --config vitest.corpus.config.ts",
+		"test:all": "npm test && npm run test:corpus",
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},

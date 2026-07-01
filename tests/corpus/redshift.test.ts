@@ -1,15 +1,16 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
-import { RedshiftLexer } from "../src/generated/redshift/RedshiftLexer.js";
-import { RedshiftParser } from "../src/generated/redshift/RedshiftParser.js";
-import { lower } from "../src/redshift/lower.js";
-import { parseRedshift } from "../src/redshift/parse.js";
-import { resolveScopes } from "../src/scope/scope.js";
-import { classifySql } from "./helpers/sql-kind.js";
-import { runDocsRatchet } from "./helpers/docs-ratchet.js";
+import { RedshiftLexer } from "../../src/generated/redshift/RedshiftLexer.js";
+import { RedshiftParser } from "../../src/generated/redshift/RedshiftParser.js";
+import { lower } from "../../src/redshift/lower.js";
+import { parseRedshift } from "../../src/redshift/parse.js";
+import { resolveScopes } from "../../src/scope/scope.js";
+import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { walkIr } from "../helpers/ir-walk.js";
 
 // Two Redshift conformance corpora, both gitignored and skipped when absent:
 //
@@ -30,6 +31,10 @@ const DOCS_CORPUS = corpusPath("redshift/docs");
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it
 const QUERY_BASELINE = 1790; // scraped-docs in-scope query bucket; superseded by the 100%/knownBad gate below
+// The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
+// in-scope, cleanly-parsed docs query bucket. Redshift is corpus-complete — 0 `other`. This rides the
+// SAME single parse the docs ratchet makes (onCleanQuery gets its tree), so no file is parsed twice.
+const OTHER_BASELINE = 0; // measured 2026-07-01 over the parsed Redshift docs query bucket; corpus-complete
 
 // Documented-broken query examples — every in-scope query example must parse EXCEPT these, each
 // verified against its AWS doc source as genuinely malformed SQL (not a grammar gap, not scraper
@@ -119,40 +124,52 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Redshift grammar vs the bytebase 
 });
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs corpus", () => {
+	// ONE pass merges the two former docs passes (runDocsRatchet + the lower/scope no-throw sweep):
+	// the ratchet parses each file once, then hands each clean query-bucket tree to onCleanQuery,
+	// which lowers → walks (other-count, baseline 0) → resolves → derives symbols. lower/resolveScopes
+	// must be TOTAL (a valid parse never throws in the semantic pipeline — unmodelled forms become
+	// `other`/`unsupported`, not exceptions); that contract and the `other` ratchet are proven together
+	// over the real corpus. No-other policy on the ratchet: every in-scope query example parses, or it
+	// is a documented-broken example listed (and justified) in KNOWN_BAD.
 	it(
-		"parses 100% of the in-scope query bucket (minus verified known-bad); reports dml/ddl",
+		"parses 100% of the in-scope query bucket (minus verified known-bad); reports dml/ddl; lower+scope total; `other` ratchet",
 		{ timeout: 1_800_000 },
 		() => {
-			// No-other policy: every in-scope query example parses, or it is a documented-broken example
-			// listed (and justified) in KNOWN_BAD. There is no silently-tolerated failing tail.
-			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, { knownBad: KNOWN_BAD });
+			const tally = new Map<string, number>();
+			const samples = new Map<string, string>();
+			const throwers: string[] = [];
+			let scoped = 0;
+			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
+				knownBad: KNOWN_BAD,
+				parse: (sql) => {
+					const r = parseRedshift(sql);
+					return { errors: r.errors, tree: r.tree };
+				},
+				onCleanQuery: (rel, tree) => {
+					try {
+						const ir = lower(tree);
+						walkIr(ir, tally, samples);
+						deriveSymbols(resolveScopes(ir, "redshift"));
+						scoped++;
+					} catch (e) {
+						throwers.push(`${rel}: ${String(e).slice(0, 120)}`);
+					}
+				},
+			});
+			const total = [...tally.values()].reduce((s, n) => s + n, 0);
+			const top = [...tally.entries()]
+				.sort((a, b) => b[1] - a[1])
+				.slice(0, 10)
+				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
+				.join("\n");
+			console.log(
+				`\n  redshift: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+			);
+			expect(scoped).toBeGreaterThan(0);
+			expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
+			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
+				OTHER_BASELINE,
+			);
 		},
 	);
-
-	// lower() + resolveScopes must be TOTAL over every parsed query: a valid parse never throws in
-	// the semantic pipeline (unmodelled forms become `other`/`unsupported`, not exceptions). This is
-	// the contract the shared semantic layer relies on — proven here over the real corpus, not faked.
-	it("lower + resolveScopes never throw over the parsed query corpus", { timeout: 1_800_000 }, () => {
-		const throwers: string[] = [];
-		let parsed = 0;
-		for (const f of sqlFiles(DOCS_CORPUS)) {
-			const sql = readFileSync(f, "utf8");
-			if (classifySql(sql) !== "query") continue;
-			const { tree, errors } = parseRedshift(sql);
-			if (errors > 0) continue; // unparsed — the ratchet covers those
-			parsed++;
-			try {
-				resolveScopes(lower(tree), "redshift");
-			} catch (e) {
-				throwers.push(
-					`${f
-						.slice(DOCS_CORPUS.length + 1)
-						.split("\\")
-						.join("/")}: ${String(e).slice(0, 120)}`,
-				);
-			}
-		}
-		expect(parsed).toBeGreaterThan(0);
-		expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
-	});
 });

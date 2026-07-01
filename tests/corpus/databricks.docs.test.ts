@@ -1,9 +1,9 @@
 import { existsSync } from "node:fs";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { describe, it } from "vitest";
-import { parseDatabricks } from "../src/databricks/parse.js";
-import { KNOWN_BAD, DEFERRED_GRAMMAR } from "./databricks-corpus-known-bad.js";
-import { runDocsRatchet } from "./helpers/docs-ratchet.js";
+import { parseDatabricks } from "../../src/databricks/parse.js";
+import { KNOWN_BAD, DEFERRED_GRAMMAR } from "../databricks-corpus-known-bad.js";
+import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 
 // SQL examples scraped from the Databricks SQL language manual
 // (docs.databricks.com/.../sql/language-manual via tools/scrape-databricks-docs.mjs; gitignored,
@@ -19,6 +19,10 @@ import { runDocsRatchet } from "./helpers/docs-ratchet.js";
 // (tests/databricks-corpus-known-bad.ts, asserted to still fail): documented-broken examples
 // (KNOWN_BAD) and valid SQL the Spark grammar doesn't accept yet (DEFERRED_GRAMMAR, tracked in
 // issue #4). Triaged file-by-file 2026-06-13.
+//
+// Single-pass by construction: runDocsRatchet parses each query-bucket file once. The Databricks
+// pipeline (lower → scope → symbols) is covered corpus-wide by databricks.oatly.test.ts, so this
+// gate stays parse-only.
 
 const CORPUS = corpusPath("databricks/docs");
 const QUERY_BASELINE = 3062; // unused in 100% mode; kept as a documented floor
