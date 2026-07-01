@@ -172,9 +172,24 @@ function functionType(name: string, args: Expr[], scope: Scope, schema: Schema, 
 	return rule ? rule(args.map((a) => inferType(a, scope, schema, ctx))) : UNKNOWN;
 }
 
+// The arg index that MUST hold a lambda for a name to be the Spark higher-order form. A same-named
+// call without a lambda there is a name collision (e.g. BigQuery multi-level `AGGREGATE(x ORDER BY
+// key)`, not Spark `aggregate(array, init, merge)`) — bail so it falls through to the registry
+// instead of indexing a missing arg. This keeps the engine total on cross-dialect input.
+const HOF_LAMBDA_ARG: Record<string, number> = {
+	transform: 1,
+	zip_with: 2,
+	aggregate: 2,
+	reduce: 2,
+	transform_keys: 1,
+	transform_values: 1,
+};
+
 /** Higher-order functions: bind the lambda parameters to the right element/value types, type the
  *  lambda body, and build the result. Returns undefined when `name` isn't a higher-order function. */
 function higherOrder(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type | undefined {
+	const lambdaArg = HOF_LAMBDA_ARG[name];
+	if (lambdaArg !== undefined && args[lambdaArg]?.kind !== "lambda") return undefined;
 	switch (name) {
 		case "transform": {
 			const elem = arrayElem(inferType(args[0], scope, schema, ctx));
