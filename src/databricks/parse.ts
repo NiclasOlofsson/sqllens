@@ -14,8 +14,8 @@ import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
 export interface ParseResult {
-	/** The CST rooted at `compoundOrSingleStatement` (one statement, or a BEGIN…END
-	 *  SQL-scripting compound, + EOF). */
+	/** The CST rooted at `multiStatement` (a `;`-separated batch of statements and/or
+	 *  BEGIN…END SQL-scripting compounds, + EOF). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
@@ -53,7 +53,7 @@ export function parseDatabricks(sql: string): ParseResult {
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		const tree = parser.compoundOrSingleStatement();
+		const tree = parser.multiStatement();
 		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	} catch {
 		// Stage 2: full LL with the normal error strategy (reports + recovers).
@@ -64,7 +64,7 @@ export function parseDatabricks(sql: string): ParseResult {
 		collector.reset(); // discount anything the SLL attempt may have reported
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
-		const tree = parser.compoundOrSingleStatement();
+		const tree = parser.multiStatement();
 		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
 	}
 }

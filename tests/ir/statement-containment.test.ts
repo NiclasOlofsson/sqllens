@@ -14,10 +14,9 @@ import { parse, type Dialect } from "../../src/index.js";
 //   2. CST/diagnostic level: the parse reports a positioned diagnostic AT the broken
 //      middle statement (not smeared to offset 0 or the document end).
 //
-// databricks' entry (compoundOrSingleStatement) is single-statement-oriented, so it
-// is out of scope here; the genuinely multi-statement entries are tsql (tsql_file =
-// batch* EOF), snowflake (snowflake_file), bigquery (root = stmts EOF) and redshift
-// (root = stmtblock EOF).
+// Every dialect's entry rule is now a statement list: databricks (multiStatement,
+// issue #1), tsql (tsql_file = batch* EOF), snowflake (snowflake_file), bigquery
+// (root = stmts EOF) and redshift (root = stmtblock EOF).
 
 // A three-statement document with a broken statement in the middle. The trailing
 // statement `SELECT c FROM u` is valid in every covered dialect.
@@ -28,7 +27,7 @@ const FIRST_SEMI = INPUT.indexOf(";"); // end of the first (valid) statement
 const SECOND_SEMI = INPUT.indexOf(";", FIRST_SEMI + 1); // end of the broken middle
 const TRAILING_START = INPUT.indexOf("SELECT c"); // start of the trailing valid statement
 
-const MULTI_STATEMENT_DIALECTS: Dialect[] = ["tsql", "snowflake", "bigquery", "redshift"];
+const MULTI_STATEMENT_DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift"];
 
 describe("multi-statement error containment", () => {
 	for (const dialect of MULTI_STATEMENT_DIALECTS) {
