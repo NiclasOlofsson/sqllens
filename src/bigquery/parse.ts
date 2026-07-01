@@ -51,7 +51,18 @@ export function parseBigQuery(sql: string): ParseResult {
 	// stable across the SLL→LL retry (the same buffer is reseeked, never re-lexed). The lexer instance
 	// is still the right vocabulary source for token names/roles.
 	tokens.fill();
-	const tokenList = mapTokens(lexer, tokens.getTokens(), "bigquery");
+	// Projecting the buffered token stream to neutral `Token`s is deferred behind a lazy getter: most
+	// consumers (the corpus gates especially) never read `.tokens`, so they should not pay for the
+	// mapping. `fill()` above still runs eagerly — the parser needs the buffer and lexer diagnostics
+	// surface there — but the projection maps once, on first read.
+	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
+		let cached: Token[] | undefined;
+		return Object.defineProperty(base as ParseResult, "tokens", {
+			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "bigquery")),
+			enumerable: true,
+			configurable: true,
+		});
+	};
 
 	const parser = new GoogleSQLParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
@@ -64,7 +75,7 @@ export function parseBigQuery(sql: string): ParseResult {
 	try {
 		const tree = parser.root();
 		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
-		return { tree, errors: diagnostics.length, diagnostics, tokens: tokenList };
+		return withTokens({ tree, errors: diagnostics.length, diagnostics });
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -76,6 +87,6 @@ export function parseBigQuery(sql: string): ParseResult {
 		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
 		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
-		return { tree, errors: diagnostics.length, diagnostics, tokens: tokenList };
+		return withTokens({ tree, errors: diagnostics.length, diagnostics });
 	}
 }

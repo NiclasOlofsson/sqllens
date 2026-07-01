@@ -44,14 +44,24 @@ export function parseSnowflake(sql: string): ParseResult {
 	tokens.fill();
 	const lexDiags = [...collector.diagnostics];
 	// The token list is stable once filled — the SLL→LL retry reseeks the same buffer, never re-lexes.
-	const tokenList = mapTokens(lexer, tokens.getTokens(), "snowflake");
+	// Projecting it to neutral `Token`s is deferred behind a lazy getter: most consumers (the corpus
+	// gates especially) never read `.tokens`, so they should not pay for the mapping. `fill()` above
+	// still runs eagerly — it surfaces lexer diagnostics — but the projection maps once, on first read.
+	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
+		let cached: Token[] | undefined;
+		return Object.defineProperty(base as ParseResult, "tokens", {
+			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "snowflake")),
+			enumerable: true,
+			configurable: true,
+		});
+	};
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.snowflake_file();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
+		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -61,7 +71,7 @@ export function parseSnowflake(sql: string): ParseResult {
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
 		const tree = parser.snowflake_file();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
+		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
 	}
 }
 
