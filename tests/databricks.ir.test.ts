@@ -187,3 +187,42 @@ describe("lower: CST -> IR", () => {
 		expect(ir.body.right.from).toMatchObject([{ kind: "table", name: ["u"] }]);
 	});
 });
+
+describe("batch parse entry (issue #1)", () => {
+	it("accepts a multi-statement batch with zero syntax errors", () => {
+		expect(parseDatabricks("SELECT 1; SELECT 2").errors).toBe(0);
+		expect(parseDatabricks("SELECT 1;;\nSELECT 2;").errors).toBe(0);
+	});
+	it("lowers a multi-statement batch as one flagged compound (parity with the other dialects)", () => {
+		const ir = lower(parseDatabricks("SELECT 1; SELECT 2").tree);
+		expect(ir.statement).toBe("compound");
+		expect(ir.body.kind === "select" && ir.body.unsupported).toContain("multi-statement");
+	});
+	it("a single statement with trailing semicolons still lowers fully", () => {
+		const ir = lower(parseDatabricks("SELECT a FROM t;").tree);
+		expect(ir.body.kind).toBe("select");
+		expect(ir.body.kind === "select" && (ir.body.unsupported ?? [])).toEqual([]);
+	});
+	it("a BEGIN…END compound still parses and flags as compound", () => {
+		const r = parseDatabricks("BEGIN SELECT 1; END");
+		expect(r.errors).toBe(0);
+		const ir = lower(r.tree);
+		expect(ir.statement).toBe("compound");
+	});
+	it("empty input parses clean and lowers flagged empty (an editor opens empty files)", () => {
+		const r = parseDatabricks("");
+		expect(r.errors).toBe(0);
+		const ir = lower(r.tree);
+		expect(ir.body.kind === "select" && ir.body.unsupported).toContain("empty");
+	});
+	it("contains an error to its own statement — later statements still lex", () => {
+		const r = parseDatabricks("SELECT 1;\nSELEC 2;\nSELECT 3;");
+		expect(r.errors).toBeGreaterThan(0);
+		// the token stream covers the WHOLE text (statement containment, editor mandate)
+		const last = r.tokens[r.tokens.length - 1];
+		expect(last.text).toBe(";");
+		// SyntaxDiagnostic.line is 1-based (src/parse-diagnostics.ts); the broken `SELEC 2`
+		// is on the second source line, so the first diagnostic reports line 2.
+		expect(r.diagnostics[0].line).toBe(2);
+	});
+});

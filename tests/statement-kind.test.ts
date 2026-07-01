@@ -58,6 +58,10 @@ describe("Databricks statement category (from the parse)", () => {
 	it("a BEGIN…END script is a compound", () => {
 		expect(databricks("BEGIN SELECT 1; END")).toBe("compound");
 	});
+
+	it("a multi-statement batch is a compound (issue #1 — batch parse entry)", () => {
+		expect(databricks("SELECT 1; SELECT 2")).toBe("compound");
+	});
 });
 
 describe("Snowflake statement category (from the parse)", () => {

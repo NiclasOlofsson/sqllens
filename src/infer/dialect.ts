@@ -2,7 +2,7 @@ import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType } from ".
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
-import { REDSHIFT_FUNCTION_RETURNS, redshiftParseType } from "./redshift.js";
+import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from "./redshift.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -52,7 +52,7 @@ const bigquery: InferDialect = {
 
 const redshift: InferDialect = {
 	functions: REDSHIFT_FUNCTION_RETURNS,
-	literal: databricksLiteral,
+	literal: redshiftLiteral,
 	parseType: redshiftParseType,
 	division: "integer", // Redshift: INT4 / INT4 → INT4 (truncates) — AWS r_numeric_computations201
 };

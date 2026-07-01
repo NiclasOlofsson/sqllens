@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SqlDocument } from "../src/document/document.js";
 import { computeDocumentSymbols } from "../src/lsp/features/symbols.js";
+import { Schema } from "../src/qualify/schema.js";
 
 const doc = (sql: string) => SqlDocument.create(sql, "databricks");
 
@@ -13,5 +14,16 @@ describe("computeDocumentSymbols", () => {
 
 	it("returns an array (possibly empty) and never throws on valid SQL", () => {
 		expect(Array.isArray(computeDocumentSymbols(doc("SELECT 1")))).toBe(true);
+	});
+
+	it("carries inferred types in the outline detail when given a schema", () => {
+		// A bare `SELECT amount` is a reference, not an output declaration (see
+		// symbols.test.ts "emits a bare projected column as a single reference") — the
+		// outline only carries declared/output columns, so alias it to exercise that path.
+		const doc = SqlDocument.create("SELECT amount AS amount_out FROM sales", "databricks");
+		const schema = new Schema({ sales: { amount: "decimal" } });
+		const syms = computeDocumentSymbols(doc, schema);
+		const amount = syms.find((s) => s.name === "amount_out");
+		expect(amount?.detail).toContain("decimal");
 	});
 });

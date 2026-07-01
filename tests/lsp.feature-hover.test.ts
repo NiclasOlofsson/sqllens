@@ -22,4 +22,12 @@ describe("computeHover", () => {
 		const sql = "SELECT amount FROM sales";
 		expect(computeHover(doc(sql), { line: 0, character: sql.indexOf("FROM") })).toBeNull();
 	});
+
+	it("falls back to symbol kind + name when no type is inferable (no schema)", () => {
+		const sql = "WITH c AS (SELECT 1 AS x) SELECT x FROM c";
+		const doc = SqlDocument.create(sql, "databricks");
+		const h = computeHover(doc, { line: 0, character: sql.indexOf("FROM c") + 5 });
+		expect(h).not.toBeNull();
+		expect((h!.contents as { value: string }).value).toContain("(cte) c");
+	});
 });

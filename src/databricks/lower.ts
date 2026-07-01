@@ -137,53 +137,57 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 	return freezeIR(lowerImpl(tree));
 }
 
+/** An empty, flagged body — the stable non-throw shape for anything not modelled. */
+function flagged(cst: ParserRuleContext, reason: string, statement: StatementCategory): QueryExpr {
+	const body: SelectExpr = {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: [reason],
+		cst,
+	};
+	return { kind: "query", statement, ctes: [], body, cst };
+}
+
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
-	const statement = statementCategory(tree);
+	// multiStatement root (issue #1): >1 element is a compound script — flagged, not modelled
+	// (the issue is parse-entry parity only). 0 elements is an empty file — also flagged,
+	// never a throw (an editor opens empty documents).
+	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
+	if (elements.length > 1) return flagged(tree, "multi-statement", "compound");
+	if (elements.length === 0 && tree.ruleIndex === P.RULE_multiStatement) return flagged(tree, "empty", "other");
+	const stmt = elements[0] ?? tree; // the single element, or a legacy single-statement root
+	const statement = statementCategory(stmt);
 	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
 	// whole thing rather than modelling whichever SELECT happens to come first inside it.
-	if (firstOfRule(tree, P.RULE_singleCompoundStatement)) {
-		const body: SelectExpr = {
-			kind: "select",
-			projections: [],
-			from: [],
-			columns: [],
-			aggregated: false,
-			unsupported: ["compound"],
-			cst: tree,
-		};
-		return { kind: "query", statement, ctes: [], body, cst: tree };
-	}
-	const query = firstOfRule(tree, P.RULE_query);
-	if (!query) {
-		// A non-query statement (DDL/DML without a SELECT). Return an empty, flagged body
-		// rather than throwing, so consumers get a stable IR they can recognize and skip.
-		const body: SelectExpr = {
-			kind: "select",
-			projections: [],
-			from: [],
-			columns: [],
-			aggregated: false,
-			unsupported: ["non-query"],
-			cst: tree,
-		};
-		return { kind: "query", statement, ctes: [], body, cst: tree };
-	}
+	if (isCompound(stmt)) return flagged(stmt, "compound", statement);
+	const query = firstOfRule(stmt, P.RULE_query);
+	if (!query) return flagged(stmt, "non-query", statement);
 	const lowered = lowerQuery(query);
 	lowered.statement = statement;
 	return lowered;
 }
 
+/** A BEGIN…END scripting compound: the batch element's BEGIN-led alternative, or a legacy
+ *  `singleCompoundStatement` root (other entries into this lowering still work). */
+function isCompound(stmt: ParserRuleContext): boolean {
+	if (stmt.ruleIndex === P.RULE_multiStatementElement && stmt.start?.type === P.BEGIN) return true;
+	return !!firstOfRule(stmt, P.RULE_singleCompoundStatement);
+}
+
 /**
  * The statement category, from the parse — not the source text. Spark's `statement` rule labels its
  * alternatives, so the structural cases are exact: a `#dmlStatement` (`ctes? dmlStatementNoWith`) is
- * DML even when written `WITH cte … INSERT …`, and a `BEGIN…END` compound is its own category. For
+ * DML even when written `WITH cte … INSERT …`, and a BEGIN…END compound is its own category. For
  * the remaining keyword-led commands (object DDL, GRANT, SET/USE/SHOW, …) the leading keyword is the
  * authoritative signal — Spark has no grouping rule above them.
  */
-function statementCategory(tree: ParserRuleContext): StatementCategory {
-	if (firstOfRule(tree, P.RULE_singleCompoundStatement)) return "compound";
-	if (shallowFirstOfRule(tree, P.RULE_dmlStatementNoWith)) return "dml";
-	return keywordCategory(tree.start?.text ?? "");
+function statementCategory(stmt: ParserRuleContext): StatementCategory {
+	if (isCompound(stmt)) return "compound";
+	if (shallowFirstOfRule(stmt, P.RULE_dmlStatementNoWith)) return "dml";
+	return keywordCategory(stmt.start?.text ?? "");
 }
 
 function lowerQuery(query: ParserRuleContext): QueryExpr {

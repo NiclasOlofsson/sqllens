@@ -1,12 +1,15 @@
 import { type DocumentSymbol, SymbolKind } from "vscode-languageserver-types";
-import type { Sym, SymbolKind as SqlSymbolKind, SqlDocument } from "../../index.js";
+import { formatType, type Schema, type Sym, type SymbolKind as SqlSymbolKind, type SqlDocument } from "../../index.js";
 import { rangeFromSpan } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Document symbols: the outline. Pure translation of the cached document's symbol
 // model — declarations (tables/CTEs/subqueries) and output columns become
 // DocumentSymbols. Bare references are omitted to keep the outline clean.
-// Symbols resolve structurally with no schema; analyze() defaults to one.
+// Symbols resolve structurally with no schema; when one is configured, analyze(schema)
+// carries inferred types into the outline detail.
+//
+// Meta: Claude Code's LSP tool speaks this method (documentSymbol); no workspaceSymbol here — single-document.
 // ---------------------------------------------------------------------------
 
 const KIND: Record<SqlSymbolKind, SymbolKind> = {
@@ -25,17 +28,20 @@ function include(s: Sym): boolean {
 	return false;
 }
 
-export function computeDocumentSymbols(doc: SqlDocument): DocumentSymbol[] {
+export function computeDocumentSymbols(doc: SqlDocument, schema?: Schema): DocumentSymbol[] {
 	const out: DocumentSymbol[] = [];
-	for (const s of doc.analyze().symbols) {
+	for (const s of doc.analyze(schema).symbols) {
 		if (!include(s)) continue;
 		const range = rangeFromSpan(s.span);
+		const parts: string[] = [];
+		if (s.type && s.type.kind !== "unknown") parts.push(formatType(s.type));
+		if (s.frame !== "_main_") parts.push(s.frame);
 		out.push({
 			name: s.name,
 			kind: KIND[s.kind],
 			range,
 			selectionRange: range,
-			detail: s.frame === "_main_" ? undefined : s.frame,
+			detail: parts.length ? parts.join(" — ") : undefined,
 		});
 	}
 	return out;

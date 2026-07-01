@@ -6,7 +6,10 @@ export default defineConfig({
 		// of tests/. Without this exclude, vitest's `**/*.test.ts` glob runs a sibling worktree's tests
 		// as part of this project's suite — they fail against shared state this branch has changed (e.g.
 		// the relocated corpus). A project's test run should cover only this working tree.
-		exclude: [...configDefaults.exclude, ".claude/worktrees/**"],
+		// Corpus conformance gates live in tests/corpus/ and run as their own tier (npm run test:corpus,
+		// vitest.corpus.config.ts). They parse thousands of files each and are the every-merge bar, not
+		// the every-run inner loop — excluding them here keeps `npm test` a fast units/features/LSP tier.
+		exclude: [...configDefaults.exclude, ".claude/worktrees/**", "tests/corpus/**"],
 		// Use the worker-threads pool, not the default `forks` pool.
 		//
 		// On this toolchain (Windows + Node 24 + vitest 4) the forks pool intermittently dies

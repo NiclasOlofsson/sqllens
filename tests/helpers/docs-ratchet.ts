@@ -1,6 +1,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
+import type { ParserRuleContext } from "antlr4ng";
 import type { StatementCategory } from "../../src/ir/statement.js";
 import { classifySql, type SqlKind } from "./sql-kind.js";
 
@@ -41,9 +42,25 @@ export interface DocsRatchetOptions {
 	 * count and (when clean) its per-statement categories. When set, bucketing is parse-derived
 	 * (the regex is only the no-parse fallback) and the dml/ddl buckets get real pass rates. One
 	 * call does the whole job — the gate does not re-parse for the error count, so the slow LL
-	 * stage runs at most once per file.
+	 * stage runs at most once per file. May also return the parse `tree`, which is handed to
+	 * `onCleanQuery` for clean, gated query-bucket files (so a classify-mode gate feeds the same
+	 * single parse into the pipeline hook without re-parsing).
 	 */
-	classify?: (sql: string) => { errors: number; kinds: StatementCategory[] | undefined };
+	classify?: (sql: string) => { errors: number; kinds: StatementCategory[] | undefined; tree?: ParserRuleContext };
+	/**
+	 * Non-classify parse for the query bucket: return the syntax-error count AND the parse tree so
+	 * the tree can feed `onCleanQuery` without a second parse. When provided it supersedes
+	 * `parseErrors` (which only yields a count). Not used in classify mode — `classify` already
+	 * carries the tree there. Backward-compatible: a gate that passes neither behaves as today.
+	 */
+	parse?: (sql: string) => { errors: number; tree: ParserRuleContext };
+	/**
+	 * Pipeline hook: fires ONCE per clean, gated query-bucket file (not knownBad, not outOfScope,
+	 * 0 syntax errors) with the already-produced parse tree. Lets a gate run lower → walkIr →
+	 * resolveScopes → deriveSymbols over the same single parse the ratchet made. Never fires for
+	 * dml/ddl, failing, known-bad, or out-of-scope files.
+	 */
+	onCleanQuery?: (rel: string, tree: ParserRuleContext) => void;
 }
 
 function* sqlFiles(dir: string): Generator<string> {
@@ -105,6 +122,7 @@ export function runDocsRatchet(
 
 		let errs: number;
 		let kind: SqlKind;
+		let tree: ParserRuleContext | undefined;
 		if (opts.classify) {
 			// Detection mode: ONE parse per file yields both the error count and the kinds; bucket
 			// from the parse, regex only as the no-parse fallback (a failed parse has no usable tree).
@@ -113,6 +131,7 @@ export function runDocsRatchet(
 				const res = opts.classify(sql);
 				errs = res.errors;
 				kinds = res.kinds;
+				tree = res.tree;
 			} catch {
 				errs = -1;
 				kinds = undefined;
@@ -127,7 +146,13 @@ export function runDocsRatchet(
 			}
 			errs = 1;
 			try {
-				errs = parseErrors(sql);
+				if (opts.parse) {
+					const res = opts.parse(sql);
+					errs = res.errors;
+					tree = res.tree;
+				} else {
+					errs = parseErrors(sql);
+				}
 			} catch {
 				errs = -1;
 			}
@@ -149,6 +174,9 @@ export function runDocsRatchet(
 		r[kind].total++;
 		if (clean) r[kind].pass++;
 		else if (kind === "query") queryFails.push(rel);
+
+		// Pipeline hook: only clean, gated query-bucket files (not knownBad/outOfScope, handled above).
+		if (clean && kind === "query" && tree && opts.onCleanQuery) opts.onCleanQuery(rel, tree);
 	}
 
 	const pct = (b: { pass: number; total: number }) => (b.total ? ((100 * b.pass) / b.total).toFixed(1) : "—");

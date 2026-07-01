@@ -93,6 +93,20 @@ singleCompoundStatement
     : BEGIN (NOT ATOMIC)? compoundBody? END SEMICOLON? EOF
     ;
 
+// Batch entry: a `;`-separated multi-statement script — parse-entry parity with the other
+// dialects (issue #1; tsql_file / snowflake_file / the BigQuery+Redshift `root` are all
+// batch-level). Elements are single statements or BEGIN…END scripting compounds. Statement
+// MODELLING depth is unchanged: lower() flags a multi-element batch, it does not model it.
+multiStatement
+    : SEMICOLON* (multiStatementElement (SEMICOLON+ multiStatementElement)* SEMICOLON*)? EOF
+    ;
+
+multiStatementElement
+    : BEGIN (NOT ATOMIC)? compoundBody? END
+    | statement
+    | setResetStatement
+    ;
+
 beginEndCompoundBlock
     : beginLabel? BEGIN (NOT ATOMIC)? compoundBody? END endLabel?
     ;

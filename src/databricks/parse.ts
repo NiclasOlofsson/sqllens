@@ -14,8 +14,8 @@ import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
 export interface ParseResult {
-	/** The CST rooted at `compoundOrSingleStatement` (one statement, or a BEGIN…END
-	 *  SQL-scripting compound, + EOF). */
+	/** The CST rooted at `multiStatement` (a `;`-separated batch of statements and/or
+	 *  BEGIN…END SQL-scripting compounds, + EOF). */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors. */
 	errors: number;
@@ -46,15 +46,25 @@ export function parseDatabricks(sql: string): ParseResult {
 	tokens.fill();
 	const lexDiags = [...collector.diagnostics];
 	// The token list is stable once filled — the SLL→LL retry reseeks the same buffer, never re-lexes.
-	const tokenList = mapTokens(lexer, tokens.getTokens(), "databricks");
+	// Projecting it to neutral `Token`s is deferred behind a lazy getter: most consumers (the corpus
+	// gates especially) never read `.tokens`, so they should not pay for the mapping. `fill()` above
+	// still runs eagerly — it surfaces lexer diagnostics — but the projection maps once, on first read.
+	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
+		let cached: Token[] | undefined;
+		return Object.defineProperty(base as ParseResult, "tokens", {
+			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "databricks")),
+			enumerable: true,
+			configurable: true,
+		});
+	};
 
 	// Stage 1: SLL, bail on the first error (no recovery, no listener noise).
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
 	sim.predictionMode = PredictionMode.SLL;
 	try {
-		const tree = parser.compoundOrSingleStatement();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
+		const tree = parser.multiStatement();
+		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
 	} catch {
 		// Stage 2: full LL with the normal error strategy (reports + recovers).
 		tokens.seek(0);
@@ -64,8 +74,8 @@ export function parseDatabricks(sql: string): ParseResult {
 		collector.reset(); // discount anything the SLL attempt may have reported
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
-		const tree = parser.compoundOrSingleStatement();
-		return { tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics, tokens: tokenList };
+		const tree = parser.multiStatement();
+		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
 	}
 }
 

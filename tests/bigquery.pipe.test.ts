@@ -1,15 +1,11 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { PipeExpr, PipeStage, QueryExpr } from "../src/ir/ir.js";
+import type { PipeExpr } from "../src/ir/ir.js";
 import { lower } from "../src/bigquery/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
-import { corpusPath } from "./helpers/corpus.js";
-import { allPipeStages, stageSubIr } from "./helpers/pipe-walk.js";
 
 // Pipe queries are modelled FAITHFULLY — a PipeExpr keeping the base relation plus an ordered list of
 // first-class PipeStage nodes (each with its `|> OPERATOR …` span), NOT desugared into nested
@@ -77,57 +73,6 @@ describe("BigQuery pipe queries — faithful model + column flow", () => {
 	});
 });
 
-// Every GoogleSQL pipe operator is modelled as its own stage kind — the `other` drift guard must never
-// fire for real corpus syntax. This gate proves nothing is silently dropped to `other`.
-const CORPUS = corpusPath("bigquery/zetasql/analyzer");
-function* sqlFiles(dir: string): Generator<string> {
-	if (!existsSync(dir)) return;
-	for (const e of readdirSync(dir, { withFileTypes: true })) {
-		const p = join(dir, e.name);
-		if (e.isDirectory()) yield* sqlFiles(p);
-		else if (e.name.endsWith(".sql")) yield p;
-	}
-}
-
-function collectPipeStages(q: QueryExpr, out: PipeStage[]): void {
-	const visitBody = (body: QueryExpr["body"]): void => {
-		if (body.kind === "pipe") {
-			visitBody(body.input);
-			for (const stage of allPipeStages(body)) {
-				out.push(stage);
-				for (const sub of stageSubIr(stage)) collectPipeStages(sub, out);
-			}
-		} else if (body.kind === "setop") {
-			visitBody(body.left);
-			visitBody(body.right);
-		} else {
-			for (const s of body.from) if (s.kind === "subquery") collectPipeStages(s.query, out);
-			for (const sub of body.subqueries ?? []) collectPipeStages(sub, out);
-		}
-	};
-	for (const cte of q.ctes) collectPipeStages(cte.body, out);
-	visitBody(q.body);
-}
-
-describe.skipIf(!existsSync(CORPUS))("BigQuery pipe — every operator modelled (no `other` stage)", () => {
-	it("no pipe stage falls through to the `other` drift guard across the corpus", { timeout: 600000 }, () => {
-		const stages: PipeStage[] = [];
-		for (const f of sqlFiles(join(CORPUS, "positive"))) {
-			const sql = readFileSync(f, "utf8");
-			let q: QueryExpr;
-			try {
-				const r = parseBigQuery(sql);
-				if (r.errors !== 0) continue;
-				q = lower(r.tree);
-			} catch {
-				continue;
-			}
-			collectPipeStages(q, stages);
-		}
-		const other = stages.filter((s) => s.op === "other");
-		// eslint-disable-next-line no-console
-		console.log(`BigQuery pipe stages over corpus: ${stages.length} (${other.length} unmodelled "other")`);
-		expect(stages.length).toBeGreaterThan(0); // the corpus does exercise pipe syntax
-		expect(other).toEqual([]); // all 31 operators modelled — the drift guard never fires
-	});
-});
+// The corpus-scale pipe-stage drift guard (every GoogleSQL pipe operator modelled — no `other` stage
+// over the ZetaSQL corpus) moved to tests/corpus/bigquery.analyzer.test.ts, where it rides the same
+// single lower() as the other BigQuery positive-corpus gates. The unit cases stay here.
