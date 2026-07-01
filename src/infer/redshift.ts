@@ -42,6 +42,26 @@ export function redshiftParseType(text: string): Type {
 	return parseType(text, REDSHIFT_ALIASES);
 }
 
+const BOOLEAN = scalar("boolean");
+
+/** Redshift literal forms. Numeric rules per the AWS SQL reference "Numeric literals"
+ *  (r_numeric_literals671): no decimal point or exponent → integer; a decimal point → DECIMAL;
+ *  an exponent → FLOAT8. Double quotes delimit identifiers (Postgres), NOT strings. */
+export function redshiftLiteral(text: string): Type {
+	const t = text.trim();
+	if (/^'/.test(t)) return scalar("string");
+	if (/^(true|false)$/i.test(t)) return BOOLEAN;
+	if (/^null$/i.test(t)) return UNKNOWN;
+	if (/^date\s*'/i.test(t)) return scalar("date");
+	if (/^time\s*'/i.test(t)) return scalar("time");
+	if (/^timestamp\s*'/i.test(t)) return scalar("timestamp");
+	if (/^interval\b/i.test(t)) return scalar("interval");
+	if (/^[+-]?\d+$/.test(t)) return scalar("int");
+	if (/^[+-]?(\d+\.?\d*|\.\d+)e[+-]?\d+$/i.test(t)) return scalar("double");
+	if (/^[+-]?(\d+\.\d*|\.\d+)$/.test(t)) return scalar("decimal");
+	return UNKNOWN;
+}
+
 /** Doc-cited starter set of common Redshift scalar/aggregate functions. Grows over time;
  *  anything absent yields `unknown` (never a wrong type). Modeled on FUNCTION_RETURNS. */
 export const REDSHIFT_FUNCTION_RETURNS: Record<string, FnRule> = {
