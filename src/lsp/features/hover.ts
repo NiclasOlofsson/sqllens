@@ -7,6 +7,8 @@ import { rangeFromCst } from "../ranges.js";
 // over the cached document model — nodeAt finds the expr + its scope, the cached
 // analyze(schema).types infers the type (the library's inference, not ours),
 // formatType renders it. No re-parse here.
+//
+// Meta: Claude Code's LSP tool speaks this method (hover).
 // ---------------------------------------------------------------------------
 
 export function computeHover(doc: SqlDocument, position: Position, schema?: Schema): Hover | null {

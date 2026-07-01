@@ -12,6 +12,8 @@ import { rangeFromSpan } from "../ranges.js";
 // the declaration as a Write and references as Reads. No re-resolution here. Offsets
 // come from doc.lines; spans → Ranges via rangeFromSpan. Both are total: any
 // no-result (off-symbol, broken input) degrades to [].
+//
+// Meta: Claude Code's LSP tool speaks computeReferences (findReferences); documentHighlight has no counterpart.
 // ---------------------------------------------------------------------------
 
 export function computeReferences(

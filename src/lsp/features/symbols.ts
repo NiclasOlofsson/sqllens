@@ -7,6 +7,8 @@ import { rangeFromSpan } from "../ranges.js";
 // model — declarations (tables/CTEs/subqueries) and output columns become
 // DocumentSymbols. Bare references are omitted to keep the outline clean.
 // Symbols resolve structurally with no schema; analyze() defaults to one.
+//
+// Meta: Claude Code's LSP tool speaks this method (documentSymbol); no workspaceSymbol here — single-document.
 // ---------------------------------------------------------------------------
 
 const KIND: Record<SqlSymbolKind, SymbolKind> = {
