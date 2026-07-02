@@ -17,7 +17,7 @@ import {
 	type ScopeTree,
 } from "../src/index.js";
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery"];
+const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift"];
 
 describe("public API — uniform entry", () => {
 	it("parse(sql, dialect) returns the IR as `ast`, an error count, and the raw CST escape hatch, for every dialect", () => {

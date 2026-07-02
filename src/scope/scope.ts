@@ -207,6 +207,8 @@ function resolveByColumnName(scope: Scope, column: string, fields: string[]): Co
 }
 
 function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
+	const d = dialect ?? parent?.dialect;
+	if (!d) throw new Error("newScope: no dialect — pass one explicitly or via parent");
 	return {
 		body,
 		sources: new Map(),
@@ -214,7 +216,7 @@ function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
 		outputs: "unknown",
 		parent,
 		children: [],
-		dialect: dialect ?? parent?.dialect ?? "databricks",
+		dialect: d,
 	};
 }
 
