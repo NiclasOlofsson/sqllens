@@ -239,10 +239,17 @@ export { LineIndex } from "./document/line-index.js";
 export { complete, type Completion } from "./completion/complete.js";
 
 // Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
-// while typing inside a call's parens, from a curated per-dialect signature table (name-only
-// fallback for the long tail). A pure token scan; total: never throws.
+// while typing inside a call's parens. Lookup order: curated (hand-verified) → harvested (doc-derived
+// long tail, from tools/harvest-signatures.mjs) → name-only fallback. A pure token scan; never throws.
 export { signatureAt, type SignatureInfo } from "./signature/signature.js";
-export { FUNCTION_SIGNATURES, type FnSignature, type ParamSig } from "./signature/signatures.js";
+export {
+	FUNCTION_SIGNATURES,
+	HARVESTED_SIGNATURES,
+	lookupSignature,
+	hasSignature,
+	type FnSignature,
+	type ParamSig,
+} from "./signature/signatures.js";
 
 // References / occurrence engine — find the declaration + every occurrence of the symbol under a
 // cursor offset. The core primitive behind LSP references / documentHighlight / codeLens / rename.

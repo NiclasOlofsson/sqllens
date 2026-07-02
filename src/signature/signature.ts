@@ -25,7 +25,7 @@ import type { SqlDocument } from "../document/document.js";
 import type { Schema } from "../qualify/schema.js";
 import type { Token } from "../token/token.js";
 import { inferDialect } from "../infer/dialect.js";
-import { FUNCTION_SIGNATURES, type FnSignature, type ParamSig } from "./signatures.js";
+import { hasSignature, lookupSignature, type FnSignature, type ParamSig } from "./signatures.js";
 
 /** What the editor shows while typing inside a call's parens. */
 export interface SignatureInfo {
@@ -104,8 +104,9 @@ function compute(doc: SqlDocument, offset: number): SignatureInfo | null {
 		}
 	}
 
-	// Step 4 — render from the curated table, else degrade to a name-only hint.
-	const sig = FUNCTION_SIGNATURES[doc.dialect][name.toLowerCase()];
+	// Step 4 — render from the curated table (harvested long tail behind it), else degrade to a
+	// name-only hint.
+	const sig = lookupSignature(doc.dialect, name.toLowerCase());
 	if (!sig) {
 		return { label: name, parameters: [], activeParameter: active };
 	}
@@ -127,7 +128,7 @@ function functionName(tok: Token | undefined, dialect: SqlDocument["dialect"]): 
 	if (tok.role === "identifier") return text;
 	if (tok.role === "keyword") {
 		const lower = text.toLowerCase();
-		if (lower in FUNCTION_SIGNATURES[dialect]) return text;
+		if (hasSignature(dialect, lower)) return text; // curated or harvested
 		if (lower in inferDialect(dialect).functions) return text;
 		return null;
 	}

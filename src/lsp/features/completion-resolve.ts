@@ -1,6 +1,6 @@
 import { MarkupKind } from "vscode-languageserver-types";
 import type { CompletionItem } from "vscode-languageserver-types";
-import { FUNCTION_SIGNATURES, type FnSignature, type ParamSig } from "../../index.js";
+import { lookupSignature, type FnSignature, type ParamSig } from "../../index.js";
 import type { CompletionItemData } from "./completion.js";
 
 // ---------------------------------------------------------------------------
@@ -18,8 +18,8 @@ export function resolveCompletion(item: CompletionItem): CompletionItem {
 	const data = item.data as CompletionItemData | undefined;
 	if (!data || data.kind !== "function") return item;
 
-	const sig = FUNCTION_SIGNATURES[data.dialect]?.[data.label.toLowerCase()];
-	if (!sig) return item; // long-tail function with no curated signature — leave as-is.
+	const sig = lookupSignature(data.dialect, data.label.toLowerCase());
+	if (!sig) return item; // no curated or harvested signature — leave as-is.
 
 	const rendered = renderSignature(sig);
 	item.detail = rendered;

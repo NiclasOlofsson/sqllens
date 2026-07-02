@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Dialect } from "../api.js";
+import { TSQL_HARVESTED } from "./generated/tsql.js";
 
 /** One formal parameter of a curated signature. `type` is the dialect's documented type name. */
 export interface ParamSig {
@@ -482,3 +483,35 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	postgres: POSTGRES,
 	duckdb: DUCKDB,
 };
+
+// ---------------------------------------------------------------------------
+// Harvested signatures — the LONG-TAIL layer under the curated table. Mined from each dialect's
+// reference-doc syntax blocks by tools/harvest-signatures.mjs into src/signature/generated/<dialect>.ts
+// (committed, rebuildable, never hand-edited). Only dialects with an offline syntax-block source in
+// the corpus repo have a generated table today (T-SQL); the rest map to an empty table and fall
+// through to the name-only hint. See the harvester's header for why.
+// ---------------------------------------------------------------------------
+
+/** Harvested parameter signatures, per dialect, keyed by LOWERCASED function name. */
+export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
+	databricks: {},
+	tsql: TSQL_HARVESTED,
+	snowflake: {},
+	bigquery: {},
+	redshift: {},
+	postgres: {},
+	duckdb: {},
+};
+
+/**
+ * The signature for a lowercased function name, honoring lookup order: curated (hand-verified) wins,
+ * then harvested (doc-derived long tail), else undefined → the caller degrades to a name-only hint.
+ */
+export function lookupSignature(dialect: Dialect, lowerName: string): FnSignature | undefined {
+	return FUNCTION_SIGNATURES[dialect][lowerName] ?? HARVESTED_SIGNATURES[dialect][lowerName];
+}
+
+/** Whether either signature layer knows this lowercased name (membership check for functionName()). */
+export function hasSignature(dialect: Dialect, lowerName: string): boolean {
+	return lowerName in FUNCTION_SIGNATURES[dialect] || lowerName in HARVESTED_SIGNATURES[dialect];
+}
