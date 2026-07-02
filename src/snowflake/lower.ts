@@ -126,11 +126,19 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
  * carries no finer rule, so its leading keyword is the authoritative signal.
  */
 function statementCategory(tree: ParserRuleContext): StatementCategory {
+	const cats = statementCategories(tree);
+	if (cats.length === 0) return "other";
+	if (cats.length > 1) return "compound";
+	return cats[0];
+}
+
+/** Per-statement categories for every `sql_command` in a parsed `snowflake_file`, in source order —
+ *  the file-level view behind statementCategory (which folds >1 into "compound"), using the same
+ *  `commandCategory` per element. Parity with the other dialects; feeds the corpus reclassifier. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
-	if (commands.length === 0) return "other";
-	if (commands.length > 1) return "compound";
-	return commandCategory(commands[0]);
+	return commands.map(commandCategory);
 }
 
 function commandCategory(cmd: ParserRuleContext): StatementCategory {

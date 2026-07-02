@@ -102,8 +102,93 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
 	if (stmts.length === 0) return "other";
 	if (stmts.length > 1) return "compound";
-	if (directChildrenOfRule(stmts[0], P.RULE_selectstmt).length) return "query";
-	return keywordCategory(stmts[0].start?.text ?? "");
+	return redshiftCategory(stmts[0]);
+}
+
+/** Per-statement categories for every top-level `stmt` in a parsed `root`, in source order — the
+ *  file-level view behind statementCategory (which folds >1 into "compound"). Parity with the other
+ *  dialects; feeds the corpus reclassifier. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
+	return collectOfRule(tree, P.RULE_stmt).map(redshiftCategory);
+}
+
+// Structural statement classification over the Postgres-derived `stmt` alternatives (grammars/
+// redshift/RedshiftParser.g4, rule `stmt`). Each `stmt` has exactly one alternative rule child; we
+// map it by its grammar rule NAME (P.ruleNames) so the category is parse-derived, not a leading-
+// keyword guess — the guess mis-reads `WITH … SELECT` as non-query, `SELECT INTO` as a read, and
+// ANALYZE/VACUUM as DDL. Rule names cited against the AWS Redshift SQL reference.
+const REDSHIFT_STMT_CATEGORY: Record<string, StatementCategory> = {
+	// docs.aws.amazon.com/redshift/latest/dg/r_SELECT_synopsis.html — the read path.
+	selectstmt: "query",
+	// Write / data movement: INSERT / UPDATE / DELETE / MERGE / COPY / LOAD / UNLOAD, plus the
+	// Redshift-specific INSERT-into-external and SELECT INTO (writes rows into a NEW table — a
+	// side-effect, not a read: r_SELECT_INTO.html). All grouped as dml.
+	insertstmt: "dml",
+	updatestmt: "dml",
+	deletestmt: "dml",
+	mergestmt: "dml",
+	copystmt: "dml", // r_COPY.html
+	loadstmt: "dml",
+	unloadstmt: "dml", // r_UNLOAD.html
+	insertexternaltablestmt: "dml", // r_INSERT_external_table.html
+	selectintostmt: "dml", // r_SELECT_INTO.html
+	// GRANT / REVOKE — data control: r_GRANT.html, r_REVOKE.html.
+	grantstmt: "dcl",
+	revokestmt: "dcl",
+	revokerolestmt: "dcl",
+	// Transaction control: BEGIN / START / COMMIT / END / ROLLBACK / ABORT / SAVEPOINT — r_BEGIN.html,
+	// r_ABORT.html, r_END.html (all one `transactionstmt` alternative).
+	transactionstmt: "tcl",
+	// Session / maintenance utilities — SET / RESET / SHOW / EXPLAIN / ANALYZE / VACUUM-style. ANALYZE
+	// and VACUUM are maintenance ops (r_ANALYZE.html, r_VACUUM.html), not object DDL — the leading-
+	// keyword guess wrongly bucketed them ddl.
+	variablesetstmt: "utility",
+	variableresetstmt: "utility",
+	variableshowstmt: "utility",
+	setsessionauthorizationstmt: "utility",
+	setsessioncharacteristicsstmt: "utility",
+	constraintssetstmt: "utility",
+	explainstmt: "utility", // r_EXPLAIN.html
+	analyzestmt: "utility", // r_ANALYZE.html
+	analyzecompressionstmt: "utility", // r_ANALYZE_COMPRESSION.html
+	vacuumstmt: "utility", // r_VACUUM.html
+	refreshmatviewstmt: "utility", // r_REFRESH_MATERIALIZED_VIEW.html
+	discardstmt: "utility",
+	clusterstmt: "utility",
+	reindexstmt: "utility",
+	checkpointstmt: "utility",
+	lockstmt: "utility", // r_LOCK.html
+	dostmt: "utility",
+	callstmt: "utility", // r_CALL.html
+	executestmt: "utility",
+	preparestmt: "utility", // r_PREPARE.html
+	deallocatestmt: "utility", // r_DEALLOCATE.html
+	declarecursorstmt: "utility", // r_DECLARE.html
+	fetchstmt: "utility", // r_FETCH.html
+	closeportalstmt: "utility", // r_CLOSE.html
+	closestmt: "utility",
+	cancelstmt: "utility", // r_CANCEL.html
+	usestmt: "utility", // r_USE.html
+	listenstmt: "utility",
+	unlistenstmt: "utility",
+	notifystmt: "utility",
+};
+
+/** Categorise one top-level `stmt` from its single alternative rule child's grammar rule name. Falls
+ *  back to the leading-keyword map for the CREATE/ALTER/DROP object-DDL family (covered by name prefix)
+ *  and the long tail of admin statements the map doesn't name. */
+function redshiftCategory(stmt: ParserRuleContext): StatementCategory {
+	const child = firstRuleChild(stmt);
+	if (!child) return keywordCategory(stmt.start?.text ?? "");
+	const rule = P.ruleNames[child.ruleIndex];
+	const mapped = REDSHIFT_STMT_CATEGORY[rule];
+	if (mapped) return mapped;
+	// Object DDL family — CREATE / ALTER / DROP / REMOVE* rules (r_CREATE_*, r_ALTER_*, r_DROP_* …).
+	if (rule.startsWith("create") || rule.startsWith("alter") || rule.startsWith("drop") || rule.startsWith("remove"))
+		return "ddl";
+	// SHOW* / DESC* commands — utility (Redshift-specific SHOW COLUMNS/TABLES/…, DESC DATASHARE).
+	if (rule.startsWith("show") || rule.startsWith("desc")) return "utility";
+	return keywordCategory(stmt.start?.text ?? "");
 }
 
 function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {

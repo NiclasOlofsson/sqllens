@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { lower as lowerDatabricks } from "../src/databricks/lower.js";
+import { lower as lowerBigQuery, statementCategories as bigQueryCategories } from "../src/bigquery/lower.js";
+import { parseBigQuery } from "../src/bigquery/parse.js";
+import { lower as lowerDatabricks, statementCategories as databricksCategories } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { coarseKind, type StatementCategory } from "../src/ir/statement.js";
+import { lower as lowerRedshift, statementCategories as redshiftCategories } from "../src/redshift/lower.js";
+import { parseRedshift } from "../src/redshift/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
-import { lower as lowerSnowflake } from "../src/snowflake/lower.js";
+import { lower as lowerSnowflake, statementCategories as snowflakeCategories } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
-import { lower as lowerTSql } from "../src/tsql/lower.js";
+import { lower as lowerTSql, statementCategories as tsqlCategories } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
 
 // Statement kind must come from the PARSE — each dialect's lower() reports the category onto the
@@ -123,6 +127,77 @@ describe("T-SQL statement category (one full-range entry, on par with the others
 		expect(q.statement).toBe("query");
 		expect(q.body.kind).toBe("select");
 		if (q.body.kind !== "pipe") expect(q.body.columns.length).toBeGreaterThan(0);
+	});
+});
+
+// Per-statement kinds — every dialect exports statementCategories(tree), one entry per top-level
+// batch element (the file-level view T-SQL already exposed). Task 3's corpus reclassifier reads
+// these instead of re-bucketing each gate. The list must agree with the folded top-level category
+// (>1 element → compound) that the existing describe blocks above pin.
+describe("statementCategories — per-statement kinds on all five dialects", () => {
+	function databricksKinds(sql: string): StatementCategory[] {
+		const { tree, errors } = parseDatabricks(sql);
+		expect(errors, `parse errors for: ${sql}`).toBe(0);
+		return databricksCategories(tree);
+	}
+	function snowflakeKinds(sql: string): StatementCategory[] {
+		const { tree, errors } = parseSnowflake(sql);
+		expect(errors, `parse errors for: ${sql}`).toBe(0);
+		return snowflakeCategories(tree);
+	}
+	function bigQueryKinds(sql: string): StatementCategory[] {
+		const { tree, errors } = parseBigQuery(sql);
+		expect(errors, `parse errors for: ${sql}`).toBe(0);
+		return bigQueryCategories(tree);
+	}
+	function redshiftKinds(sql: string): StatementCategory[] {
+		const { tree, errors } = parseRedshift(sql);
+		expect(errors, `parse errors for: ${sql}`).toBe(0);
+		return redshiftCategories(tree);
+	}
+
+	it("per-statement kinds, all five dialects (parity with tsql's statementCategories)", () => {
+		expect(tsqlCategories(parseTSql("SELECT 1; INSERT INTO t (a) VALUES (1)").tree)).toEqual(["query", "dml"]);
+		expect(databricksKinds("SELECT 1; INSERT INTO t VALUES (1); CREATE TABLE t2 (a INT)")).toEqual([
+			"query",
+			"dml",
+			"ddl",
+		]);
+		expect(snowflakeKinds("SELECT 1; INSERT INTO t VALUES (1)")).toEqual(["query", "dml"]);
+		expect(bigQueryKinds("SELECT 1; INSERT INTO t VALUES (1)")).toEqual(["query", "dml"]);
+		expect(redshiftKinds("SELECT 1; INSERT INTO t VALUES (1); GRANT SELECT ON t TO u")).toEqual([
+			"query",
+			"dml",
+			"dcl",
+		]);
+	});
+
+	it("redshift structural detection replaces the keyword fallback for the core statements", () => {
+		expect(redshiftKinds("UPDATE t SET a = 1")).toEqual(["dml"]);
+		expect(redshiftKinds("CREATE TABLE t (a INT)")).toEqual(["ddl"]);
+		expect(redshiftKinds("BEGIN; COMMIT")).toEqual(["tcl", "tcl"]);
+		// ANALYZE / VACUUM are maintenance utilities — structural detection lands them in utility,
+		// where the leading-keyword guess (keywordCategory) wrongly said ddl.
+		expect(redshiftKinds("VACUUM")).toEqual(["utility"]);
+		expect(redshiftKinds("ANALYZE t")).toEqual(["utility"]);
+		// ABORT / END are transaction control the keyword guess missed (→ other); structural → tcl.
+		expect(redshiftKinds("ABORT")).toEqual(["tcl"]);
+	});
+
+	it("the single-statement list agrees with the folded top-level category", () => {
+		// The list's sole entry equals lower().statement for a single statement, every dialect.
+		expect(redshiftCategories(parseRedshift("SELECT a FROM t").tree)).toEqual([
+			lowerRedshift(parseRedshift("SELECT a FROM t").tree).statement,
+		]);
+		expect(databricksCategories(parseDatabricks("CREATE TABLE t (a INT)").tree)).toEqual([
+			lowerDatabricks(parseDatabricks("CREATE TABLE t (a INT)").tree).statement,
+		]);
+		expect(snowflakeCategories(parseSnowflake("INSERT INTO t SELECT * FROM s").tree)).toEqual([
+			lowerSnowflake(parseSnowflake("INSERT INTO t SELECT * FROM s").tree).statement,
+		]);
+		expect(bigQueryCategories(parseBigQuery("SELECT 1").tree)).toEqual([
+			lowerBigQuery(parseBigQuery("SELECT 1").tree).statement,
+		]);
 	});
 });
 

@@ -192,6 +192,18 @@ function statementCategory(stmt: ParserRuleContext): StatementCategory {
 	return keywordCategory(stmt.start?.text ?? "");
 }
 
+/** Per-statement categories for every top-level unit of a parsed `multiStatement`, in source order —
+ *  one entry per `multiStatementElement`, using the same per-element `statementCategory` lower() uses.
+ *  Parity with the other dialects' `statementCategories`; feeds the corpus reclassifier. A legacy
+ *  single-statement root (not a `multiStatement`) yields its one category; an empty batch yields []. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
+	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
+	if (elements.length === 0) {
+		return tree.ruleIndex === P.RULE_multiStatement ? [] : [statementCategory(tree)];
+	}
+	return elements.map(statementCategory);
+}
+
 function lowerQuery(query: ParserRuleContext): QueryExpr {
 	const ctesNode = directChildrenOfRule(query, P.RULE_ctes)[0];
 	const ctes = ctesNode ? directChildrenOfRule(ctesNode, P.RULE_namedQuery).map(lowerNamedQuery) : [];
