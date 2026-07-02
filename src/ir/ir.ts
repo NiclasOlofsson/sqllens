@@ -147,7 +147,7 @@ export type Expr =
 			name: string;
 			/** The dotted path before the last segment, lowercased (e.g. `hll_count` in
 			 *  `HLL_COUNT.EXTRACT`) — the qualifier under which a dotted-family call keys its return
-			 *  type. Absent for a bare call. Additive/optional; only BigQuery sets it today. */
+			 *  type. Absent for a bare call. Additive/optional; set by BigQuery (dotted paths) and Snowflake (sequence NEXTVAL). */
 			qualifier?: string;
 			args: Expr[];
 			/** Parallel to `args`: the parameter name for a named-argument invocation
