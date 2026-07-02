@@ -255,6 +255,35 @@ describe("Redshift lower — Redshift-specific sources", () => {
 	});
 });
 
+// The PartiQL SUPER unpivot lateral (`UNPIVOT expr AS val AT attr`) registers val/attr as an ordinary
+// lateral source AND UnpivotInfo re-adds nameColumn/valueColumn on top (the SUPER-unpivot reshape) — a
+// bare `SELECT *` must not double them. Mirrors the CONNECT BY LEVEL pseudo-column fix below.
+// docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting
+describe("Redshift PartiQL UNPIVOT — no duplicate val/attr under a schema-fed SELECT *", () => {
+	function scopes(sql: string) {
+		return resolveScopes(lower(parseRedshift(sql).tree), "redshift");
+	}
+	const UNPIVOT_SQL = "FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr";
+
+	it("excludes val/attr from a bare star expansion (no duplicates)", () => {
+		const schema = new Schema({ customer_orders_lineitem: { id: "int4", c_orders: "super" } });
+		const tree = scopes(`SELECT * ${UNPIVOT_SQL}`);
+		expect(qualify(tree, schema).columnsOf(tree.root)).toEqual(["id", "c_orders", "attr", "val"]);
+	});
+
+	it("named val/attr still resolve bound", () => {
+		const tree = scopes(`SELECT val, attr ${UNPIVOT_SQL}`);
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		const valRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "val");
+		const attrRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "attr");
+		expect(valRef).toBeDefined();
+		expect(attrRef).toBeDefined();
+		expect(resolveColumn(tree.root, valRef!).kind).toBe("bound");
+		expect(resolveColumn(tree.root, attrRef!).kind).toBe("bound");
+	});
+});
+
 // The CONNECT BY LEVEL pseudo-column: it resolves by name (a lateral pseudo-source), but must NOT
 // appear in a bare `SELECT *` expansion — real pseudo-column semantics, like Snowflake/Oracle.
 // docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html

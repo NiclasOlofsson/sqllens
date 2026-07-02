@@ -495,11 +495,13 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 	const columnAliases = aliasNode ? aliasColumnList(aliasNode) : undefined;
 
 	// PartiQL SUPER unpivot FROM item: `UNPIVOT <expr> AS value AT attribute` — yields (value, attribute)
-	// rows. Modelled as a lateral source exposing those two output columns (the UnpivotInfo carrying the
-	// same names is attached at the select level). docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting
+	// rows. Modelled as a lateral PSEUDO source (the UnpivotInfo attached at the select level re-adds
+	// value/attribute onto the SUPER-unpivot reshape, so a bare `SELECT *` must not also expand this
+	// lateral — that would double them; named access still binds by name).
+	// docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting
 	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) {
 		const columns = directChildrenOfRule(tr, P.RULE_colid).map((c) => textOf(c));
-		return { kind: "lateral", columns, alias, aliasCst, cst: tr };
+		return { kind: "lateral", columns, pseudo: true, alias, aliasCst, cst: tr };
 	}
 
 	const rel = directChildrenOfRule(tr, P.RULE_relation_expr)[0];
