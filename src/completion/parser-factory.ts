@@ -53,8 +53,8 @@ function databricksFactory(sql: string): MadeParser {
 		parser,
 		lexer,
 		tokenStream,
-		entryRuleIndex: DatabricksParser.RULE_compoundOrSingleStatement,
-		runEntry: () => parser.compoundOrSingleStatement(),
+		entryRuleIndex: DatabricksParser.RULE_multiStatement,
+		runEntry: () => parser.multiStatement(),
 	};
 }
 

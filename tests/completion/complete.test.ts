@@ -108,4 +108,16 @@ describe("complete — databricks, scope + schema aware", () => {
 		expect(Array.isArray(items)).toBe(true);
 		expect(labels(items, "table")).toEqual([]); // no schema → no tables
 	});
+
+	// The ATN walk enters `multiStatement` (a `;`-separated batch), not the single-statement
+	// `compoundOrSingleStatement` — so completion in the second statement of a batch must still
+	// reach the FROM-relation columns, not just the keyword fallback.
+	it("survives a batch prefix: completes columns in the second statement of a `;`-separated batch", () => {
+		const sql = "SELECT 1; SELECT  FROM sales";
+		const offset = "SELECT 1; SELECT ".length;
+		const items = complete(SqlDocument.create(sql, "databricks"), offset, schema);
+		const cols = labels(items, "column");
+		expect(cols).toContain("amount");
+		expect(cols).toContain("id");
+	});
 });

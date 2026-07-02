@@ -228,6 +228,14 @@ describe("BigQuery registry: breadth + family spot checks (docs-verified)", () =
 		expect(bqRule("decrypt_string")).toEqual(scalar("string")); // aead.decrypt_string → STRING
 	});
 
+	// Regression lock for the parity-wave Task 4 fix round: both were briefly wrong (a phantom KLL
+	// UINT64 review pass and an earlier net-family typing pass mis-typed them) before landing on the
+	// doc-verified types below. A re-reversal must fail this test.
+	it("holds the Task 4 fix round: ip_net_mask and merge_point_float64 stay correctly typed", () => {
+		expect(bqRule("ip_net_mask")).toEqual(scalar("binary")); // net.ip_net_mask → BYTES
+		expect(bqRule("merge_point_float64")).toEqual(scalar("double")); // kll_quantiles.merge_point_float64 → FLOAT64
+	});
+
 	it("geography returns GEOGRAPHY / FLOAT64 / BOOL / INT64 / STRING correctly", () => {
 		expect(bqRule("st_geogfromtext")).toEqual(scalar("geography"));
 		expect(bqRule("st_distance")).toEqual(scalar("double"));
