@@ -61,6 +61,49 @@ describe("T-SQL type inference (dialect-specific knowledge)", () => {
 	it("a base-table column still types from the schema (engine still travels)", () => {
 		expect(tsqlType("SELECT a AS r FROM t", T)).toEqual({ kind: "scalar", name: "bigint" });
 	});
+
+	// XML .value(xpath, 'sqltype') is typed by its second argument WHERE it is a literal type string
+	// (never-wrong: no XML shredding — the value's runtime type is the declared sqltype).
+	// https://learn.microsoft.com/en-us/sql/t-sql/xml/value-method-xml-data-type
+	it("XML .value(path, 'type') is typed by its literal type-string second argument", () => {
+		expect(tsqlType("SELECT c.value('(@n)[1]', 'varchar(100)') AS r FROM t", T)).toEqual({
+			kind: "scalar",
+			name: "string",
+		});
+		expect(tsqlType("SELECT c.value('(@n)[1]', 'int') AS r FROM t", T)).toEqual({ kind: "scalar", name: "int" });
+	});
+
+	it("XML .exist() is boolean (bit); .query() is xml", () => {
+		expect(tsqlType("SELECT c.exist('/x') AS r FROM t", T)).toEqual({ kind: "scalar", name: "boolean" });
+		expect(tsqlType("SELECT c.query('/x') AS r FROM t", T)).toEqual({ kind: "scalar", name: "xml" });
+	});
+});
+
+describe("T-SQL OPENJSON/OPENXML WITH-column types flow to output columns", () => {
+	// The WITH (col type …) schema types the source's output columns; a `j.id` / `j.nm` reference then
+	// infers int / string end-to-end through resolveScopes → inferType (no schema needed — the types
+	// come from the WITH clause). https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql
+	function projTypes(sql: string) {
+		const tree = resolveScopes(lower(parseTSql(sql).tree), "tsql");
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body.projections.map((p) => inferType(p.expr, tree.root, new Schema({})));
+	}
+
+	it("types j.id (int) and j.nm (string) from the OPENJSON WITH schema", () => {
+		expect(
+			projTypes("SELECT j.id, j.nm FROM OPENJSON(@j) WITH (id int '$.id', nm nvarchar(50) '$.name') AS j"),
+		).toEqual([
+			{ kind: "scalar", name: "int" },
+			{ kind: "scalar", name: "string" },
+		]);
+	});
+
+	it("types OPENXML WITH columns the same way", () => {
+		expect(projTypes("SELECT x.qty FROM OPENXML(@h, '/root', 2) WITH (qty int '@quantity') AS x")).toEqual([
+			{ kind: "scalar", name: "int" },
+		]);
+	});
 });
 
 describe("T-SQL function registry (return types verified against MS docs)", () => {

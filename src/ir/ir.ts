@@ -399,6 +399,11 @@ export interface TableSource {
 	aliasCst?: ParserRuleContext;
 	/** Inline column aliases, e.g. `t AS u (c1, c2)` → ["c1","c2"]. */
 	columnAliases?: string[];
+	/** Declared columns WITH their types, for sources that name both — T-SQL OPENJSON/OPENXML
+	 *  `WITH (col type …)`. Additive/optional: `columnAliases` still carries the bare names for
+	 *  compatibility; `declaredColumns` adds the per-column type text so inference can type the
+	 *  source's output columns. `type` is absent when only a name is declared. */
+	declaredColumns?: { name: string; type?: string }[];
 	cst: ParserRuleContext;
 }
 

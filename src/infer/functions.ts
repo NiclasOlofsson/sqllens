@@ -1,5 +1,6 @@
+import type { Expr } from "../ir/ir.js";
 import { commonType, widenSum } from "./coerce.js";
-import { scalar, UNKNOWN, type Type } from "./types.js";
+import { parseType, scalar, TSQL_ALIASES, UNKNOWN, type Type } from "./types.js";
 
 // Function return-type registry for Databricks/Spark SQL, from the built-in function
 // reference (the language spec — NOT the corpus; the corpus is only a validation gate). A
@@ -918,3 +919,31 @@ export const TSQL_FUNCTION_RETURNS: Record<string, FnRule> = {
 	]),
 	eventdata: fixed(scalar("xml")),
 };
+
+/** T-SQL pre-registry inference hook — the XML data type methods, which `lowerUdtElem` lowers to
+ *  `function` nodes with the receiver as arg 0. `value(xpath, 'sqltype')` is typed by its literal
+ *  sqltype argument (never-wrong: no XML shredding — the declared sqltype is the value's runtime
+ *  type; a non-literal sqltype falls through to unknown); `exist()` → boolean (bit); `query()` → xml.
+ *  https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods */
+export function tsqlSpecial(fn: Extract<Expr, { kind: "function" }>): Type | undefined {
+	if (fn.qualifier !== undefined) return undefined;
+	switch (fn.name.toLowerCase()) {
+		case "value": {
+			// args = [receiver, xpath, sqltype]; the second method argument (arg 2) is the declared type.
+			const sqltype = fn.args[2];
+			return sqltype?.kind === "literal" ? parseType(unquoteLiteral(sqltype.text), TSQL_ALIASES) : undefined;
+		}
+		case "exist":
+			return scalar("boolean"); // .exist() returns bit
+		case "query":
+			return scalar("xml"); // .query() returns xml
+		default:
+			return undefined;
+	}
+}
+
+/** Strip a surrounding SQL string-literal quote (`'varchar(100)'` → `varchar(100)`). */
+function unquoteLiteral(text: string): string {
+	const t = text.trim();
+	return t.length >= 2 && t.startsWith("'") && t.endsWith("'") ? t.slice(1, -1) : t;
+}

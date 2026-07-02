@@ -90,6 +90,9 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 
 function sourceColumnType(src: ResolvedSource, column: string, schema: Schema, ctx: Ctx, d: InferDialect): Type {
 	if (src.kind === "table") {
+		// Declared columns carrying a type (T-SQL OPENJSON/OPENXML `WITH (col type …)`) type directly.
+		const declared = src.source.declaredColumns?.find((c) => eq(c.name, column));
+		if (declared) return declared.type ? d.parseType(declared.type) : UNKNOWN;
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
 		const t = schema.columnsFor(src.name)?.find((c) => eq(c.name, column))?.type;
 		return t ? d.parseType(t) : UNKNOWN;

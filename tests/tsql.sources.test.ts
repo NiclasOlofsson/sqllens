@@ -50,6 +50,113 @@ describe("T-SQL APPLY / OPENJSON / OPENXML sources", () => {
 	});
 });
 
+describe("T-SQL XML data type methods and REGEXP_LIKE predicate", () => {
+	// XML `.value()/.query()/.exist()` in a select list parse as `udt_elem` (receiver id_ '.' method
+	// udt_method_arguments); lower() models them as function exprs with the receiver as the FIRST arg,
+	// so the receiver column is conserved (walkable, resolvable) rather than buried in a string field.
+	// https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods
+	it("models an XML .value() call as a function with the receiver conserved as arg 0", () => {
+		const b = ir("SELECT ev.value('(@name)[1]', 'varchar(100)') AS nm FROM t").body;
+		if (b.kind !== "select") throw new Error("select");
+		const p = b.projections[0];
+		expect(p.name).toBe("nm");
+		expect(p.expr).toMatchObject({
+			kind: "function",
+			name: "value",
+			args: [{ kind: "column", parts: ["ev"] }, { kind: "literal" }, { kind: "literal", text: "'varchar(100)'" }],
+		});
+		// the receiver column is captured as a projection column (conservation → it resolves)
+		expect(b.columns.filter((c) => c.clause === "projection").map((c) => c.parts.join("."))).toContain("ev");
+	});
+
+	it("models .query() and .exist() XML methods as functions (no `other` leak)", () => {
+		const q = ir("SELECT c.query('/root') AS x FROM t").body;
+		if (q.kind !== "select") throw new Error("select");
+		expect(q.projections[0].expr).toMatchObject({ kind: "function", name: "query" });
+		const e = ir("SELECT c.exist('/root') AS x FROM t").body;
+		if (e.kind !== "select") throw new Error("select");
+		expect(e.projections[0].expr).toMatchObject({ kind: "function", name: "exist" });
+	});
+
+	// REGEXP_LIKE in a WHERE clause parses as the `predicate` alternative (not a function call), so
+	// lower() maps it to a `predicate` IR node — the boolean regex test — with its columns captured.
+	// https://learn.microsoft.com/en-us/sql/t-sql/functions/regexp-like-transact-sql (SQL Server 2025)
+	it("models REGEXP_LIKE in WHERE as an rlike predicate with its columns captured", () => {
+		const b = ir("SELECT a FROM t WHERE REGEXP_LIKE(s, '[0-9]+')").body;
+		if (b.kind !== "select") throw new Error("select");
+		expect(b.where).toMatchObject({
+			kind: "predicate",
+			op: "rlike",
+			negated: false,
+			operand: { kind: "column", parts: ["s"] },
+			args: [{ kind: "literal", text: "'[0-9]+'" }],
+		});
+		expect(b.columns.filter((c) => c.clause === "where").map((c) => c.parts.join("."))).toContain("s");
+	});
+
+	it("REGEXP_LIKE with an optional flags argument still models as a predicate", () => {
+		const b = ir("SELECT a FROM t WHERE REGEXP_LIKE(s, '^A.*Y$', 'i')").body;
+		if (b.kind !== "select") throw new Error("select");
+		expect(b.where).toMatchObject({ kind: "predicate", op: "rlike" });
+	});
+
+	// Quantified comparison `expr <cmp> ALL|SOME|ANY (subquery)` — one expression + a subquery on the
+	// right — models as a boolean predicate; operand column + subquery scope both conserved.
+	// https://learn.microsoft.com/en-us/sql/t-sql/language-elements/some-any-transact-sql
+	it("models `= ANY (subquery)` as a quantified-comparison predicate", () => {
+		const t = tree("SELECT a FROM t WHERE t.name = ANY (SELECT v.name FROM v)");
+		const b = t.root.body;
+		if (b.kind !== "select") throw new Error("select");
+		expect(b.where).toMatchObject({
+			kind: "predicate",
+			op: "= any",
+			operand: { kind: "column", parts: ["t", "name"] },
+			args: [{ kind: "subquery" }],
+		});
+		expect(b.columns.filter((c) => c.clause === "where").map((c) => c.parts.join("."))).toContain("t.name");
+		// the subquery became its own child scope (its columns don't leak into this block)
+		expect(b.subqueries?.length).toBe(1);
+	});
+
+	// SQL Graph MATCH(<pattern>) in WHERE — a boolean predicate; modelled without shredding the graph.
+	// https://learn.microsoft.com/en-us/sql/t-sql/queries/match-sql-graph
+	it("models a SQL Graph MATCH() as a boolean `match` predicate (no `other` leak)", () => {
+		const b = ir("SELECT p1.name FROM Person p1, likes l, Person p2 WHERE MATCH(p1-(l)->p2)").body;
+		if (b.kind !== "select") throw new Error("select");
+		expect(b.where).toMatchObject({ kind: "predicate", op: "match" });
+		expect(b.where && "operand" in b.where ? b.where.operand.kind : "").not.toBe("other");
+	});
+
+	// Full-text CONTAINS/FREETEXT predicate — boolean; the searched columns are conserved.
+	// https://learn.microsoft.com/en-us/sql/t-sql/queries/contains-transact-sql
+	it("models a full-text CONTAINS() as a boolean predicate with its column conserved", () => {
+		const b = ir("SELECT a FROM t WHERE CONTAINS(descr, 'fast')").body;
+		if (b.kind !== "select") throw new Error("select");
+		expect(b.where).toMatchObject({
+			kind: "predicate",
+			op: "contains",
+			operand: { kind: "column", parts: ["descr"] },
+		});
+		expect(b.columns.filter((c) => c.clause === "where").map((c) => c.parts.join("."))).toContain("descr");
+	});
+
+	// OPENJSON/OPENXML WITH captures each declared column's data type (additive to columnAliases).
+	// https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql
+	it("OPENJSON WITH captures declared column names AND types", () => {
+		const b = ir("SELECT * FROM OPENJSON(@j) WITH (id int '$.id', nm nvarchar(50) '$.name') AS j").body;
+		if (b.kind !== "select") throw new Error("select");
+		const src = b.from.find((s) => s.kind === "table" && s.alias === "j");
+		expect(src).toMatchObject({
+			kind: "table",
+			columnAliases: ["id", "nm"],
+			declaredColumns: [
+				{ name: "id", type: "int" },
+				{ name: "nm", type: "nvarchar(50)" },
+			],
+		});
+	});
+});
+
 describe("T-SQL legacy *= join and row-limiting", () => {
 	it("models the non-ANSI *= operator as a comparison and captures its columns", () => {
 		const b = ir("SELECT a FROM t1, t2 WHERE t1.id *= t2.id").body;

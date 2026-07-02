@@ -378,6 +378,14 @@ function buildProjection(elem: ParserRuleContext): Projection {
 			cst: elem,
 		};
 	}
+	// `receiver.method('...')` in a select list parses as `udt_elem` (id_ '.' id_ udt_method_arguments)
+	// — the XML data type methods value()/query()/exist()/modify() (their args are string/@var only).
+	// Modelled as a function with the receiver conserved as arg 0, so the receiver column resolves.
+	const udt = directChildrenOfRule(elem, P.RULE_udt_elem)[0];
+	if (udt) {
+		const alias = directChildrenOfRule(udt, P.RULE_as_column_alias)[0];
+		return { name: alias ? aliasText(alias) : undefined, isStar: false, expr: lowerUdtElem(udt), cst: elem };
+	}
 	// expression_elem: `column_alias '=' expression` OR `expression as_column_alias?`
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0] ?? elem;
 	const exprCtx = directChildrenOfRule(exprElem, P.RULE_expression)[0];
@@ -393,6 +401,37 @@ function buildProjection(elem: ParserRuleContext): Projection {
 function aliasText(alias: ParserRuleContext): string {
 	const id = firstOfRule(alias, P.RULE_id_);
 	return stripQuotes(id ? id.getText() : alias.getText());
+}
+
+/** An XML data type method in a select list — `receiver.method('arg', …)` (grammar rule `udt_elem`:
+ *  `id_ '.'|'::' id_ udt_method_arguments`). value()/query()/exist()/modify() take string/@var args.
+ *  Modelled as a `function`: the receiver becomes arg 0 (a column ref, so it stays conserved and
+ *  resolvable — the receiver is a value-bearing subexpression, unlike BigQuery's namespace qualifier),
+ *  the method-call strings follow. Typed later by the T-SQL `special` inference hook (value → the
+ *  literal sqltype, exist → boolean, query → xml). https://learn.microsoft.com/en-us/sql/t-sql/xml/xml-data-type-methods */
+function lowerUdtElem(udt: ParserRuleContext): Expr {
+	const ids = directChildrenOfRule(udt, P.RULE_id_);
+	const receiver = ids[0];
+	const method = ids[1];
+	const receiverExpr: Expr = receiver
+		? { kind: "column", parts: [stripQuotes(receiver.getText())], cst: receiver }
+		: otherExpr(udt);
+	const argsNode = directChildrenOfRule(udt, P.RULE_udt_method_arguments)[0];
+	const methodArgs: Expr[] = argsNode
+		? directChildrenOfRule(argsNode, P.RULE_execute_var_string).map((a) => ({
+				kind: "literal",
+				text: a.getText(),
+				cst: a,
+			}))
+		: [];
+	return {
+		kind: "function",
+		name: method ? stripQuotes(method.getText()).toLowerCase() : "",
+		args: [receiverExpr, ...methodArgs],
+		aggregate: false,
+		distinct: false,
+		cst: udt,
+	};
 }
 
 // --- sources ---------------------------------------------------------------
@@ -418,17 +457,28 @@ function buildSource(item: ParserRuleContext): Source {
 	const openNode = directChildrenOfRule(item, P.RULE_open_json)[0] ?? directChildrenOfRule(item, P.RULE_open_xml)[0];
 	if (openNode) {
 		const al = innerTableAlias(openNode) ?? alias;
+		// Each WITH `column_declaration` is `id_ data_type STRING?` — capture the name AND the data-type
+		// text, so inference can type the source's output columns (declaredColumns), keeping the bare
+		// names on columnAliases for compatibility. https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql
 		const declared = collectOfRule(openNode, P.RULE_column_declaration)
-			.map((cd) => stripQuotes(firstOfRule(cd, P.RULE_id_)?.getText() ?? ""))
-			.filter((c) => c.length > 0);
+			.map((cd) => ({
+				name: stripQuotes(firstOfRule(cd, P.RULE_id_)?.getText() ?? ""),
+				type: directChildrenOfRule(cd, P.RULE_data_type)[0]?.getText(),
+			}))
+			.filter((c) => c.name.length > 0);
 		const isJson = openNode.ruleIndex === P.RULE_open_json;
-		const columnAliases = declared.length ? declared : isJson ? ["key", "value", "type"] : undefined;
+		const columnAliases = declared.length
+			? declared.map((c) => c.name)
+			: isJson
+				? ["key", "value", "type"]
+				: undefined;
 		return {
 			kind: "table",
 			name: [al?.text ?? (isJson ? "openjson" : "openxml")],
 			alias: al?.text,
 			aliasCst: al?.cst,
 			columnAliases,
+			declaredColumns: declared.length ? declared : undefined,
 			cst: item,
 		};
 	}
@@ -544,6 +594,57 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 	const operand = exprs[0] ? lowerExpression(exprs[0]) : otherExpr(pred);
 	const negated = hasToken(pred, P.NOT);
 
+	// REGEXP_LIKE(string, pattern [, flags]) — the boolean regex predicate (SQL Server 2025). The
+	// operand is the string; args are the pattern (+ optional flags). Modelled as an `rlike` predicate
+	// (→ boolean). https://learn.microsoft.com/en-us/sql/t-sql/functions/regexp-like-transact-sql
+	if (hasDirectToken(pred, P.REGEXP_LIKE)) {
+		return {
+			kind: "predicate",
+			op: "rlike",
+			negated,
+			operand,
+			args: exprs.slice(1).map(lowerExpression),
+			cst: pred,
+		};
+	}
+
+	// Full-text search `CONTAINS(cols, '…')` / `FREETEXT(cols, '…')` — a boolean predicate. The searched
+	// columns are conserved as the operand + column args; the search-condition string(s) follow.
+	// https://learn.microsoft.com/en-us/sql/t-sql/queries/contains-transact-sql
+	const ft = directChildrenOfRule(pred, P.RULE_freetext_predicate)[0];
+	if (ft) {
+		const cols: Expr[] = collectOfRule(ft, P.RULE_full_column_name).map((c) => ({
+			kind: "column",
+			parts: nameParts(c),
+			cst: c,
+		}));
+		const searches = directChildrenOfRule(ft, P.RULE_expression).map(lowerExpression);
+		return {
+			kind: "predicate",
+			op: hasDirectToken(ft, P.CONTAINS) ? "contains" : "freetext",
+			negated,
+			operand: cols[0] ?? { kind: "literal", text: ft.getText(), cst: ft },
+			args: [...cols.slice(1), ...searches],
+			cst: ft,
+		};
+	}
+
+	// SQL Graph `MATCH(<graph_pattern>)` — a boolean predicate over a node/edge traversal pattern (the
+	// pattern names graph node/edge tables already in FROM, not columns). We model it the way XML is
+	// modelled — as a boolean predicate, keeping the pattern text, without shredding the topology.
+	// https://learn.microsoft.com/en-us/sql/t-sql/queries/match-sql-graph
+	if (hasDirectToken(pred, P.MATCH)) {
+		const pat = firstOfRule(pred, P.RULE_graph_match_pattern);
+		return {
+			kind: "predicate",
+			op: "match",
+			negated,
+			operand: pat ? { kind: "literal", text: pat.getText(), cst: pat } : otherExpr(pred),
+			args: [],
+			cst: pred,
+		};
+	}
+
 	// IS [NOT] DISTINCT FROM (2022) — checked before the plain IS branch, which would
 	// otherwise read it as a null test.
 	if (hasDirectToken(pred, P.IS) && hasDirectToken(pred, P.DISTINCT)) {
@@ -590,6 +691,25 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 	const cmp = directChildrenOfRule(pred, P.RULE_comparison_operator)[0];
 	if (cmp && exprs.length >= 2) {
 		return { kind: "binary", op: cmp.getText(), left: operand, right: lowerExpression(exprs[1]), cst: pred };
+	}
+	// Quantified comparison: `expr <cmp> ALL|SOME|ANY (subquery)` — the right side is a subquery, so
+	// there is only one expression. Modelled as a boolean predicate (op = "<cmp> all|some|any") whose
+	// arg is the subquery, so the operand column and the subquery scope are both conserved.
+	// https://learn.microsoft.com/en-us/sql/t-sql/language-elements/all-transact-sql
+	if (cmp) {
+		const sub = firstOfRule(pred, P.RULE_subquery);
+		if (sub) {
+			const quant = directTokenType(pred, [P.ALL, P.SOME, P.ANY]);
+			const q = quant === P.ALL ? "all" : quant === P.SOME ? "some" : "any";
+			return {
+				kind: "predicate",
+				op: `${cmp.getText()} ${q}`,
+				negated,
+				operand,
+				args: [{ kind: "subquery", query: lowerSubquery(sub), cst: sub }],
+				cst: pred,
+			};
+		}
 	}
 	// Legacy non-ANSI outer-join operator `*=` (SQL-82) appearing in WHERE — modelled as a comparison
 	// so its columns are captured (the outer-join semantics aren't reconstructed).

@@ -1,6 +1,6 @@
 import type { Expr } from "../ir/ir.js";
 import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType, bigquerySpecial } from "./bigquery.js";
-import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
+import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, tsqlSpecial, type FnRule } from "./functions.js";
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
 import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from "./redshift.js";
@@ -41,6 +41,7 @@ const tsql: InferDialect = {
 	literal: tsqlLiteral,
 	parseType: (t) => parseType(t, TSQL_ALIASES),
 	division: "integer",
+	special: tsqlSpecial, // XML data type methods: value()/exist()/query() typed by method + sqltype
 };
 
 const snowflake: InferDialect = {

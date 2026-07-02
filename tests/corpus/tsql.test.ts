@@ -37,7 +37,8 @@ const QUERY_BASELINE = 1555;
 // Databricks). This rides the SAME single parse the docs ratchet makes (onCleanQuery gets its tree),
 // so no file is parsed twice. The failure output names the leaking CST node types — that list IS the
 // lower() worklist for T-SQL.
-const OTHER_BASELINE = 26; // measured 2026-07-01 over the parsed T-SQL docs query bucket; may only fall
+const OTHER_BASELINE = 0; // driven to 0 (2026-07-02): XML data type methods, REGEXP_LIKE / quantified /
+// MATCH / CONTAINS predicates all modelled — T-SQL is expression-corpus-complete like Databricks. May only fall.
 
 /** Production parse (tsql_file, two-stage SLL→LL); returns the syntax-error count. */
 function parseErrors(sql: string): number {
