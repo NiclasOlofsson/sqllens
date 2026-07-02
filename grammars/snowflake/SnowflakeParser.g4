@@ -4974,9 +4974,19 @@ select_list
     : select_list_elem (COMMA select_list_elem)* COMMA?
     ;
 
+// The former `column_elem as_alias?` alternative overlapped `expression_elem as_alias?` on
+// every dotted-name chain (those are expr's primitive_expression), making the decision ambiguous
+// on every bare-column item (SLL-surgery wave, 2026-07-03; cf. Spark's single namedExpression).
+// Only the column_elem forms expr can NOT express survive, as column_elem_adjacent: the
+// dot-less adjacent qualifier (`CONNECT_BY_ROOT title` — object_name carries no trailing DOT)
+// and the `$n` positional reference (docs.snowflake.com/en/sql-reference/sql/select —
+// staged-file columns; DOLLAR is not an expr form). It stays ABOVE expression_elem so `id id`
+// keeps resolving as an adjacent-qualified column, exactly as the old column_elem-first
+// ordering did. lower() classifies dotted-name expressions as columns, as it always did for
+// expression_elem projections.
 select_list_elem
-    : column_elem as_alias?
-    | column_elem_star star_modifier*
+    : column_elem_star star_modifier*
+    | column_elem_adjacent as_alias?
     //    | udt_elem
     | expression_elem as_alias?
     ;
@@ -5000,6 +5010,15 @@ column_elem_star
 
 column_elem
     : object_name_or_alias? column_name
+    | object_name_or_alias? DOLLAR column_position
+    ;
+
+// The column_elem forms outside expr, split out for select_list_elem (see the note there):
+// a dot-less adjacent qualifier (plain object_name — never `alias DOT`, which would re-create
+// the dotted chains expr already covers), and the `$n` positional reference. Shapes unchanged
+// from column_elem's alternatives.
+column_elem_adjacent
+    : object_name column_name
     | object_name_or_alias? DOLLAR column_position
     ;
 

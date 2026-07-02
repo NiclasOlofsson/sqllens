@@ -879,6 +879,40 @@ describe("Snowflake lower -> IR", () => {
 		expect(errorsOf("SELECT a BETWEEN 1 FROM t")).toBeGreaterThan(0);
 	});
 
+	// SLL-surgery wave (2026-07-03): select_list_elem's `column_elem` alternative overlapped
+	// expression_elem on every dotted-name chain (expr's primitive_expression). It was replaced
+	// by column_elem_adjacent, keeping only the forms expr cannot express: the dot-less adjacent
+	// qualifier (`CONNECT_BY_ROOT title`) and the `$n` positional reference. The IR must be
+	// identical for every form. docs.snowflake.com/en/sql-reference/sql/select
+	it("keeps column projections identical across the select_list_elem fix", () => {
+		const bare = selectBody("SELECT a, t.b AS c FROM t").body;
+		expect(bare.projections[0]).toMatchObject({ name: "a", expr: { kind: "column", parts: ["a"] } });
+		expect(bare.projections[1]).toMatchObject({ name: "c", expr: { kind: "column", parts: ["t", "b"] } });
+		// IDENTIFIER('t').c was reachable via column_elem's object_name — still parses (via expr).
+		expect(errorsOf("SELECT IDENTIFIER('t').c FROM t")).toBe(0);
+		// $n positional refs (lexed as ID2 identifiers) keep their exact IR.
+		const pos = selectBody("SELECT $1, $2 AS x FROM @my_stage").body;
+		expect(pos.projections[0]).toMatchObject({ name: "$1", expr: { kind: "column", parts: ["$1"] } });
+		expect(pos.projections[1]).toMatchObject({ name: "x", expr: { kind: "column", parts: ["$2"] } });
+		// The adjacent-qualifier forms keep parsing with their exact old IR (qualifier + column
+		// merged into one column ref — this is how the grammar supports CONNECT_BY_ROOT):
+		const adj = selectBody("SELECT CONNECT_BY_ROOT title AS root_title, a b, q b.c FROM t").body;
+		expect(adj.projections[0]).toMatchObject({
+			name: "root_title",
+			expr: { kind: "column", parts: ["CONNECT_BY_ROOT", "title"] },
+		});
+		expect(adj.projections[1]).toMatchObject({ name: "b", expr: { kind: "column", parts: ["a", "b"] } });
+		expect(adj.projections[2]).toMatchObject({ name: "c", expr: { kind: "column", parts: ["q", "b", "c"] } });
+		expect(errorsOf("SELECT IDENTIFIER('q') col FROM t")).toBe(0);
+		// Ordinary select items — bare, dotted, computed — no longer force the SLL→LL fallback.
+		const r = parseSnowflake("SELECT a, t.b, a + b AS c FROM t");
+		expect(r.errors).toBe(0);
+		expect(r.sllFallback).toBe(false);
+		// Adjacent invalid forms stay rejected: four adjacent names / a detached $ position.
+		expect(errorsOf("SELECT a b c d FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT t.$ 1 FROM t")).toBeGreaterThan(0);
+	});
+
 	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
 		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });

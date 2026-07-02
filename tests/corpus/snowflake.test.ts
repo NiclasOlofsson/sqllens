@@ -45,7 +45,7 @@ const OTHER_BASELINE = 0; // sequence refs (<seq>.NEXTVAL) now lower to typed fu
 // 2026-07-03 via `node --import tsx tools/profile-sll.ts snowflake` over this same docs query bucket.
 // Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
 // re-parse. May only fall as the surgery wave's per-dialect tasks land; 0 is healthy (untracked again).
-const FALLBACK_RATCHET = 315; // 525 → 315: select_list_top + expression_elem surgery (2026-07-03)
+const FALLBACK_RATCHET = 220; // 525 → 315 → 220: select_list_top + expression_elem + select_list_elem surgery (2026-07-03)
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {

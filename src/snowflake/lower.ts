@@ -596,9 +596,13 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	}
 
 	const alias = directChildrenOfRule(elem, P.RULE_as_alias)[0];
-	const colElem = directChildrenOfRule(elem, P.RULE_column_elem)[0];
-	if (colElem) {
-		const expr = lowerColumnElem(colElem);
+	// Adjacent-qualifier (`CONNECT_BY_ROOT title`) and $n positional refs keep their own
+	// alternative (column_elem_adjacent — neither is an expr form); dotted-name projections now
+	// arrive as expression_elem and are classified as columns below (the SLL-surgery
+	// select_list_elem de-overlap, 2026-07-03).
+	const colAdjacent = directChildrenOfRule(elem, P.RULE_column_elem_adjacent)[0];
+	if (colAdjacent) {
+		const expr = lowerColumnElem(colAdjacent);
 		const name = alias ? aliasText(alias) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
 		return { name, isStar: false, expr, cst: elem };
 	}
@@ -617,9 +621,12 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	return { name, isStar: false, expr, cst: elem };
 }
 
-/** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position */
+/** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position —
+ *  also accepts column_elem_adjacent, whose adjacency form carries a bare object_name qualifier. */
 function lowerColumnElem(colElem: ParserRuleContext): Expr {
-	const qualifier = directChildrenOfRule(colElem, P.RULE_object_name_or_alias)[0];
+	const qualifier =
+		directChildrenOfRule(colElem, P.RULE_object_name_or_alias)[0] ??
+		directChildrenOfRule(colElem, P.RULE_object_name)[0];
 	const qParts = qualifier ? nameParts(qualifier) : [];
 	if (hasDirectToken(colElem, P.DOLLAR)) {
 		const pos = directChildrenOfRule(colElem, P.RULE_column_position)[0];
