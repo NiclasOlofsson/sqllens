@@ -6,11 +6,13 @@ import type {
 	CteDef,
 	Expr,
 	LimitInfo,
+	PivotInfo,
 	Projection,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,
 	Source,
+	UnpivotInfo,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
@@ -70,6 +72,11 @@ const AGGREGATES = new Set([
 	"var_samp",
 	"variance",
 ]);
+
+// CONNECT BY exposes the LEVEL pseudo-column (the node's depth in the hierarchy). It resolves by name
+// but is excluded from a bare `SELECT *` — real pseudo-column semantics (src/qualify/qualify.ts).
+// docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html
+const CONNECT_BY_PSEUDO_COLUMNS = ["LEVEL"];
 
 /** Lower a parsed Redshift file (root: stmtblock of `;`-separated statements) into the IR.
  *  A single SELECT statement lowers fully; anything else (DDL, DML, multi-statement batches)
@@ -398,8 +405,17 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const qualify = directChildrenOfRule(node, P.RULE_qualify_clause)[0];
 	const qualifyExpr = qualify ? lowerExpr(firstAExpr(qualify)) : undefined;
 
-	// CONNECT BY hierarchies (start_with_clause) aren't modelled — flagged, not dropped.
-	if (directChildrenOfRule(node, P.RULE_start_with_clause).length) unsupported.push("connect-by");
+	// CONNECT BY hierarchical query (start_with_clause): its START WITH / CONNECT BY predicates are
+	// ordinary exprs whose columns are conserved (below); LEVEL enters scope as a lateral pseudo-source
+	// exposing "LEVEL". docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html
+	const startWith = directChildrenOfRule(node, P.RULE_start_with_clause)[0];
+	const connectByExprs = startWith ? directChildrenOfRule(startWith, P.RULE_a_expr).map(lowerExpr) : [];
+	if (startWith) from.push(levelPseudoSource(startWith));
+
+	// PIVOT / UNPIVOT (incl. PartiQL SUPER unpivot) reshape the FROM relation's output columns; modelled
+	// onto the shared PivotInfo/UnpivotInfo IR, applied by the scope/qualify passes.
+	const pivot = fromClause ? extractPivot(fromClause) : undefined;
+	const unpivot = fromClause ? extractUnpivot(fromClause) : undefined;
 
 	const aggregated =
 		groupByAll ||
@@ -414,6 +430,9 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (havingExpr) columnsOf(havingExpr, columns, "having");
 	if (qualifyExpr) columnsOf(qualifyExpr, columns, "qualify");
+	for (const e of connectByExprs) columnsOf(e, columns, "where");
+	// Conserve the PartiQL SUPER unpivot's source expression columns (UNPIVOT <expr> AS val AT attr).
+	if (fromClause) for (const a of partiqlUnpivotExprs(fromClause)) columnsOf(lowerExpr(a), columns, "where");
 
 	const subqueries = extractExpressionSubqueries(node, fromSubqueryNodes(from));
 
@@ -429,6 +448,8 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 		qualify: qualifyExpr,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
+		pivot,
+		unpivot,
 		unsupported: unsupported.length ? unsupported : undefined,
 		cst: node,
 	};
@@ -452,16 +473,10 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 
 // --- sources / joins ----------------------------------------------------------
 
-/** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. */
+/** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. The
+ *  pivot_clause / unpivot_clause suffix and the PartiQL SUPER UNPIVOT reshape the output columns; they
+ *  are modelled onto PivotInfo/UnpivotInfo by extractPivot/extractUnpivot at the select level. */
 function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
-	// PIVOT / UNPIVOT reshape the source's output columns; the IR doesn't model that for Redshift
-	// yet, so flag it (visible gap) rather than silently keeping only the un-pivoted relation.
-	if (directChildrenOfRule(tr, P.RULE_pivot_clause).length) unsupported.push("pivot");
-	if (directChildrenOfRule(tr, P.RULE_unpivot_clause).length) unsupported.push("unpivot");
-	// PartiQL SUPER object unpivoting (UNPIVOT expr AS val AT attr — a FROM item, not the SQL UNPIVOT
-	// suffix) reshapes a SUPER object into (value, attribute) rows; the IR doesn't model it yet, so
-	// flag it rather than leaving only an opaque source (docs … query-super.html#unpivoting).
-	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
@@ -478,6 +493,14 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 	const alias = aliasNode ? aliasName(aliasNode) : undefined;
 	const aliasCst = aliasNode ? firstShallow(aliasNode, P.RULE_table_alias) : undefined;
 	const columnAliases = aliasNode ? aliasColumnList(aliasNode) : undefined;
+
+	// PartiQL SUPER unpivot FROM item: `UNPIVOT <expr> AS value AT attribute` — yields (value, attribute)
+	// rows. Modelled as a lateral source exposing those two output columns (the UnpivotInfo carrying the
+	// same names is attached at the select level). docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting
+	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) {
+		const columns = directChildrenOfRule(tr, P.RULE_colid).map((c) => textOf(c));
+		return { kind: "lateral", columns, alias, aliasCst, cst: tr };
+	}
 
 	const rel = directChildrenOfRule(tr, P.RULE_relation_expr)[0];
 	if (rel) return buildTableFromRelation(rel, alias, aliasCst, columnAliases);
@@ -575,6 +598,125 @@ function funcAliasName(funcAlias: ParserRuleContext): string | undefined {
 	}
 	const cid = firstShallow(funcAlias, P.RULE_colid);
 	return cid ? textOf(cid) : undefined;
+}
+
+// --- CONNECT BY / PIVOT / UNPIVOT ---------------------------------------------
+// docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html
+// docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-pivot-unpivot-examples.html
+
+/** A lateral pseudo-source exposing the CONNECT BY pseudo-column(s) so `SELECT LEVEL` resolves while
+ *  `SELECT *` excludes it (pseudo: true). Mirrors the Snowflake lowerer. */
+function levelPseudoSource(cst: ParserRuleContext): Source {
+	return { kind: "lateral", columns: CONNECT_BY_PSEUDO_COLUMNS, pseudo: true, cst };
+}
+
+/** pivot_clause: PIVOT '(' a_expr opt_alias? FOR colid IN '(' pivot_in_list ')' ')' opt_alias?
+ *  a_expr = the aggregate (its columns → aggColumns); the FOR colid → forColumns; the IN-list items →
+ *  values (each item's `AS collabel` alias, else the literal/expr text); a trailing alias names the
+ *  pivoted relation. */
+function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
+	const node = firstShallow(fromClause, P.RULE_pivot_clause);
+	if (!node) return undefined;
+	const aggA = directChildrenOfRule(node, P.RULE_a_expr)[0];
+	const aggRefs: ColumnRef[] = [];
+	if (aggA) columnsOf(lowerExpr(aggA), aggRefs, "projection");
+	const forCol = directChildrenOfRule(node, P.RULE_colid)[0];
+	const inList = firstShallow(node, P.RULE_pivot_in_list);
+	const items = inList ? directChildrenOfRule(inList, P.RULE_pivot_in_item) : [];
+	return {
+		values: items.map(pivotItemLabel),
+		forColumns: forCol ? [textOf(forCol)] : [],
+		aggColumns: aggRefs.map((r) => r.parts[r.parts.length - 1]),
+		alias: trailingAlias(node),
+	};
+}
+
+/** SQL unpivot_clause (UNPIVOT '(' colid FOR colid IN '(' pivot_in_list ')' ')' opt_alias?), else the
+ *  PartiQL SUPER unpivot FROM item (UNPIVOT <expr> AS colid AT colid?). Value/name from the colids; the
+ *  SQL form's IN-list are the consumed (removed) input columns, the PartiQL form has none. */
+function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined {
+	const node = firstShallow(fromClause, P.RULE_unpivot_clause);
+	if (node) {
+		const cols = directChildrenOfRule(node, P.RULE_colid);
+		const inList = firstShallow(node, P.RULE_pivot_in_list);
+		const items = inList ? directChildrenOfRule(inList, P.RULE_pivot_in_item) : [];
+		return {
+			valueColumn: cols[0] ? textOf(cols[0]) : "",
+			nameColumn: cols[1] ? textOf(cols[1]) : "",
+			removed: items.map(pivotItemColumn),
+			alias: trailingAlias(node),
+		};
+	}
+	const partiql = partiqlUnpivotRef(fromClause);
+	if (partiql) {
+		const cols = directChildrenOfRule(partiql, P.RULE_colid);
+		return {
+			valueColumn: cols[0] ? textOf(cols[0]) : "",
+			nameColumn: cols[1] ? textOf(cols[1]) : "",
+			removed: [],
+			alias: undefined,
+		};
+	}
+	return undefined;
+}
+
+/** The PartiQL SUPER unpivot FROM item (table_ref: UNPIVOT a_expr AS colid AT colid?), if present. */
+function partiqlUnpivotRef(fromClause: ParserRuleContext): ParserRuleContext | undefined {
+	for (const tr of collectShallow(fromClause, P.RULE_table_ref)) {
+		if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) return tr;
+	}
+	return undefined;
+}
+
+/** The source expressions of any PartiQL SUPER unpivot FROM items — conserved so their columns resolve. */
+function partiqlUnpivotExprs(fromClause: ParserRuleContext): ParserRuleContext[] {
+	const ref = partiqlUnpivotRef(fromClause);
+	return ref ? directChildrenOfRule(ref, P.RULE_a_expr) : [];
+}
+
+/** pivot_in_item: a_expr (AS? collabel)? — for PIVOT the output column name (alias wins, else value). */
+function pivotItemLabel(item: ParserRuleContext): string {
+	const label = directChildrenOfRule(item, P.RULE_collabel)[0];
+	if (label) return textOf(label);
+	const a = directChildrenOfRule(item, P.RULE_a_expr)[0];
+	return a ? stripStringQuotes(a.getText()) : "";
+}
+
+/** pivot_in_item as an UNPIVOT consumed column: the input column name (the alias only renames the value
+ *  that lands in the name-column, so the removed column is the a_expr's column name). */
+function pivotItemColumn(item: ParserRuleContext): string {
+	const a = directChildrenOfRule(item, P.RULE_a_expr)[0];
+	if (!a) return "";
+	const e = lowerExpr(a);
+	return e.kind === "column" ? e.parts[e.parts.length - 1] : stripStringQuotes(a.getText());
+}
+
+/** The trailing `opt_alias_clause` (the last child), naming the pivoted/unpivoted relation, if present. */
+function trailingAlias(node: ParserRuleContext): string | undefined {
+	const last = node.getChild(node.getChildCount() - 1);
+	return last instanceof ParserRuleContext && last.ruleIndex === P.RULE_opt_alias_clause
+		? aliasName(last)
+		: undefined;
+}
+
+/** Nodes of `ruleIndex` reachable without descending into a nested select_with_parens (so a pivot in a
+ *  FROM subquery belongs to that subquery's own select, not this one). */
+function collectShallow(node: ParseTree, ruleIndex: number): ParserRuleContext[] {
+	const out: ParserRuleContext[] = [];
+	for (let i = 0; i < node.getChildCount(); i++) {
+		const child = node.getChild(i);
+		if (!(child instanceof ParserRuleContext)) continue;
+		if (child.ruleIndex === ruleIndex) out.push(child);
+		if (child.ruleIndex !== P.RULE_select_with_parens) out.push(...collectShallow(child, ruleIndex));
+	}
+	return out;
+}
+
+/** Strip surrounding single/double quotes from a literal/identifier's raw text. */
+function stripStringQuotes(text: string): string {
+	if (text.length >= 2 && text[0] === "'" && text[text.length - 1] === "'")
+		return text.slice(1, -1).replace(/''/g, "'");
+	return stripQuotes(text);
 }
 
 // --- projections --------------------------------------------------------------
@@ -687,7 +829,7 @@ function lowerExpr(node: ParserRuleContext | undefined): Expr {
 		case P.RULE_a_expr_compare:
 			return lowerCompare(node);
 		case P.RULE_a_expr_prior_or_level:
-			return passthroughTo(node, P.RULE_a_expr_like); // PRIOR/LEVEL pseudo-ops: operand carries the refs
+			return lowerPriorOrLevel(node);
 		case P.RULE_a_expr_like:
 			return lowerLike(node);
 		case P.RULE_a_expr_qual_op:
@@ -726,6 +868,19 @@ function passthrough(node: ParserRuleContext): Expr {
 function passthroughTo(node: ParserRuleContext, operandRule: number): Expr {
 	const child = directChildrenOfRule(node, operandRule)[0];
 	return child ? lowerExpr(child) : passthrough(node);
+}
+
+/** a_expr_prior_or_level: (PRIOR | LEVEL)? a_expr_like — the CONNECT BY pseudo-operators.
+ *  `PRIOR x` lowers as a `prior(x)` function (so columnsOf still reaches `x` — a dropped arg would
+ *  lose the correlated column); LEVEL is only ever the bare pseudo-column (it parses as the operand's
+ *  columnref, never the optional prefix), handled as an ordinary column bound to the LEVEL pseudo-source.
+ *  docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html */
+function lowerPriorOrLevel(node: ParserRuleContext): Expr {
+	const operand = directChildrenOfRule(node, P.RULE_a_expr_like)[0];
+	const inner = operand ? lowerExpr(operand) : otherExpr(node);
+	if (hasDirectToken(node, P.PRIOR))
+		return { kind: "function", name: "prior", args: [inner], aggregate: false, distinct: false, cst: node };
+	return inner;
 }
 
 /** `operand (OP operand)*` — left-fold into binary nodes. OP is any non-operand child

@@ -165,18 +165,19 @@ describe("known lower() gaps (curated clean repros)", () => {
 		if (errors !== 0) throw new Error("repro did not parse");
 		return (lowerRedshift(tree).body as { unsupported?: string[] }).unsupported ?? [];
 	};
-	it("Redshift PIVOT / UNPIVOT / CONNECT BY are unmodelled (flag) — flip these when implemented", () => {
-		expect(
-			rsFlags("SELECT * FROM t1 PIVOT (sum(a) FOR b IN (1, 2))"),
-			"redshift pivot now models — remove from gaps",
-		).toContain("pivot");
+	it("Redshift PIVOT / UNPIVOT / CONNECT BY are modelled onto the shared IR (no longer flagged)", () => {
+		// Flipped from asserts-flagged to asserts-modelled (Task 5): these lower to PivotInfo/UnpivotInfo
+		// and conserved CONNECT BY predicate columns, the same shapes the sibling dialects produce.
+		expect(rsFlags("SELECT * FROM t1 PIVOT (sum(a) FOR b IN (1, 2))"), "redshift pivot should model").not.toContain(
+			"pivot",
+		);
 		expect(
 			rsFlags("SELECT * FROM t1 UNPIVOT (val FOR col IN (a, b))"),
-			"redshift unpivot now models — remove from gaps",
-		).toContain("unpivot");
+			"redshift unpivot should model",
+		).not.toContain("unpivot");
 		expect(
 			rsFlags("SELECT a FROM t1 START WITH a = 1 CONNECT BY PRIOR a = b"),
-			"redshift connect-by now models — remove from gaps",
-		).toContain("connect-by");
+			"redshift connect-by should model",
+		).not.toContain("connect-by");
 	});
 });

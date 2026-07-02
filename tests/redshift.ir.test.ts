@@ -2,6 +2,9 @@ import { describe, expect, it } from "vitest";
 import type { Expr, QueryExpr, SelectExpr, SetOpExpr } from "../src/ir/ir.js";
 import { lower } from "../src/redshift/lower.js";
 import { parseRedshift } from "../src/redshift/parse.js";
+import { resolveColumn, resolveScopes } from "../src/scope/scope.js";
+import { qualify } from "../src/qualify/qualify.js";
+import { Schema } from "../src/qualify/schema.js";
 
 // IR lowering for Redshift (CST -> the shared dialect-neutral IR). Tests encode the SEMANTIC
 // shape each query should lower to, so a regression in lower() — or a wrong CST assumption —
@@ -193,20 +196,47 @@ describe("Redshift lower — CTE, set ops, VALUES", () => {
 	});
 });
 
-describe("Redshift lower — visible gaps", () => {
-	it("PIVOT is flagged unsupported, not silently dropped", () => {
+// PIVOT / UNPIVOT / CONNECT BY are modelled onto the shared IR (PivotInfo / UnpivotInfo / conserved
+// predicate columns + LEVEL pseudo-source), the same shapes the sibling dialects produce — no longer
+// flagged unsupported. Doc-cited against the AWS Redshift SQL reference.
+describe("Redshift lower — PIVOT / UNPIVOT / CONNECT BY modelled", () => {
+	// docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-pivot-unpivot-examples.html
+	it("PIVOT lowers to PivotInfo (values / FOR column / aggregate column), not a flag", () => {
 		const b = selectBody("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A', 'B'))");
-		expect(b.unsupported).toContain("pivot");
+		expect(b.unsupported).toBeUndefined();
+		expect(b.pivot).toEqual({ values: ["A", "B"], forColumns: ["region"], aggColumns: ["qty"], alias: undefined });
+		expect(b.unpivot).toBeUndefined();
 	});
 
-	it("UNPIVOT is flagged unsupported", () => {
+	// The IN-list may alias each output column (val [AS] alias); the alias names the pivoted column.
+	it("PIVOT with aliased IN-list values uses the aliases as output column names", () => {
+		const b = selectBody("SELECT * FROM sales PIVOT (sum(qty) FOR region IN ('A' AS ap, 'B' AS bp)) p");
+		expect(b.pivot).toEqual({ values: ["ap", "bp"], forColumns: ["region"], aggColumns: ["qty"], alias: "p" });
+	});
+
+	// docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-pivot-unpivot-examples.html
+	it("UNPIVOT lowers to UnpivotInfo (value / name / removed columns), not a flag", () => {
 		const b = selectBody("SELECT * FROM (SELECT a, b FROM t) UNPIVOT (v FOR n IN (a, b))");
-		expect(b.unsupported).toContain("unpivot");
+		expect(b.unsupported).toBeUndefined();
+		expect(b.unpivot).toEqual({ valueColumn: "v", nameColumn: "n", removed: ["a", "b"], alias: undefined });
+		expect(b.pivot).toBeUndefined();
 	});
 
-	it("CONNECT BY is flagged unsupported", () => {
-		const b = selectBody("SELECT id FROM t CONNECT BY PRIOR id = pid START WITH id = 1");
-		expect(b.unsupported).toContain("connect-by");
+	// docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html — START WITH / CONNECT BY.
+	it("CONNECT BY is un-flagged; START WITH / CONNECT BY predicate columns are conserved", () => {
+		const b = selectBody("SELECT id FROM t START WITH id = 1 CONNECT BY PRIOR id = pid");
+		expect(b.unsupported).toBeUndefined();
+		const whereCols = b.columns.filter((c) => c.clause === "where").map((c) => c.parts.join(".").toLowerCase());
+		// START WITH `id`, and both sides of `PRIOR id = pid` (a dropped PRIOR arg would lose `id`).
+		expect(whereCols).toEqual(expect.arrayContaining(["id", "pid"]));
+	});
+
+	// `PRIOR x` lowers as a `prior(x)` function so columnsOf still reaches `x` (Task-4 Snowflake shape).
+	it("PRIOR lowers as a prior(x) function over the referenced column", () => {
+		const b = selectBody("SELECT id FROM t START WITH parent IS NULL CONNECT BY parent = PRIOR id");
+		expect(b.unsupported).toBeUndefined();
+		const whereCols = b.columns.filter((c) => c.clause === "where").map((c) => c.parts.join(".").toLowerCase());
+		expect(whereCols).toEqual(expect.arrayContaining(["parent", "id"]));
 	});
 });
 
@@ -216,9 +246,37 @@ describe("Redshift lower — Redshift-specific sources", () => {
 		expect(b.from[0]).toMatchObject({ kind: "table", name: ["b", "a", "c", "d"] });
 	});
 
-	it("PartiQL SUPER UNPIVOT in FROM is flagged unsupported, not a silent opaque source", () => {
+	// PartiQL SUPER object unpivoting: UNPIVOT expr AS value AT attribute is a FROM item that reshapes a
+	// SUPER object into (value, attribute) rows — docs.aws.amazon.com/redshift/latest/dg/query-super.html#unpivoting
+	it("PartiQL SUPER UNPIVOT in FROM lowers to UnpivotInfo with value/name from AS/AT, not a flag", () => {
 		const b = selectBody("SELECT attr FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr");
-		expect(b.unsupported).toContain("unpivot");
+		expect(b.unsupported).toBeUndefined();
+		expect(b.unpivot).toEqual({ valueColumn: "val", nameColumn: "attr", removed: [], alias: undefined });
+	});
+});
+
+// The CONNECT BY LEVEL pseudo-column: it resolves by name (a lateral pseudo-source), but must NOT
+// appear in a bare `SELECT *` expansion — real pseudo-column semantics, like Snowflake/Oracle.
+// docs.aws.amazon.com/redshift/latest/dg/r_CONNECT_BY_clause.html
+describe("Redshift CONNECT BY — LEVEL pseudo-column semantics", () => {
+	function scopes(sql: string) {
+		return resolveScopes(lower(parseRedshift(sql).tree), "redshift");
+	}
+
+	it("binds LEVEL by name on a CONNECT BY hierarchical select", () => {
+		const tree = scopes("SELECT id, LEVEL FROM t START WITH id = 1 CONNECT BY PRIOR id = pid");
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		expect(body.unsupported).toBeUndefined();
+		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
+		expect(levelRef).toBeDefined();
+		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
+	});
+
+	it("excludes LEVEL from a schema-fed `SELECT *` on a CONNECT BY query", () => {
+		const schema = new Schema({ t: { id: "int4", pid: "int4" } });
+		const tree = scopes("SELECT * FROM t START WITH id = 1 CONNECT BY PRIOR id = pid");
+		expect(qualify(tree, schema).columnsOf(tree.root)).toEqual(["id", "pid"]);
 	});
 });
 

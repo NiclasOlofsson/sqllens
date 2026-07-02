@@ -5,6 +5,8 @@ import { lower as lowerDbx } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { lower as lowerTsql } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
+import { lower as lowerRs } from "../src/redshift/lower.js";
+import { parseRedshift } from "../src/redshift/parse.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
@@ -17,6 +19,14 @@ import { resolveScopes } from "../src/scope/scope.js";
 
 const BQ = new Schema({ "proj.ds.t": { product: "STRING", quarter: "STRING", sales: "INT64" } });
 const DBX = new Schema({ t: { product: "STRING", quarter: "STRING", sales: "INT" } });
+const RS = new Schema({ t: { product: "varchar", quarter: "varchar", sales: "int4" } });
+
+function rsCols(sql: string): string[] | "unknown" {
+	const r = parseRedshift(sql);
+	expect(r.errors, sql).toBe(0);
+	const tree = resolveScopes(lowerRs(r.tree), "redshift");
+	return qualify(tree, RS).columnsOf(tree.root);
+}
 
 function bqCols(sql: string): string[] | "unknown" {
 	const r = parseBigQuery(sql);
@@ -56,6 +66,20 @@ describe("PIVOT / UNPIVOT — qualified output reflects the reshape (dialect-neu
 			"q1",
 			"q2",
 		]);
+	});
+
+	// docs.aws.amazon.com/redshift/latest/dg/r_FROM_clause-pivot-unpivot-examples.html — the Redshift
+	// lowerer feeds the same PivotInfo/UnpivotInfo IR, so the schema-fed reshape holds unchanged.
+	it("Redshift PIVOT: consumes FOR + aggregate columns, adds the IN-list values", () => {
+		expect(rsCols("SELECT * FROM t PIVOT (SUM(sales) FOR quarter IN ('Q1' AS q1, 'Q2' AS q2))")).toEqual([
+			"product",
+			"q1",
+			"q2",
+		]);
+	});
+
+	it("Redshift UNPIVOT: consumes the IN-list columns, adds name + value", () => {
+		expect(rsCols("SELECT * FROM t UNPIVOT (val FOR q IN (sales))")).toEqual(["product", "quarter", "q", "val"]);
 	});
 });
 
