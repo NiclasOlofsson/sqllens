@@ -5016,9 +5016,23 @@ as_alias
     : AS? alias
     ;
 
+// expr already covers the IN / [I]LIKE [ANY|ALL] / RLIKE / REGEXP / IS and bare-expr predicate
+// forms as its own alternatives, so referencing the full `predicate` here made `expr | predicate`
+// ambiguous on nearly every select item (SLL-surgery wave, 2026-07-03). Only the predicate forms
+// expr does NOT subsume remain, split out as predicate_only; parse results are unchanged —
+// first-alternative-wins already sent every overlapping form through expr.
 expression_elem
     : expr
-    | predicate
+    | predicate_only
+    ;
+
+// The predicate alternatives outside expr's operator hierarchy: EXISTS, quantified comparison
+// (docs.snowflake.com/en/sql-reference/operators-subquery), and [NOT] BETWEEN
+// (docs.snowflake.com/en/sql-reference/functions/between). Same shapes as in `predicate`.
+predicate_only
+    : EXISTS LR_BRACKET subquery RR_BRACKET
+    | expr comparison_operator (ALL | SOME | ANY) LR_BRACKET subquery RR_BRACKET
+    | expr NOT? BETWEEN expr AND expr
     ;
 
 column_position

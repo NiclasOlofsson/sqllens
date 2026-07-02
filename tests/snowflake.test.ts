@@ -842,6 +842,43 @@ describe("Snowflake lower -> IR", () => {
 		expect(errorsOf("SELECT TOP 1 x FROM t LIMIT 1")).toBeGreaterThan(0);
 	});
 
+	// SLL-surgery wave (2026-07-03): expression_elem's `predicate` alternative was narrowed to
+	// predicate_only (EXISTS / quantified comparison / BETWEEN — the forms expr does NOT already
+	// carry as its own alternatives), removing an ambiguity on nearly every select item. The IR
+	// for every form must be what it was: the overlapping predicate forms (IN/LIKE/IS/…) already
+	// parsed via expr under first-alternative-wins.
+	// docs.snowflake.com/en/sql-reference/operators-subquery, /en/sql-reference/functions/between
+	it("keeps every predicate select-item lowering across the expression_elem fix", () => {
+		// EXISTS as a select item → exists IR.
+		const ex = selectBody("SELECT EXISTS (SELECT 1 FROM u) AS has_rows FROM t").body;
+		expect(ex.projections[0].expr).toMatchObject({ kind: "exists" });
+		// Quantified comparison → binary with a subquery right operand.
+		const qc = selectBody("SELECT x > ALL (SELECT y FROM u) FROM t").body;
+		expect(qc.projections[0].expr).toMatchObject({ kind: "binary", op: ">", right: { kind: "subquery" } });
+		// BETWEEN → between predicate IR.
+		const bw = selectBody("SELECT a BETWEEN 1 AND 2 FROM t").body;
+		expect(bw.projections[0].expr).toMatchObject({ kind: "predicate", op: "between", negated: false });
+		const nb = selectBody("SELECT a NOT BETWEEN 1 AND 2 FROM t").body;
+		expect(nb.projections[0].expr).toMatchObject({ kind: "predicate", op: "between", negated: true });
+		// The expr-subsumed forms keep their IR (they always parsed via expr).
+		const inp = selectBody("SELECT a IN (1, 2) FROM t").body;
+		expect(inp.projections[0].expr).toMatchObject({ kind: "predicate", op: "in" });
+		const lk = selectBody("SELECT a LIKE 'x%' FROM t").body;
+		expect(lk.projections[0].expr).toMatchObject({ kind: "predicate", op: "like" });
+		const isn = selectBody("SELECT a IS NOT NULL FROM t").body;
+		expect(isn.projections[0].expr).toMatchObject({ kind: "predicate", op: "null", negated: true });
+		// Function-call and EXISTS select items no longer force the SLL→LL fallback (computed
+		// items like `a + b` stay dirty until the select_list_elem fix — the next iteration).
+		const fn = parseSnowflake("SELECT SUM(x) FROM t GROUP BY a");
+		expect(fn.errors).toBe(0);
+		expect(fn.sllFallback).toBe(false);
+		const exq = parseSnowflake("SELECT EXISTS (SELECT 1 FROM u) FROM t");
+		expect(exq.errors).toBe(0);
+		expect(exq.sllFallback).toBe(false);
+		// Adjacent invalid form stays rejected: BETWEEN missing its AND arm.
+		expect(errorsOf("SELECT a BETWEEN 1 FROM t")).toBeGreaterThan(0);
+	});
+
 	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
 		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });

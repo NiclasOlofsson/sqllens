@@ -437,9 +437,13 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 		if (num) return { kind: "literal", text: num.getText(), cst: num } satisfies Expr;
 		const ee = directChildrenOfRule(e, P.RULE_expression_elem)[0];
 		const inner = ee
-			? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate)[0])
+			? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate_only)[0])
 			: undefined;
-		return inner ? (inner.ruleIndex === P.RULE_predicate ? lowerPredicate(inner) : lowerExpr(inner)) : otherExpr(e);
+		return inner
+			? inner.ruleIndex === P.RULE_predicate_only
+				? lowerPredicate(inner)
+				: lowerExpr(inner)
+			: otherExpr(e);
 	});
 	return items.length ? items : undefined;
 }
@@ -601,10 +605,10 @@ function buildProjection(elem: ParserRuleContext): Projection {
 
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0];
 	const inner = exprElem
-		? (directChildrenOfRule(exprElem, P.RULE_expr)[0] ?? directChildrenOfRule(exprElem, P.RULE_predicate)[0])
+		? (directChildrenOfRule(exprElem, P.RULE_expr)[0] ?? directChildrenOfRule(exprElem, P.RULE_predicate_only)[0])
 		: undefined;
 	const expr = inner
-		? inner.ruleIndex === P.RULE_predicate
+		? inner.ruleIndex === P.RULE_predicate_only
 			? lowerPredicate(inner)
 			: lowerExpr(inner)
 		: otherExpr(elem);
