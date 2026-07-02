@@ -578,6 +578,7 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	redshift: {},
 	postgres: {},
 	duckdb: {},
+	trino: {},
 };
 
 /**
