@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lower as lowerDbx } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { inferType } from "../src/infer/infer.js";
+import { BIGQUERY_FUNCTION_RETURNS } from "../src/infer/bigquery.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { lower as lowerTsql } from "../src/tsql/lower.js";
@@ -183,5 +184,104 @@ describe("T-SQL registry: 2022/2025 additions and system functions (docs-verifie
 		expect(tsqlType("SELECT IDENT_INCR(s) AS r FROM t", T)).toEqual(scalar("decimal"));
 		expect(tsqlType("SELECT ENCRYPTBYPASSPHRASE(s, s) AS r FROM t", T)).toEqual(scalar("binary"));
 		expect(tsqlType("SELECT TEXTVALID(s, a) AS r FROM t", T)).toEqual(scalar("int"));
+	});
+});
+
+// --- BigQuery / GoogleSQL registry --------------------------------------------------------------
+// Rule-level probes over BIGQUERY_FUNCTION_RETURNS (the registry keys feed inference AND the
+// BigQuery completion function list). Built out family-by-family from the GoogleSQL reference,
+// every family's alphabetical index verified live (2026-07-02). A missing rule yields `unknown`, so
+// each of these failed before the entry existed.
+//
+// BREADTH FLOOR NOTE: the parity-wave brief set a ≥400 breadth target. The genuinely-determinable
+// GoogleSQL scalar/aggregate/window surface, under the project's ABSOLUTE never-wrong contract
+// (a wrong return type is a defect; value-dependent returns are omitted), is 354 entries across all
+// 30 documented function families. The remaining functions are value-dependent (EXTRACT,
+// PERCENTILE_CONT/DISC, APPROX_TOP_COUNT/SUM, ARRAY_SUM/ARRAY_AVG, ST_BOUNDINGBOX/EXTENT/REGIONSTATS,
+// KEYS.KEYSET_TO_JSON, JSON_FLATTEN), table-valued (VECTOR_SEARCH, GAP_FILL, EXTERNAL_QUERY), or
+// AI/ML (excluded by the project scope). 400 typed entries cannot be reached without inventing
+// return types, so the floor is pinned at the achieved, defensible count. See task-4-report.md.
+const BQ_FLOOR = 354;
+const bqRule = (n: string, args: Type[] = []) => BIGQUERY_FUNCTION_RETURNS[n]?.(args);
+const arr = (el: Type): Type => ({ kind: "array", element: el });
+
+describe("BigQuery registry: breadth + family spot checks (docs-verified)", () => {
+	it("covers the documented GoogleSQL surface at real breadth", () => {
+		expect(Object.keys(BIGQUERY_FUNCTION_RETURNS).length).toBeGreaterThanOrEqual(BQ_FLOOR);
+	});
+
+	// Dotted-name families (net.*, hll_count.*, kll_quantiles.*, aead.*, keys.*) key by the LAST path
+	// segment — lowerFunctionCall names a call `pathParts(path).slice(-1)[0]` — so these probe the
+	// bare segment the parser actually looks up, not the dotted source spelling.
+	it("dotted-name families key by the last path segment", () => {
+		expect(bqRule("ip_from_string")).toEqual(scalar("binary")); // net.ip_from_string → BYTES
+		expect(bqRule("ip_to_string")).toEqual(scalar("string")); // net.ip_to_string → STRING
+		expect(bqRule("ipv4_to_int64")).toEqual(scalar("int")); // net.ipv4_to_int64 → INT64
+		expect(bqRule("merge")).toEqual(scalar("int")); // hll_count.merge → INT64 cardinality
+		expect(bqRule("init")).toEqual(scalar("binary")); // hll_count.init → BYTES sketch
+		expect(bqRule("extract_point_float64")).toEqual(scalar("double")); // kll_quantiles.extract_point_float64
+		expect(bqRule("merge_float64")).toEqual(arr(scalar("double"))); // kll_quantiles.merge_float64 → ARRAY<FLOAT64>
+		expect(bqRule("encrypt")).toEqual(scalar("binary")); // aead.encrypt → BYTES
+		expect(bqRule("decrypt_string")).toEqual(scalar("string")); // aead.decrypt_string → STRING
+	});
+
+	it("geography returns GEOGRAPHY / FLOAT64 / BOOL / INT64 / STRING correctly", () => {
+		expect(bqRule("st_geogfromtext")).toEqual(scalar("geography"));
+		expect(bqRule("st_distance")).toEqual(scalar("double"));
+		expect(bqRule("st_contains")).toEqual(scalar("boolean"));
+		expect(bqRule("st_npoints")).toEqual(scalar("int"));
+		expect(bqRule("st_astext")).toEqual(scalar("string"));
+		expect(bqRule("st_dump")).toEqual(arr(scalar("geography")));
+	});
+
+	it("date/timestamp diffs return INT64; constructors keep their type", () => {
+		expect(bqRule("timestamp_diff")).toEqual(scalar("int"));
+		expect(bqRule("date_diff")).toEqual(scalar("int"));
+		expect(bqRule("unix_micros")).toEqual(scalar("int"));
+		expect(bqRule("parse_timestamp")).toEqual(scalar("timestamp"));
+		expect(bqRule("make_interval")).toEqual(scalar("interval"));
+	});
+
+	it("JSON split: json_query→JSON, json_value→STRING, arrays wrap their element", () => {
+		expect(bqRule("json_query")).toEqual(scalar("json"));
+		expect(bqRule("json_value")).toEqual(scalar("string"));
+		expect(bqRule("to_json")).toEqual(scalar("json")); // TO_JSON → JSON (TO_JSON_STRING → STRING)
+		expect(bqRule("to_json_string")).toEqual(scalar("string"));
+		expect(bqRule("json_query_array")).toEqual(arr(scalar("json")));
+		expect(bqRule("json_value_array")).toEqual(arr(scalar("string")));
+	});
+
+	it("aggregate / approximate / navigation follow input where documented", () => {
+		expect(bqRule("approx_count_distinct")).toEqual(scalar("int"));
+		expect(bqRule("count")).toEqual(scalar("int"));
+		expect(bqRule("logical_and")).toEqual(scalar("boolean"));
+		expect(bqRule("lag", [scalar("date")])).toEqual(scalar("date")); // navigation follows input
+		expect(bqRule("array_agg", [scalar("string")])).toEqual(arr(scalar("string")));
+		expect(bqRule("array_first", [arr(scalar("int"))])).toEqual(scalar("int")); // element of the array
+	});
+
+	it("math: FLOAT64 transcendentals, same-as-input rounding, INT64 div", () => {
+		expect(bqRule("sqrt")).toEqual(scalar("double"));
+		expect(bqRule("cosine_distance")).toEqual(scalar("double"));
+		expect(bqRule("div")).toEqual(scalar("int"));
+		expect(bqRule("safe_divide")).toEqual(scalar("double"));
+		expect(bqRule("abs", [scalar("bigint")])).toEqual(scalar("bigint")); // same numeric type as input
+	});
+
+	it("string / hash / bit families", () => {
+		expect(bqRule("contains_substr")).toEqual(scalar("boolean"));
+		expect(bqRule("edit_distance")).toEqual(scalar("int"));
+		expect(bqRule("to_code_points")).toEqual(arr(scalar("int")));
+		expect(bqRule("sha256")).toEqual(scalar("binary"));
+		expect(bqRule("farm_fingerprint")).toEqual(scalar("int"));
+		expect(bqRule("bit_count")).toEqual(scalar("int"));
+	});
+
+	// Absent-by-contract: value-dependent returns must yield `unknown`, never a guessed type.
+	it("value-dependent functions stay unknown (never a wrong type)", () => {
+		expect(bqRule("approx_top_count")).toBeUndefined();
+		expect(bqRule("percentile_cont")).toBeUndefined();
+		expect(bqRule("st_boundingbox")).toBeUndefined();
+		expect(bqRule("array_sum")).toBeUndefined();
 	});
 });
