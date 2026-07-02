@@ -14,6 +14,8 @@ import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
 import { PostgresParser } from "../generated/postgres/PostgresParser.js";
 import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
 import { DuckdbParser } from "../generated/duckdb/DuckdbParser.js";
+import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
+import { TrinoParser } from "../generated/trino/TrinoParser.js";
 
 /**
  * Per-dialect tuning for the ATN candidate walk (`collectCandidates`).
@@ -140,6 +142,20 @@ const DUCKDB_PREFERRED = new Set<number>([...DUCKDB_TABLE_RULES, ...DUCKDB_COLUM
 const DUCKDB_RELATION_KEYWORDS = new Set<number>([DuckdbLexer.FROM, DuckdbLexer.JOIN]);
 const DUCKDB_NAME_TOKENS = new Set<number>([DuckdbLexer.Identifier, DuckdbLexer.QuotedIdentifier]);
 
+// -- Trino (first-party SqlBase.g4 split) ------------------------------------
+// Post-FROM relation names live under relationPrimary/qualifiedName; column slots are
+// primaryExpression. Identifiers: plain / "quoted" / backquoted / digit-led.
+const TRINO_TABLE_RULES = new Set<number>([TrinoParser.RULE_relationPrimary, TrinoParser.RULE_qualifiedName]);
+const TRINO_COLUMN_RULES = new Set<number>([TrinoParser.RULE_primaryExpression]);
+const TRINO_PREFERRED = new Set<number>([...TRINO_TABLE_RULES, ...TRINO_COLUMN_RULES]);
+const TRINO_RELATION_KEYWORDS = new Set<number>([TrinoLexer.FROM, TrinoLexer.JOIN]);
+const TRINO_NAME_TOKENS = new Set<number>([
+	TrinoLexer.IDENTIFIER,
+	TrinoLexer.QUOTED_IDENTIFIER,
+	TrinoLexer.BACKQUOTED_IDENTIFIER,
+	TrinoLexer.DIGIT_IDENTIFIER,
+]);
+
 export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 	databricks: {
 		preferredRules: DATABRICKS_PREFERRED,
@@ -196,5 +212,13 @@ export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 		columnRules: DUCKDB_COLUMN_RULES,
 		relationKeywordTokens: DUCKDB_RELATION_KEYWORDS,
 		nameTokens: DUCKDB_NAME_TOKENS,
+	},
+	trino: {
+		preferredRules: TRINO_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: TRINO_TABLE_RULES,
+		columnRules: TRINO_COLUMN_RULES,
+		relationKeywordTokens: TRINO_RELATION_KEYWORDS,
+		nameTokens: TRINO_NAME_TOKENS,
 	},
 };

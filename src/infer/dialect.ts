@@ -5,6 +5,7 @@ import { databricksLiteral, tsqlLiteral } from "./literals.js";
 import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from "./redshift.js";
 import { POSTGRES_FUNCTION_RETURNS, postgresLiteral, postgresParseType } from "./postgres.js";
 import { DUCKDB_FUNCTION_RETURNS, duckdbLiteral, duckdbParseType } from "./duckdb.js";
+import { TRINO_FUNCTION_RETURNS, trinoLiteral, trinoParseType } from "./trino.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -73,7 +74,23 @@ const duckdb: InferDialect = {
 	division: "float", // DuckDB: `/` is DOUBLE division even for integers (`//` divides) — functions/numeric.md
 };
 
-const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery, redshift, postgres, duckdb };
+const trino: InferDialect = {
+	functions: TRINO_FUNCTION_RETURNS,
+	literal: trinoLiteral,
+	parseType: trinoParseType,
+	division: "integer", // Trino: integer / integer truncates - functions/math.html
+};
+
+const DIALECTS: Record<string, InferDialect> = {
+	databricks,
+	tsql,
+	snowflake,
+	bigquery,
+	redshift,
+	postgres,
+	duckdb,
+	trino,
+};
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */
 export function inferDialect(name: string | undefined): InferDialect {

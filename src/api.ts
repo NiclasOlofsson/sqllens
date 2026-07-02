@@ -27,6 +27,8 @@ import { parsePostgres } from "./postgres/parse.js";
 import { lower as lowerPostgres } from "./postgres/lower.js";
 import { parseDuckdb } from "./duckdb/parse.js";
 import { lower as lowerDuckdb } from "./duckdb/lower.js";
+import { parseTrino } from "./trino/parse.js";
+import { lower as lowerTrino } from "./trino/lower.js";
 import type { Expr, QueryExpr } from "./ir/ir.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
@@ -45,7 +47,7 @@ import type { Token } from "./token/token.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
  *  parse+lower pair; everything after lower() runs unchanged on all seven. */
-export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb";
+export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino";
 
 interface DialectFns {
 	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[]; tokens: Token[] };
@@ -60,6 +62,7 @@ const DIALECTS: Record<Dialect, DialectFns> = {
 	redshift: { parse: parseRedshift, lower: lowerRedshift },
 	postgres: { parse: parsePostgres, lower: lowerPostgres },
 	duckdb: { parse: parseDuckdb, lower: lowerDuckdb },
+	trino: { parse: parseTrino, lower: lowerTrino },
 };
 
 /** Options carrying the dialect, needed only when a lift helper enters from a raw string. */

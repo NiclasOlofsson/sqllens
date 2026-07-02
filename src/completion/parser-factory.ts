@@ -21,6 +21,8 @@ import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
 import { PostgresParser } from "../generated/postgres/PostgresParser.js";
 import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
 import { DuckdbParser } from "../generated/duckdb/DuckdbParser.js";
+import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
+import { TrinoParser } from "../generated/trino/TrinoParser.js";
 
 /**
  * A ready-to-walk parser for the completion engine: the lexer, the token stream, the entry
@@ -162,6 +164,22 @@ function duckdbFactory(sql: string): MadeParser {
 	};
 }
 
+function trinoFactory(sql: string): MadeParser {
+	const lexer = new TrinoLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new TrinoParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: TrinoParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
 const FACTORIES: Record<Dialect, Factory> = {
 	databricks: databricksFactory,
 	tsql: tsqlFactory,
@@ -170,6 +188,7 @@ const FACTORIES: Record<Dialect, Factory> = {
 	redshift: redshiftFactory,
 	postgres: postgresFactory,
 	duckdb: duckdbFactory,
+	trino: trinoFactory,
 };
 
 /** Build a fresh error-tolerant parser for `dialect`, lexing `sql`. */
