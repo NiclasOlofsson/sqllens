@@ -195,13 +195,16 @@ describe("T-SQL registry: 2022/2025 additions and system functions (docs-verifie
 //
 // BREADTH FLOOR NOTE: the parity-wave brief set a ≥400 breadth target. The genuinely-determinable
 // GoogleSQL scalar/aggregate/window surface, under the project's ABSOLUTE never-wrong contract
-// (a wrong return type is a defect; value-dependent returns are omitted), is 354 entries across all
-// 30 documented function families. The remaining functions are value-dependent (EXTRACT,
-// PERCENTILE_CONT/DISC, APPROX_TOP_COUNT/SUM, ARRAY_SUM/ARRAY_AVG, ST_BOUNDINGBOX/EXTENT/REGIONSTATS,
-// KEYS.KEYSET_TO_JSON, JSON_FLATTEN), table-valued (VECTOR_SEARCH, GAP_FILL, EXTERNAL_QUERY), or
-// AI/ML (excluded by the project scope). 400 typed entries cannot be reached without inventing
-// return types, so the floor is pinned at the achieved, defensible count. See task-4-report.md.
-const BQ_FLOOR = 354;
+// (a wrong return type is a defect; value-dependent returns are omitted), is 352 entries across all
+// 30 documented function families (corrected 2026-07-02: dropped 4 phantom KLL_QUANTILES *_uint64
+// keys — no UINT64 variant exists, only INT64/FLOAT64 — and added the 2 real MERGE_POINT_INT64/
+// MERGE_POINT_FLOAT64 keys the phantom-key review turned up). The remaining functions are
+// value-dependent (EXTRACT, PERCENTILE_CONT/DISC, APPROX_TOP_COUNT/SUM, ARRAY_SUM/ARRAY_AVG,
+// ST_BOUNDINGBOX/EXTENT/REGIONSTATS, KEYS.KEYSET_TO_JSON, JSON_FLATTEN), table-valued
+// (VECTOR_SEARCH, GAP_FILL, EXTERNAL_QUERY), or AI/ML (excluded by the project scope). 400 typed
+// entries cannot be reached without inventing return types, so the floor is pinned at the achieved,
+// defensible count. See task-4-report.md.
+const BQ_FLOOR = 352;
 const bqRule = (n: string, args: Type[] = []) => BIGQUERY_FUNCTION_RETURNS[n]?.(args);
 const arr = (el: Type): Type => ({ kind: "array", element: el });
 

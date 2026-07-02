@@ -297,14 +297,17 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(fixed(BIN), ["init", "merge_partial"]), // HLL_COUNT.INIT / .MERGE_PARTIAL → BYTES sketch
 	merge: fixed(I), // HLL_COUNT.MERGE → INT64 cardinality
 
-	// --- KLL_QUANTILES.* (keyed by last segment; INIT/MERGE_PARTIAL → sketch BYTES) ---
-	...group(fixed(BIN), ["init_int64", "init_uint64", "init_float64"]),
+	// --- KLL_QUANTILES.* (keyed by last segment; INIT/MERGE_PARTIAL → sketch BYTES). No UINT64
+	// variant exists (only INT64/FLOAT64) — cloud.google.com/bigquery/docs/reference/standard-sql/kll_functions.
+	...group(fixed(BIN), ["init_int64", "init_float64"]),
 	// MERGE/EXTRACT return the quantile boundaries as an ARRAY of the sketch's value type.
-	...group(arrayOf(I), ["merge_int64", "merge_uint64", "extract_int64", "extract_uint64"]),
+	...group(arrayOf(I), ["merge_int64", "extract_int64"]),
 	...group(arrayOf(D), ["merge_float64", "extract_float64"]),
-	// EXTRACT_POINT_* return a single quantile boundary (scalar).
-	...group(fixed(I), ["extract_point_int64", "extract_point_uint64"]),
+	// EXTRACT_POINT_* / MERGE_POINT_* return a single quantile boundary (scalar).
+	extract_point_int64: fixed(I),
 	extract_point_float64: fixed(D),
+	merge_point_int64: fixed(I),
+	merge_point_float64: fixed(D),
 
 	// === Navigation + numbering (window) functions ===
 	...group(fixed(I), ["row_number", "rank", "dense_rank", "ntile"]),
@@ -438,8 +441,10 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(fixed(BIN), ["md5", "sha1", "sha256", "sha512"]),
 
 	// === Net functions (net.*; keyed by last segment) ===
-	...group(fixed(S), ["host", "ip_net_mask", "ip_to_string", "ipv4_from_int64", "public_suffix", "reg_domain"]),
-	...group(fixed(BIN), ["ip_from_string", "safe_ip_from_string", "ip_trunc"]),
+	// IP_NET_MASK and IPV4_FROM_INT64 return BYTES, not STRING —
+	// cloud.google.com/bigquery/docs/reference/standard-sql/net_functions.
+	...group(fixed(S), ["host", "ip_to_string", "public_suffix", "reg_domain"]),
+	...group(fixed(BIN), ["ip_from_string", "safe_ip_from_string", "ip_trunc", "ip_net_mask", "ipv4_from_int64"]),
 	ipv4_to_int64: fixed(I),
 
 	// === AEAD encryption functions (aead.* / keys.* / deterministic_*; keyed by last segment) ===
