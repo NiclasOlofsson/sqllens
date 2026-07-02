@@ -17,19 +17,11 @@ corpus (clause fragments and `<placeholder>` templates dropped by the scraper).
 
 Still open:
 
-1. **Docs-corpus grammar long tail** — the ~19% behind the ratchet baseline in
-   `tests/snowflake.corpus.test.ts` is now a flat tail (≤8 files per failure class):
-   scripting statement kinds (IF/FOR/LET/cursors), assorted statement options, DDL
-   details. Raise the baseline as fixes land.
-
-2. **`src/index.ts` export** — Snowflake (and T-SQL) parse/lower aren't exported yet;
-   packaging-phase decision.
-
-3. **Embedded UDF bodies** — JS/Python/Java/Scala in `CREATE FUNCTION … AS` parse as
+1. **Embedded UDF bodies** — JS/Python/Java/Scala in `CREATE FUNCTION … AS` parse as
    one opaque `$$…$$` token. Fine for the query layer; revisit only if a consumer
    needs structure inside the body.
 
-4. **Upstream contributions** — the fork fixes are upstreamable to antlr/grammars-v4
+2. **Upstream contributions** — the fork fixes are upstreamable to antlr/grammars-v4
    (window frames, MATCH_RECOGNIZE patterns, star modifiers, quoted-keyword strings,
    WITHIN GROUP, multi-row VALUES, ICEBERG, the `pattern` split…). Per project policy
    we contribute back when we improve a grammars-v4 grammar — needs Nicke's go (PRs

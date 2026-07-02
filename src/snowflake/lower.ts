@@ -23,8 +23,9 @@ import { freezeIR } from "../ir/freeze.js";
 // unchanged; only this file knows Snowflake's grammar. Core query path:
 // query_statement, select_statement, table_sources, search_condition, expr.
 // Constructs not yet mapped become explicit `other`/`unsupported`, never
-// silently dropped. QUALIFY and the SELECT * modifiers are flagged
-// `unsupported` pending shared IR fields (see docs/snowflake-backlog.md).
+// silently dropped. QUALIFY, the SELECT * modifiers (EXCLUDE/ILIKE/REPLACE/
+// RENAME), and CONNECT BY (LEVEL pseudo-column) are modelled onto shared IR
+// fields; sequence `<seq>.NEXTVAL` refs lower to typed function exprs.
 //
 // Navigation is by rule index against the generated parser. Nested
 // `subquery`/`select_statement` nodes belong to their own scope, so shallow

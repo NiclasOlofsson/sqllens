@@ -98,7 +98,7 @@ Leaker census (live run): `Braced_constructorContext` 73 + `Braced_new_construct
 
 ### Task 8: Databricks issue #4 — the six deferred constructs
 
-`tests/databricks-corpus-known-bad.ts:34-55`, 13 DEFERRED_GRAMMAR entries. One is scraper noise, not grammar: `pipeop/21.sql` carries appended result-table rows from a bad scrape — fix at the scraper/corpus level (clean the file or teach `tools/scrape-databricks-docs.mjs` the pattern; it moves to KNOWN_BAD-scraper-noise, not grammar work).
+`tests/databricks-corpus-known-bad.ts:34-55`, 14 DEFERRED_GRAMMAR entries (planning docs said 13 — off by one; 11+3=14). One is scraper noise, not grammar: `pipeop/21.sql` carries appended result-table rows from a bad scrape — fix at the scraper/corpus level (clean the file or teach `tools/scrape-databricks-docs.mjs` the pattern; it moves to KNOWN_BAD-scraper-noise, not grammar work).
 
 - [ ] Grammar work, each doc-cited to docs.databricks.com and TDD'd in `tests/databricks.test.ts`/`databricks.ir.test.ts`: (1) `WITH (CREDENTIAL <name>)` table-reference option; (2) `VALUES … tab(cols) |> AS name` — piping an inline aliased VALUES relation (the residual pipe gap in `pipeop/6.sql`); (3) `?::` try-cast (lowers as `try_cast`); (4) `expr : <TYPE>` type ascription (distinct from the variant colon-path — the grammar must disambiguate on the right-hand side being a type); (5) `name => value` named-argument invocation (IR: keep the arg expr; the name may ride a new optional field on the function-arg or be dropped-with-comment — smallest honest model, conservation-visible); (6) `COLLATION FOR (expr)`.
 - [ ] Regen; every Databricks gate green (oatly 1558 + docs + doc-coverage — the doc-coverage probes for these constructs flip from `noparse` where pinned).

@@ -20,6 +20,9 @@ editor tooling — an LSP and a SQL debugger — over incomplete, mid-edit text.
 | Snowflake | yes | yes | grammar forked from grammars-v4 `sql/snowflake` |
 | BigQuery (GoogleSQL) | yes | yes | grammar forked from `bytebase/parser` `googlesql/`; gated against ZetaSQL's `.test` corpus |
 | Redshift | yes | yes | grammar forked from Bytebase's Postgres-derived Redshift grammar (BSD-3) |
+| PostgreSQL | yes | yes | grammar forked from `bytebase/parser` `postgresql/` (BSD-3, PG18 keywords) |
+| DuckDB | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
+| Trino | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split; covers dbt-trino + dbt-athena |
 
 The semantic layer is dialect-agnostic: it operates on the shared IR and runs
 unchanged on every dialect. Only the parse and lower stages are dialect-specific.
@@ -44,14 +47,14 @@ parse → lower → resolveScopes → qualify → infer / lineage / symbols
 
 Pre-release, and not yet published to npm. The library is consumed as TypeScript
 (no build emit yet — packaging is a later step). The public API (`src/index.ts`)
-is uniform across all five dialects: `parse` and `analyze` take the dialect as a
+is uniform across all eight dialects: `parse` and `analyze` take the dialect as a
 parameter, and every per-dialect `parse*` / `lower` plus the shared passes stay
 exported as lower-level building blocks. The editor-facing surface — `tokenize`,
 `SqlDocument`, `complete`, `signatureAt` — lives on the same barrel.
 
 ## Usage
 
-`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift"`. The surface is
+`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`. The surface is
 **layered** — each tier is a terminal value you can stop at — and **composable**:
 every semantic method takes the closest upstream result (so passing it does no
 rework) or a raw string / IR via an idempotent lift helper.
@@ -180,6 +183,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | Text sync — open / change / close | ✅ (full-document) |
 | Incremental sync | ◻️ full-document only (fine at SQL file sizes) |
 | Save notifications (`didSave` / `willSave`) | ◻️ not yet |
+| Notebook document sync | ◻️ not yet |
 
 **Workspace features**
 
@@ -187,7 +191,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | --- | --- |
 | Workspace symbols | ◻️ needs a project / multi-file model |
 | Execute command | ◻️ not yet |
-| Configuration / watched-files | ◻️ not yet |
+| Configuration / watched-files | ◻️ not yet (protocol config; file-based `.sqllens.json` config exists) |
 | File operations (create / rename / delete) | ◻️ not yet |
 
 Legend: ✅ implemented · ◻️ not yet / deferred · — not applicable to SQL. The
@@ -202,7 +206,7 @@ after editing any `.g4`, generate the parsers (the lexer must generate before th
 parser, which the driver handles):
 
 ```bash
-npm run gen -- databricks   # | tsql | snowflake | bigquery | redshift
+npm run gen -- databricks   # | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino
 npm run typecheck
 npm test
 ```
