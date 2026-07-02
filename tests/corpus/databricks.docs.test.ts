@@ -14,18 +14,18 @@ import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 // The gate requires 100% of the in-scope query bucket; the dml/ddl buckets are reported but never
 // gate (object/platform DDL — Unity Catalog CATALOG/SHARE/RECIPIENT/EXTERNAL LOCATION/VOLUME/
 // MATERIALIZED VIEW/STREAMING TABLE, plus operational Delta maintenance — is cleared Out of scope).
-// Bucketing is the leading-keyword regex (sql-kind.ts): this corpus is one statement per file, so
-// the regex is accurate and avoids parsing the out-of-scope DDL bulk. Excluded from the query gate
-// (tests/databricks-corpus-known-bad.ts, asserted to still fail): documented-broken examples
-// (KNOWN_BAD) and valid SQL the Spark grammar doesn't accept yet (DEFERRED_GRAMMAR, tracked in
-// issue #4). Triaged file-by-file 2026-06-13.
+// Bucketing is FROM THE PATH (parser/positive/<kind>/…), placed by the organizer with the current
+// parser — the gate parses only the query bucket, never re-classifies. Documented-broken examples
+// (KNOWN_BAD) and valid SQL the Spark grammar doesn't accept yet (DEFERRED_GRAMMAR, issue #4) fail to
+// parse and sit under unparsed/; the gate asserts they stay there (self-policing). Triaged
+// file-by-file 2026-06-13 (tests/databricks-corpus-known-bad.ts).
 //
 // Single-pass by construction: runDocsRatchet parses each query-bucket file once. The Databricks
 // pipeline (lower → scope → symbols) is covered corpus-wide by databricks.oatly.test.ts, so this
 // gate stays parse-only.
 
 const CORPUS = corpusPath("databricks/docs");
-const QUERY_BASELINE = 3062; // unused in 100% mode; kept as a documented floor
+const QUERY_BASELINE = 3088; // documented floor for the query population
 
 describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL language manual", () => {
 	it(

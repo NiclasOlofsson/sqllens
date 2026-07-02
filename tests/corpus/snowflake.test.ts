@@ -22,15 +22,16 @@ import { KNOWN_BAD } from "../snowflake-corpus-known-bad.js";
 // 2. harness/local/snowflake-docs — every SQL example scraped from the 2,348
 //    docs.snowflake.com sql-reference pages (tools/scrape-snowflake-docs.mjs). It spans
 //    the full surface (queries, DDL, admin, scripting); the gate requires 100% of the in-scope
-//    query bucket to parse (object/platform DDL is cleared Out and only reported). The handful of
-//    examples that are invalid SQL in Snowflake's own docs are listed in KNOWN_BAD, excluded from
-//    the gate, and asserted to still fail (self-policing) — see tests/snowflake-corpus-known-bad.ts.
+//    query bucket to parse (object/platform DDL is cleared Out and only reported). Bucketing is FROM THE PATH
+//    (parser/positive/<kind>/…), placed by the organizer with the current parser. The invalid-SQL
+//    examples in Snowflake's own docs fail to parse and sit under unparsed/; KNOWN_BAD asserts they
+//    stay there (self-policing) — see tests/snowflake-corpus-known-bad.ts.
 
 const VENDOR_EXAMPLES = corpusPath("snowflake/grammars-v4");
 const DOCS_CORPUS = corpusPath("snowflake/docs");
 // The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
 // the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
-const QUERY_BASELINE = 2942;
+const QUERY_BASELINE = 2976; // documented floor for the query population (path-bucketed)
 
 // The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
 // in-scope, cleanly-parsed docs query bucket and ratchet the total (it may only fall; drive to 0 like

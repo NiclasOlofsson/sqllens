@@ -184,6 +184,19 @@ describe("statementCategories — per-statement kinds on all five dialects", () 
 		expect(redshiftKinds("ABORT")).toEqual(["tcl"]);
 	});
 
+	it("redshift counts only top-level stmts — a CREATE FUNCTION with a BEGIN ATOMIC body is ONE ddl", () => {
+		// The grammar nests `stmt` inside createfunc_opt_item (`BEGIN ATOMIC <stmt>; END`,
+		// RedshiftParser.g4). A deep descendant walk would count the inner SELECT as a second
+		// top-level statement (→ ["ddl","query"], which the bucket rule then mis-reads as a query).
+		// statementCategories must walk only the stmtmulti's direct stmt children — one entry, ddl.
+		expect(redshiftKinds("CREATE FUNCTION f() RETURNS int VOLATILE BEGIN ATOMIC SELECT 1; END")).toEqual(["ddl"]);
+	});
+
+	it("empty input yields no statements (no phantom entry)", () => {
+		expect(redshiftCategories(parseRedshift("").tree)).toEqual([]);
+		expect(databricksCategories(parseDatabricks("").tree)).toEqual([]);
+	});
+
 	it("the single-statement list agrees with the folded top-level category", () => {
 		// The list's sole entry equals lower().statement for a single statement, every dialect.
 		expect(redshiftCategories(parseRedshift("SELECT a FROM t").tree)).toEqual([

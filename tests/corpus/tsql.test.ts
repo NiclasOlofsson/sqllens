@@ -1,15 +1,14 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { corpusPath } from "../helpers/corpus.js";
-import type { ParserRuleContext } from "antlr4ng";
 import { beforeAll, describe, expect, it } from "vitest";
-import { lower, statementCategories } from "../../src/tsql/lower.js";
+import { lower } from "../../src/tsql/lower.js";
 import { parseTSql } from "../../src/tsql/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { walkIr } from "../helpers/ir-walk.js";
-import { KNOWN_BAD, OUT_OF_SCOPE } from "../tsql-corpus-known-bad.js";
+import { KNOWN_BAD } from "../tsql-corpus-known-bad.js";
 
 // grammars-v4 ships its own T-SQL example corpus. These are full T-SQL *scripts* (mostly DDL/admin,
 // GO-separated batches), so they exercise the GRAMMAR via the full-file entry rule `tsql_file` — not
@@ -25,15 +24,13 @@ const EXAMPLES = corpusPath("tsql/grammars-v4");
 const DOCS_CORPUS = corpusPath("tsql/docs");
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
-// docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is
-// parse-derived: every file is parsed and bucketed by its statement kinds (statementCategories;
-// first substantive statement decides), with the leading-keyword regex only as the no-parse
-// fallback. The gate requires 100% of the in-scope query bucket; documented-broken examples are
-// excluded via KNOWN_BAD (asserted to still fail) and mixed scripts whose payload is out-of-scope
-// DDL/admin are reclassified via OUT_OF_SCOPE — both lists verified file-by-file against the
-// source markdown (2026-06-13). dml/ddl buckets are reported, never gated (object/platform DDL is
-// cleared Out of scope). The numeric baseline is unused in 100% mode but kept as a documented floor.
-const QUERY_BASELINE = 854;
+// docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is FROM THE PATH
+// (parser/positive/<kind>/…), placed by the organizer with the current parser's per-statement kinds
+// (first substantive statement decides) — the gate no longer parses everything to classify. The gate
+// requires 100% of the in-scope query bucket; documented-broken examples fail to parse and sit under
+// unparsed/ (KNOWN_BAD asserts they stay there). dml/ddl are reported, never gated (object/platform
+// DDL is cleared Out of scope). The numeric baseline is a documented floor for the query population.
+const QUERY_BASELINE = 1555;
 
 // The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
 // in-scope, cleanly-parsed docs query bucket and ratchet the total (it may only fall; drive to 0 like
@@ -45,18 +42,6 @@ const OTHER_BASELINE = 26; // measured 2026-07-01 over the parsed T-SQL docs que
 /** Production parse (tsql_file, two-stage SLL→LL); returns the syntax-error count. */
 function parseErrors(sql: string): number {
 	return parseTSql(sql).errors;
-}
-
-/** One parse per file: its error count plus, when clean, the per-statement categories for
- *  parse-derived bucketing AND the tree (for the onCleanQuery pipeline hook). Returning all from a
- *  single parse avoids re-parsing every file. */
-function parseAndClassify(sql: string): {
-	errors: number;
-	kinds: ReturnType<typeof statementCategories> | undefined;
-	tree: ParserRuleContext;
-} {
-	const r = parseTSql(sql);
-	return { errors: r.errors, kinds: r.errors === 0 ? statementCategories(r.tree) : undefined, tree: r.tree };
 }
 
 describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example corpus", () => {
@@ -119,7 +104,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs corpus", () => {
 	it(
-		"parses 100% of in-scope query examples (parse-derived buckets; KNOWN_BAD excluded); `other` ratchet",
+		"parses 100% of in-scope query examples (path-bucketed; KNOWN_BAD under unparsed/); `other` ratchet",
 		{ timeout: 600000 },
 		() => {
 			// One pass: the docs ratchet parses each file once, then hands the clean query-bucket tree to
@@ -131,8 +116,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 			let scoped = 0;
 			runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
-				outOfScope: OUT_OF_SCOPE,
-				classify: parseAndClassify,
+				parse: (sql) => {
+					const r = parseTSql(sql);
+					return { errors: r.errors, tree: r.tree };
+				},
 				onCleanQuery: (rel, tree) => {
 					try {
 						const ir = lower(tree);

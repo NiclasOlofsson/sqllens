@@ -2,63 +2,40 @@ import { readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { expect } from "vitest";
 import type { ParserRuleContext } from "antlr4ng";
-import type { StatementCategory } from "../../src/ir/statement.js";
-import { classifySql, type SqlKind } from "./sql-kind.js";
 
-// Shared runner for the per-dialect docs-corpus gates. A docs corpus is mostly object/
-// platform DDL that is cleared OUT of scope; gating on the blended pass rate would measure
-// us on work we deliberately don't do. So the gate applies to the in-scope query bucket
-// (SELECT/WITH/VALUES/…) and only REPORTS the dml/ddl buckets — they never fail the gate.
+// Shared runner for the per-dialect docs-corpus gates. A docs corpus is mostly object/platform DDL
+// that is cleared OUT of scope; gating on the blended pass rate would measure us on work we
+// deliberately don't do. So the gate applies to the in-scope query bucket (SELECT/WITH/VALUES/…) and
+// only REPORTS the dml/ddl/unparsed buckets — they never fail the gate.
 //
-// Bucketing: when the dialect provides parse-based statement detection (opts.classify — T-SQL
-// does, via statementCategories), EVERY file is parsed ONCE and a parseable file is bucketed
-// from its parsed statement kinds; the leading-keyword regex (sql-kind.ts) is only the fallback
-// for files that do not parse. Dialects without opts.classify keep the regex bucketing and skip
-// parsing out-of-scope files (a speed optimization — parsing ~2,800 failing DDL files just to
-// print an ungated number was the bulk of the corpus runtime).
-
-export interface DocsRatchetResult {
-	query: { pass: number; total: number };
-	dml: { pass: number; total: number };
-	ddl: { pass: number; total: number };
-}
+// BUCKETING IS FROM THE PATH. The corpus is laid out by the organizer (tools/organize-corpus.test.ts)
+// as `parser/positive/<kind>/<slug…>`, where <kind> is `bucketOfKinds(statementCategories)` over the
+// CURRENT parser (tests/helpers/statement-bucket.ts) — the same rule this gate would apply. So the
+// gate trusts the path: it never re-classifies at test time (no leading-keyword regex, no
+// parse-everything). It parses ONLY the query bucket — the deliverable — which is why the gate is
+// fast even on a corpus of thousands of DDL files. A query/ file that fails to parse is a regression
+// (or a stale reclassification), never an exclusion — re-run the organizer, then investigate.
 
 export interface DocsRatchetOptions {
 	/**
-	 * Known-bad query examples — paths relative to `dir` (forward slashes) mapped to the reason
-	 * they are not valid SQL (docs typos/truncations). Excluded from the gated query bucket and
-	 * asserted to STILL fail; one that starts parsing fails the gate as stale (remove it then).
-	 * When provided, the query gate tightens from "ratchet" to "100% of the remaining bucket".
+	 * Documented-broken query examples (docs typos/truncations) and valid SQL the grammar doesn't
+	 * accept yet (issue-tracked gaps) — slugs relative to the corpus page root, mapped to the reason.
+	 * By construction these fail to parse, so the organizer files them under `unparsed/`. The gate
+	 * asserts each slug STILL sits under `unparsed/`: if a rebuild moved one out (the docs got fixed or
+	 * the grammar grew), the file now parses and left `unparsed/`, the assertion fails, and the entry
+	 * is removed. The query gate needs no exclusion list — known-bad files are not in `query/`.
 	 */
 	knownBad?: Record<string, string>;
 	/**
-	 * Valid-SQL files whose payload is out-of-scope DDL/admin although they lead with a query
-	 * keyword (mixed setup-SELECT + DDL scripts). Forced into the ddl bucket; no still-fails
-	 * assertion — whether they parse is irrelevant to the query gate.
-	 */
-	outOfScope?: Record<string, string>;
-	/**
-	 * Parse-based statement-kind detection: parse the file ONCE and return both its syntax-error
-	 * count and (when clean) its per-statement categories. When set, bucketing is parse-derived
-	 * (the regex is only the no-parse fallback) and the dml/ddl buckets get real pass rates. One
-	 * call does the whole job — the gate does not re-parse for the error count, so the slow LL
-	 * stage runs at most once per file. May also return the parse `tree`, which is handed to
-	 * `onCleanQuery` for clean, gated query-bucket files (so a classify-mode gate feeds the same
-	 * single parse into the pipeline hook without re-parsing).
-	 */
-	classify?: (sql: string) => { errors: number; kinds: StatementCategory[] | undefined; tree?: ParserRuleContext };
-	/**
-	 * Non-classify parse for the query bucket: return the syntax-error count AND the parse tree so
-	 * the tree can feed `onCleanQuery` without a second parse. When provided it supersedes
-	 * `parseErrors` (which only yields a count). Not used in classify mode — `classify` already
-	 * carries the tree there. Backward-compatible: a gate that passes neither behaves as today.
+	 * Query-bucket parse: return the syntax-error count AND the parse tree so the tree can feed
+	 * `onCleanQuery` without a second parse. When omitted, `parseErrors` supplies the count (and
+	 * `onCleanQuery` cannot fire, since there is no tree).
 	 */
 	parse?: (sql: string) => { errors: number; tree: ParserRuleContext };
 	/**
-	 * Pipeline hook: fires ONCE per clean, gated query-bucket file (not knownBad, not outOfScope,
-	 * 0 syntax errors) with the already-produced parse tree. Lets a gate run lower → walkIr →
-	 * resolveScopes → deriveSymbols over the same single parse the ratchet made. Never fires for
-	 * dml/ddl, failing, known-bad, or out-of-scope files.
+	 * Pipeline hook: fires ONCE per clean query-bucket file with the already-produced parse tree. Lets
+	 * a gate run lower → walkIr → resolveScopes → deriveSymbols over the same single parse the ratchet
+	 * made. Never fires for dml/ddl/unparsed or failing files.
 	 */
 	onCleanQuery?: (rel: string, tree: ParserRuleContext) => void;
 }
@@ -71,25 +48,25 @@ function* sqlFiles(dir: string): Generator<string> {
 	}
 }
 
-/** Bucket a parsed file by its statement kinds: the first substantive statement decides —
- *  utility/tcl/other are setup/preamble (USE, SET, DECLARE, BEGIN TRAN, …); query/dml win as
- *  themselves; ddl/dcl and BEGIN…END compounds land in the ddl (everything-else) bucket. A file
- *  with no substantive statement (pure setup) is ddl. */
-function bucketOfKinds(kinds: StatementCategory[]): SqlKind {
-	for (const k of kinds) {
-		if (k === "query") return "query";
-		if (k === "dml") return "dml";
-		if (k === "ddl" || k === "dcl" || k === "compound") return "ddl";
-	}
-	return "ddl";
+type Bucket = "query" | "dml" | "ddl" | "unparsed";
+
+/** The bucket a file was placed in, read off its rel path `…/<validity>/<kind>/<slug…>`. The organizer
+ *  emits only query/dml/ddl/unparsed, but map the legacy fine-grained kinds too (dcl/tcl/utility/
+ *  compound/other → ddl) so a not-yet-reclassified tree still buckets sensibly. */
+function pathBucket(rel: string): Bucket {
+	const seg = rel.split("/");
+	const vi = seg.findIndex((s) => s === "positive" || s === "negative");
+	const kind = vi >= 0 && vi + 1 < seg.length ? seg[vi + 1] : seg[0];
+	if (kind === "query") return "query";
+	if (kind === "dml") return "dml";
+	if (kind === "unparsed") return "unparsed";
+	return "ddl"; // ddl | dcl | tcl | utility | compound | other
 }
 
 /**
- * Parse every example, bucket it by statement kind, and print the per-bucket breakdown.
- * `parseErrors` returns the syntax-error count for one example (0 = clean); a throw counts as
- * a failure. Only the query bucket gates: by default it ratchets (never drops below
- * `queryBaseline`). Pass `opts.knownBad` to exclude documented-broken examples and require the
- * remaining query bucket to parse at 100%.
+ * Parse the query-bucket examples (100% must parse), and report the dml/ddl/unparsed side buckets.
+ * `parseErrors` returns the syntax-error count for one query example (0 = clean); a throw counts as a
+ * failure. `opts.parse` supersedes it when the tree is needed for `onCleanQuery`.
  */
 export function runDocsRatchet(
 	dir: string,
@@ -98,117 +75,83 @@ export function runDocsRatchet(
 	opts: DocsRatchetOptions = {},
 ): void {
 	const knownBad = opts.knownBad ?? {};
-	const outOfScope = opts.outOfScope ?? {};
-	// KNOWN_BAD / outOfScope keys are provenance slugs (e.g. "account-usage/5.sql"). After the corpus
-	// reorg the gated file lives at "<stage>/<validity>/<category>/<slug>", so match by slug suffix —
-	// the key as-is, or the tail after a "/". Slugs are full page-paths, so suffix collisions don't occur.
-	const matchKey = (rel: string, map: Record<string, string>): boolean =>
-		rel in map || Object.keys(map).some((k) => rel.endsWith("/" + k));
-	const r: DocsRatchetResult = {
-		query: { pass: 0, total: 0 },
-		dml: { pass: 0, total: 0 },
-		ddl: { pass: 0, total: 0 },
-	};
-	const queryFails: string[] = []; // in-scope query files that failed and are NOT known-bad
-	const staleKnownBad: string[] = []; // listed as known-bad but now parse cleanly
-	let knownBadSeen = 0;
+	// KNOWN_BAD keys are provenance slugs (e.g. "account-usage/5.sql"); the file lives at
+	// "…/unparsed/<slug>", so match by slug suffix. Slugs are full page-paths, so no suffix collisions.
+	const matchKey = (rel: string, k: string): boolean => rel === k || rel.endsWith("/" + k);
+
+	const query = { pass: 0, total: 0 };
+	let dml = 0;
+	let ddl = 0;
+	const unparsedRels: string[] = [];
+	const queryFails: string[] = [];
 
 	for (const f of sqlFiles(dir)) {
-		const sql = readFileSync(f, "utf8");
 		const rel = f
 			.slice(dir.length + 1)
 			.split("\\")
 			.join("/");
-
-		let errs: number;
-		let kind: SqlKind;
-		let tree: ParserRuleContext | undefined;
-		if (opts.classify) {
-			// Detection mode: ONE parse per file yields both the error count and the kinds; bucket
-			// from the parse, regex only as the no-parse fallback (a failed parse has no usable tree).
-			let kinds: StatementCategory[] | undefined;
-			try {
-				const res = opts.classify(sql);
-				errs = res.errors;
-				kinds = res.kinds;
-				tree = res.tree;
-			} catch {
-				errs = -1;
-				kinds = undefined;
-			}
-			kind = kinds ? bucketOfKinds(kinds) : classifySql(sql);
-		} else {
-			// Regex mode: only the query bucket is parsed; dml/ddl are counted, not parsed.
-			kind = classifySql(sql);
-			if (kind !== "query") {
-				r[kind].total++;
-				continue;
-			}
-			errs = 1;
-			try {
-				if (opts.parse) {
-					const res = opts.parse(sql);
-					errs = res.errors;
-					tree = res.tree;
-				} else {
-					errs = parseErrors(sql);
-				}
-			} catch {
-				errs = -1;
-			}
-		}
-		const clean = errs === 0;
-
-		if (matchKey(rel, outOfScope)) {
-			// Out-of-scope payload (DDL/admin) behind a query-leading script — never gated.
-			r.ddl.total++;
-			if (clean) r.ddl.pass++;
+		const bucket = pathBucket(rel);
+		if (bucket === "dml") {
+			dml++;
 			continue;
 		}
-		if (matchKey(rel, knownBad)) {
-			knownBadSeen++;
-			if (clean) staleKnownBad.push(rel);
-			continue; // excluded from the gated query bucket
+		if (bucket === "ddl") {
+			ddl++;
+			continue;
 		}
-
-		r[kind].total++;
-		if (clean) r[kind].pass++;
-		else if (kind === "query") queryFails.push(rel);
-
-		// Pipeline hook: only clean, gated query-bucket files (not knownBad/outOfScope, handled above).
-		if (clean && kind === "query" && tree && opts.onCleanQuery) opts.onCleanQuery(rel, tree);
+		if (bucket === "unparsed") {
+			unparsedRels.push(rel);
+			continue;
+		}
+		// query bucket — the gated, in-scope read path. Parse it (100% must be clean).
+		query.total++;
+		const sql = readFileSync(f, "utf8");
+		let errs = 1;
+		let tree: ParserRuleContext | undefined;
+		try {
+			if (opts.parse) {
+				const res = opts.parse(sql);
+				errs = res.errors;
+				tree = res.tree;
+			} else {
+				errs = parseErrors(sql);
+			}
+		} catch {
+			errs = -1;
+		}
+		if (errs === 0) {
+			query.pass++;
+			if (tree && opts.onCleanQuery) opts.onCleanQuery(rel, tree);
+		} else {
+			queryFails.push(rel);
+		}
 	}
 
-	const pct = (b: { pass: number; total: number }) => (b.total ? ((100 * b.pass) / b.total).toFixed(1) : "—");
-	const excluded = knownBadSeen ? `, ${knownBadSeen} known-bad excluded` : "";
-	const offScope = Object.keys(outOfScope).length ? `, ${Object.keys(outOfScope).length} out-of-scope -> ddl` : "";
-	const side = (b: { pass: number; total: number }, name: string) =>
-		opts.classify
-			? `\n  ${name}   ${b.pass}/${b.total} (${pct(b)}%)  [out of scope, reported only]`
-			: `\n  ${name}   ${b.total} files  [out of scope, not parsed]`;
+	const pct = query.total ? ((100 * query.pass) / query.total).toFixed(1) : "—";
 	console.log(
-		`\n  query ${r.query.pass}/${r.query.total} (${pct(r.query)}%)  [gated${excluded}${offScope}]` +
-			side(r.dml, "dml") +
-			side(r.ddl, "ddl"),
+		`\n  query ${query.pass}/${query.total} (${pct}%)  [gated, floor ${queryBaseline}]` +
+			`\n  dml   ${dml} files  [out of scope, reported]` +
+			`\n  ddl   ${ddl} files  [out of scope, reported]` +
+			`\n  unparsed ${unparsedRels.length} files  [known-fail as of the last reclassification, reported]`,
 	);
 
-	// Self-policing: a known-bad file that now parses means the docs were fixed (or our grammar
-	// grew to accept it) — drop it from the list rather than silently keeping a stale exclusion.
+	// Vacuity guard: the query bucket must not be empty (a reclassification that emptied query/ would
+	// otherwise pass a 0/0 gate silently).
+	expect(query.total, "query bucket is empty — did reclassification misfile everything?").toBeGreaterThan(0);
+
+	// Inverted self-policing: each known-bad / deferred slug must STILL sit under unparsed/. If the
+	// docs were fixed or the grammar grew, the file now parses, the organizer moved it into query/,
+	// and it is no longer here — drop it from the list (and close the issue item).
+	const escaped = Object.keys(knownBad).filter((k) => !unparsedRels.some((rel) => matchKey(rel, k)));
 	expect(
-		staleKnownBad,
-		`known-bad examples now parse cleanly — remove them from KNOWN_BAD:\n${staleKnownBad.join("\n")}`,
+		escaped,
+		`KNOWN_BAD/DEFERRED entries no longer sit under unparsed/ (docs fixed or grammar grew — re-run the organizer, then remove them):\n${escaped.join("\n")}`,
 	).toEqual([]);
 
-	if (opts.knownBad) {
-		// 100% gate: every in-scope query example that is not documented-broken must parse.
-		expect(
-			queryFails,
-			`in-scope query examples failed to parse (not in KNOWN_BAD):\n${queryFails.join("\n")}`,
-		).toEqual([]);
-	} else {
-		expect(
-			r.query.pass,
-			`in-scope query pass count dropped: ${r.query.pass}/${r.query.total} (baseline ${queryBaseline})`,
-		).toBeGreaterThanOrEqual(queryBaseline);
-	}
+	// 100% gate: every query-bucket example must parse. The bucket is populated by the organizer from
+	// a clean parse, so a failure here is a regression or a stale reclassification — never an exclusion.
+	expect(
+		queryFails,
+		`in-scope query examples failed to parse (query/ is reclassifier-populated — investigate, don't exclude):\n${queryFails.join("\n")}`,
+	).toEqual([]);
 }

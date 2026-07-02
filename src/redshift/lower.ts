@@ -81,7 +81,7 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
-	const stmts = collectOfRule(tree, P.RULE_stmt);
+	const stmts = topLevelStmts(tree);
 	const statement = statementCategory(stmts);
 	if (stmts.length !== 1) {
 		const q = nonQuery(tree, stmts.length === 0 ? "empty" : "multi-statement");
@@ -109,7 +109,18 @@ function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
  *  file-level view behind statementCategory (which folds >1 into "compound"). Parity with the other
  *  dialects; feeds the corpus reclassifier. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return collectOfRule(tree, P.RULE_stmt).map(redshiftCategory);
+	return topLevelStmts(tree).map(redshiftCategory);
+}
+
+/** The top-level `stmt` nodes of a parsed file — root → stmtblock → stmtmulti's DIRECT `stmt`
+ *  children. A deep `collectOfRule(tree, RULE_stmt)` would also pick up a `stmt` nested inside
+ *  `createfunc_opt_item` (`CREATE FUNCTION … BEGIN ATOMIC <stmt>; END`, RedshiftParser.g4), so a
+ *  single CREATE FUNCTION would count as two statements. Walk only the top level, like the other
+ *  dialects. */
+function topLevelStmts(tree: ParserRuleContext): ParserRuleContext[] {
+	const stmtblock = directChildrenOfRule(tree, P.RULE_stmtblock)[0] ?? tree;
+	const stmtmulti = directChildrenOfRule(stmtblock, P.RULE_stmtmulti)[0] ?? stmtblock;
+	return directChildrenOfRule(stmtmulti, P.RULE_stmt);
 }
 
 // Structural statement classification over the Postgres-derived `stmt` alternatives (grammars/

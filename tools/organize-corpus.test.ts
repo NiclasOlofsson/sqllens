@@ -1,6 +1,5 @@
-// ONE-TIME corpus reorganization. Runs HERE (where the parsers live), moves files in the corpus
-// repo (resolved via corpusPath / SQL_CORPUS_DIR). Classifies every .sql by parse → lower → the
-// real statement category, and lays the corpus out as:
+// MAINTAINED corpus reclassifier (not a one-shot). Runs HERE (where the parsers live) and moves
+// files in the corpus repo (resolved via corpusPath / SQL_CORPUS_DIR). The corpus is laid out as:
 //
 //   <dialect>/<source>/<stage>/<validity>/<category>/<slug…>/<file>.sql
 //
@@ -8,44 +7,54 @@
 // source    where it came from, a plain label (oatly, docs, zetasql, grammars-v4, bytebase)
 // stage     parser (syntax) | analyzer (resolution/types)
 // validity  positive (must parse) | negative (must be rejected)
-// category  query|dml|ddl|dcl|tcl|utility|compound|other|unparsed  (parse-derived; unparsed = didn't parse)
+// category  query | dml | ddl | unparsed  (bucketOfKinds over the CURRENT parse; unparsed = didn't parse)
 //
-// Guarded behind ORGANIZE=1 so `npm test` never triggers it. Run explicitly:
+// The <category> segment is the SAME bucket the docs-corpus gates read off the path
+// (tests/helpers/statement-bucket.ts `bucketOfKinds`), so the gates can trust the layout instead of
+// re-classifying at test time. Re-run this whenever the parsers change (a file the grammar learned
+// to parse leaves unparsed/; a statement whose bucket changed moves) — it re-buckets in place using
+// the current parsers, moving only what changed. The corpus repo is git-backed, so moves are
+// recoverable.
+//
+// Guarded behind ORGANIZE=1 so `npm test` never triggers it. Run explicitly (ONLY = a <dialect>/<source>
+// root, exactly as it sits in the corpus repo):
 //   ORGANIZE=1 npx vitest run tools/organize-corpus.test.ts
-//   ORGANIZE=1 ONLY="vendor/grammars-v4/sql/snowflake/examples" npx vitest run tools/organize-corpus.test.ts
-// It's a one-shot migration; the corpus repo is git-backed, so moves are recoverable.
+//   ORGANIZE=1 ONLY="databricks/docs" npx vitest run tools/organize-corpus.test.ts
 
-import { readdirSync, mkdirSync, renameSync, existsSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join, relative, sep } from "node:path";
+import { readdirSync, mkdirSync, renameSync, existsSync, rmSync, writeFileSync, readFileSync } from "node:fs";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { describe, it } from "vitest";
 import { corpusPath } from "../tests/helpers/corpus.js";
+import { bucketOfKinds } from "../tests/helpers/statement-bucket.js";
+import type { StatementCategory } from "../src/ir/statement.js";
 
 import { parseDatabricks } from "../src/databricks/parse.js";
-import { lower as lowerDatabricks } from "../src/databricks/lower.js";
+import { statementCategories as databricksCategories } from "../src/databricks/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
-import { lower as lowerTSql } from "../src/tsql/lower.js";
+import { statementCategories as tsqlCategories } from "../src/tsql/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
-import { lower as lowerSnowflake } from "../src/snowflake/lower.js";
+import { statementCategories as snowflakeCategories } from "../src/snowflake/lower.js";
 import { parseBigQuery } from "../src/bigquery/parse.js";
-import { lower as lowerBigQuery } from "../src/bigquery/lower.js";
+import { statementCategories as bigQueryCategories } from "../src/bigquery/lower.js";
 import { parseRedshift } from "../src/redshift/parse.js";
-import { lower as lowerRedshift } from "../src/redshift/lower.js";
+import { statementCategories as redshiftCategories } from "../src/redshift/lower.js";
 
 type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
 
 const PARSERS: Record<
 	Dialect,
-	{ parse: (s: string) => { tree: any; errors: number }; lower: (t: any) => { statement?: string } }
+	{ parse: (s: string) => { tree: any; errors: number }; categories: (t: any) => StatementCategory[] }
 > = {
-	databricks: { parse: parseDatabricks, lower: lowerDatabricks },
-	tsql: { parse: parseTSql, lower: lowerTSql },
-	snowflake: { parse: parseSnowflake, lower: lowerSnowflake },
-	bigquery: { parse: parseBigQuery, lower: lowerBigQuery },
-	redshift: { parse: parseRedshift, lower: lowerRedshift },
+	databricks: { parse: parseDatabricks, categories: databricksCategories },
+	tsql: { parse: parseTSql, categories: tsqlCategories },
+	snowflake: { parse: parseSnowflake, categories: snowflakeCategories },
+	bigquery: { parse: parseBigQuery, categories: bigQueryCategories },
+	redshift: { parse: parseRedshift, categories: redshiftCategories },
 };
 
-/** Parse-derived category; "unparsed" when the dialect's parser rejects it. */
-function classify(dialect: Dialect, sql: string): string {
+/** The gate's bucket over the current parse: query | dml | ddl, or "unparsed" when the parser
+ *  rejects it (syntax errors or a throw). This is exactly the rule the docs gates apply to the path. */
+function reclassify(dialect: Dialect, sql: string): string {
 	const p = PARSERS[dialect];
 	let r: { tree: any; errors: number };
 	try {
@@ -55,86 +64,29 @@ function classify(dialect: Dialect, sql: string): string {
 	}
 	if (r.errors > 0) return "unparsed";
 	try {
-		return p.lower(r.tree).statement ?? "other";
+		return bucketOfKinds(p.categories(r.tree));
 	} catch {
 		return "unparsed";
 	}
 }
 
 interface Corpus {
-	srcRel: string; // path of the corpus root inside the corpus repo
+	/** The corpus root as it sits in the corpus repo, `<dialect>/<source>`. */
+	rootRel: string;
 	dialect: Dialect;
-	source: string;
-	stage: "parser" | "analyzer";
-	/** "positive" fixed, or "byDir" = first path segment (positive/negative) under srcRel. */
-	validity: "positive" | "byDir";
 }
 
+// Every organized corpus root. The reclassifier re-buckets each in place under the current parsers.
 const CORPORA: Corpus[] = [
-	{
-		srcRel: "harness/local/databricks",
-		dialect: "databricks",
-		source: "oatly",
-		stage: "parser",
-		validity: "positive",
-	},
-	{
-		srcRel: "harness/local/databricks-docs",
-		dialect: "databricks",
-		source: "docs",
-		stage: "parser",
-		validity: "positive",
-	},
-	{
-		srcRel: "harness/local/snowflake-docs",
-		dialect: "snowflake",
-		source: "docs",
-		stage: "parser",
-		validity: "positive",
-	},
-	{ srcRel: "harness/local/tsql-docs", dialect: "tsql", source: "docs", stage: "parser", validity: "positive" },
-	{
-		srcRel: "harness/local/redshift-docs",
-		dialect: "redshift",
-		source: "docs",
-		stage: "parser",
-		validity: "positive",
-	},
-	{
-		srcRel: "harness/local/bigquery-zetasql",
-		dialect: "bigquery",
-		source: "zetasql",
-		stage: "analyzer",
-		validity: "byDir",
-	},
-	{
-		srcRel: "harness/local/bigquery-zetasql-parser",
-		dialect: "bigquery",
-		source: "zetasql",
-		stage: "parser",
-		validity: "byDir",
-	},
-	{
-		srcRel: "vendor/grammars-v4/sql/tsql/examples",
-		dialect: "tsql",
-		source: "grammars-v4",
-		stage: "parser",
-		validity: "positive",
-	},
-	{
-		srcRel: "vendor/grammars-v4/sql/snowflake/examples",
-		dialect: "snowflake",
-		source: "grammars-v4",
-		stage: "parser",
-		validity: "positive",
-	},
-	{
-		srcRel: "vendor/bytebase-parser/redshift/examples",
-		dialect: "redshift",
-		source: "bytebase",
-		stage: "parser",
-		validity: "positive",
-	},
+	{ rootRel: "databricks/oatly", dialect: "databricks" },
+	{ rootRel: "databricks/docs", dialect: "databricks" },
+	{ rootRel: "snowflake/docs", dialect: "snowflake" },
+	{ rootRel: "snowflake/grammars-v4", dialect: "snowflake" },
+	{ rootRel: "tsql/docs", dialect: "tsql" },
+	{ rootRel: "tsql/grammars-v4", dialect: "tsql" },
+	{ rootRel: "redshift/docs", dialect: "redshift" },
+	{ rootRel: "redshift/bytebase", dialect: "redshift" },
+	{ rootRel: "bigquery/zetasql", dialect: "bigquery" },
 ];
 
 function sqlFiles(root: string): string[] {
@@ -156,59 +108,61 @@ function pruneEmpty(root: string): void {
 	}
 }
 
-describe.skipIf(!process.env.ORGANIZE)("organize-corpus (one-time migration)", () => {
-	it("reorganizes the corpus into <dialect>/<source>/<stage>/<validity>/<category>/…", { timeout: 1_800_000 }, () => {
-		const only = process.env.ONLY;
-		const counts = new Map<string, number>();
-		let moved = 0;
-		let skipped = 0;
+describe.skipIf(!process.env.ORGANIZE)("organize-corpus (maintained reclassifier)", () => {
+	it(
+		"re-buckets <dialect>/<source>/<stage>/<validity>/<category>/… under the current parsers",
+		{ timeout: 1_800_000 },
+		() => {
+			const only = process.env.ONLY;
+			const counts = new Map<string, number>();
+			let moved = 0;
+			let inPlace = 0;
 
-		for (const c of CORPORA) {
-			if (only && c.srcRel !== only) continue;
-			const root = corpusPath(c.srcRel);
-			if (!existsSync(root)) {
-				console.log(`(absent) ${c.srcRel}`);
-				continue;
-			}
-			for (const file of sqlFiles(root)) {
-				const rel = relative(root, file).split(sep).join("/"); // e.g. positive/agg_4.sql or account-usage/1.sql
-				let validity: string;
-				let sub: string;
-				if (c.validity === "byDir") {
-					const i = rel.indexOf("/");
-					validity = rel.slice(0, i); // positive | negative
-					sub = rel.slice(i + 1);
-				} else {
-					validity = "positive";
-					sub = rel;
-				}
-				const sql = readFile(file);
-				const category =
-					validity === "negative" && c.stage === "parser" ? "unparsed" : classify(c.dialect, sql);
-				const targetRel = [c.dialect, c.source, c.stage, validity, category, sub].join("/");
-				const target = corpusPath(targetRel);
-				if (existsSync(target)) {
-					skipped++;
+			for (const c of CORPORA) {
+				if (only && c.rootRel !== only) continue;
+				const root = corpusPath(c.rootRel);
+				if (!existsSync(root)) {
+					console.log(`(absent) ${c.rootRel}`);
 					continue;
 				}
-				mkdirSync(dirname(target), { recursive: true });
-				renameSync(file, target);
-				moved++;
-				const key = [c.dialect, c.source, c.stage, validity, category].join("/");
-				counts.set(key, (counts.get(key) ?? 0) + 1);
+				for (const file of sqlFiles(root)) {
+					// rel = <stage>/<validity>/<oldCategory>/<slug…> — split off the fixed prefix, keep the slug.
+					const rel = relative(root, file).split(sep).join("/");
+					const parts = rel.split("/");
+					if (parts.length < 4) {
+						console.log(`(skip, unexpected layout) ${c.rootRel}/${rel}`);
+						continue;
+					}
+					const [stage, validity, , ...slugParts] = parts;
+					const slug = slugParts.join("/");
+					const sql = readFileSync(file, "utf8");
+					// Parser negatives must be rejected — they stay in unparsed/, never re-bucketed.
+					const category =
+						validity === "negative" && stage === "parser" ? "unparsed" : reclassify(c.dialect, sql);
+					const targetRel = [c.rootRel, stage, validity, category, slug].join("/");
+					const target = corpusPath(targetRel);
+					if (resolve(target) === resolve(file)) {
+						inPlace++;
+						continue; // already in the right bucket
+					}
+					if (existsSync(target)) {
+						console.log(`(skip, target exists) ${targetRel}`);
+						continue;
+					}
+					mkdirSync(dirname(target), { recursive: true });
+					renameSync(file, target);
+					moved++;
+					const key = [c.rootRel, stage, validity, category].join("/");
+					counts.set(key, (counts.get(key) ?? 0) + 1);
+				}
+				pruneEmpty(root);
 			}
-			pruneEmpty(root);
-		}
 
-		const lines = [`moved ${moved} files (${skipped} skipped — target existed)`, ""];
-		for (const key of [...counts.keys()].sort()) lines.push(`  ${String(counts.get(key)).padStart(6)}  ${key}`);
-		const summary = lines.join("\n");
-		console.log("\n" + summary);
-		writeFileSync(corpusPath("_organize-summary.txt"), summary + "\n");
-	});
+			const lines = [`moved ${moved} files (${inPlace} already in place)`, ""];
+			for (const key of [...counts.keys()].sort()) lines.push(`  ${String(counts.get(key)).padStart(6)}  ${key}`);
+			const summary = lines.join("\n");
+			console.log("\n" + summary);
+			writeFileSync(corpusPath("_organize-summary.txt"), summary + "\n");
+		},
+	);
 });
-
-import { readFileSync } from "node:fs";
-function readFile(p: string): string {
-	return readFileSync(p, "utf8");
-}
