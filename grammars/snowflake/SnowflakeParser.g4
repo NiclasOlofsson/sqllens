@@ -4962,8 +4962,12 @@ select_list_no_top
     : all_distinct? select_list
     ;
 
+// top_clause is REQUIRED here: with it optional, select_list_top subsumed select_list_no_top,
+// making select_statement's two alternatives ambiguous on every TOP-less SELECT (SLL-surgery
+// wave, 2026-07-03). A TOP-less SELECT still binds only to select_clause (alt 1), a TOP SELECT
+// only to select_top_clause (alt 2), and TOP+LIMIT stays rejected (alt 2 has no limit_clause).
 select_list_top
-    : all_distinct? top_clause? select_list
+    : all_distinct? top_clause select_list
     ;
 
 select_list

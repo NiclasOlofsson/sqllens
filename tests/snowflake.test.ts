@@ -825,6 +825,23 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.limit?.top).toMatchObject({ kind: "literal", text: "3" });
 	});
 
+	// SLL-surgery wave (2026-07-03): select_list_top's top_clause was made REQUIRED so
+	// select_statement's two alternatives stop being ambiguous on every TOP-less SELECT.
+	// These pin the accepted language across that change and that the fast SLL path no longer bails.
+	// docs.snowflake.com/en/sql-reference/constructs/top_n and /constructs/limit
+	it("keeps TOP / LIMIT / TOP+LIMIT acceptance exact after the select_list_top fix", () => {
+		// TOP-less SELECT: still parses, and no longer forces an SLL→LL fallback.
+		const plain = parseSnowflake("SELECT x FROM t");
+		expect(plain.errors).toBe(0);
+		expect(plain.sllFallback).toBe(false);
+		// SELECT with LIMIT: parses.
+		expect(errorsOf("SELECT x FROM t LIMIT 1")).toBe(0);
+		// SELECT TOP n: parses.
+		expect(errorsOf("SELECT TOP 1 x FROM t")).toBe(0);
+		// TOP and LIMIT together remain rejected (alt 2 has no limit_clause).
+		expect(errorsOf("SELECT TOP 1 x FROM t LIMIT 1")).toBeGreaterThan(0);
+	});
+
 	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
 		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });
