@@ -47,14 +47,3 @@ export const KNOWN_BAD: Record<string, string> = {
 	// are supported inside a CTE definition but not in a general subquery.
 	"queries_nested-common-table-expression/3.sql": "documented-to-fail example (Msg 156) — WITH in a derived table",
 };
-
-// Valid SQL whose PAYLOAD is out-of-scope platform DDL/admin — mixed scripts that merely LEAD
-// with a setup SELECT, which is why keyword bucketing would put them in the query gate. They
-// are reclassified to the ddl bucket (reported, never gated); the project does not build object
-// DDL (CLAUDE.md, Nicke-cleared). Unlike KNOWN_BAD there is no still-fails assertion — whether
-// they parse is irrelevant to the query gate.
-export const OUT_OF_SCOPE: Record<string, string> = {
-	"database-console-commands_dbcc-freeproccache-transact-sql/2.sql": "payload is DBCC FREEPROCCACHE (admin)",
-	"statements_alter-database-transact-sql/5.sql": "payload is ALTER DATABASE … MODIFY (EDITION …) (Azure DDL)",
-	"statements_alter-workload-group-transact-sql/1.sql": "payload is ALTER WORKLOAD GROUP (Synapse admin DDL)",
-};

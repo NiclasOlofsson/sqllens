@@ -81,7 +81,9 @@ const AGGREGATES = new Set([
 
 /** Lower a parsed GoogleSQL file (`stmts`: a `;`-separated batch) into the IR. */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "bigquery";
+	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
@@ -109,11 +111,17 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 // --- statement category ---------------------------------------------------------
 
 function statementCategory(tree: ParserRuleContext): StatementCategory {
-	// stmts → unterminated_statement → (unterminated_sql_statement | unterminated_script_statement).
-	// Script statements (DECLARE/IF/LOOP/…) carry no sql_statement_body and don't contribute here.
-	// stmts → top_statement → (define_macro_statement | unterminated_statement). A define_macro_statement
-	// (DEFINE MACRO, detect-only) carries no sql_statement_body, so it contributes nothing here and the
-	// statement lowers to a flagged non-query "other" body.
+	const cats = statementCategories(tree);
+	if (cats.length === 0) return "other";
+	if (cats.length > 1) return "compound";
+	return cats[0];
+}
+
+/** The `sql_statement_body` nodes under `root`, in source order. Script statements (DECLARE/IF/LOOP/…)
+ *  and DEFINE MACRO carry no `sql_statement_body`, so they contribute nothing here (as before). */
+function sqlStatementBodies(tree: ParserRuleContext): ParserRuleContext[] {
+	// stmts → top_statement → (define_macro_statement | unterminated_statement); an
+	// unterminated_statement → (unterminated_sql_statement | unterminated_script_statement).
 	const bodies: ParserRuleContext[] = [];
 	for (const s of directChildrenOfRule(tree, P.RULE_stmts)) {
 		for (const tp of directChildrenOfRule(s, P.RULE_top_statement)) {
@@ -124,9 +132,14 @@ function statementCategory(tree: ParserRuleContext): StatementCategory {
 			}
 		}
 	}
-	if (bodies.length === 0) return "other";
-	if (bodies.length > 1) return "compound";
-	return bodyCategory(bodies[0]);
+	return bodies;
+}
+
+/** Per-statement categories for every top-level SQL statement body in a parsed `root`, in source
+ *  order — the file-level view behind statementCategory (which folds >1 into "compound"), using the
+ *  same `bodyCategory` per element. Parity with the other dialects; feeds the corpus reclassifier. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
+	return sqlStatementBodies(tree).map(bodyCategory);
 }
 
 function bodyCategory(body: ParserRuleContext): StatementCategory {

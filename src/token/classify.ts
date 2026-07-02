@@ -85,6 +85,23 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		// Whitespace.
 		{ role: "whitespace", pattern: /^Whitespace$/ },
 	],
+
+	// Postgres (bytebase/parser postgresql/ fork) and DuckDB (fork of our postgres pair): the
+	// same TVL-lineage lexer as Redshift, so the same mixed-case token names apply.
+	postgres: [
+		{ role: "identifier", pattern: /Identifier|PLSQLVARIABLENAME|PLSQLIDENTIFIER/ },
+		{ role: "string", pattern: /StringConstant|DollarText/ },
+		{ role: "number", pattern: /Integral|Numeric/ },
+		{ role: "comment", pattern: /LineComment|BlockComment/ },
+		{ role: "whitespace", pattern: /^Whitespace$/ },
+	],
+	duckdb: [
+		{ role: "identifier", pattern: /Identifier|PLSQLVARIABLENAME|PLSQLIDENTIFIER/ },
+		{ role: "string", pattern: /StringConstant|DollarText/ },
+		{ role: "number", pattern: /Integral|Numeric/ },
+		{ role: "comment", pattern: /LineComment|BlockComment/ },
+		{ role: "whitespace", pattern: /^Whitespace$/ },
+	],
 };
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);

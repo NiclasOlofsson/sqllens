@@ -20,27 +20,27 @@ import { walkIr } from "../helpers/ir-walk.js";
 //
 // 2. harness/local/redshift-docs — every SQL example scraped from the Amazon Redshift SQL
 //    reference (tools/scrape-redshift-docs.mjs, ~3,186 files). It spans the full surface; the
-//    gate requires 100% of the in-scope query bucket (SELECT/WITH/VALUES/…) to parse — minus the
-//    verified KNOWN_BAD documented-broken examples — and only REPORTS dml/ddl, since object/
-//    platform DDL is cleared Out (CLAUDE.md). Regex bucketing (sql-kind.ts) until Redshift lower()
-//    exposes parse-derived statement kinds — same as Snowflake/Databricks.
+//    gate requires 100% of the in-scope query bucket (SELECT/WITH/VALUES/…) to parse and only
+//    REPORTS dml/ddl, since object/platform DDL is cleared Out (CLAUDE.md). Bucketing is FROM THE
+//    PATH (parser/positive/<kind>/…), placed by the organizer with the current parser; the
+//    documented-broken KNOWN_BAD examples fail to parse and sit under unparsed/ (asserted to stay).
 
 const VENDOR_EXAMPLES = corpusPath("redshift/bytebase");
 const DOCS_CORPUS = corpusPath("redshift/docs");
 
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it
-const QUERY_BASELINE = 1790; // scraped-docs in-scope query bucket; superseded by the 100%/knownBad gate below
+const QUERY_BASELINE = 1808; // documented floor for the scraped-docs query population (path-bucketed)
 // The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
 // in-scope, cleanly-parsed docs query bucket. Redshift is corpus-complete — 0 `other`. This rides the
 // SAME single parse the docs ratchet makes (onCleanQuery gets its tree), so no file is parsed twice.
 const OTHER_BASELINE = 0; // measured 2026-07-01 over the parsed Redshift docs query bucket; corpus-complete
 
-// Documented-broken query examples — every in-scope query example must parse EXCEPT these, each
-// verified against its AWS doc source as genuinely malformed SQL (not a grammar gap, not scraper
-// noise). Passing `knownBad` flips the query gate from "ratchet ≥ baseline" to "100% of the rest
-// must parse", and a known-bad that starts parsing fails the gate as stale. (T-SQL precedent:
-// tests/tsql-corpus-known-bad.ts.) Pure scraper noise — leaked EXPLAIN plans, prose math,
+// Documented-broken query examples — each verified against its AWS doc source as genuinely malformed
+// SQL (not a grammar gap, not scraper noise). They fail to parse, so the organizer files them under
+// unparsed/; `knownBad` asserts each STILL sits there (self-policing: if one starts parsing it leaves
+// unparsed/ and the assertion fails, so the entry is removed). The query gate is 100% of query/.
+// Pure scraper noise — leaked EXPLAIN plans, prose math,
 // expression-fragment listings, bare <placeholder> metasyntax — is fixed at the scraper instead
 // (tools/scrape-redshift-docs.mjs) so it never reaches the corpus.
 const KNOWN_BAD: Record<string, string> = {

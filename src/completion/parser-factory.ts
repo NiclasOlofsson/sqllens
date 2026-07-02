@@ -17,6 +17,10 @@ import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
+import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
+import { PostgresParser } from "../generated/postgres/PostgresParser.js";
+import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
+import { DuckdbParser } from "../generated/duckdb/DuckdbParser.js";
 
 /**
  * A ready-to-walk parser for the completion engine: the lexer, the token stream, the entry
@@ -53,8 +57,8 @@ function databricksFactory(sql: string): MadeParser {
 		parser,
 		lexer,
 		tokenStream,
-		entryRuleIndex: DatabricksParser.RULE_compoundOrSingleStatement,
-		runEntry: () => parser.compoundOrSingleStatement(),
+		entryRuleIndex: DatabricksParser.RULE_multiStatement,
+		runEntry: () => parser.multiStatement(),
 	};
 }
 
@@ -126,12 +130,46 @@ function redshiftFactory(sql: string): MadeParser {
 	};
 }
 
+function postgresFactory(sql: string): MadeParser {
+	const lexer = new PostgresLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new PostgresParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: PostgresParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
+function duckdbFactory(sql: string): MadeParser {
+	const lexer = new DuckdbLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new DuckdbParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: DuckdbParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
 const FACTORIES: Record<Dialect, Factory> = {
 	databricks: databricksFactory,
 	tsql: tsqlFactory,
 	snowflake: snowflakeFactory,
 	bigquery: bigqueryFactory,
 	redshift: redshiftFactory,
+	postgres: postgresFactory,
+	duckdb: duckdbFactory,
 };
 
 /** Build a fresh error-tolerant parser for `dialect`, lexing `sql`. */

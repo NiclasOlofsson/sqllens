@@ -15,6 +15,8 @@ import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
+import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
+import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
 import { mapTokens } from "./map.js";
 import type { Token } from "./token.js";
 
@@ -26,6 +28,8 @@ const LEXERS: Record<Dialect, (cs: CharStream) => Lexer> = {
 	snowflake: (cs) => new SnowflakeLexer(cs),
 	bigquery: (cs) => new GoogleSQLLexer(cs),
 	redshift: (cs) => new RedshiftLexer(cs),
+	postgres: (cs) => new PostgresLexer(cs),
+	duckdb: (cs) => new DuckdbLexer(cs),
 };
 
 /**

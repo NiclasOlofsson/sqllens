@@ -23,6 +23,10 @@ import { parseBigQuery } from "./bigquery/parse.js";
 import { lower as lowerBigQuery } from "./bigquery/lower.js";
 import { parseRedshift } from "./redshift/parse.js";
 import { lower as lowerRedshift } from "./redshift/lower.js";
+import { parsePostgres } from "./postgres/parse.js";
+import { lower as lowerPostgres } from "./postgres/lower.js";
+import { parseDuckdb } from "./duckdb/parse.js";
+import { lower as lowerDuckdb } from "./duckdb/lower.js";
 import type { Expr, QueryExpr } from "./ir/ir.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
@@ -40,8 +44,8 @@ import { deriveSymbols as deriveSymbolsScopes, type Sym } from "./symbols/symbol
 import type { Token } from "./token/token.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
- *  parse+lower pair; everything after lower() runs unchanged on all five. */
-export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
+ *  parse+lower pair; everything after lower() runs unchanged on all seven. */
+export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb";
 
 interface DialectFns {
 	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[]; tokens: Token[] };
@@ -54,6 +58,8 @@ const DIALECTS: Record<Dialect, DialectFns> = {
 	snowflake: { parse: parseSnowflake, lower: lowerSnowflake },
 	bigquery: { parse: parseBigQuery, lower: lowerBigQuery },
 	redshift: { parse: parseRedshift, lower: lowerRedshift },
+	postgres: { parse: parsePostgres, lower: lowerPostgres },
+	duckdb: { parse: parseDuckdb, lower: lowerDuckdb },
 };
 
 /** Options carrying the dialect, needed only when a lift helper enters from a raw string. */
@@ -140,14 +146,15 @@ export function toAst(x: string | QueryExpr, dialect?: Dialect): QueryExpr {
 }
 
 /** Lift to a ScopeTree. A ScopeTree returns unchanged; an IR is resolved; a string is parsed +
- *  lowered + resolved. The dialect is required only when entering from a string or a bare IR. */
+ *  lowered + resolved. The dialect is required only when entering from a string, or a bare
+ *  hand-built IR that carries no `dialect` tag — an IR from a dialect's lower() needs nothing. */
 export function toScopes(x: string | QueryExpr | ScopeTree, opts: DialectOpts = {}): ScopeTree {
 	if (isScopeTree(x)) return x;
 	if (typeof x === "string") {
 		if (!opts.dialect) throw new Error("toScopes(string) needs a dialect");
 		return resolveScopes(toAst(x, opts.dialect), opts.dialect);
 	}
-	return resolveScopes(x, opts.dialect ?? "databricks");
+	return resolveScopes(x, opts.dialect);
 }
 
 function isScopeTree(x: unknown): x is ScopeTree {

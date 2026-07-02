@@ -317,6 +317,161 @@ const REDSHIFT: Record<string, FnSignature> = {
 	listagg: { name: "LISTAGG", params: [p("aggregate_expression", "string"), p("delimiter", "string")] }, // LISTAGG function
 };
 
+// ---------------------------------------------------------------------------
+// PostgreSQL — postgresql.org/docs/18 function reference; cites the doc page/table per entry.
+// ---------------------------------------------------------------------------
+const POSTGRES: Record<string, FnSignature> = {
+	// date/time — functions-datetime.html (Table 9.33)
+	age: { name: "age", params: [p("timestamp", "timestamp"), p("timestamp2", "timestamp")] }, // age(timestamp, timestamp)
+	date_trunc: { name: "date_trunc", params: [p("field", "text"), p("source", "timestamp")] }, // date_trunc(field, source)
+	date_part: { name: "date_part", params: [p("field", "text"), p("source", "timestamp")] }, // date_part(field, source)
+	date_bin: {
+		name: "date_bin",
+		params: [p("stride", "interval"), p("source", "timestamp"), p("origin", "timestamp")],
+	}, // date_bin(stride, source, origin)
+	make_date: { name: "make_date", params: [p("year", "int"), p("month", "int"), p("day", "int")] }, // make_date(year, month, day)
+	make_interval: {
+		name: "make_interval",
+		params: [p("years", "int"), p("months", "int"), p("weeks", "int"), p("days", "int")],
+	}, // make_interval(years, months, …)
+	to_date: { name: "to_date", params: [p("text", "text"), p("format", "text")] }, // to_date(text, format)
+	to_timestamp: { name: "to_timestamp", params: [p("text", "text"), p("format", "text")] }, // to_timestamp(text, format)
+	to_char: { name: "to_char", params: [p("value"), p("format", "text")] }, // to_char(value, format)
+	to_number: { name: "to_number", params: [p("text", "text"), p("format", "text")] }, // to_number(text, format)
+	// string — functions-string.html (Table 9.10)
+	concat: { name: "concat", params: [p("val")], variadic: true }, // concat(val1, val2, …)
+	concat_ws: { name: "concat_ws", params: [p("sep", "text"), p("val")], variadic: true }, // concat_ws(sep, val…)
+	substring: { name: "substring", params: [p("string", "text"), p("start", "int"), p("count", "int")] }, // substring(string, start, count)
+	substr: { name: "substr", params: [p("string", "text"), p("start", "int"), p("count", "int")] }, // substr(string, start, count)
+	split_part: { name: "split_part", params: [p("string", "text"), p("delimiter", "text"), p("n", "int")] }, // split_part(string, delimiter, n)
+	replace: { name: "replace", params: [p("string", "text"), p("from", "text"), p("to", "text")] }, // replace(string, from, to)
+	regexp_replace: {
+		name: "regexp_replace",
+		params: [p("string", "text"), p("pattern", "text"), p("replacement", "text"), p("flags", "text")],
+	}, // regexp_replace(string, pattern, replacement [, flags])
+	regexp_match: { name: "regexp_match", params: [p("string", "text"), p("pattern", "text"), p("flags", "text")] }, // regexp_match(string, pattern [, flags])
+	lpad: { name: "lpad", params: [p("string", "text"), p("length", "int"), p("fill", "text")] }, // lpad(string, length, fill)
+	rpad: { name: "rpad", params: [p("string", "text"), p("length", "int"), p("fill", "text")] }, // rpad(string, length, fill)
+	position: { name: "position", params: [p("substring", "text"), p("string", "text")] }, // position(substring in string)
+	strpos: { name: "strpos", params: [p("string", "text"), p("substring", "text")] }, // strpos(string, substring)
+	left: { name: "left", params: [p("string", "text"), p("n", "int")] }, // left(string, n)
+	right: { name: "right", params: [p("string", "text"), p("n", "int")] }, // right(string, n)
+	format: { name: "format", params: [p("formatstr", "text"), p("formatarg")], variadic: true }, // format(formatstr, formatarg…)
+	string_to_array: {
+		name: "string_to_array",
+		params: [p("string", "text"), p("delimiter", "text"), p("null_string", "text")],
+	}, // string_to_array(string, delimiter [, null_string])
+	// numeric — functions-math.html (Table 9.5)
+	round: { name: "round", params: [p("v", "numeric"), p("s", "int")] }, // round(v numeric, s int)
+	trunc: { name: "trunc", params: [p("v", "numeric"), p("s", "int")] }, // trunc(v numeric, s int)
+	abs: { name: "abs", params: [p("x", "numeric")] }, // abs(x)
+	ceil: { name: "ceil", params: [p("x", "numeric")] }, // ceil(x)
+	floor: { name: "floor", params: [p("x", "numeric")] }, // floor(x)
+	power: { name: "power", params: [p("a", "numeric"), p("b", "numeric")] }, // power(a, b)
+	mod: { name: "mod", params: [p("y", "numeric"), p("x", "numeric")] }, // mod(y, x)
+	div: { name: "div", params: [p("y", "numeric"), p("x", "numeric")] }, // div(y, x)
+	width_bucket: {
+		name: "width_bucket",
+		params: [p("operand", "numeric"), p("low", "numeric"), p("high", "numeric"), p("count", "int")],
+	}, // width_bucket(operand, low, high, count)
+	// conditional — functions-conditional.html
+	coalesce: { name: "coalesce", params: [p("value")], variadic: true }, // COALESCE(value…)
+	nullif: { name: "nullif", params: [p("value1"), p("value2")] }, // NULLIF(value1, value2)
+	greatest: { name: "greatest", params: [p("value")], variadic: true }, // GREATEST(value…)
+	least: { name: "least", params: [p("value")], variadic: true }, // LEAST(value…)
+	// aggregates — functions-aggregate.html (Table 9.62)
+	count: { name: "count", params: [p("expression")] }, // count(expression)
+	sum: { name: "sum", params: [p("expression", "numeric")] }, // sum(expression)
+	avg: { name: "avg", params: [p("expression", "numeric")] }, // avg(expression)
+	min: { name: "min", params: [p("expression")] }, // min(expression)
+	max: { name: "max", params: [p("expression")] }, // max(expression)
+	string_agg: { name: "string_agg", params: [p("value", "text"), p("delimiter", "text")] }, // string_agg(value, delimiter)
+	array_agg: { name: "array_agg", params: [p("expression")] }, // array_agg(expression)
+	// JSON — functions-json.html
+	jsonb_set: {
+		name: "jsonb_set",
+		params: [p("target", "jsonb"), p("path", "text[]"), p("new_value", "jsonb"), p("create_if_missing", "boolean")],
+	}, // jsonb_set(target, path, new_value [, create_if_missing])
+	jsonb_extract_path: {
+		name: "jsonb_extract_path",
+		params: [p("from_json", "jsonb"), p("path_elems", "text")],
+		variadic: true,
+	}, // jsonb_extract_path(from_json, VARIADIC path_elems)
+	json_build_object: { name: "json_build_object", params: [p("arg")], variadic: true }, // json_build_object(VARIADIC args)
+};
+
+// ---------------------------------------------------------------------------
+// DuckDB — duckdb.org/docs/current/sql/functions reference; cites the page per entry.
+// ---------------------------------------------------------------------------
+const DUCKDB: Record<string, FnSignature> = {
+	// date/time — functions/date.md, timestamp.md
+	date_part: { name: "date_part", params: [p("part", "text"), p("date", "date")] }, // date_part(part, date)
+	date_diff: { name: "date_diff", params: [p("part", "text"), p("startdate", "date"), p("enddate", "date")] }, // date_diff(part, startdate, enddate)
+	date_add: { name: "date_add", params: [p("date", "date"), p("interval", "interval")] }, // date_add(date, interval)
+	date_sub: { name: "date_sub", params: [p("part", "text"), p("startdate", "date"), p("enddate", "date")] }, // date_sub(part, startdate, enddate)
+	date_trunc: { name: "date_trunc", params: [p("part", "text"), p("date", "date")] }, // date_trunc(part, date)
+	strftime: { name: "strftime", params: [p("date", "date"), p("format", "text")] }, // strftime(date, format)
+	strptime: { name: "strptime", params: [p("text", "text"), p("format", "text")] }, // strptime(text, format)
+	make_date: { name: "make_date", params: [p("year", "bigint"), p("month", "bigint"), p("day", "bigint")] }, // make_date(year, month, day)
+	time_bucket: {
+		name: "time_bucket",
+		params: [p("bucket_width", "interval"), p("timestamp", "timestamp"), p("offset", "interval")],
+	}, // time_bucket(bucket_width, timestamp[, offset])
+	// text — functions/text.md
+	concat: { name: "concat", params: [p("value")], variadic: true }, // concat(value, ...)
+	concat_ws: { name: "concat_ws", params: [p("separator", "text"), p("value")], variadic: true }, // concat_ws(separator, value, ...)
+	substring: { name: "substring", params: [p("string", "text"), p("start", "int"), p("length", "int")] }, // substring(string, start, length)
+	split_part: { name: "split_part", params: [p("string", "text"), p("separator", "text"), p("index", "int")] }, // split_part(string, separator, index)
+	replace: { name: "replace", params: [p("string", "text"), p("source", "text"), p("target", "text")] }, // replace(string, source, target)
+	regexp_replace: {
+		name: "regexp_replace",
+		params: [p("string", "text"), p("pattern", "text"), p("replacement", "text"), p("options", "text")],
+	}, // regexp_replace(string, pattern, replacement[, options])
+	regexp_extract: { name: "regexp_extract", params: [p("string", "text"), p("pattern", "text"), p("group", "int")] }, // regexp_extract(string, pattern[, group])
+	regexp_matches: {
+		name: "regexp_matches",
+		params: [p("string", "text"), p("pattern", "text"), p("options", "text")],
+	}, // regexp_matches(string, pattern[, options])
+	lpad: { name: "lpad", params: [p("string", "text"), p("count", "int"), p("character", "text")] }, // lpad(string, count, character)
+	rpad: { name: "rpad", params: [p("string", "text"), p("count", "int"), p("character", "text")] }, // rpad(string, count, character)
+	left: { name: "left", params: [p("string", "text"), p("count", "int")] }, // left(string, count)
+	right: { name: "right", params: [p("string", "text"), p("count", "int")] }, // right(string, count)
+	contains: { name: "contains", params: [p("string", "text"), p("search_string", "text")] }, // contains(string, search_string)
+	starts_with: { name: "starts_with", params: [p("string", "text"), p("search_string", "text")] }, // starts_with(string, search_string)
+	printf: { name: "printf", params: [p("format", "text"), p("parameter")], variadic: true }, // printf(format, parameters...)
+	format: { name: "format", params: [p("format", "text"), p("parameter")], variadic: true }, // format(format, parameters...)
+	// numeric — functions/numeric.md
+	round: { name: "round", params: [p("v", "numeric"), p("s", "int")] }, // round(v, s)
+	trunc: { name: "trunc", params: [p("x", "numeric")] }, // trunc(x)
+	abs: { name: "abs", params: [p("x", "numeric")] }, // abs(x)
+	ceil: { name: "ceil", params: [p("x", "numeric")] }, // ceil(x)
+	floor: { name: "floor", params: [p("x", "numeric")] }, // floor(x)
+	power: { name: "power", params: [p("x", "numeric"), p("y", "numeric")] }, // power(x, y)
+	// list — functions/list.md
+	list_transform: { name: "list_transform", params: [p("list", "list"), p("lambda")] }, // list_transform(list, lambda)
+	list_filter: { name: "list_filter", params: [p("list", "list"), p("lambda")] }, // list_filter(list, lambda)
+	list_reduce: { name: "list_reduce", params: [p("list", "list"), p("lambda"), p("initial_value")] }, // list_reduce(list, lambda[, initial_value])
+	list_extract: { name: "list_extract", params: [p("list", "list"), p("index", "int")] }, // list_extract(list, index)
+	list_contains: { name: "list_contains", params: [p("list", "list"), p("element")] }, // list_contains(list, element)
+	array_to_string: { name: "array_to_string", params: [p("list", "list"), p("delimiter", "text")] }, // array_to_string(list, delimiter)
+	unnest: { name: "unnest", params: [p("list", "list")] }, // unnest(list)
+	// conditional — functions/utility.md
+	coalesce: { name: "coalesce", params: [p("expr")], variadic: true }, // coalesce(expr, ...)
+	nullif: { name: "nullif", params: [p("a"), p("b")] }, // nullif(a, b)
+	ifnull: { name: "ifnull", params: [p("expr"), p("other")] }, // ifnull(expr, other)
+	if: { name: "if", params: [p("condition", "boolean"), p("a"), p("b")] }, // if(condition, a, b)
+	// aggregates — functions/aggregates.md
+	count: { name: "count", params: [p("arg")] }, // count(arg)
+	sum: { name: "sum", params: [p("arg", "numeric")] }, // sum(arg)
+	avg: { name: "avg", params: [p("arg", "numeric")] }, // avg(arg)
+	min: { name: "min", params: [p("arg"), p("n", "int")] }, // min(arg[, n])
+	max: { name: "max", params: [p("arg"), p("n", "int")] }, // max(arg[, n])
+	arg_max: { name: "arg_max", params: [p("arg"), p("val"), p("n", "int")] }, // arg_max(arg, val[, n])
+	arg_min: { name: "arg_min", params: [p("arg"), p("val"), p("n", "int")] }, // arg_min(arg, val[, n])
+	string_agg: { name: "string_agg", params: [p("arg", "text"), p("sep", "text")] }, // string_agg(arg, sep)
+	quantile_cont: { name: "quantile_cont", params: [p("x", "numeric"), p("pos", "double")] }, // quantile_cont(x, pos)
+};
+
 /** Curated parameter signatures, per dialect, keyed by LOWERCASED function name. */
 export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	databricks: DATABRICKS,
@@ -324,4 +479,6 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	snowflake: SNOWFLAKE,
 	bigquery: BIGQUERY,
 	redshift: REDSHIFT,
+	postgres: POSTGRES,
+	duckdb: DUCKDB,
 };

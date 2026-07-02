@@ -1,5 +1,5 @@
 import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
-import { RedshiftParser as P } from "../generated/redshift/RedshiftParser.js";
+import { DuckdbParser as P } from "../generated/duckdb/DuckdbParser.js";
 import type {
 	Clause,
 	ColumnRef,
@@ -17,41 +17,74 @@ import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
-// Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
+// Lowering — DuckDB (fork of this repo's grammars/postgres pair, TVL lineage)
 // CST -> the shared dialect-neutral IR (src/ir/ir.ts). The semantic layer runs
-// on the IR unchanged; only this file knows Redshift's grammar.
+// on the IR unchanged; only this file knows the DuckDB grammar.
 //
-// The expression grammar is the Postgres precedence cascade
-// (a_expr -> a_expr_qual -> … -> a_expr_typecast -> c_expr): each level is its
-// own rule, passed through when it carries no operator. Constructs not yet
-// modelled become explicit `other`/`unsupported`, never silently dropped.
-// Navigation is by rule index; nested select_with_parens / subqueries belong to
-// their own scope, so shallow walks never descend into them.
+// Twin of src/postgres/lower.ts (same CST shapes); DuckDB deltas handled here:
+// FROM-first queries (a star projection is synthesized when SELECT is absent),
+// QUALIFY, GROUP BY ALL, star EXCLUDE/REPLACE/RENAME + COLUMNS(), prefix
+// aliases (x: 42, alias: tbl), list/struct/map literals + comprehensions,
+// `lambda x:` lambdas, method chaining (x.f(y) → f(x, y)), string-literal
+// relations (FROM 'file.parquet'), and the PIVOT/UNPIVOT statements (flagged
+// `pivot`/`unpivot` — visible gaps, not silent drops).
 // ---------------------------------------------------------------------------
 
-// docs.aws.amazon.com/redshift/latest/dg/c_Aggregate_Functions.html
-// + the approximate / bit / boolean / window-capable aggregate families.
+// https://duckdb.org/docs/current/sql/functions/aggregates.html — general + approximate +
+// statistical + ordered-set aggregate names (holistic/nested families included).
 const AGGREGATES = new Set([
 	"any_value",
-	"approximate",
+	"approx_count_distinct",
+	"approx_quantile",
+	"approx_top_k",
+	"arbitrary",
+	"arg_max",
+	"arg_max_null",
+	"arg_min",
+	"arg_min_null",
+	"argmax",
+	"argmin",
+	"array_agg",
 	"avg",
 	"bit_and",
 	"bit_or",
+	"bit_xor",
+	"bitstring_agg",
 	"bool_and",
 	"bool_or",
 	"corr",
 	"count",
 	"count_if",
+	"count_star",
+	"countif",
 	"covar_pop",
 	"covar_samp",
-	"cume_dist",
+	"entropy",
+	"favg",
+	"first",
+	"fsum",
+	"geomean",
+	"geometric_mean",
+	"histogram",
+	"histogram_exact",
+	"kahan_sum",
 	"kurtosis",
+	"kurtosis_pop",
+	"last",
+	"list",
 	"listagg",
+	"mad",
 	"max",
+	"max_by",
+	"mean",
 	"median",
 	"min",
-	"percentile_cont",
-	"percentile_disc",
+	"min_by",
+	"mode",
+	"product",
+	"quantile",
+	"quantile_cont",
+	"quantile_disc",
 	"regr_avgx",
 	"regr_avgy",
 	"regr_count",
@@ -61,27 +94,32 @@ const AGGREGATES = new Set([
 	"regr_sxx",
 	"regr_sxy",
 	"regr_syy",
+	"reservoir_quantile",
 	"skewness",
 	"stddev",
 	"stddev_pop",
 	"stddev_samp",
+	"string_agg",
 	"sum",
+	"sumkahan",
 	"var_pop",
 	"var_samp",
 	"variance",
+	"weighted_avg",
+	"wavg",
 ]);
 
-/** Lower a parsed Redshift file (root: stmtblock of `;`-separated statements) into the IR.
- *  A single SELECT statement lowers fully; anything else (DDL, DML, multi-statement batches)
- *  becomes a flagged non-query body — a valid parse never throws. Frozen — immutable after lower(). */
+/** Lower a parsed DuckDB file (root: stmtblock of `;`-separated statements) into the IR.
+ *  A single SELECT (or FROM-first) statement lowers fully; anything else becomes a flagged
+ *  non-query body — a valid parse never throws. Frozen — immutable after lower(). */
 export function lower(tree: ParserRuleContext): QueryExpr {
 	const q = lowerImpl(tree);
-	q.dialect = "redshift";
+	q.dialect = "duckdb";
 	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
-	const stmts = topLevelStmts(tree);
+	const stmts = collectOfRule(tree, P.RULE_stmt);
 	const statement = statementCategory(stmts);
 	if (stmts.length !== 1) {
 		const q = nonQuery(tree, stmts.length === 0 ? "empty" : "multi-statement");
@@ -90,6 +128,16 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	}
 	const selectStmt = directChildrenOfRule(stmts[0], P.RULE_selectstmt)[0];
 	if (!selectStmt) {
+		// PIVOT/UNPIVOT statements are row-returning table transforms: keep the source relation
+		// visible and flag the reshape (a visible gap, not a silent drop).
+		const pivot =
+			directChildrenOfRule(stmts[0], P.RULE_pivotstmt)[0] ??
+			directChildrenOfRule(stmts[0], P.RULE_unpivotstmt)[0];
+		if (pivot) {
+			const q = lowerPivotStmt(pivot);
+			q.statement = statement;
+			return q;
+		}
 		const q = nonQuery(stmts[0], "non-query");
 		q.statement = statement;
 		return q;
@@ -102,103 +150,95 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
 	if (stmts.length === 0) return "other";
 	if (stmts.length > 1) return "compound";
-	return redshiftCategory(stmts[0]);
+	return duckdbCategory(stmts[0]);
 }
 
-/** Per-statement categories for every top-level `stmt` in a parsed `root`, in source order — the
- *  file-level view behind statementCategory (which folds >1 into "compound"). Parity with the other
- *  dialects; feeds the corpus reclassifier. */
+/** Per-statement categories for every top-level `stmt` in a parsed `root`, in source order. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return topLevelStmts(tree).map(redshiftCategory);
+	return collectOfRule(tree, P.RULE_stmt).map(duckdbCategory);
 }
 
-/** The top-level `stmt` nodes of a parsed file — root → stmtblock → stmtmulti's DIRECT `stmt`
- *  children. A deep `collectOfRule(tree, RULE_stmt)` would also pick up a `stmt` nested inside
- *  `createfunc_opt_item` (`CREATE FUNCTION … BEGIN ATOMIC <stmt>; END`, RedshiftParser.g4), so a
- *  single CREATE FUNCTION would count as two statements. Walk only the top level, like the other
- *  dialects. */
-function topLevelStmts(tree: ParserRuleContext): ParserRuleContext[] {
-	const stmtblock = directChildrenOfRule(tree, P.RULE_stmtblock)[0] ?? tree;
-	const stmtmulti = directChildrenOfRule(stmtblock, P.RULE_stmtmulti)[0] ?? stmtblock;
-	return directChildrenOfRule(stmtmulti, P.RULE_stmt);
-}
-
-// Structural statement classification over the Postgres-derived `stmt` alternatives (grammars/
-// redshift/RedshiftParser.g4, rule `stmt`). Each `stmt` has exactly one alternative rule child; we
-// map it by its grammar rule NAME (P.ruleNames) so the category is parse-derived, not a leading-
-// keyword guess — the guess mis-reads `WITH … SELECT` as non-query, `SELECT INTO` as a read, and
-// ANALYZE/VACUUM as DDL. Rule names cited against the AWS Redshift SQL reference.
-const REDSHIFT_STMT_CATEGORY: Record<string, StatementCategory> = {
-	// docs.aws.amazon.com/redshift/latest/dg/r_SELECT_synopsis.html — the read path.
+// Structural statement classification over the `stmt` alternatives (grammars/duckdb/
+// DuckdbParser.g4, rule `stmt`). Same contract as the other dialects; the DuckDB-only
+// statements cited against duckdb.org/docs/current/sql/statements/.
+const DUCKDB_STMT_CATEGORY: Record<string, StatementCategory> = {
 	selectstmt: "query",
-	// Write / data movement: INSERT / UPDATE / DELETE / MERGE / COPY / LOAD / UNLOAD, plus the
-	// Redshift-specific INSERT-into-external and SELECT INTO (writes rows into a NEW table — a
-	// side-effect, not a read: r_SELECT_INTO.html). All grouped as dml.
+	// PIVOT/UNPIVOT are row-returning table transforms — reads, not writes (pivot.md, unpivot.md).
+	pivotstmt: "query",
+	unpivotstmt: "query",
 	insertstmt: "dml",
 	updatestmt: "dml",
 	deletestmt: "dml",
 	mergestmt: "dml",
-	copystmt: "dml", // r_COPY.html
-	loadstmt: "dml",
-	unloadstmt: "dml", // r_UNLOAD.html
-	insertexternaltablestmt: "dml", // r_INSERT_external_table.html
-	selectintostmt: "dml", // r_SELECT_INTO.html
-	// GRANT / REVOKE — data control: r_GRANT.html, r_REVOKE.html.
+	copystmt: "dml",
 	grantstmt: "dcl",
+	grantrolestmt: "dcl",
 	revokestmt: "dcl",
 	revokerolestmt: "dcl",
-	// Transaction control: BEGIN / START / COMMIT / END / ROLLBACK / ABORT / SAVEPOINT — r_BEGIN.html,
-	// r_ABORT.html, r_END.html (all one `transactionstmt` alternative).
+	reassignownedstmt: "dcl",
+	dropownedstmt: "dcl",
 	transactionstmt: "tcl",
-	// Session / maintenance utilities — SET / RESET / SHOW / EXPLAIN / ANALYZE / VACUUM-style. ANALYZE
-	// and VACUUM are maintenance ops (r_ANALYZE.html, r_VACUUM.html), not object DDL — the leading-
-	// keyword guess wrongly bucketed them ddl.
 	variablesetstmt: "utility",
 	variableresetstmt: "utility",
 	variableshowstmt: "utility",
-	setsessionauthorizationstmt: "utility",
-	setsessioncharacteristicsstmt: "utility",
 	constraintssetstmt: "utility",
-	explainstmt: "utility", // r_EXPLAIN.html
-	analyzestmt: "utility", // r_ANALYZE.html
-	analyzecompressionstmt: "utility", // r_ANALYZE_COMPRESSION.html
-	vacuumstmt: "utility", // r_VACUUM.html
-	refreshmatviewstmt: "utility", // r_REFRESH_MATERIALIZED_VIEW.html
+	explainstmt: "utility",
+	analyzestmt: "utility",
+	vacuumstmt: "utility",
+	refreshmatviewstmt: "utility",
 	discardstmt: "utility",
 	clusterstmt: "utility",
 	reindexstmt: "utility",
 	checkpointstmt: "utility",
-	lockstmt: "utility", // r_LOCK.html
+	lockstmt: "utility",
 	dostmt: "utility",
-	callstmt: "utility", // r_CALL.html
+	callstmt: "utility",
 	executestmt: "utility",
-	preparestmt: "utility", // r_PREPARE.html
-	deallocatestmt: "utility", // r_DEALLOCATE.html
-	declarecursorstmt: "utility", // r_DECLARE.html
-	fetchstmt: "utility", // r_FETCH.html
-	closeportalstmt: "utility", // r_CLOSE.html
-	closestmt: "utility",
-	cancelstmt: "utility", // r_CANCEL.html
-	usestmt: "utility", // r_USE.html
+	preparestmt: "utility",
+	deallocatestmt: "utility",
+	declarecursorstmt: "utility",
+	fetchstmt: "utility",
+	closeportalstmt: "utility",
 	listenstmt: "utility",
 	unlistenstmt: "utility",
 	notifystmt: "utility",
+	loadstmt: "utility",
+	plsqlconsolecommand: "utility",
+	// DuckDB session/admin statements — attach.md, use.md, installing_extensions.md, pragmas.md,
+	// export.md, summarize.md, describe.md, overview.md#updating-extensions.
+	summarizestmt: "utility",
+	describestmt: "utility",
+	attachstmt: "utility",
+	detachstmt: "utility",
+	usestmt: "utility",
+	installstmt: "utility",
+	pragmastmt: "utility",
+	exportstmt: "utility",
+	importdatabasestmt: "utility",
+	updateextensionsstmt: "utility",
+	// Object definition — create_macro.md, secrets manager, plus the Postgres non-prefix DDL rules.
+	createmacrostmt: "ddl",
+	createsecretstmt: "ddl",
+	dropsecretstmt: "ddl",
+	indexstmt: "ddl",
+	viewstmt: "ddl",
+	rulestmt: "ddl",
+	definestmt: "ddl",
+	renamestmt: "ddl",
+	commentstmt: "ddl",
+	seclabelstmt: "ddl",
+	importforeignschemastmt: "ddl",
+	truncatestmt: "ddl",
 };
 
-/** Categorise one top-level `stmt` from its single alternative rule child's grammar rule name. Falls
- *  back to the leading-keyword map for the CREATE/ALTER/DROP object-DDL family (covered by name prefix)
- *  and the long tail of admin statements the map doesn't name. */
-function redshiftCategory(stmt: ParserRuleContext): StatementCategory {
+function duckdbCategory(stmt: ParserRuleContext): StatementCategory {
 	const child = firstRuleChild(stmt);
 	if (!child) return keywordCategory(stmt.start?.text ?? "");
 	const rule = P.ruleNames[child.ruleIndex];
-	const mapped = REDSHIFT_STMT_CATEGORY[rule];
+	const mapped = DUCKDB_STMT_CATEGORY[rule];
 	if (mapped) return mapped;
-	// Object DDL family — CREATE / ALTER / DROP / REMOVE* rules (r_CREATE_*, r_ALTER_*, r_DROP_* …).
 	if (rule.startsWith("create") || rule.startsWith("alter") || rule.startsWith("drop") || rule.startsWith("remove"))
 		return "ddl";
-	// SHOW* / DESC* commands — utility (Redshift-specific SHOW COLUMNS/TABLES/…, DESC DATASHARE).
-	if (rule.startsWith("show") || rule.startsWith("desc")) return "utility";
 	return keywordCategory(stmt.start?.text ?? "");
 }
 
@@ -209,6 +249,38 @@ function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
 		body: { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: [reason], cst },
 		cst,
 	};
+}
+
+/** PIVOT/UNPIVOT statement — keep the source relation + ON/USING column refs visible, flag the
+ *  reshape as unsupported (duckdb.org/docs/current/sql/statements/pivot.md, unpivot.md). */
+function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
+	const kind = stmt.ruleIndex === P.RULE_pivotstmt ? "pivot" : "unpivot";
+	const from: Source[] = [];
+	const qn = directChildrenOfRule(stmt, P.RULE_qualified_name)[0];
+	if (qn) from.push({ kind: "table", name: nameParts(qn), cst: qn });
+	const sw = directChildrenOfRule(stmt, P.RULE_select_with_parens)[0];
+	if (sw) {
+		const inner = innerSelect(sw);
+		from.push({ kind: "subquery", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: sw });
+	}
+	const columns: ColumnRef[] = [];
+	for (const on of [
+		...collectOfRule(stmt, P.RULE_pivot_on),
+		...collectOfRule(stmt, P.RULE_unpivot_on),
+		...collectOfRule(stmt, P.RULE_target_el),
+	]) {
+		for (const a of directChildrenOfRule(on, P.RULE_a_expr)) columnsOf(lowerExpr(a), columns, "projection");
+	}
+	const body: SelectExpr = {
+		kind: "select",
+		projections: [{ isStar: true, expr: { kind: "star", cst: stmt }, cst: stmt }],
+		from,
+		columns,
+		aggregated: false,
+		unsupported: [kind],
+		cst: stmt,
+	};
+	return { kind: "query", ctes: [], body, cst: stmt };
 }
 
 // --- query statement: WITH / set ops / ORDER BY / LIMIT -----------------------
@@ -225,22 +297,15 @@ function lowerSelectStmt(stmt: ParserRuleContext): QueryExpr {
 	return emptyQuery(stmt);
 }
 
-/** select_with_parens: '(' select_no_parens ')' | '(' select_with_parens ')' — unwrap. */
 function innerSelect(withParens: ParserRuleContext): ParserRuleContext | undefined {
 	const noParens = directChildrenOfRule(withParens, P.RULE_select_no_parens)[0];
-	if (noParens) return findSelectStmtParent(noParens);
+	if (noParens) return noParens;
 	const inner = directChildrenOfRule(withParens, P.RULE_select_with_parens)[0];
 	return inner ? innerSelect(inner) : undefined;
 }
 
-/** A select_no_parens / select_with_parens does not have a selectstmt wrapper, so wrap it. */
-function findSelectStmtParent(noParens: ParserRuleContext): ParserRuleContext {
-	return noParens; // handled by lowerSelectStmt via the select_no_parens branch when re-dispatched
-}
-
 /** select_no_parens: with_clause? select_clause opt_sort_clause? (select_limit | for_locking)? */
 function lowerSelectNoParens(node: ParserRuleContext): QueryExpr {
-	// with_clause: WITH RECURSIVE? cte_list; cte_list: common_table_expr (COMMA common_table_expr)*
 	const withClause = directChildrenOfRule(node, P.RULE_with_clause)[0];
 	const cteList = withClause ? directChildrenOfRule(withClause, P.RULE_cte_list)[0] : undefined;
 	const ctes = cteList ? directChildrenOfRule(cteList, P.RULE_common_table_expr).map(lowerCte) : [];
@@ -258,25 +323,25 @@ function lowerSelectNoParens(node: ParserRuleContext): QueryExpr {
 	return { kind: "query", ctes, body, orderBy, limit, cst: node };
 }
 
-/** common_table_expr: name opt_name_list? AS opt_materialized? '(' preparablestmt ')' */
+/** common_table_expr: name opt_name_list? (USING KEY (…))? AS opt_materialized? '(' preparablestmt ')' */
 function lowerCte(cte: ParserRuleContext): CteDef {
 	const name = firstShallow(cte, P.RULE_name);
 	const nameList = directChildrenOfRule(cte, P.RULE_opt_name_list)[0];
 	const cols = nameList ? collectOfRule(nameList, P.RULE_name).map((n) => textOf(n)) : [];
 	const prep = directChildrenOfRule(cte, P.RULE_preparablestmt)[0];
 	const inner = prep ? directChildrenOfRule(prep, P.RULE_selectstmt)[0] : undefined;
+	const pivot = prep
+		? (directChildrenOfRule(prep, P.RULE_pivotstmt)[0] ?? directChildrenOfRule(prep, P.RULE_unpivotstmt)[0])
+		: undefined;
 	return {
 		name: name ? textOf(name) : "",
 		columnAliases: cols.length ? cols : undefined,
-		body: inner ? lowerSelectStmt(inner) : nonQuery(cte, "non-query-cte"),
+		body: inner ? lowerSelectStmt(inner) : pivot ? lowerPivotStmt(pivot) : nonQuery(cte, "non-query-cte"),
 		cst: cte,
 	};
 }
 
 // --- set operations -----------------------------------------------------------
-// select_clause     : simple_select_intersect ((UNION|EXCEPT) all_or_distinct? simple_select_intersect)*
-// simple_select_intersect : simple_select_pramary (INTERSECT all_or_distinct? simple_select_pramary)*
-// Both are left-associative; INTERSECT binds tighter (lower in the grammar) than UNION/EXCEPT.
 
 function lowerSelectClause(clause: ParserRuleContext): QueryBody {
 	return foldSetOps(clause, P.RULE_simple_select_intersect, lowerSimpleSelectIntersect, [P.UNION, P.EXCEPT]);
@@ -286,7 +351,6 @@ function lowerSimpleSelectIntersect(node: ParserRuleContext): QueryBody {
 	return foldSetOps(node, P.RULE_simple_select_pramary, lowerSimpleSelectPramary, [P.INTERSECT]);
 }
 
-/** Fold `branch (OP branch)*` left into a SetOpExpr chain (or the single branch's body). */
 function foldSetOps(
 	node: ParserRuleContext,
 	branchRule: number,
@@ -317,6 +381,9 @@ function foldSetOps(
 			body = branch;
 		} else {
 			const op = pendingTok === P.INTERSECT ? "intersect" : pendingTok === P.EXCEPT ? "except" : "union";
+			// UNION [ALL] BY NAME matches columns by name — the set-op node is the same; byName rides
+			// as a modelled fact only if the IR grows it (it does not today; name-matching is a
+			// binder concern the scope layer approximates by position, like Snowflake's BY NAME).
 			body = { kind: "setop", op, all: pendingAll, left: body, right: branch, columns: [], cst: opCst };
 			pendingTok = undefined;
 			pendingAll = false;
@@ -327,7 +394,6 @@ function foldSetOps(
 
 // --- the SELECT body ----------------------------------------------------------
 
-/** simple_select_pramary: the SELECT body | values_clause | TABLE relation_expr | select_with_parens */
 function lowerSimpleSelectPramary(node: ParserRuleContext): QueryBody {
 	const values = directChildrenOfRule(node, P.RULE_values_clause)[0];
 	if (values) return lowerValues(values);
@@ -339,7 +405,11 @@ function lowerSimpleSelectPramary(node: ParserRuleContext): QueryBody {
 	}
 
 	// TABLE relation_expr  ≡  SELECT * FROM relation_expr
-	if (hasDirectToken(node, P.TABLE)) {
+	if (
+		hasDirectToken(node, P.TABLE) &&
+		!hasDirectToken(node, P.SELECT) &&
+		!directChildrenOfRule(node, P.RULE_from_clause).length
+	) {
 		const rel = directChildrenOfRule(node, P.RULE_relation_expr)[0];
 		const star: Expr = { kind: "star", cst: node };
 		return {
@@ -359,15 +429,14 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const unsupported: string[] = [];
 
 	const targetList = firstShallow(node, P.RULE_target_list);
-	const projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
-
-	// SELECT * EXCLUDE (cols) — attach to the star projection.
-	const exclude = directChildrenOfRule(node, P.RULE_exclude_clause)[0];
-	if (exclude) {
-		const cols = collectOfRule(exclude, P.RULE_columnlist)
-			.flatMap((l) => collectOfRule(l, P.RULE_columnElem))
-			.map((c) => textOf(c));
-		for (const p of projections) if (p.expr.kind === "star") p.expr.exclude = cols.length ? cols : undefined;
+	let projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
+	// FROM-first without a SELECT clause: `FROM tbl` ≡ SELECT * (from.md#from-first-syntax).
+	if (
+		!projections.length &&
+		!hasDirectToken(node, P.SELECT) &&
+		directChildrenOfRule(node, P.RULE_from_clause).length
+	) {
+		projections = [{ isStar: true, expr: { kind: "star", cst: node }, cst: node }];
 	}
 
 	const fromClause = directChildrenOfRule(node, P.RULE_from_clause)[0];
@@ -381,25 +450,20 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 			collectTableRef(tr, from, joinConditions, unsupported);
 		}
 	}
+	joinConditions.push(...nestedJoinConditions.splice(0));
 
 	const where = directChildrenOfRule(node, P.RULE_where_clause)[0];
 	const whereExpr = where ? lowerExpr(firstAExpr(where)) : undefined;
 
 	const groupClause = directChildrenOfRule(node, P.RULE_group_clause)[0];
-	const groupBy = groupClause ? extractGroupBy(groupClause) : undefined;
-	const groupByAll =
-		groupClause !== undefined &&
-		firstShallow(groupClause, P.RULE_group_by_item) === undefined &&
-		hasTokenShallow(groupClause, P.ALL);
+	const groupByAll = groupClause !== undefined && hasTokenShallow(groupClause, P.ALL);
+	const groupBy = groupClause && !groupByAll ? extractGroupBy(groupClause) : undefined;
 
 	const having = directChildrenOfRule(node, P.RULE_having_clause)[0];
 	const havingExpr = having ? lowerExpr(firstAExpr(having)) : undefined;
 
 	const qualify = directChildrenOfRule(node, P.RULE_qualify_clause)[0];
 	const qualifyExpr = qualify ? lowerExpr(firstAExpr(qualify)) : undefined;
-
-	// CONNECT BY hierarchies (start_with_clause) aren't modelled — flagged, not dropped.
-	if (directChildrenOfRule(node, P.RULE_start_with_clause).length) unsupported.push("connect-by");
 
 	const aggregated =
 		groupByAll ||
@@ -409,6 +473,12 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 
 	const columns: ColumnRef[] = [];
 	for (const p of projections) columnsOf(p.expr, columns, "projection");
+	const distinct = directChildrenOfRule(node, P.RULE_distinct_clause)[0];
+	if (distinct) {
+		const list = directChildrenOfRule(distinct, P.RULE_expr_list)[0];
+		if (list)
+			for (const e of directChildrenOfRule(list, P.RULE_a_expr)) columnsOf(lowerExpr(e), columns, "projection");
+	}
 	if (whereExpr) columnsOf(whereExpr, columns, "where");
 	for (const j of joinConditions) columnsOf(j, columns, "join");
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
@@ -434,13 +504,13 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	};
 }
 
-/** values_clause: VALUES '(' expr_list ')' (COMMA '(' expr_list ')')* — lower to a modelled
- *  select with literal/expr projections named column1…columnN (Postgres/Redshift default names). */
+/** values_clause — lower to a modelled select with projections named col0…colN (DuckDB's
+ *  default VALUES column names, duckdb.org/docs/current/sql/statements/values.md). */
 function lowerValues(values: ParserRuleContext): SelectExpr {
 	const firstList = directChildrenOfRule(values, P.RULE_expr_list)[0];
 	const exprs = firstList ? directChildrenOfRule(firstList, P.RULE_a_expr) : [];
 	const projections: Projection[] = exprs.map((e, i) => ({
-		name: `column${i + 1}`,
+		name: `col${i}`,
 		isStar: false,
 		expr: lowerExpr(e),
 		cst: e,
@@ -452,16 +522,10 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 
 // --- sources / joins ----------------------------------------------------------
 
-/** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. */
 function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
-	// PIVOT / UNPIVOT reshape the source's output columns; the IR doesn't model that for Redshift
-	// yet, so flag it (visible gap) rather than silently keeping only the un-pivoted relation.
-	if (directChildrenOfRule(tr, P.RULE_pivot_clause).length) unsupported.push("pivot");
-	if (directChildrenOfRule(tr, P.RULE_unpivot_clause).length) unsupported.push("unpivot");
-	// PartiQL SUPER object unpivoting (UNPIVOT expr AS val AT attr — a FROM item, not the SQL UNPIVOT
-	// suffix) reshapes a SUPER object into (value, attribute) rows; the IR doesn't model it yet, so
-	// flag it rather than leaving only an opaque source (docs … query-super.html#unpivoting).
-	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) unsupported.push("unpivot");
+	// FROM-level PIVOT/UNPIVOT reshape the source's output columns; flagged, not silently dropped.
+	if (directChildrenOfRule(tr, P.RULE_from_pivot_suffix).length) unsupported.push("pivot");
+	if (directChildrenOfRule(tr, P.RULE_from_unpivot_suffix).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
@@ -472,15 +536,25 @@ function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], u
 	}
 }
 
-/** The primary of a table_ref: relation_expr | select_with_parens | func_table | LATERAL … | (join). */
 function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Source {
 	const aliasNode = directChildrenOfRule(tr, P.RULE_opt_alias_clause)[0];
-	const alias = aliasNode ? aliasName(aliasNode) : undefined;
+	// A leading `alias:` prefix (select.md#prefix-aliases) is the alias when no AS clause is given.
+	const prefixAlias =
+		hasDirectToken(tr, P.COLON) && directChildrenOfRule(tr, P.RULE_colid).length
+			? textOf(directChildrenOfRule(tr, P.RULE_colid)[0])
+			: undefined;
+	const alias = (aliasNode ? aliasName(aliasNode) : undefined) ?? prefixAlias;
 	const aliasCst = aliasNode ? firstShallow(aliasNode, P.RULE_table_alias) : undefined;
 	const columnAliases = aliasNode ? aliasColumnList(aliasNode) : undefined;
 
 	const rel = directChildrenOfRule(tr, P.RULE_relation_expr)[0];
 	if (rel) return buildTableFromRelation(rel, alias, aliasCst, columnAliases);
+
+	// FROM 'file.parquet' — a string-literal relation (replacement scan, data/overview.md).
+	const fileRel = directChildrenOfRule(tr, P.RULE_sconst)[0];
+	if (fileRel) {
+		return { kind: "table", name: [stripStringQuotes(fileRel.getText())], alias, aliasCst, columnAliases, cst: tr };
+	}
 
 	const sub = directChildrenOfRule(tr, P.RULE_select_with_parens)[0];
 	if (sub) {
@@ -495,7 +569,12 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 		};
 	}
 
-	// func_table: a set-returning function in FROM — opaque columns (need the signature).
+	// FROM (PIVOT …) — a parenthesized pivot statement is a relation (pivot.md).
+	const pivot = directChildrenOfRule(tr, P.RULE_pivotstmt)[0] ?? directChildrenOfRule(tr, P.RULE_unpivotstmt)[0];
+	if (pivot) {
+		return { kind: "subquery", query: lowerPivotStmt(pivot), alias, aliasCst, columnAliases, cst: tr };
+	}
+
 	const funcTable = directChildrenOfRule(tr, P.RULE_func_table)[0];
 	if (funcTable) {
 		const fname = firstShallow(funcTable, P.RULE_func_name);
@@ -509,15 +588,16 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 		};
 	}
 
-	// LATERAL (…) and a parenthesized join group: descend for the inner sources is handled by the
-	// caller for joins; here we record an opaque source so a valid parse never throws.
+	const jsonTable = directChildrenOfRule(tr, P.RULE_json_table)[0];
+	if (jsonTable) {
+		return { kind: "table", name: ["json_table"], alias, aliasCst, columnAliases, cst: tr };
+	}
+
 	const nestedTr = directChildrenOfRule(tr, P.RULE_table_ref)[0];
 	if (nestedTr) {
-		// '(' table_ref join… ')' — flatten the inner join group into this source list.
 		const innerFrom: Source[] = [];
 		const innerJoins: Expr[] = [];
 		collectTableRef(nestedTr, innerFrom, innerJoins, unsupported);
-		// The inner ON conditions belong to the enclosing select; collect via a side channel.
 		nestedJoinConditions.push(...innerJoins);
 		if (innerFrom.length) return innerFrom[0];
 	}
@@ -525,7 +605,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 	return { kind: "table", name: [textOrEmpty(tr)], alias, aliasCst, columnAliases, cst: tr };
 }
 
-// Parenthesized-join ON conditions surfaced from a nested table_ref, drained by buildSelect's caller.
 const nestedJoinConditions: Expr[] = [];
 
 function buildTableFromRelation(
@@ -536,22 +615,6 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
-	// Redshift catalog path database@namespace[/cluster].schema.table: the @namespace, optional
-	// /cluster, and trailing .schema.table sit beside the qualified_name in relation_expr. Fold them
-	// in so the source name isn't silently truncated to just the database
-	// (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html).
-	if (hasDirectToken(rel, P.AT_SIGN)) {
-		for (const cid of directChildrenOfRule(rel, P.RULE_colid)) parts.push(textOf(cid));
-		const ind = directChildrenOfRule(rel, P.RULE_indirection)[0];
-		if (ind) {
-			for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
-				if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) {
-					const attr = firstShallow(el, P.RULE_attr_name);
-					parts.push(attr ? textOf(attr) : el.getText().replace(/^\./, ""));
-				}
-			}
-		}
-	}
 	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
 }
 
@@ -579,39 +642,63 @@ function funcAliasName(funcAlias: ParserRuleContext): string | undefined {
 
 // --- projections --------------------------------------------------------------
 
-/** target_el: a_expr target_alias? #target_label | STAR #target_star */
+/** target_el: columnref star_modifier* | colid ':' a_expr | a_expr target_alias? | STAR star_modifier* */
 function buildProjection(elem: ParserRuleContext): Projection {
-	// target_star — a bare STAR with no a_expr child.
-	const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
-	if (!a) {
-		return { isStar: true, expr: { kind: "star", cst: elem }, cst: elem };
+	// Prefix alias `x: 42` (select.md#prefix-aliases): colid COLON a_expr.
+	const prefixCid = directChildrenOfRule(elem, P.RULE_colid)[0];
+	if (prefixCid && hasDirectToken(elem, P.COLON)) {
+		const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
+		const expr = a ? lowerExpr(a) : otherExpr(elem);
+		return { name: textOf(prefixCid), isStar: false, expr, cst: elem };
 	}
-	const expr = lowerExpr(a);
+	const colref = directChildrenOfRule(elem, P.RULE_columnref)[0];
+	const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
+	const base = colref ?? a;
+	if (!base) {
+		const star: Expr = { kind: "star", cst: elem };
+		applyStarModifiers(star, elem);
+		return { isStar: true, expr: star, cst: elem };
+	}
+	const expr = colref ? lowerColumnref(colref) : lowerExpr(a);
 	const aliasNode = directChildrenOfRule(elem, P.RULE_target_alias)[0];
 	const alias = aliasNode ? targetAliasText(aliasNode) : undefined;
 
 	if (expr.kind === "star") {
+		applyStarModifiers(expr, elem);
 		return { isStar: true, expr, name: undefined, cst: elem };
 	}
 	const name = alias ?? (expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined);
 	return { name, isStar: false, expr, cst: elem };
 }
 
-/** target_alias: AS collabel | identifier */
+/** Star modifiers (star.md): EXCLUDE names ride on the star; REPLACE expressions' column refs
+ *  are recovered through columnsOf's `other` fallback (the modifier stays in the CST). */
+function applyStarModifiers(star: Expr & { kind: "star" }, elem: ParserRuleContext): void {
+	const excludes: string[] = [];
+	for (const mod of directChildrenOfRule(elem, P.RULE_star_modifier)) {
+		if (hasDirectToken(mod, P.EXCLUDE)) {
+			for (const item of directChildrenOfRule(mod, P.RULE_star_exclude_item)) {
+				excludes.push(stripStringQuotes(textOf(item)));
+			}
+		}
+	}
+	if (excludes.length) star.exclude = excludes;
+}
+
 function targetAliasText(node: ParserRuleContext): string {
-	const cl = firstShallow(node, P.RULE_collabel) ?? firstShallow(node, P.RULE_identifier);
-	return cl ? textOf(cl) : node.getText();
+	const cl =
+		firstShallow(node, P.RULE_collabel) ??
+		firstShallow(node, P.RULE_identifier) ??
+		firstShallow(node, P.RULE_sconst);
+	return cl ? stripStringQuotes(textOf(cl)) : node.getText();
 }
 
 // --- GROUP BY / ORDER BY / LIMIT ----------------------------------------------
 
-/** group_clause: GROUP BY group_by_list. A group_by_item is a_expr | () | CUBE/ROLLUP/GROUPING SETS;
- *  collect the leaf a_expr keys (the wrappers' inner expr_list keys included). */
 function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 	const items = collectOfRule(clause, P.RULE_group_by_item);
 	const keys: Expr[] = [];
 	for (const item of items) {
-		// A bare a_expr key is a direct child; CUBE/ROLLUP/GROUPING SETS hold their keys in an expr_list.
 		const direct = directChildrenOfRule(item, P.RULE_a_expr)[0];
 		if (direct) {
 			keys.push(lowerExpr(direct));
@@ -624,8 +711,8 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 	return keys.length ? keys : undefined;
 }
 
-/** sort_clause: ORDER BY sortby_list; sortby: a_expr (USING … | ASC/DESC)? NULLS …? */
 function extractSortKeys(sort: ParserRuleContext): Expr[] | undefined {
+	// ORDER BY ALL (orderby.md#order-by-all) — no per-key exprs; the clause is present but keyless.
 	const keys = collectOfRule(sort, P.RULE_sortby).map((s) => {
 		const a = directChildrenOfRule(s, P.RULE_a_expr)[0];
 		return a ? lowerExpr(a) : otherExpr(s);
@@ -633,7 +720,6 @@ function extractSortKeys(sort: ParserRuleContext): Expr[] | undefined {
 	return keys.length ? keys : undefined;
 }
 
-/** select_limit: limit_clause offset_clause? | offset_clause limit_clause? */
 function extractLimit(node: ParserRuleContext): LimitInfo | undefined {
 	const info: LimitInfo = {};
 	let any = false;
@@ -641,11 +727,22 @@ function extractLimit(node: ParserRuleContext): LimitInfo | undefined {
 	if (limit) {
 		const v = directChildrenOfRule(limit, P.RULE_select_limit_value)[0];
 		const a = v ? directChildrenOfRule(v, P.RULE_a_expr)[0] : undefined;
+		const pct = v ? directChildrenOfRule(v, P.RULE_aexprconst)[0] : undefined;
 		if (a) {
 			info.top = lowerExpr(a);
 			any = true;
+		} else if (pct) {
+			// LIMIT 10% (limit.md) — the percentage constant is the cap expression.
+			info.top = { kind: "literal", text: pct.getText(), cst: pct };
+			any = true;
 		} else if (v && hasDirectToken(v, P.ALL)) {
-			any = true; // LIMIT ALL — no row cap; recorded as a present-but-unbounded clause
+			any = true;
+		}
+		const ff = directChildrenOfRule(limit, P.RULE_select_fetch_first_value)[0];
+		if (ff) {
+			const c = directChildrenOfRule(ff, P.RULE_c_expr)[0];
+			info.top = c ? lowerExpr(c) : { kind: "literal", text: ff.getText(), cst: ff };
+			any = true;
 		}
 	}
 	const offset = directChildrenOfRule(node, P.RULE_offset_clause)[0];
@@ -686,8 +783,6 @@ function lowerExpr(node: ParserRuleContext | undefined): Expr {
 			return lowerIsNot(node);
 		case P.RULE_a_expr_compare:
 			return lowerCompare(node);
-		case P.RULE_a_expr_prior_or_level:
-			return passthroughTo(node, P.RULE_a_expr_like); // PRIOR/LEVEL pseudo-ops: operand carries the refs
 		case P.RULE_a_expr_like:
 			return lowerLike(node);
 		case P.RULE_a_expr_qual_op:
@@ -705,19 +800,20 @@ function lowerExpr(node: ParserRuleContext | undefined): Expr {
 		case P.RULE_a_expr_at_time_zone:
 			return lowerAtTimeZone(node);
 		case P.RULE_a_expr_collate:
-			return passthroughTo(node, P.RULE_a_expr_typecast); // COLLATE doesn't change value/refs
+			return passthroughTo(node, P.RULE_a_expr_typecast);
 		case P.RULE_a_expr_typecast:
 			return lowerTypecast(node);
 		case P.RULE_c_expr:
 			return lowerCExpr(node);
 		case P.RULE_b_expr:
 			return lowerBExpr(node);
+		case P.RULE_lambda_expr:
+			return lowerLambda(node);
 		default:
 			return passthrough(node);
 	}
 }
 
-/** Recurse into the single rule child (passthrough level). */
 function passthrough(node: ParserRuleContext): Expr {
 	const child = firstRuleChild(node);
 	return child ? lowerExpr(child) : otherExpr(node);
@@ -728,8 +824,6 @@ function passthroughTo(node: ParserRuleContext, operandRule: number): Expr {
 	return child ? lowerExpr(child) : passthrough(node);
 }
 
-/** `operand (OP operand)*` — left-fold into binary nodes. OP is any non-operand child
- *  (a terminal operator token, or a qual_op rule); AND/OR normalize to lowercase. */
 function leftChain(node: ParserRuleContext, operandRule: number): Expr {
 	let result: Expr | undefined;
 	let pendingOp = "";
@@ -745,7 +839,7 @@ function leftChain(node: ParserRuleContext, operandRule: number): Expr {
 		} else if (c instanceof TerminalNode) {
 			pendingOp = opText(c.symbol.type, c.getText());
 		} else if (c instanceof ParserRuleContext) {
-			pendingOp = c.getText(); // qual_op operator
+			pendingOp = c.getText();
 		}
 	}
 	return result ?? otherExpr(node);
@@ -757,7 +851,6 @@ function opText(type: number, text: string): string {
 	return text;
 }
 
-/** a_expr_between: a_expr_in (NOT? BETWEEN SYMMETRIC? a_expr_in AND a_expr_in)? */
 function lowerBetween(node: ParserRuleContext): Expr {
 	const operands = directChildrenOfRule(node, P.RULE_a_expr_in);
 	if (!hasDirectToken(node, P.BETWEEN) || operands.length < 3) return passthrough(node);
@@ -771,7 +864,7 @@ function lowerBetween(node: ParserRuleContext): Expr {
 	};
 }
 
-/** a_expr_in: a_expr_unary_not (NOT? IN_P in_expr)? — in_expr: select_with_parens | '(' expr_list ')' */
+/** a_expr_in: … NOT? IN_P in_expr — in_expr may also be a collection expression (in.md). */
 function lowerIn(node: ParserRuleContext): Expr {
 	const left = directChildrenOfRule(node, P.RULE_a_expr_unary_not)[0];
 	if (!hasDirectToken(node, P.IN_P)) return passthrough(node);
@@ -783,7 +876,12 @@ function lowerIn(node: ParserRuleContext): Expr {
 		args = [{ kind: "subquery", query: inner ? lowerSelectStmt(inner) : emptyQuery(sub), cst: sub }];
 	} else {
 		const list = inExpr ? directChildrenOfRule(inExpr, P.RULE_expr_list)[0] : undefined;
-		args = list ? directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr) : [];
+		if (list) {
+			args = directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr);
+		} else {
+			const coll = inExpr ? directChildrenOfRule(inExpr, P.RULE_a_expr)[0] : undefined;
+			args = coll ? [lowerExpr(coll)] : [];
+		}
 	}
 	return {
 		kind: "predicate",
@@ -795,14 +893,12 @@ function lowerIn(node: ParserRuleContext): Expr {
 	};
 }
 
-/** a_expr_unary_not: NOT? a_expr_isnull */
 function lowerUnaryNot(node: ParserRuleContext): Expr {
 	const operand = directChildrenOfRule(node, P.RULE_a_expr_isnull)[0];
 	const inner = operand ? lowerExpr(operand) : otherExpr(node);
 	return hasDirectToken(node, P.NOT) ? { kind: "unary", op: "not", operand: inner, cst: node } : inner;
 }
 
-/** a_expr_isnull: a_expr_is_not (ISNULL | NOTNULL)? */
 function lowerIsNull(node: ParserRuleContext): Expr {
 	const operand = directChildrenOfRule(node, P.RULE_a_expr_is_not)[0];
 	const inner = operand ? lowerExpr(operand) : otherExpr(node);
@@ -813,7 +909,6 @@ function lowerIsNull(node: ParserRuleContext): Expr {
 	return inner;
 }
 
-/** a_expr_is_not: a_expr_compare (IS NOT? (NULL|TRUE|FALSE|UNKNOWN | DISTINCT FROM a_expr | …))? */
 function lowerIsNot(node: ParserRuleContext): Expr {
 	const left = directChildrenOfRule(node, P.RULE_a_expr_compare)[0];
 	const inner = left ? lowerExpr(left) : otherExpr(node);
@@ -830,6 +925,8 @@ function lowerIsNot(node: ParserRuleContext): Expr {
 			cst: node,
 		};
 	}
+	if (hasDirectToken(node, P.JSON))
+		return { kind: "predicate", op: "json", negated, operand: inner, args: [], cst: node };
 	const op = hasDirectToken(node, P.TRUE_P)
 		? "true"
 		: hasDirectToken(node, P.FALSE_P)
@@ -840,9 +937,8 @@ function lowerIsNot(node: ParserRuleContext): Expr {
 	return { kind: "predicate", op, negated, operand: inner, args: [], cst: node };
 }
 
-/** a_expr_compare: a_expr_prior_or_level ((cmp) a_expr_prior_or_level | subquery_Op sub_type (…))? */
 function lowerCompare(node: ParserRuleContext): Expr {
-	const operands = directChildrenOfRule(node, P.RULE_a_expr_prior_or_level);
+	const operands = directChildrenOfRule(node, P.RULE_a_expr_like);
 	const cmp = directTokenType(node, [P.LT, P.GT, P.EQUAL, P.LESS_EQUALS, P.GREATER_EQUALS, P.NOT_EQUALS]);
 	if (cmp !== undefined && operands.length === 2) {
 		return {
@@ -853,7 +949,6 @@ function lowerCompare(node: ParserRuleContext): Expr {
 			cst: node,
 		};
 	}
-	// expr subquery_Op (ANY|SOME|ALL) (subquery | (a_expr)) — quantified comparison.
 	if (directChildrenOfRule(node, P.RULE_subquery_Op).length) {
 		const left = operands[0] ? lowerExpr(operands[0]) : otherExpr(node);
 		const sub = directChildrenOfRule(node, P.RULE_select_with_parens)[0];
@@ -879,12 +974,12 @@ function lowerCompare(node: ParserRuleContext): Expr {
 	return passthrough(node);
 }
 
-/** a_expr_like: a_expr_qual_op (NOT? (LIKE | ILIKE | SIMILAR TO) a_expr_qual_op opt_escape?)? */
+/** a_expr_like: … NOT? (LIKE | ILIKE | GLOB | SIMILAR TO) … (pattern_matching.md). */
 function lowerLike(node: ParserRuleContext): Expr {
 	const operands = directChildrenOfRule(node, P.RULE_a_expr_qual_op);
-	const tok = directTokenType(node, [P.LIKE, P.ILIKE, P.SIMILAR]);
+	const tok = directTokenType(node, [P.LIKE, P.ILIKE, P.GLOB, P.SIMILAR]);
 	if (tok === undefined || operands.length < 2) return operands[0] ? lowerExpr(operands[0]) : passthrough(node);
-	const op = tok === P.ILIKE ? "ilike" : tok === P.SIMILAR ? "similar" : "like";
+	const op = tok === P.ILIKE ? "ilike" : tok === P.SIMILAR ? "similar" : tok === P.GLOB ? "glob" : "like";
 	return {
 		kind: "predicate",
 		op,
@@ -895,7 +990,6 @@ function lowerLike(node: ParserRuleContext): Expr {
 	};
 }
 
-/** a_expr_unary_qualop: qual_op? a_expr_add */
 function lowerUnaryQualOp(node: ParserRuleContext): Expr {
 	const operand = directChildrenOfRule(node, P.RULE_a_expr_add)[0];
 	const inner = operand ? lowerExpr(operand) : otherExpr(node);
@@ -903,7 +997,6 @@ function lowerUnaryQualOp(node: ParserRuleContext): Expr {
 	return qualOp ? { kind: "unary", op: qualOp.getText(), operand: inner, cst: node } : inner;
 }
 
-/** a_expr_caret: a_expr_unary_sign (CARET a_expr)? */
 function lowerCaret(node: ParserRuleContext): Expr {
 	const left = directChildrenOfRule(node, P.RULE_a_expr_unary_sign)[0];
 	const inner = left ? lowerExpr(left) : otherExpr(node);
@@ -912,7 +1005,6 @@ function lowerCaret(node: ParserRuleContext): Expr {
 	return { kind: "binary", op: "^", left: inner, right: right ? lowerExpr(right) : otherExpr(node), cst: node };
 }
 
-/** a_expr_unary_sign: (MINUS | PLUS)? a_expr_at_time_zone */
 function lowerUnarySign(node: ParserRuleContext): Expr {
 	const operand = directChildrenOfRule(node, P.RULE_a_expr_at_time_zone)[0];
 	const inner = operand ? lowerExpr(operand) : otherExpr(node);
@@ -920,7 +1012,6 @@ function lowerUnarySign(node: ParserRuleContext): Expr {
 	return sign !== undefined ? { kind: "unary", op: sign === P.MINUS ? "-" : "+", operand: inner, cst: node } : inner;
 }
 
-/** a_expr_at_time_zone: a_expr_collate (AT TIME ZONE a_expr)? — modelled as a 2-arg function. */
 function lowerAtTimeZone(node: ParserRuleContext): Expr {
 	const left = directChildrenOfRule(node, P.RULE_a_expr_collate)[0];
 	const inner = left ? lowerExpr(left) : otherExpr(node);
@@ -936,7 +1027,6 @@ function lowerAtTimeZone(node: ParserRuleContext): Expr {
 	};
 }
 
-/** a_expr_typecast: c_expr (TYPECAST typename)* — fold `:: type` casts left. */
 function lowerTypecast(node: ParserRuleContext): Expr {
 	const cexpr = directChildrenOfRule(node, P.RULE_c_expr)[0];
 	let expr = cexpr ? lowerExpr(cexpr) : otherExpr(node);
@@ -947,7 +1037,6 @@ function lowerTypecast(node: ParserRuleContext): Expr {
 	return expr;
 }
 
-/** b_expr is the restricted expression grammar (used in a few positions); left-recursive. */
 function lowerBExpr(node: ParserRuleContext): Expr {
 	const cexpr = directChildrenOfRule(node, P.RULE_c_expr)[0];
 	if (cexpr) return lowerExpr(cexpr);
@@ -982,7 +1071,6 @@ function lowerBExpr(node: ParserRuleContext): Expr {
 // --- c_expr: the expression leaves --------------------------------------------
 
 function lowerCExpr(node: ParserRuleContext): Expr {
-	// EXISTS ( select )
 	if (hasDirectToken(node, P.EXISTS)) {
 		const sw = directChildrenOfRule(node, P.RULE_select_with_parens)[0];
 		const inner = sw ? innerSelect(sw) : undefined;
@@ -990,32 +1078,83 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 			? { kind: "exists", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: node }
 			: otherExpr(node);
 	}
-	// columnref — a column / qualified column / qualified star / subscripted column
+	// COLUMNS(*/'regex'/lambda) — a dynamic multi-column selection; the closest faithful IR node
+	// is a star (the concrete column set needs the schema) — star.md#columns-expression.
+	if (hasDirectToken(node, P.COLUMNS)) {
+		return { kind: "star", cst: node };
+	}
+	// [1, 2] list literal / [x FOR x IN l] comprehension — data_types/list.md, functions/list.md.
+	if (hasDirectToken(node, P.OPEN_BRACKET)) {
+		if (hasDirectToken(node, P.FOR)) {
+			const exprs = directChildrenOfRule(node, P.RULE_a_expr);
+			const body = exprs[0] ? lowerExpr(exprs[0]) : otherExpr(node);
+			const params = directChildrenOfRule(node, P.RULE_colid).map((c) => textOf(c));
+			const rest = exprs.slice(1).map(lowerExpr);
+			return {
+				kind: "function",
+				name: "list_comprehension",
+				args: [{ kind: "lambda", params, body, cst: node }, ...rest],
+				aggregate: false,
+				distinct: false,
+				cst: node,
+			};
+		}
+		const list = directChildrenOfRule(node, P.RULE_expr_list)[0];
+		const elems = list ? directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr) : [];
+		const base: Expr = {
+			kind: "function",
+			name: "list_value",
+			args: elems,
+			aggregate: false,
+			distinct: false,
+			cst: node,
+		};
+		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
+		return ind ? applyIndirection(base, ind, node) : base;
+	}
+	// {'k': v} struct / MAP {k: v} map literal — struct.md, map.md.
+	if (hasDirectToken(node, P.OPEN_BRACE)) {
+		const isMap = hasDirectToken(node, P.MAP_P);
+		const args: Expr[] = [];
+		for (const f of directChildrenOfRule(node, P.RULE_struct_literal_field)) {
+			for (const a of directChildrenOfRule(f, P.RULE_a_expr)) args.push(lowerExpr(a));
+		}
+		const base: Expr = {
+			kind: "function",
+			name: isMap ? "map" : "struct_pack",
+			args,
+			aggregate: false,
+			distinct: false,
+			cst: node,
+		};
+		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
+		return ind ? applyIndirection(base, ind, node) : base;
+	}
+	const lambda = directChildrenOfRule(node, P.RULE_lambda_expr)[0];
+	if (lambda) return lowerLambda(lambda);
 	const colref = directChildrenOfRule(node, P.RULE_columnref)[0];
 	if (colref) return lowerColumnref(colref);
-	// case
 	const caseExpr = directChildrenOfRule(node, P.RULE_case_expr)[0];
 	if (caseExpr) return lowerCase(caseExpr);
-	// func_expr
 	const funcExpr = directChildrenOfRule(node, P.RULE_func_expr)[0];
-	if (funcExpr) return lowerFuncExpr(funcExpr);
-	// literal
+	if (funcExpr) {
+		const base = lowerFuncExpr(funcExpr);
+		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
+		return ind ? applyIndirection(base, ind, node) : base;
+	}
 	const constant = directChildrenOfRule(node, P.RULE_aexprconst)[0];
 	if (constant) return { kind: "literal", text: constant.getText(), cst: constant };
-	// ( a_expr ) opt_indirection — parenthesized, with optional subscript/field access
 	const inParen = directChildrenOfRule(node, P.RULE_a_expr)[0];
 	if (inParen) {
 		const base = lowerExpr(inParen);
 		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
 		return ind ? applyIndirection(base, ind, node) : base;
 	}
-	// scalar subquery: select_with_parens indirection?
 	const sw = directChildrenOfRule(node, P.RULE_select_with_parens)[0];
 	if (sw) {
 		const inner = innerSelect(sw);
 		return { kind: "subquery", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: node };
 	}
-	// ARRAY ( select | [elems] )
 	if (hasDirectToken(node, P.ARRAY)) {
 		const swInner = directChildrenOfRule(node, P.RULE_select_with_parens)[0];
 		if (swInner) {
@@ -1026,24 +1165,27 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 		const elems = arr ? collectOfRule(arr, P.RULE_a_expr).map(lowerExpr) : [];
 		return { kind: "function", name: "array", args: elems, aggregate: false, distinct: false, cst: node };
 	}
-	// GROUPING ( expr_list )
 	if (hasDirectToken(node, P.GROUPING)) {
 		const list = directChildrenOfRule(node, P.RULE_expr_list)[0];
 		const args = list ? directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr) : [];
 		return { kind: "function", name: "grouping", args, aggregate: false, distinct: false, cst: node };
 	}
-	// PARAM ($1) / plsqlvariablename — a bind parameter / variable; not a column reference.
 	if (hasDirectToken(node, P.PARAM)) return { kind: "literal", text: node.getText(), cst: node };
 	const plsqlvar = directChildrenOfRule(node, P.RULE_plsqlvariablename)[0];
 	if (plsqlvar) return { kind: "column", parts: [plsqlvar.getText()], cst: node };
-	// row constructors / OVERLAPS — not modelled structurally.
 	const exprs = collectOfRule(node, P.RULE_a_expr).map(lowerExpr);
 	if (exprs.length)
 		return { kind: "function", name: "row", args: exprs, aggregate: false, distinct: false, cst: node };
 	return otherExpr(node);
 }
 
-/** columnref: colid indirection?  — colid is the head; indirection adds .attr / .* / [idx]. */
+/** lambda_expr: LAMBDA colid (',' colid)* ':' a_expr — functions/lambda.md. */
+function lowerLambda(node: ParserRuleContext): Expr {
+	const params = directChildrenOfRule(node, P.RULE_colid).map((c) => textOf(c));
+	const bodyNode = directChildrenOfRule(node, P.RULE_a_expr)[0];
+	return { kind: "lambda", params, body: bodyNode ? lowerExpr(bodyNode) : otherExpr(node), cst: node };
+}
+
 function lowerColumnref(node: ParserRuleContext): Expr {
 	const colid = directChildrenOfRule(node, P.RULE_colid)[0];
 	const head = colid ? textOf(colid) : node.getText();
@@ -1053,7 +1195,8 @@ function lowerColumnref(node: ParserRuleContext): Expr {
 }
 
 /** Apply indirection_el+ to a base expr: `.attr` extends a column path, `.*` makes a qualified
- *  star, `[idx]` / `[lo:hi]` makes a subscript. Mixed chains compose left-to-right. */
+ *  star, `[idx]` / `[lo:hi(:step)]` a subscript, `.f(args)` a chained method call
+ *  (x.f(y) ≡ f(x, y) — functions/overview.md#function-chaining-via-the-dot-operator). */
 function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: ParserRuleContext): Expr {
 	let expr = base;
 	for (const el of directChildrenOfRule(indirection, P.RULE_indirection_el)) {
@@ -1061,6 +1204,17 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 			if (hasDirectToken(el, P.STAR)) {
 				const qualifier = expr.kind === "column" ? expr.parts : undefined;
 				expr = { kind: "star", qualifier, cst };
+			} else if (hasDirectToken(el, P.OPEN_PAREN)) {
+				const attr = firstShallow(el, P.RULE_attr_name);
+				const name = (attr ? textOf(attr) : el.getText().replace(/^\./, "")).toLowerCase();
+				const list = directChildrenOfRule(el, P.RULE_func_arg_list)[0];
+				const args = list
+					? directChildrenOfRule(list, P.RULE_func_arg_expr).map((fa) => {
+							const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
+							return a ? lowerExpr(a) : otherExpr(fa);
+						})
+					: [];
+				expr = { kind: "function", name, args: [expr, ...args], aggregate: false, distinct: false, cst };
 			} else {
 				const attr = firstShallow(el, P.RULE_attr_name);
 				const part = attr ? textOf(attr) : el.getText().replace(/^\./, "");
@@ -1070,7 +1224,6 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 						: { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
 			}
 		} else {
-			// '[' a_expr ']' or '[' lo? : hi? ']' subscript
 			const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
 			const index: Expr = idxNode ? lowerExpr(idxNode) : { kind: "literal", text: el.getText(), cst: el };
 			expr = { kind: "subscript", base: expr, index, cst };
@@ -1079,7 +1232,6 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 	return expr;
 }
 
-/** case_expr: CASE case_arg? when_clause+ (ELSE a_expr)? END */
 function lowerCase(node: ParserRuleContext): Expr {
 	const arg = directChildrenOfRule(node, P.RULE_case_arg)[0];
 	const subject = arg ? lowerExpr(directChildrenOfRule(arg, P.RULE_a_expr)[0]) : undefined;
@@ -1087,7 +1239,6 @@ function lowerCase(node: ParserRuleContext): Expr {
 		const es = directChildrenOfRule(w, P.RULE_a_expr);
 		const whenVal = es[0] ? lowerExpr(es[0]) : otherExpr(w);
 		const then = es[1] ? lowerExpr(es[1]) : otherExpr(w);
-		// Simple CASE <subject> WHEN v — desugar to `subject = v` so column/type passes see both.
 		const when: Expr = subject ? { kind: "binary", op: "=", left: subject, right: whenVal, cst: w } : whenVal;
 		return { when, then };
 	});
@@ -1096,7 +1247,6 @@ function lowerCase(node: ParserRuleContext): Expr {
 	return { kind: "case", whens, elseExpr, cst: node };
 }
 
-/** func_expr: func_application within_group? filter? over? | func_expr_common_subexpr */
 function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const common = directChildrenOfRule(node, P.RULE_func_expr_common_subexpr)[0];
 	if (common) return lowerCommonFunc(common);
@@ -1106,11 +1256,15 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const fname = firstShallow(app, P.RULE_func_name);
 	const name = (fname ? lastName(fname) : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
-	// WITHIN GROUP (ORDER BY …) keys feed the aggregate — include as args.
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];
 	if (within) {
 		const sort = firstShallow(within, P.RULE_sort_clause);
 		if (sort) for (const k of extractSortKeys(sort) ?? []) args.push(k);
+	}
+	const filter = directChildrenOfRule(node, P.RULE_filter_clause)[0];
+	if (filter) {
+		const fa = directChildrenOfRule(filter, P.RULE_a_expr)[0];
+		if (fa) args.push(lowerExpr(fa));
 	}
 	const over = directChildrenOfRule(node, P.RULE_over_clause)[0];
 	const window = over ? lowerOver(over) : undefined;
@@ -1125,33 +1279,33 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	};
 }
 
-/** func_application: func_name '(' (func_arg_list … | VARIADIC … | (ALL|DISTINCT) func_arg_list … | STAR | ) ')' */
 function funcArgs(app: ParserRuleContext): Expr[] {
 	const list = directChildrenOfRule(app, P.RULE_func_arg_list)[0];
-	if (!list) return []; // STAR (count(*)) or empty arg list
+	if (!list) return [];
 	return directChildrenOfRule(list, P.RULE_func_arg_expr).map((fa) => {
-		// func_arg_expr: a_expr | param_name (:=|=>) a_expr  — take the a_expr value.
 		const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
-		return a ? lowerExpr(a) : otherExpr(fa);
+		if (a) return lowerExpr(a);
+		const l = directChildrenOfRule(fa, P.RULE_lambda_expr)[0];
+		return l ? lowerLambda(l) : otherExpr(fa);
 	});
 }
 
-/** func_expr_common_subexpr: CAST/TRY_CAST/EXTRACT/SUBSTRING/COALESCE/NULLIF/TRIM/… */
+/** func_expr_common_subexpr: CAST, TRY_CAST, EXTRACT, SUBSTRING, COALESCE, NULLIF, TRIM, … */
 function lowerCommonFunc(node: ParserRuleContext): Expr {
-	// CAST / TRY_CAST / TREAT ( a_expr AS typename )
 	if (hasDirectToken(node, P.CAST) || hasDirectToken(node, P.TRY_CAST) || hasDirectToken(node, P.TREAT)) {
 		const a = directChildrenOfRule(node, P.RULE_a_expr)[0];
 		const tn = directChildrenOfRule(node, P.RULE_typename)[0];
 		return { kind: "cast", expr: a ? lowerExpr(a) : otherExpr(node), typeText: tn ? tn.getText() : "", cst: node };
 	}
 	const name = (leftmostToken(node) ?? "").toLowerCase();
-	// Collect every a_expr / b_expr / expr_list argument the form carries (EXTRACT, SUBSTRING,
-	// COALESCE, NULLIF, TRIM, POSITION, OVERLAY, GREATEST, LEAST, NORMALIZE, XML*, CURRENT_*).
 	const args: Expr[] = [];
 	for (const list of directChildrenOfRule(node, P.RULE_expr_list)) {
 		for (const a of directChildrenOfRule(list, P.RULE_a_expr)) args.push(lowerExpr(a));
 	}
 	for (const a of directChildrenOfRule(node, P.RULE_a_expr)) args.push(lowerExpr(a));
+	for (const jve of collectOfRule(node, P.RULE_json_value_expr)) {
+		for (const a of directChildrenOfRule(jve, P.RULE_a_expr)) args.push(lowerExpr(a));
+	}
 	for (const sub of [
 		P.RULE_extract_list,
 		P.RULE_substr_list,
@@ -1167,10 +1321,9 @@ function lowerCommonFunc(node: ParserRuleContext): Expr {
 	return { kind: "function", name, args, aggregate: false, distinct: false, cst: node };
 }
 
-/** over_clause: OVER (window_specification | colid). */
 function lowerOver(over: ParserRuleContext): WindowSpec {
 	const spec = directChildrenOfRule(over, P.RULE_window_specification)[0];
-	if (!spec) return { partitionBy: [], orderBy: [], cst: over }; // OVER namedWindow
+	if (!spec) return { partitionBy: [], orderBy: [], cst: over };
 	const part = directChildrenOfRule(spec, P.RULE_opt_partition_clause)[0];
 	const partitionBy = part
 		? directChildrenOfRule(part, P.RULE_expr_list)[0]
@@ -1182,7 +1335,7 @@ function lowerOver(over: ParserRuleContext): WindowSpec {
 	return { partitionBy, orderBy, cst: over };
 }
 
-// --- expression subqueries (scalar / IN / EXISTS) -----------------------------
+// --- expression subqueries -----------------------------------------------------
 
 function fromSubqueryNodes(from: Source[]): Set<ParserRuleContext> {
 	const set = new Set<ParserRuleContext>();
@@ -1206,19 +1359,16 @@ function extractExpressionSubqueries(node: ParserRuleContext, fromQueries: Set<P
 					const inner = innerSelect(child);
 					out.push(inner ? lowerSelectStmt(inner) : emptyQuery(child));
 				}
-				continue; // its own scope — don't descend
+				continue;
 			}
 			walk(child);
 		}
 	};
-	// Walk the whole select body; FROM subqueries are in `fromQueries` and are skipped (and not
-	// descended into — they own their scope), so only the expression subqueries (projection / WHERE
-	// / HAVING / QUALIFY scalar / IN / EXISTS) remain.
 	walk(node);
 	return out;
 }
 
-// --- column extraction (single source of truth for SelectExpr.columns) --------
+// --- column extraction ----------------------------------------------------------
 
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
@@ -1262,12 +1412,11 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	}
 }
 
-/** Fallback: recover column references from inside an unmodelled `other` node. */
 function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void {
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const child = node.getChild(i);
 		if (!(child instanceof ParserRuleContext)) continue;
-		if (child.ruleIndex === P.RULE_select_with_parens) continue; // own scope
+		if (child.ruleIndex === P.RULE_select_with_parens) continue;
 		if (child.ruleIndex === P.RULE_columnref) {
 			acc.push({ parts: lowerColumnrefParts(child), clause, cst: child });
 			continue;
@@ -1332,7 +1481,6 @@ function collectOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext[] 
 	return out;
 }
 
-/** First node of `ruleIndex` reachable without descending into a nested select_with_parens. */
 function firstShallow(node: ParseTree, ruleIndex: number): ParserRuleContext | undefined {
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const child = node.getChild(i);
@@ -1370,7 +1518,6 @@ function hasDirectToken(node: ParseTree, type: number): boolean {
 	return false;
 }
 
-/** Token within `node`, not descending into a nested select_with_parens. */
 function hasTokenShallow(node: ParseTree, type: number): boolean {
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const child = node.getChild(i);
@@ -1409,7 +1556,6 @@ function leftmostToken(node: ParseTree): string | undefined {
 	return undefined;
 }
 
-/** The dotted name parts of a qualified_name / columnref (colid + indirection attrs). */
 function nameParts(node: ParserRuleContext): string[] {
 	const colid = directChildrenOfRule(node, P.RULE_colid)[0];
 	const parts = colid ? [textOf(colid)] : [];
@@ -1430,13 +1576,11 @@ function nameParts(node: ParserRuleContext): string[] {
 		.filter((p) => p.length > 0);
 }
 
-/** Last component of a (possibly dotted) func_name / name. */
 function lastName(node: ParserRuleContext): string {
 	const parts = nameParts(node);
 	return parts.length ? parts[parts.length - 1] : node.getText();
 }
 
-/** Identifier text with quotes stripped (handles colid/name/identifier subtrees). */
 function textOf(node: ParserRuleContext): string {
 	return stripQuotes(node.getText());
 }
@@ -1449,6 +1593,12 @@ function stripQuotes(text: string): string {
 	if (text.length >= 2 && text[0] === '"' && text[text.length - 1] === '"')
 		return text.slice(1, -1).replace(/""/g, '"');
 	return text;
+}
+
+function stripStringQuotes(text: string): string {
+	if (text.length >= 2 && text[0] === "'" && text[text.length - 1] === "'")
+		return text.slice(1, -1).replace(/''/g, "'");
+	return stripQuotes(text);
 }
 
 function otherExpr(node: ParserRuleContext): Expr {
@@ -1471,5 +1621,4 @@ function emptyQuery(cst: ParserRuleContext): QueryExpr {
 	return { kind: "query", ctes: [], body: emptyBody(cst), cst };
 }
 
-// A sentinel CST for the rare empty-expression fallback (keeps Expr.cst non-optional).
 const emptyCst = new ParserRuleContext(null);

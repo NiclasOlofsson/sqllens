@@ -134,7 +134,9 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 
 /** Lower a parsed Databricks statement (CST) into the IR, frozen — immutable after lower() (no pass writes back). */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "databricks";
+	return freezeIR(q);
 }
 
 /** An empty, flagged body — the stable non-throw shape for anything not modelled. */
@@ -188,6 +190,18 @@ function statementCategory(stmt: ParserRuleContext): StatementCategory {
 	if (isCompound(stmt)) return "compound";
 	if (shallowFirstOfRule(stmt, P.RULE_dmlStatementNoWith)) return "dml";
 	return keywordCategory(stmt.start?.text ?? "");
+}
+
+/** Per-statement categories for every top-level unit of a parsed `multiStatement`, in source order —
+ *  one entry per `multiStatementElement`, using the same per-element `statementCategory` lower() uses.
+ *  Parity with the other dialects' `statementCategories`; feeds the corpus reclassifier. A legacy
+ *  single-statement root (not a `multiStatement`) yields its one category; an empty batch yields []. */
+export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
+	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
+	if (elements.length === 0) {
+		return tree.ruleIndex === P.RULE_multiStatement ? [] : [statementCategory(tree)];
+	}
+	return elements.map(statementCategory);
 }
 
 function lowerQuery(query: ParserRuleContext): QueryExpr {

@@ -1,5 +1,5 @@
 import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
-import { RedshiftParser as P } from "../generated/redshift/RedshiftParser.js";
+import { PostgresParser as P } from "../generated/postgres/PostgresParser.js";
 import type {
 	Clause,
 	ColumnRef,
@@ -17,9 +17,9 @@ import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
-// Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
+// Lowering — PostgreSQL (bytebase/parser postgresql/ fork, TVL-lineage grammar)
 // CST -> the shared dialect-neutral IR (src/ir/ir.ts). The semantic layer runs
-// on the IR unchanged; only this file knows Redshift's grammar.
+// on the IR unchanged; only this file knows the Postgres grammar.
 //
 // The expression grammar is the Postgres precedence cascade
 // (a_expr -> a_expr_qual -> … -> a_expr_typecast -> c_expr): each level is its
@@ -27,31 +27,57 @@ import { freezeIR } from "../ir/freeze.js";
 // modelled become explicit `other`/`unsupported`, never silently dropped.
 // Navigation is by rule index; nested select_with_parens / subqueries belong to
 // their own scope, so shallow walks never descend into them.
+//
+// Same CST shapes as src/redshift/lower.ts (both grammars are the Tunnel Vision
+// Labs Postgres grammar via bytebase/parser); adapted here: the Redshift-only
+// surface (QUALIFY, SELECT * EXCLUDE, CONNECT BY, PIVOT/UNPIVOT, @namespace
+// catalog paths, TRY_CAST, PRIOR/LEVEL) is gone, and the Postgres-only surface
+// (DISTINCT ON, WITH … SEARCH/CYCLE, JSON_TABLE) is added.
 // ---------------------------------------------------------------------------
 
-// docs.aws.amazon.com/redshift/latest/dg/c_Aggregate_Functions.html
-// + the approximate / bit / boolean / window-capable aggregate families.
+// https://www.postgresql.org/docs/18/functions-aggregate.html — general-purpose (Table 9.62),
+// statistical (9.63), ordered-set (9.64) and hypothetical-set (9.65) aggregates. The
+// hypothetical-set names double as window functions; `aggregate` is only set when there is
+// no OVER clause, so including them is correct.
 const AGGREGATES = new Set([
 	"any_value",
-	"approximate",
+	"array_agg",
 	"avg",
 	"bit_and",
 	"bit_or",
+	"bit_xor",
 	"bool_and",
 	"bool_or",
 	"corr",
 	"count",
-	"count_if",
 	"covar_pop",
 	"covar_samp",
 	"cume_dist",
-	"kurtosis",
-	"listagg",
+	"dense_rank",
+	"every",
+	"json_agg",
+	"json_agg_strict",
+	"json_arrayagg",
+	"json_object_agg",
+	"json_object_agg_strict",
+	"json_object_agg_unique",
+	"json_object_agg_unique_strict",
+	"json_objectagg",
+	"jsonb_agg",
+	"jsonb_agg_strict",
+	"jsonb_object_agg",
+	"jsonb_object_agg_strict",
+	"jsonb_object_agg_unique",
+	"jsonb_object_agg_unique_strict",
 	"max",
-	"median",
 	"min",
+	"mode",
+	"percent_rank",
 	"percentile_cont",
 	"percentile_disc",
+	"range_agg",
+	"range_intersect_agg",
+	"rank",
 	"regr_avgx",
 	"regr_avgy",
 	"regr_count",
@@ -61,27 +87,28 @@ const AGGREGATES = new Set([
 	"regr_sxx",
 	"regr_sxy",
 	"regr_syy",
-	"skewness",
 	"stddev",
 	"stddev_pop",
 	"stddev_samp",
+	"string_agg",
 	"sum",
 	"var_pop",
 	"var_samp",
 	"variance",
+	"xmlagg",
 ]);
 
-/** Lower a parsed Redshift file (root: stmtblock of `;`-separated statements) into the IR.
+/** Lower a parsed PostgreSQL file (root: stmtblock of `;`-separated statements) into the IR.
  *  A single SELECT statement lowers fully; anything else (DDL, DML, multi-statement batches)
  *  becomes a flagged non-query body — a valid parse never throws. Frozen — immutable after lower(). */
 export function lower(tree: ParserRuleContext): QueryExpr {
 	const q = lowerImpl(tree);
-	q.dialect = "redshift";
+	q.dialect = "postgres";
 	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
-	const stmts = topLevelStmts(tree);
+	const stmts = collectOfRule(tree, P.RULE_stmt);
 	const statement = statementCategory(stmts);
 	if (stmts.length !== 1) {
 		const q = nonQuery(tree, stmts.length === 0 ? "empty" : "multi-statement");
@@ -102,103 +129,99 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
 	if (stmts.length === 0) return "other";
 	if (stmts.length > 1) return "compound";
-	return redshiftCategory(stmts[0]);
+	return postgresCategory(stmts[0]);
 }
 
 /** Per-statement categories for every top-level `stmt` in a parsed `root`, in source order — the
  *  file-level view behind statementCategory (which folds >1 into "compound"). Parity with the other
  *  dialects; feeds the corpus reclassifier. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return topLevelStmts(tree).map(redshiftCategory);
+	return collectOfRule(tree, P.RULE_stmt).map(postgresCategory);
 }
 
-/** The top-level `stmt` nodes of a parsed file — root → stmtblock → stmtmulti's DIRECT `stmt`
- *  children. A deep `collectOfRule(tree, RULE_stmt)` would also pick up a `stmt` nested inside
- *  `createfunc_opt_item` (`CREATE FUNCTION … BEGIN ATOMIC <stmt>; END`, RedshiftParser.g4), so a
- *  single CREATE FUNCTION would count as two statements. Walk only the top level, like the other
- *  dialects. */
-function topLevelStmts(tree: ParserRuleContext): ParserRuleContext[] {
-	const stmtblock = directChildrenOfRule(tree, P.RULE_stmtblock)[0] ?? tree;
-	const stmtmulti = directChildrenOfRule(stmtblock, P.RULE_stmtmulti)[0] ?? stmtblock;
-	return directChildrenOfRule(stmtmulti, P.RULE_stmt);
-}
-
-// Structural statement classification over the Postgres-derived `stmt` alternatives (grammars/
-// redshift/RedshiftParser.g4, rule `stmt`). Each `stmt` has exactly one alternative rule child; we
-// map it by its grammar rule NAME (P.ruleNames) so the category is parse-derived, not a leading-
-// keyword guess — the guess mis-reads `WITH … SELECT` as non-query, `SELECT INTO` as a read, and
-// ANALYZE/VACUUM as DDL. Rule names cited against the AWS Redshift SQL reference.
-const REDSHIFT_STMT_CATEGORY: Record<string, StatementCategory> = {
-	// docs.aws.amazon.com/redshift/latest/dg/r_SELECT_synopsis.html — the read path.
+// Structural statement classification over the `stmt` alternatives (grammars/postgres/
+// PostgresParser.g4, rule `stmt`). Each `stmt` has exactly one alternative rule child; we map it
+// by its grammar rule NAME (P.ruleNames) so the category is parse-derived, not a leading-keyword
+// guess. Rule names cited against the PostgreSQL 18 SQL commands reference
+// (https://www.postgresql.org/docs/18/sql-commands.html).
+const POSTGRES_STMT_CATEGORY: Record<string, StatementCategory> = {
+	// sql-select.html — the read path.
 	selectstmt: "query",
-	// Write / data movement: INSERT / UPDATE / DELETE / MERGE / COPY / LOAD / UNLOAD, plus the
-	// Redshift-specific INSERT-into-external and SELECT INTO (writes rows into a NEW table — a
-	// side-effect, not a read: r_SELECT_INTO.html). All grouped as dml.
+	// Write / data movement: INSERT / UPDATE / DELETE / MERGE / COPY (sql-insert.html, sql-update.html,
+	// sql-delete.html, sql-merge.html, sql-copy.html). TRUNCATE removes rows but the shared contract
+	// (src/ir/statement.ts) files it under ddl with the other dialects.
 	insertstmt: "dml",
 	updatestmt: "dml",
 	deletestmt: "dml",
 	mergestmt: "dml",
-	copystmt: "dml", // r_COPY.html
-	loadstmt: "dml",
-	unloadstmt: "dml", // r_UNLOAD.html
-	insertexternaltablestmt: "dml", // r_INSERT_external_table.html
-	selectintostmt: "dml", // r_SELECT_INTO.html
-	// GRANT / REVOKE — data control: r_GRANT.html, r_REVOKE.html.
+	copystmt: "dml",
+	// GRANT / REVOKE + role membership and ownership transfer — data control (sql-grant.html,
+	// sql-revoke.html, sql-reassign-owned.html, sql-drop-owned.html).
 	grantstmt: "dcl",
+	grantrolestmt: "dcl",
 	revokestmt: "dcl",
 	revokerolestmt: "dcl",
-	// Transaction control: BEGIN / START / COMMIT / END / ROLLBACK / ABORT / SAVEPOINT — r_BEGIN.html,
-	// r_ABORT.html, r_END.html (all one `transactionstmt` alternative).
+	reassignownedstmt: "dcl",
+	dropownedstmt: "dcl",
+	// BEGIN / START / COMMIT / END / ROLLBACK / SAVEPOINT / RELEASE — one transactionstmt rule
+	// (sql-begin.html, sql-commit.html, …).
 	transactionstmt: "tcl",
-	// Session / maintenance utilities — SET / RESET / SHOW / EXPLAIN / ANALYZE / VACUUM-style. ANALYZE
-	// and VACUUM are maintenance ops (r_ANALYZE.html, r_VACUUM.html), not object DDL — the leading-
-	// keyword guess wrongly bucketed them ddl.
+	// Session / maintenance utilities — never object DDL: SET/RESET/SHOW (sql-set.html), EXPLAIN
+	// (sql-explain.html), ANALYZE (sql-analyze.html), VACUUM (sql-vacuum.html), CLUSTER, REINDEX,
+	// CHECKPOINT, LOCK, DO, CALL, PREPARE/EXECUTE/DEALLOCATE, cursors, LISTEN/NOTIFY, LOAD, DISCARD,
+	// REFRESH MATERIALIZED VIEW (a data refresh, not a definition change), psql meta-commands.
 	variablesetstmt: "utility",
 	variableresetstmt: "utility",
 	variableshowstmt: "utility",
-	setsessionauthorizationstmt: "utility",
-	setsessioncharacteristicsstmt: "utility",
 	constraintssetstmt: "utility",
-	explainstmt: "utility", // r_EXPLAIN.html
-	analyzestmt: "utility", // r_ANALYZE.html
-	analyzecompressionstmt: "utility", // r_ANALYZE_COMPRESSION.html
-	vacuumstmt: "utility", // r_VACUUM.html
-	refreshmatviewstmt: "utility", // r_REFRESH_MATERIALIZED_VIEW.html
+	explainstmt: "utility",
+	analyzestmt: "utility",
+	vacuumstmt: "utility",
+	refreshmatviewstmt: "utility",
 	discardstmt: "utility",
 	clusterstmt: "utility",
 	reindexstmt: "utility",
 	checkpointstmt: "utility",
-	lockstmt: "utility", // r_LOCK.html
+	lockstmt: "utility",
 	dostmt: "utility",
-	callstmt: "utility", // r_CALL.html
+	callstmt: "utility",
 	executestmt: "utility",
-	preparestmt: "utility", // r_PREPARE.html
-	deallocatestmt: "utility", // r_DEALLOCATE.html
-	declarecursorstmt: "utility", // r_DECLARE.html
-	fetchstmt: "utility", // r_FETCH.html
-	closeportalstmt: "utility", // r_CLOSE.html
-	closestmt: "utility",
-	cancelstmt: "utility", // r_CANCEL.html
-	usestmt: "utility", // r_USE.html
+	preparestmt: "utility",
+	deallocatestmt: "utility",
+	declarecursorstmt: "utility",
+	fetchstmt: "utility",
+	closeportalstmt: "utility",
 	listenstmt: "utility",
 	unlistenstmt: "utility",
 	notifystmt: "utility",
+	loadstmt: "utility",
+	plsqlconsolecommand: "utility",
+	// Object definition that doesn't lead with CREATE/ALTER/DROP: CREATE INDEX is `indexstmt`,
+	// CREATE VIEW `viewstmt`, CREATE RULE `rulestmt`, CREATE AGGREGATE/OPERATOR/TYPE `definestmt`,
+	// ALTER … RENAME `renamestmt`, COMMENT ON `commentstmt`, SECURITY LABEL `seclabelstmt`,
+	// IMPORT FOREIGN SCHEMA `importforeignschemastmt`, TRUNCATE `truncatestmt` (contract: ddl).
+	indexstmt: "ddl",
+	viewstmt: "ddl",
+	rulestmt: "ddl",
+	definestmt: "ddl",
+	renamestmt: "ddl",
+	commentstmt: "ddl",
+	seclabelstmt: "ddl",
+	importforeignschemastmt: "ddl",
+	truncatestmt: "ddl",
 };
 
 /** Categorise one top-level `stmt` from its single alternative rule child's grammar rule name. Falls
- *  back to the leading-keyword map for the CREATE/ALTER/DROP object-DDL family (covered by name prefix)
- *  and the long tail of admin statements the map doesn't name. */
-function redshiftCategory(stmt: ParserRuleContext): StatementCategory {
+ *  back to the name-prefix ddl family (the create-, alter-, drop-, remove- rules) and the
+ *  leading-keyword map. */
+function postgresCategory(stmt: ParserRuleContext): StatementCategory {
 	const child = firstRuleChild(stmt);
 	if (!child) return keywordCategory(stmt.start?.text ?? "");
 	const rule = P.ruleNames[child.ruleIndex];
-	const mapped = REDSHIFT_STMT_CATEGORY[rule];
+	const mapped = POSTGRES_STMT_CATEGORY[rule];
 	if (mapped) return mapped;
-	// Object DDL family — CREATE / ALTER / DROP / REMOVE* rules (r_CREATE_*, r_ALTER_*, r_DROP_* …).
 	if (rule.startsWith("create") || rule.startsWith("alter") || rule.startsWith("drop") || rule.startsWith("remove"))
 		return "ddl";
-	// SHOW* / DESC* commands — utility (Redshift-specific SHOW COLUMNS/TABLES/…, DESC DATASHARE).
-	if (rule.startsWith("show") || rule.startsWith("desc")) return "utility";
 	return keywordCategory(stmt.start?.text ?? "");
 }
 
@@ -228,14 +251,9 @@ function lowerSelectStmt(stmt: ParserRuleContext): QueryExpr {
 /** select_with_parens: '(' select_no_parens ')' | '(' select_with_parens ')' — unwrap. */
 function innerSelect(withParens: ParserRuleContext): ParserRuleContext | undefined {
 	const noParens = directChildrenOfRule(withParens, P.RULE_select_no_parens)[0];
-	if (noParens) return findSelectStmtParent(noParens);
+	if (noParens) return noParens;
 	const inner = directChildrenOfRule(withParens, P.RULE_select_with_parens)[0];
 	return inner ? innerSelect(inner) : undefined;
-}
-
-/** A select_no_parens / select_with_parens does not have a selectstmt wrapper, so wrap it. */
-function findSelectStmtParent(noParens: ParserRuleContext): ParserRuleContext {
-	return noParens; // handled by lowerSelectStmt via the select_no_parens branch when re-dispatched
 }
 
 /** select_no_parens: with_clause? select_clause opt_sort_clause? (select_limit | for_locking)? */
@@ -258,11 +276,22 @@ function lowerSelectNoParens(node: ParserRuleContext): QueryExpr {
 	return { kind: "query", ctes, body, orderBy, limit, cst: node };
 }
 
-/** common_table_expr: name opt_name_list? AS opt_materialized? '(' preparablestmt ')' */
+/** common_table_expr: name opt_name_list? AS opt_materialized? '(' preparablestmt ')'
+ *  search_clause? cycle_clause?
+ *  SEARCH … SET col / CYCLE … SET col … USING col add computed columns to the CTE's output
+ *  (PostgreSQL 18 §7.8.2.1/7.8.2.2) — appended to the declared column list so a reference to
+ *  the search/cycle column (`ORDER BY ordercol`) resolves. WITH RECURSIVE requires the explicit
+ *  column list, so the base list is always present when these clauses are. */
 function lowerCte(cte: ParserRuleContext): CteDef {
 	const name = firstShallow(cte, P.RULE_name);
 	const nameList = directChildrenOfRule(cte, P.RULE_opt_name_list)[0];
 	const cols = nameList ? collectOfRule(nameList, P.RULE_name).map((n) => textOf(n)) : [];
+	for (const clause of [
+		directChildrenOfRule(cte, P.RULE_search_clause)[0],
+		directChildrenOfRule(cte, P.RULE_cycle_clause)[0],
+	]) {
+		if (clause && cols.length) for (const cid of directChildrenOfRule(clause, P.RULE_colid)) cols.push(textOf(cid));
+	}
 	const prep = directChildrenOfRule(cte, P.RULE_preparablestmt)[0];
 	const inner = prep ? directChildrenOfRule(prep, P.RULE_selectstmt)[0] : undefined;
 	return {
@@ -361,15 +390,6 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const targetList = firstShallow(node, P.RULE_target_list);
 	const projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
 
-	// SELECT * EXCLUDE (cols) — attach to the star projection.
-	const exclude = directChildrenOfRule(node, P.RULE_exclude_clause)[0];
-	if (exclude) {
-		const cols = collectOfRule(exclude, P.RULE_columnlist)
-			.flatMap((l) => collectOfRule(l, P.RULE_columnElem))
-			.map((c) => textOf(c));
-		for (const p of projections) if (p.expr.kind === "star") p.expr.exclude = cols.length ? cols : undefined;
-	}
-
 	const fromClause = directChildrenOfRule(node, P.RULE_from_clause)[0];
 	const from: Source[] = [];
 	const joinConditions: Expr[] = [];
@@ -381,6 +401,7 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 			collectTableRef(tr, from, joinConditions, unsupported);
 		}
 	}
+	joinConditions.push(...nestedJoinConditions.splice(0));
 
 	const where = directChildrenOfRule(node, P.RULE_where_clause)[0];
 	const whereExpr = where ? lowerExpr(firstAExpr(where)) : undefined;
@@ -395,12 +416,6 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const having = directChildrenOfRule(node, P.RULE_having_clause)[0];
 	const havingExpr = having ? lowerExpr(firstAExpr(having)) : undefined;
 
-	const qualify = directChildrenOfRule(node, P.RULE_qualify_clause)[0];
-	const qualifyExpr = qualify ? lowerExpr(firstAExpr(qualify)) : undefined;
-
-	// CONNECT BY hierarchies (start_with_clause) aren't modelled — flagged, not dropped.
-	if (directChildrenOfRule(node, P.RULE_start_with_clause).length) unsupported.push("connect-by");
-
 	const aggregated =
 		groupByAll ||
 		(groupBy !== undefined && groupBy.length > 0) ||
@@ -409,11 +424,18 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 
 	const columns: ColumnRef[] = [];
 	for (const p of projections) columnsOf(p.expr, columns, "projection");
+	// DISTINCT ON (expr, …) keys reference input columns — capture them (sql-select.html
+	// #SQL-DISTINCT); the keys ride with the projection clause for reference/highlight purposes.
+	const distinct = directChildrenOfRule(node, P.RULE_distinct_clause)[0];
+	if (distinct) {
+		const list = directChildrenOfRule(distinct, P.RULE_expr_list)[0];
+		if (list)
+			for (const e of directChildrenOfRule(list, P.RULE_a_expr)) columnsOf(lowerExpr(e), columns, "projection");
+	}
 	if (whereExpr) columnsOf(whereExpr, columns, "where");
 	for (const j of joinConditions) columnsOf(j, columns, "join");
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (havingExpr) columnsOf(havingExpr, columns, "having");
-	if (qualifyExpr) columnsOf(qualifyExpr, columns, "qualify");
 
 	const subqueries = extractExpressionSubqueries(node, fromSubqueryNodes(from));
 
@@ -426,7 +448,6 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 		joinConditions: joinConditions.length ? joinConditions : undefined,
 		groupBy,
 		having: havingExpr,
-		qualify: qualifyExpr,
 		aggregated,
 		subqueries: subqueries.length ? subqueries : undefined,
 		unsupported: unsupported.length ? unsupported : undefined,
@@ -435,7 +456,7 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 }
 
 /** values_clause: VALUES '(' expr_list ')' (COMMA '(' expr_list ')')* — lower to a modelled
- *  select with literal/expr projections named column1…columnN (Postgres/Redshift default names). */
+ *  select with literal/expr projections named column1…columnN (the Postgres default names). */
 function lowerValues(values: ParserRuleContext): SelectExpr {
 	const firstList = directChildrenOfRule(values, P.RULE_expr_list)[0];
 	const exprs = firstList ? directChildrenOfRule(firstList, P.RULE_a_expr) : [];
@@ -454,14 +475,6 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 
 /** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. */
 function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
-	// PIVOT / UNPIVOT reshape the source's output columns; the IR doesn't model that for Redshift
-	// yet, so flag it (visible gap) rather than silently keeping only the un-pivoted relation.
-	if (directChildrenOfRule(tr, P.RULE_pivot_clause).length) unsupported.push("pivot");
-	if (directChildrenOfRule(tr, P.RULE_unpivot_clause).length) unsupported.push("unpivot");
-	// PartiQL SUPER object unpivoting (UNPIVOT expr AS val AT attr — a FROM item, not the SQL UNPIVOT
-	// suffix) reshapes a SUPER object into (value, attribute) rows; the IR doesn't model it yet, so
-	// flag it rather than leaving only an opaque source (docs … query-super.html#unpivoting).
-	if (hasDirectToken(tr, P.UNPIVOT) && directChildrenOfRule(tr, P.RULE_a_expr).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
@@ -472,7 +485,8 @@ function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], u
 	}
 }
 
-/** The primary of a table_ref: relation_expr | select_with_parens | func_table | LATERAL … | (join). */
+/** The primary of a table_ref: relation_expr | select_with_parens | func_table | json_table |
+ *  LATERAL … | (join). */
 function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Source {
 	const aliasNode = directChildrenOfRule(tr, P.RULE_opt_alias_clause)[0];
 	const alias = aliasNode ? aliasName(aliasNode) : undefined;
@@ -495,6 +509,20 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 		};
 	}
 
+	// JSON_TABLE(…) — an opaque relation whose output columns ARE knowable: the COLUMNS(…) names
+	// (including NESTED levels — all rows are flattened into one row type, PostgreSQL 18 §9.16.2).
+	const jsonTable = directChildrenOfRule(tr, P.RULE_json_table)[0];
+	if (jsonTable) {
+		return {
+			kind: "table",
+			name: ["json_table"],
+			alias,
+			aliasCst,
+			columnAliases: columnAliases ?? jsonTableColumns(jsonTable),
+			cst: tr,
+		};
+	}
+
 	// func_table: a set-returning function in FROM — opaque columns (need the signature).
 	const funcTable = directChildrenOfRule(tr, P.RULE_func_table)[0];
 	if (funcTable) {
@@ -509,8 +537,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 		};
 	}
 
-	// LATERAL (…) and a parenthesized join group: descend for the inner sources is handled by the
-	// caller for joins; here we record an opaque source so a valid parse never throws.
 	const nestedTr = directChildrenOfRule(tr, P.RULE_table_ref)[0];
 	if (nestedTr) {
 		// '(' table_ref join… ')' — flatten the inner join group into this source list.
@@ -525,7 +551,23 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 	return { kind: "table", name: [textOrEmpty(tr)], alias, aliasCst, columnAliases, cst: tr };
 }
 
-// Parenthesized-join ON conditions surfaced from a nested table_ref, drained by buildSelect's caller.
+/** The output column names of a JSON_TABLE: every named column definition, NESTED levels included
+ *  (they flatten into the same row type). */
+function jsonTableColumns(jsonTable: ParserRuleContext): string[] | undefined {
+	const names: string[] = [];
+	const walk = (list: ParserRuleContext): void => {
+		for (const def of directChildrenOfRule(list, P.RULE_json_table_column_definition)) {
+			const cid = directChildrenOfRule(def, P.RULE_colid)[0];
+			if (cid) names.push(textOf(cid));
+			for (const nested of directChildrenOfRule(def, P.RULE_json_table_column_definition_list)) walk(nested);
+		}
+	};
+	const top = directChildrenOfRule(jsonTable, P.RULE_json_table_column_definition_list)[0];
+	if (top) walk(top);
+	return names.length ? names : undefined;
+}
+
+// Parenthesized-join ON conditions surfaced from a nested table_ref, drained by buildSelect.
 const nestedJoinConditions: Expr[] = [];
 
 function buildTableFromRelation(
@@ -536,22 +578,6 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
-	// Redshift catalog path database@namespace[/cluster].schema.table: the @namespace, optional
-	// /cluster, and trailing .schema.table sit beside the qualified_name in relation_expr. Fold them
-	// in so the source name isn't silently truncated to just the database
-	// (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html).
-	if (hasDirectToken(rel, P.AT_SIGN)) {
-		for (const cid of directChildrenOfRule(rel, P.RULE_colid)) parts.push(textOf(cid));
-		const ind = directChildrenOfRule(rel, P.RULE_indirection)[0];
-		if (ind) {
-			for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
-				if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) {
-					const attr = firstShallow(el, P.RULE_attr_name);
-					parts.push(attr ? textOf(attr) : el.getText().replace(/^\./, ""));
-				}
-			}
-		}
-	}
 	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
 }
 
@@ -581,7 +607,6 @@ function funcAliasName(funcAlias: ParserRuleContext): string | undefined {
 
 /** target_el: a_expr target_alias? #target_label | STAR #target_star */
 function buildProjection(elem: ParserRuleContext): Projection {
-	// target_star — a bare STAR with no a_expr child.
 	const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
 	if (!a) {
 		return { isStar: true, expr: { kind: "star", cst: elem }, cst: elem };
@@ -611,7 +636,6 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 	const items = collectOfRule(clause, P.RULE_group_by_item);
 	const keys: Expr[] = [];
 	for (const item of items) {
-		// A bare a_expr key is a direct child; CUBE/ROLLUP/GROUPING SETS hold their keys in an expr_list.
 		const direct = directChildrenOfRule(item, P.RULE_a_expr)[0];
 		if (direct) {
 			keys.push(lowerExpr(direct));
@@ -646,6 +670,13 @@ function extractLimit(node: ParserRuleContext): LimitInfo | undefined {
 			any = true;
 		} else if (v && hasDirectToken(v, P.ALL)) {
 			any = true; // LIMIT ALL — no row cap; recorded as a present-but-unbounded clause
+		}
+		// FETCH FIRST n ROWS ONLY lands in limit_clause as select_fetch_first_value.
+		const ff = directChildrenOfRule(limit, P.RULE_select_fetch_first_value)[0];
+		if (ff) {
+			const c = directChildrenOfRule(ff, P.RULE_c_expr)[0];
+			info.top = c ? lowerExpr(c) : { kind: "literal", text: ff.getText(), cst: ff };
+			any = true;
 		}
 	}
 	const offset = directChildrenOfRule(node, P.RULE_offset_clause)[0];
@@ -686,8 +717,6 @@ function lowerExpr(node: ParserRuleContext | undefined): Expr {
 			return lowerIsNot(node);
 		case P.RULE_a_expr_compare:
 			return lowerCompare(node);
-		case P.RULE_a_expr_prior_or_level:
-			return passthroughTo(node, P.RULE_a_expr_like); // PRIOR/LEVEL pseudo-ops: operand carries the refs
 		case P.RULE_a_expr_like:
 			return lowerLike(node);
 		case P.RULE_a_expr_qual_op:
@@ -813,7 +842,8 @@ function lowerIsNull(node: ParserRuleContext): Expr {
 	return inner;
 }
 
-/** a_expr_is_not: a_expr_compare (IS NOT? (NULL|TRUE|FALSE|UNKNOWN | DISTINCT FROM a_expr | …))? */
+/** a_expr_is_not: a_expr_compare (IS NOT? (NULL|TRUE|FALSE|UNKNOWN | DISTINCT FROM a_expr |
+ *  JSON …type…? …uniqueness…? | …))? — IS JSON per PostgreSQL 18 §9.16.1. */
 function lowerIsNot(node: ParserRuleContext): Expr {
 	const left = directChildrenOfRule(node, P.RULE_a_expr_compare)[0];
 	const inner = left ? lowerExpr(left) : otherExpr(node);
@@ -830,6 +860,8 @@ function lowerIsNot(node: ParserRuleContext): Expr {
 			cst: node,
 		};
 	}
+	if (hasDirectToken(node, P.JSON))
+		return { kind: "predicate", op: "json", negated, operand: inner, args: [], cst: node };
 	const op = hasDirectToken(node, P.TRUE_P)
 		? "true"
 		: hasDirectToken(node, P.FALSE_P)
@@ -840,9 +872,9 @@ function lowerIsNot(node: ParserRuleContext): Expr {
 	return { kind: "predicate", op, negated, operand: inner, args: [], cst: node };
 }
 
-/** a_expr_compare: a_expr_prior_or_level ((cmp) a_expr_prior_or_level | subquery_Op sub_type (…))? */
+/** a_expr_compare: a_expr_like ((cmp) a_expr_like | subquery_Op sub_type (…))? */
 function lowerCompare(node: ParserRuleContext): Expr {
-	const operands = directChildrenOfRule(node, P.RULE_a_expr_prior_or_level);
+	const operands = directChildrenOfRule(node, P.RULE_a_expr_like);
 	const cmp = directTokenType(node, [P.LT, P.GT, P.EQUAL, P.LESS_EQUALS, P.GREATER_EQUALS, P.NOT_EQUALS]);
 	if (cmp !== undefined && operands.length === 2) {
 		return {
@@ -1112,6 +1144,12 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 		const sort = firstShallow(within, P.RULE_sort_clause);
 		if (sort) for (const k of extractSortKeys(sort) ?? []) args.push(k);
 	}
+	// FILTER (WHERE …) — the predicate references columns; include it as an arg.
+	const filter = directChildrenOfRule(node, P.RULE_filter_clause)[0];
+	if (filter) {
+		const fa = directChildrenOfRule(filter, P.RULE_a_expr)[0];
+		if (fa) args.push(lowerExpr(fa));
+	}
 	const over = directChildrenOfRule(node, P.RULE_over_clause)[0];
 	const window = over ? lowerOver(over) : undefined;
 	return {
@@ -1136,22 +1174,26 @@ function funcArgs(app: ParserRuleContext): Expr[] {
 	});
 }
 
-/** func_expr_common_subexpr: CAST/TRY_CAST/EXTRACT/SUBSTRING/COALESCE/NULLIF/TRIM/… */
+/** func_expr_common_subexpr: CAST, EXTRACT, SUBSTRING, COALESCE, NULLIF, TRIM, the JSON_ forms, … */
 function lowerCommonFunc(node: ParserRuleContext): Expr {
-	// CAST / TRY_CAST / TREAT ( a_expr AS typename )
-	if (hasDirectToken(node, P.CAST) || hasDirectToken(node, P.TRY_CAST) || hasDirectToken(node, P.TREAT)) {
+	// CAST / TREAT ( a_expr AS typename )
+	if (hasDirectToken(node, P.CAST) || hasDirectToken(node, P.TREAT)) {
 		const a = directChildrenOfRule(node, P.RULE_a_expr)[0];
 		const tn = directChildrenOfRule(node, P.RULE_typename)[0];
 		return { kind: "cast", expr: a ? lowerExpr(a) : otherExpr(node), typeText: tn ? tn.getText() : "", cst: node };
 	}
 	const name = (leftmostToken(node) ?? "").toLowerCase();
 	// Collect every a_expr / b_expr / expr_list argument the form carries (EXTRACT, SUBSTRING,
-	// COALESCE, NULLIF, TRIM, POSITION, OVERLAY, GREATEST, LEAST, NORMALIZE, XML*, CURRENT_*).
+	// COALESCE, NULLIF, TRIM, POSITION, OVERLAY, GREATEST, LEAST, NORMALIZE, XML*, JSON_*,
+	// CURRENT_*); json_value_expr wraps its a_expr so the generic a_expr collection reaches it.
 	const args: Expr[] = [];
 	for (const list of directChildrenOfRule(node, P.RULE_expr_list)) {
 		for (const a of directChildrenOfRule(list, P.RULE_a_expr)) args.push(lowerExpr(a));
 	}
 	for (const a of directChildrenOfRule(node, P.RULE_a_expr)) args.push(lowerExpr(a));
+	for (const jve of collectOfRule(node, P.RULE_json_value_expr)) {
+		for (const a of directChildrenOfRule(jve, P.RULE_a_expr)) args.push(lowerExpr(a));
+	}
 	for (const sub of [
 		P.RULE_extract_list,
 		P.RULE_substr_list,
@@ -1211,9 +1253,6 @@ function extractExpressionSubqueries(node: ParserRuleContext, fromQueries: Set<P
 			walk(child);
 		}
 	};
-	// Walk the whole select body; FROM subqueries are in `fromQueries` and are skipped (and not
-	// descended into — they own their scope), so only the expression subqueries (projection / WHERE
-	// / HAVING / QUALIFY scalar / IN / EXISTS) remain.
 	walk(node);
 	return out;
 }
