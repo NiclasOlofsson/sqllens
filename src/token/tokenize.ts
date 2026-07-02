@@ -17,6 +17,7 @@ import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
 import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
+import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { mapTokens } from "./map.js";
 import type { Token } from "./token.js";
 
@@ -30,6 +31,7 @@ const LEXERS: Record<Dialect, (cs: CharStream) => Lexer> = {
 	redshift: (cs) => new RedshiftLexer(cs),
 	postgres: (cs) => new PostgresLexer(cs),
 	duckdb: (cs) => new DuckdbLexer(cs),
+	trino: (cs) => new TrinoLexer(cs),
 };
 
 /**

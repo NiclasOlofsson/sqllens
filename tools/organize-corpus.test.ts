@@ -42,8 +42,10 @@ import { parsePostgres } from "../src/postgres/parse.js";
 import { statementCategories as postgresCategories } from "../src/postgres/lower.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { statementCategories as duckdbCategories } from "../src/duckdb/lower.js";
+import { parseTrino } from "../src/trino/parse.js";
+import { statementCategories as trinoCategories } from "../src/trino/lower.js";
 
-type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb";
+type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino";
 
 const PARSERS: Record<
 	Dialect,
@@ -56,6 +58,7 @@ const PARSERS: Record<
 	redshift: { parse: parseRedshift, categories: redshiftCategories },
 	postgres: { parse: parsePostgres, categories: postgresCategories },
 	duckdb: { parse: parseDuckdb, categories: duckdbCategories },
+	trino: { parse: parseTrino, categories: trinoCategories },
 };
 
 /** The gate's bucket over the current parse: query | dml | ddl, or "unparsed" when the parser
@@ -96,6 +99,8 @@ const CORPORA: Corpus[] = [
 	{ rootRel: "postgres/docs", dialect: "postgres" },
 	{ rootRel: "postgres/bytebase", dialect: "postgres" },
 	{ rootRel: "duckdb/docs", dialect: "duckdb" },
+	{ rootRel: "trino/docs", dialect: "trino" },
+	{ rootRel: "trino/bytebase", dialect: "trino" },
 ];
 
 function sqlFiles(root: string): string[] {

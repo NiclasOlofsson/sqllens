@@ -102,6 +102,13 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "comment", pattern: /LineComment|BlockComment/ },
 		{ role: "whitespace", pattern: /^Whitespace$/ },
 	],
+
+	// Trino (first-party SqlBase.g4 split): uppercase names, mostly covered by the defaults;
+	// two misses - BINARY_LITERAL (a string form) and DOUBLE_VALUE (a number form).
+	trino: [
+		{ role: "string", pattern: /^BINARY_LITERAL$/ },
+		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
+	],
 };
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);
