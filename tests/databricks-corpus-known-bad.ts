@@ -25,31 +25,23 @@ export const KNOWN_BAD: Record<string, string> = {
 	"functions/vector_search/1.sql": "syntax template with { a | b } / [ optional ] metasyntax, not a query",
 	"sql-ref-syntax-comment/8.sql":
 		"a multi-line /* … */ block comment — the scraper's output-stripping doesn't track block comments across lines (niche comment-syntax page)",
+
+	// Documentation errors uncovered closing out issue #4 — the docs example itself is invalid SQL that
+	// real Databricks would reject, so it is not a grammar gap (verified against the live docs 2026-07-02).
+	"sql-ref-syntax-qry-select-pipeop/6.sql":
+		"docs bug: `|> SELECT col1 + col2 FROM new_tab` — the pipe `|> SELECT` operator takes no FROM clause (the columns come from the piped input); the example's FROM is a documentation error",
+	"functions/http_request/2.sql":
+		"docs bug: the named-arg example is missing the comma between the `json =>` and `headers =>` arguments (and has a trailing comma inside map(…)) — unbalanced/invalid as written",
+	"sql-ref-syntax-ddl-create-sql-function/16.sql":
+		"docs bug: `roll_dice(10 => num_sides, num_dice => 3)` writes the first named-arg pair reversed — the name is the identifier LHS (`num_sides => 10`), so `10 =>` is not a valid named argument",
 };
 
-// (2) Valid, documented Databricks SQL the forked Spark grammar doesn't accept yet — tracked in
-// https://github.com/NiclasOlofsson/sqllens/issues/4. Excluded with the same self-policing
-// assertion: when the grammar grows to accept one, the gate flags it so the entry (and the issue
-// item) is closed out.
-export const DEFERRED_GRAMMAR: Record<string, string> = {
-	// WITH (CREDENTIAL <name>) path table-reference option
-	"sql-ref-storage-credentials/2.sql": "issue #4: FROM `delta`.`path` WITH (CREDENTIAL c)",
-	"sql-ref-storage-credentials/3.sql": "issue #4: FROM `delta`.`path` WITH (CREDENTIAL c)",
-	"sql-ref-names/20.sql": "issue #4: FROM `csv`.`path` WITH (CREDENTIAL c)",
-	"sql-ref-syntax-qry-select-table-reference/5.sql": "issue #4: WITH(CREDENTIAL c) table option",
-	// SQL pipe operators |>
-	"sql-ref-syntax-qry-select-pipeop/6.sql": "issue #4: `|>` pipe operators (AS, SELECT)",
-	"sql-ref-syntax-qry-select-pipeop/21.sql": "issue #4: `|>` pipe operators (UNPIVOT)",
-	// ?:: try-cast operator
-	"functions/questiondoublecolonsign/3.sql": "issue #4: `?::` try-cast operator",
-	"functions/try_variant_get/4.sql": "issue #4: `?::` try-cast operator",
-	// expr : <TYPE> type ascription
-	"functions/from_avro/1.sql": "issue #4: `NULL:MAP<…>` type ascription",
-	"functions/from_avro/2.sql": "issue #4: `NULL:MAP<…>` type ascription",
-	"functions/from_avro/3.sql": "issue #4: `NULL:MAP<…>` type ascription",
-	// named-argument invocation name => value
-	"functions/http_request/2.sql": "issue #4: named-argument invocation `name => value`",
-	"sql-ref-syntax-ddl-create-sql-function/16.sql": "issue #4: named-argument invocation `name => value`",
-	// COLLATION FOR(expr)
-	"data-types/string-type/14.sql": "issue #4: `COLLATION FOR(expr)` (SQL-standard collation accessor)",
-};
+// (2) Valid, documented Databricks SQL the forked Spark grammar didn't accept yet — tracked in
+// https://github.com/NiclasOlofsson/sqllens/issues/4. CLOSED OUT 2026-07-02: the six constructs
+// (WITH (CREDENTIAL); piping an inline aliased VALUES relation; `?::` try-cast; `:` complex-type
+// ascription; `name =>` named args; `COLLATION FOR`) now parse, so those files graduated to query/
+// via the organizer. Three files that were on this list turned out to be documentation errors, not
+// grammar gaps — they moved to KNOWN_BAD above (pipe SELECT with a FROM, a missing comma in the
+// http_request example, a reversed named-arg pair). The list is intentionally empty; the docs gate
+// still merges it, and the self-policing residency assertion keeps it that way.
+export const DEFERRED_GRAMMAR: Record<string, string> = {};

@@ -4,6 +4,7 @@ import {
 	ArithmeticUnaryContext,
 	CastByColonContext,
 	CastContext,
+	CollationForContext,
 	ColumnReferenceContext,
 	ComparisonContext,
 	ConstantDefaultContext,
@@ -27,6 +28,8 @@ import {
 	SubscriptContext,
 	TimestampaddContext,
 	TimestampdiffContext,
+	TryCastByColonContext,
+	TypeAscriptionContext,
 } from "../generated/databricks/DatabricksParser.js";
 
 // ---------------------------------------------------------------------------
@@ -921,6 +924,44 @@ function lowerExpression(node: ParserRuleContext): Expr {
 			kind: "cast",
 			expr: inner ? lowerExpression(inner) : otherExpr(node),
 			typeText: dt?.getText() ?? "",
+			// `TRY_CAST(x AS t)` is the try form of the `#cast` alternative (CAST | TRY_CAST).
+			...(directTokenType(node, [P.TRY_CAST]) !== undefined ? { try: true } : {}),
+			cst: node,
+		};
+	}
+	// `expr ?:: <type>` — the try-cast operator; models like a cast, flagged `try`.
+	if (node instanceof TryCastByColonContext) {
+		const inner = firstOfRule(node, P.RULE_primaryExpression);
+		const dt = firstOfRule(node, P.RULE_dataType);
+		return {
+			kind: "cast",
+			expr: inner ? lowerExpression(inner) : otherExpr(node),
+			typeText: dt?.getText() ?? "",
+			try: true,
+			cst: node,
+		};
+	}
+	// `expr : <complex type>` — type ascription (a typed value, e.g. `NULL:MAP<STRING,STRING>`);
+	// models as a plain cast to the ascribed type.
+	if (node instanceof TypeAscriptionContext) {
+		const inner = firstOfRule(node, P.RULE_primaryExpression);
+		const asc = firstOfRule(node, P.RULE_complexTypeArgumented);
+		return {
+			kind: "cast",
+			expr: inner ? lowerExpression(inner) : otherExpr(node),
+			typeText: asc?.getText() ?? "",
+			cst: node,
+		};
+	}
+	// `COLLATION FOR (expr)` — the SQL-standard collation accessor; a unary function of its arg.
+	if (node instanceof CollationForContext) {
+		const inner = firstOfRule(node, P.RULE_expression);
+		return {
+			kind: "function",
+			name: "collation for",
+			args: inner ? [lowerExpression(inner)] : [],
+			aggregate: false,
+			distinct: false,
 			cst: node,
 		};
 	}
@@ -1124,15 +1165,23 @@ function lowerUnary(node: ParserRuleContext): Expr {
 
 function lowerFunction(node: FunctionCallContext): Expr {
 	const name = firstOfRule(node, P.RULE_functionName)?.getText() ?? "";
-	const args = directChildrenOfRule(node, P.RULE_functionArgument).map((a) => {
+	const argCtxs = directChildrenOfRule(node, P.RULE_functionArgument);
+	const args = argCtxs.map((a) => {
 		const e = firstOfRule(a, P.RULE_expression);
 		return e ? lowerExpression(e) : otherExpr(a);
+	});
+	// Named-argument invocation `fn(name => value)`: capture the parameter name per arg so the
+	// `name =>` is conservation-visible. Only set when at least one arg is named.
+	const argNames = argCtxs.map((a) => {
+		const named = shallowFirstOfRule(a, P.RULE_namedArgumentExpression);
+		return named ? firstOfRule(named, P.RULE_identifier)?.getText() : undefined;
 	});
 	const windowCtx = firstOfRule(node, P.RULE_windowSpec);
 	return {
 		kind: "function",
 		name,
 		args,
+		...(argNames.some((n) => n !== undefined) ? { argNames } : {}),
 		aggregate: AGGREGATES.has(name.toLowerCase()),
 		distinct: directTokenType(node, [P.DISTINCT]) !== undefined,
 		window: windowCtx ? lowerWindow(windowCtx) : undefined,

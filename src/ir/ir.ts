@@ -150,6 +150,10 @@ export type Expr =
 			 *  type. Absent for a bare call. Additive/optional; only BigQuery sets it today. */
 			qualifier?: string;
 			args: Expr[];
+			/** Parallel to `args`: the parameter name for a named-argument invocation
+			 *  (`fn(name => value)`), or `undefined` for a positional argument. Absent when the
+			 *  call has no named arguments at all. Keeps the `name =>` conservation-visible. */
+			argNames?: (string | undefined)[];
 			/** Heuristic: name is in a known-aggregate set (sum/count/avg/…). */
 			aggregate: boolean;
 			distinct: boolean;
@@ -158,7 +162,13 @@ export type Expr =
 			cst: ParserRuleContext;
 	  }
 	| { kind: "case"; whens: { when: Expr; then: Expr }[]; elseExpr?: Expr; cst: ParserRuleContext }
-	| { kind: "cast"; expr: Expr; typeText: string; cst: ParserRuleContext }
+	| {
+			kind: "cast";
+			expr: Expr;
+			typeText: string;
+			/** `?::` / `TRY_CAST` — null on failure. */ try?: boolean;
+			cst: ParserRuleContext;
+	  }
 	| { kind: "subquery"; query: QueryExpr; cst: ParserRuleContext }
 	| { kind: "exists"; query: QueryExpr; cst: ParserRuleContext }
 	| {

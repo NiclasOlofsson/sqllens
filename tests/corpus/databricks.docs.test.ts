@@ -25,7 +25,7 @@ import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 // gate stays parse-only.
 
 const CORPUS = corpusPath("databricks/docs");
-const QUERY_BASELINE = 3088; // documented floor for the query population
+const QUERY_BASELINE = 3099; // documented floor for the query population (raised +11 when issue #4 constructs graduated, 2026-07-02)
 
 describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL language manual", () => {
 	it(

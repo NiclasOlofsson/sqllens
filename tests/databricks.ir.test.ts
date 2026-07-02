@@ -188,6 +188,89 @@ describe("lower: CST -> IR", () => {
 	});
 });
 
+// Issue #4 — the deferred grammar constructs. Each doc-cited to docs.databricks.com; a parse
+// assertion (the grammar accepts it) plus an IR assertion (it lowers to sane, conservation-visible
+// shape). https://github.com/NiclasOlofsson/sqllens/issues/4
+describe("issue #4 constructs", () => {
+	it("(1) accepts WITH (CREDENTIAL <name>) on a path-based table reference", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-table-reference
+		expect(parseDatabricks("SELECT count(1) FROM `delta`.`s3://d/f` WITH (CREDENTIAL my_cred)").errors).toBe(0);
+		// no-space form `WITH(CREDENTIAL ...)`, and used as a real credential name that is a keyword-ish word
+		expect(parseDatabricks("SELECT * FROM `csv`.`x.csv` WITH(CREDENTIAL some_credential)").errors).toBe(0);
+		// CREDENTIAL stays usable as an ordinary identifier (non-reserved)
+		expect(parseDatabricks("SELECT credential FROM t").errors).toBe(0);
+	});
+
+	it("(2) pipes an inline aliased VALUES relation through |> AS then |> SELECT", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-pipeop
+		const r = parseDatabricks("VALUES (0, 1) tab(col1, col2)\n  |> AS new_tab\n  |> SELECT col1 + col2");
+		expect(r.errors).toBe(0);
+	});
+
+	it("(3) accepts the ?:: try-cast operator and lowers it to a try-flagged cast", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/functions/questiondoublecolonsign
+		const { tree, errors } = parseDatabricks("SELECT NULL?::STRING");
+		expect(errors).toBe(0);
+		const e = asSelect(lower(tree).body).projections[0].expr;
+		expect(e).toMatchObject({ kind: "cast", typeText: "STRING", try: true });
+	});
+
+	it("(3) accepts ?:: after a variant colon-path (try_variant_get docs example)", () => {
+		const { errors } = parseDatabricks(`SELECT '{"key": 123, "data": [4]}':data[1].a ?::STRING`);
+		expect(errors).toBe(0);
+	});
+
+	it("(3) marks TRY_CAST(x AS t) as a try cast too", () => {
+		const sel = asSelect(lower(parseDatabricks("SELECT TRY_CAST(x AS INT) FROM t").tree).body);
+		expect(sel.projections[0].expr).toMatchObject({ kind: "cast", typeText: "INT", try: true });
+	});
+
+	it("(4) accepts `expr : <complex type>` type ascription and lowers it to a cast", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/functions/from_avro
+		const { tree, errors } = parseDatabricks("SELECT NULL:MAP<STRING, STRING>");
+		expect(errors).toBe(0);
+		const e = asSelect(lower(tree).body).projections[0].expr;
+		expect(e).toMatchObject({ kind: "cast", typeText: "MAP<STRING,STRING>" });
+		// a type ascription is not a try cast
+		expect(e && "try" in e && e.try).toBeFalsy();
+	});
+
+	it("(4) does NOT read a bare variant colon-path as a type ascription", () => {
+		// The disambiguation must not regress the variant `:` path (heavy in the Oatly corpus):
+		// `c:field` and even `c:map` (a field named like a type, no `<...>`) stay variant paths.
+		expect(parseDatabricks("SELECT c:field.sub FROM t").errors).toBe(0);
+		expect(parseDatabricks("SELECT c:map FROM t").errors).toBe(0);
+		const e = asSelect(lower(parseDatabricks("SELECT c:field.sub FROM t").tree).body).projections[0].expr;
+		expect(e?.kind).not.toBe("cast");
+	});
+
+	it("(5) captures named-argument names on the function IR (name => value)", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-create-sql-function
+		const sel = asSelect(lower(parseDatabricks("SELECT http_request(conn => 'x', method => 'POST')").tree).body);
+		expect(sel.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "http_request",
+			argNames: ["conn", "method"],
+		});
+	});
+
+	it("(5) leaves a fully positional call with no argNames field", () => {
+		const sel = asSelect(lower(parseDatabricks("SELECT concat(a, b) FROM t").tree).body);
+		const e = sel.projections[0].expr;
+		expect(e?.kind).toBe("function");
+		expect(e && "argNames" in e).toBe(false);
+	});
+
+	it("(6) accepts COLLATION FOR(expr) and lowers it to a unary function", () => {
+		// https://docs.databricks.com/aws/en/sql/language-manual/functions/collation
+		const { tree, errors } = parseDatabricks("SELECT COLLATION FOR(c1) FROM v");
+		expect(errors).toBe(0);
+		const e = asSelect(lower(tree).body).projections[0].expr;
+		expect(e).toMatchObject({ kind: "function", name: "collation for" });
+		expect(e && e.kind === "function" && e.args).toHaveLength(1);
+	});
+});
+
 describe("batch parse entry (issue #1)", () => {
 	it("accepts a multi-statement batch with zero syntax errors", () => {
 		expect(parseDatabricks("SELECT 1; SELECT 2").errors).toBe(0);

@@ -190,6 +190,9 @@ CONTAINS: 'CONTAINS';
 CONTINUE: 'CONTINUE';
 COST: 'COST';
 CREATE: 'CREATE';
+// CREDENTIAL — storage-credential option on a path-based table reference,
+// `FROM ... WITH (CREDENTIAL <name>)`. https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-table-reference
+CREDENTIAL: 'CREDENTIAL';
 CROSS: 'CROSS';
 CUBE: 'CUBE';
 CURRENT: 'CURRENT';

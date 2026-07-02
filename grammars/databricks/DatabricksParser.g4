@@ -1137,7 +1137,7 @@ relationPrimary
     : streamRelationPrimary                                 #streamRelation
     | identifierReference changesClause
       optionsClause? tableAlias                             #changelogTableName
-    | identifierReference temporalClause?
+    | identifierReference temporalClause? credentialClause?
       optionsClause? sample? watermarkClause? tableAlias    #tableName
     | LEFT_PAREN query RIGHT_PAREN sample? watermarkClause?
       tableAlias                                            #aliasedQuery
@@ -1149,6 +1149,14 @@ relationPrimary
 
 optionsClause
     : WITH options=propertyList
+    ;
+
+// Storage-credential option on a path-based table reference:
+// `FROM `delta`.`path` WITH (CREDENTIAL <name>)`. Placed before optionsClause on the
+// tableName alternative so `WITH (CREDENTIAL c)` is not mis-read as a generic option list.
+// https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-qry-select-table-reference
+credentialClause
+    : WITH LEFT_PAREN CREDENTIAL credentialName=identifier RIGHT_PAREN
     ;
 
 // Clause for naming streaming sources with IDENTIFIED BY
@@ -1350,14 +1358,26 @@ primaryExpression
     | name=(CAST | TRY_CAST) LEFT_PAREN expression AS dataType RIGHT_PAREN                     #cast
     | primaryExpression collateClause                                                      #collate
     | primaryExpression DOUBLE_COLON dataType                                                  #castByColon
+    // `expr ?:: <type>` — the try-cast operator (null on failure instead of erroring), the
+    // operator form of TRY_CAST. https://docs.databricks.com/aws/en/sql/language-manual/functions/questiondoublecolonsign
+    | primaryExpression QUESTION DOUBLE_COLON dataType                                          #tryCastByColon
     | STRUCT LEFT_PAREN (argument+=namedExpression (COMMA argument+=namedExpression)*)? RIGHT_PAREN #struct
     | FIRST LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                                  #first
     | ANY_VALUE LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                              #any_value
     | LAST LEFT_PAREN expression (IGNORE NULLS)? RIGHT_PAREN                                   #last
     | POSITION LEFT_PAREN substr=valueExpression IN str=valueExpression RIGHT_PAREN            #position
+    // `COLLATION FOR (expr)` — the SQL-standard collation accessor: returns the collation name
+    // of the string expression. https://docs.databricks.com/aws/en/sql/language-manual/functions/collation
+    | COLLATION FOR LEFT_PAREN expression RIGHT_PAREN                                          #collationFor
     | constant                                                                                 #constantDefault
     | ASTERISK exceptClause?                                                                   #star
     | qualifiedName DOT ASTERISK exceptClause?                                                 #star
+    // `expr : <complex type>` — type ascription, e.g. a typed NULL `NULL:MAP<STRING, STRING>`.
+    // Restricted to a complex type WITH its `<...>` argument list: the mandatory `<` is what a
+    // variant colon-path (semiStructuredExtract, below) can never contain, so a bare `col:field`
+    // stays a variant path and only `col:ARRAY<…>/MAP<…>/STRUCT<…>` reads as an ascription.
+    // https://docs.databricks.com/aws/en/sql/language-manual/functions/from_avro
+    | col=primaryExpression COLON asc=complexTypeArgumented                                    #typeAscription
     | col=primaryExpression COLON path=semiStructuredExtractionPath                            #semiStructuredExtract
     | LEFT_PAREN namedExpression (COMMA namedExpression)+ RIGHT_PAREN                          #rowConstructor
     | LEFT_PAREN query RIGHT_PAREN                                                             #subqueryExpression
@@ -1544,6 +1564,15 @@ dataType
     | complex=MAP (LT dataType COMMA dataType GT)?              #complexDataType
     | complex=STRUCT ((LT complexColTypeList? GT) | NEQ {(this.tokenStream.tokenSource as DatabricksLexer).decComplexTypeLevelCounter();})?       #complexDataType
     | primitiveType                                             #primitiveDataType
+    ;
+
+// A complex type that carries its `<...>` argument list — the only shape allowed on the
+// right of a `:` type ascription (see #typeAscription). The mandatory `<` disambiguates it
+// from a variant colon-path; a bare `ARRAY`/`MAP`/`STRUCT` (no `<...>`) is not matched here.
+complexTypeArgumented
+    : ARRAY LT dataType GT
+    | MAP LT dataType COMMA dataType GT
+    | STRUCT LT complexColTypeList? GT
     ;
 
 qualifiedColTypeWithPositionList
@@ -2007,6 +2036,7 @@ ansiNonReserved
     | CONTAINS
     | CONTINUE
     | COST
+    | CREDENTIAL
     | CURSOR
     | CUBE
     | CURRENT
@@ -2400,6 +2430,7 @@ nonReserved
     | CONTINUE
     | COST
     | CREATE
+    | CREDENTIAL
     | CUBE
     | CURRENT
     | CURSOR
