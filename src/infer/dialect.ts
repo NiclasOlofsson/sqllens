@@ -3,6 +3,8 @@ import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./function
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
 import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from "./redshift.js";
+import { POSTGRES_FUNCTION_RETURNS, postgresLiteral, postgresParseType } from "./postgres.js";
+import { DUCKDB_FUNCTION_RETURNS, duckdbLiteral, duckdbParseType } from "./duckdb.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -57,7 +59,21 @@ const redshift: InferDialect = {
 	division: "integer", // Redshift: INT4 / INT4 → INT4 (truncates) — AWS r_numeric_computations201
 };
 
-const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery, redshift };
+const postgres: InferDialect = {
+	functions: POSTGRES_FUNCTION_RETURNS,
+	literal: postgresLiteral,
+	parseType: postgresParseType,
+	division: "integer", // PostgreSQL: integer / integer truncates toward zero — functions-math.html
+};
+
+const duckdb: InferDialect = {
+	functions: DUCKDB_FUNCTION_RETURNS,
+	literal: duckdbLiteral,
+	parseType: duckdbParseType,
+	division: "float", // DuckDB: `/` is DOUBLE division even for integers (`//` divides) — functions/numeric.md
+};
+
+const DIALECTS: Record<string, InferDialect> = { databricks, tsql, snowflake, bigquery, redshift, postgres, duckdb };
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */
 export function inferDialect(name: string | undefined): InferDialect {

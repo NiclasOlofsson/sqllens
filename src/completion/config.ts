@@ -10,6 +10,10 @@ import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
+import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
+import { PostgresParser } from "../generated/postgres/PostgresParser.js";
+import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
+import { DuckdbParser } from "../generated/duckdb/DuckdbParser.js";
 
 /**
  * Per-dialect tuning for the ATN candidate walk (`collectCandidates`).
@@ -121,6 +125,21 @@ const REDSHIFT_PREFERRED = new Set<number>([...REDSHIFT_TABLE_RULES, ...REDSHIFT
 const REDSHIFT_RELATION_KEYWORDS = new Set<number>([RedshiftLexer.FROM, RedshiftLexer.JOIN]);
 const REDSHIFT_NAME_TOKENS = new Set<number>([RedshiftLexer.Identifier, RedshiftLexer.QuotedIdentifier]);
 
+// ── Postgres / DuckDB (TVL-lineage forks like Redshift) ─────────────────────
+// The same rule split as Redshift applies (same grammar shapes): post-FROM → relation_expr,
+// SELECT/WHERE → a_expr; relation names are plain/quoted identifiers after FROM/JOIN.
+const POSTGRES_TABLE_RULES = new Set<number>([PostgresParser.RULE_relation_expr]);
+const POSTGRES_COLUMN_RULES = new Set<number>([PostgresParser.RULE_a_expr]);
+const POSTGRES_PREFERRED = new Set<number>([...POSTGRES_TABLE_RULES, ...POSTGRES_COLUMN_RULES]);
+const POSTGRES_RELATION_KEYWORDS = new Set<number>([PostgresLexer.FROM, PostgresLexer.JOIN]);
+const POSTGRES_NAME_TOKENS = new Set<number>([PostgresLexer.Identifier, PostgresLexer.QuotedIdentifier]);
+
+const DUCKDB_TABLE_RULES = new Set<number>([DuckdbParser.RULE_relation_expr]);
+const DUCKDB_COLUMN_RULES = new Set<number>([DuckdbParser.RULE_a_expr]);
+const DUCKDB_PREFERRED = new Set<number>([...DUCKDB_TABLE_RULES, ...DUCKDB_COLUMN_RULES]);
+const DUCKDB_RELATION_KEYWORDS = new Set<number>([DuckdbLexer.FROM, DuckdbLexer.JOIN]);
+const DUCKDB_NAME_TOKENS = new Set<number>([DuckdbLexer.Identifier, DuckdbLexer.QuotedIdentifier]);
+
 export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 	databricks: {
 		preferredRules: DATABRICKS_PREFERRED,
@@ -161,5 +180,21 @@ export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 		columnRules: REDSHIFT_COLUMN_RULES,
 		relationKeywordTokens: REDSHIFT_RELATION_KEYWORDS,
 		nameTokens: REDSHIFT_NAME_TOKENS,
+	},
+	postgres: {
+		preferredRules: POSTGRES_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: POSTGRES_TABLE_RULES,
+		columnRules: POSTGRES_COLUMN_RULES,
+		relationKeywordTokens: POSTGRES_RELATION_KEYWORDS,
+		nameTokens: POSTGRES_NAME_TOKENS,
+	},
+	duckdb: {
+		preferredRules: DUCKDB_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: DUCKDB_TABLE_RULES,
+		columnRules: DUCKDB_COLUMN_RULES,
+		relationKeywordTokens: DUCKDB_RELATION_KEYWORDS,
+		nameTokens: DUCKDB_NAME_TOKENS,
 	},
 };

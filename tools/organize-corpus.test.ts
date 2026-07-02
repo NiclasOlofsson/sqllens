@@ -38,8 +38,12 @@ import { parseBigQuery } from "../src/bigquery/parse.js";
 import { statementCategories as bigQueryCategories } from "../src/bigquery/lower.js";
 import { parseRedshift } from "../src/redshift/parse.js";
 import { statementCategories as redshiftCategories } from "../src/redshift/lower.js";
+import { parsePostgres } from "../src/postgres/parse.js";
+import { statementCategories as postgresCategories } from "../src/postgres/lower.js";
+import { parseDuckdb } from "../src/duckdb/parse.js";
+import { statementCategories as duckdbCategories } from "../src/duckdb/lower.js";
 
-type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift";
+type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb";
 
 const PARSERS: Record<
 	Dialect,
@@ -50,6 +54,8 @@ const PARSERS: Record<
 	snowflake: { parse: parseSnowflake, categories: snowflakeCategories },
 	bigquery: { parse: parseBigQuery, categories: bigQueryCategories },
 	redshift: { parse: parseRedshift, categories: redshiftCategories },
+	postgres: { parse: parsePostgres, categories: postgresCategories },
+	duckdb: { parse: parseDuckdb, categories: duckdbCategories },
 };
 
 /** The gate's bucket over the current parse: query | dml | ddl, or "unparsed" when the parser
@@ -87,6 +93,9 @@ const CORPORA: Corpus[] = [
 	{ rootRel: "redshift/docs", dialect: "redshift" },
 	{ rootRel: "redshift/bytebase", dialect: "redshift" },
 	{ rootRel: "bigquery/zetasql", dialect: "bigquery" },
+	{ rootRel: "postgres/docs", dialect: "postgres" },
+	{ rootRel: "postgres/bytebase", dialect: "postgres" },
+	{ rootRel: "duckdb/docs", dialect: "duckdb" },
 ];
 
 function sqlFiles(root: string): string[] {
