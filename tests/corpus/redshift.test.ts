@@ -10,6 +10,7 @@ import { parseRedshift } from "../../src/redshift/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 
 // Two Redshift conformance corpora, both gitignored and skipped when absent:
@@ -27,6 +28,9 @@ import { walkIr } from "../helpers/ir-walk.js";
 
 const VENDOR_EXAMPLES = corpusPath("redshift/bytebase");
 const DOCS_CORPUS = corpusPath("redshift/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject).
+const NEGATIVES = corpusPath("redshift/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 320; // 320/400 mutants rejected (2026-07-02)
 
 // Ratchet floors — pass counts must never drop below these. Raised as grammar fixes land.
 const VENDOR_BASELINE = 115; // upstream's own 115-file corpus: the fork parses all of it
@@ -172,4 +176,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("Redshift negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("redshift", NEGATIVES, (sql) => parseRedshift(sql).errors, MUTATED_FLOOR);
+	});
 });

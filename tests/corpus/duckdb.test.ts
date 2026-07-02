@@ -6,6 +6,7 @@ import { parseDuckdb } from "../../src/duckdb/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 
 // DuckDB conformance corpus (skipped when absent): duckdb/docs — every ```sql example from the
@@ -14,6 +15,9 @@ import { walkIr } from "../helpers/ir-walk.js";
 // the query bucket. DuckDB's PIVOT/UNPIVOT statements classify as query (row-returning reads).
 
 const DOCS_CORPUS = corpusPath("duckdb/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject).
+const NEGATIVES = corpusPath("duckdb/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 333; // 333/400 mutants rejected (2026-07-02)
 
 const QUERY_BASELINE = 900; // documented floor; the gate itself is 100%-of-query-bucket
 // The cross-dialect `other` ratchet: DuckDB is expression-corpus-complete — 0 `other`
@@ -72,4 +76,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("DuckDB grammar vs the duckdb-web docs
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("DuckDB negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("duckdb", NEGATIVES, (sql) => parseDuckdb(sql).errors, MUTATED_FLOOR);
+	});
 });

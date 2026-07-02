@@ -7,6 +7,7 @@ import { parseTSql } from "../../src/tsql/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 import { KNOWN_BAD } from "../tsql-corpus-known-bad.js";
 
@@ -22,6 +23,9 @@ import { KNOWN_BAD } from "../tsql-corpus-known-bad.js";
 
 const EXAMPLES = corpusPath("tsql/grammars-v4");
 const DOCS_CORPUS = corpusPath("tsql/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject).
+const NEGATIVES = corpusPath("tsql/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 315; // 315/400 mutants rejected (2026-07-02)
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
 // docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is FROM THE PATH
@@ -148,4 +152,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("T-SQL negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("tsql", NEGATIVES, (sql) => parseTSql(sql).errors, MUTATED_FLOOR);
+	});
 });

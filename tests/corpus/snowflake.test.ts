@@ -10,6 +10,7 @@ import { parseSnowflake } from "../../src/snowflake/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 import { KNOWN_BAD } from "../snowflake-corpus-known-bad.js";
 
@@ -29,6 +30,10 @@ import { KNOWN_BAD } from "../snowflake-corpus-known-bad.js";
 
 const VENDOR_EXAMPLES = corpusPath("snowflake/grammars-v4");
 const DOCS_CORPUS = corpusPath("snowflake/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject; the 3
+// snowflake.test.ts reject unit tests are folded into the curated set).
+const NEGATIVES = corpusPath("snowflake/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 332; // 332/400 mutants rejected (2026-07-02)
 // The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
 // the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 2976; // documented floor for the query population (path-bucketed)
@@ -145,4 +150,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("Snowflake negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("snowflake", NEGATIVES, (sql) => parseSnowflake(sql).errors, MUTATED_FLOOR);
+	});
 });

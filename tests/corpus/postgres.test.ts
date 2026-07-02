@@ -7,6 +7,7 @@ import { parsePostgres } from "../../src/postgres/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 
 // Two PostgreSQL conformance corpora, both in the corpus repo and skipped when absent:
@@ -21,6 +22,10 @@ import { walkIr } from "../helpers/ir-walk.js";
 
 const VENDOR_EXAMPLES = corpusPath("postgres/bytebase");
 const DOCS_CORPUS = corpusPath("postgres/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject). Floor pinned
+// at the measured rejection count — mutation cannot guarantee invalidity, so it may only rise.
+const NEGATIVES = corpusPath("postgres/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 325; // 325/400 mutants rejected (2026-07-02)
 
 const VENDOR_BASELINE = 217; // upstream's own example corpus: the fork parses all of it
 const QUERY_BASELINE = 330; // documented floor; the gate itself is 100%-of-query-bucket
@@ -113,4 +118,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("Postgres negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("postgres", NEGATIVES, (sql) => parsePostgres(sql).errors, MUTATED_FLOOR);
+	});
 });

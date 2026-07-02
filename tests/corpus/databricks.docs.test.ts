@@ -4,6 +4,7 @@ import { describe, it } from "vitest";
 import { parseDatabricks } from "../../src/databricks/parse.js";
 import { KNOWN_BAD, DEFERRED_GRAMMAR } from "../databricks-corpus-known-bad.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 
 // SQL examples scraped from the Databricks SQL language manual
 // (docs.databricks.com/.../sql/language-manual via tools/scrape-databricks-docs.mjs; gitignored,
@@ -26,6 +27,9 @@ import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 
 const CORPUS = corpusPath("databricks/docs");
 const QUERY_BASELINE = 3099; // documented floor for the query population (raised +11 when issue #4 constructs graduated, 2026-07-02)
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject).
+const NEGATIVES = corpusPath("databricks/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 334; // 334/400 mutants rejected (2026-07-02)
 
 describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL language manual", () => {
 	it(
@@ -37,4 +41,10 @@ describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL lang
 			});
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("Databricks negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("databricks", NEGATIVES, (sql) => parseDatabricks(sql).errors, MUTATED_FLOOR);
+	});
 });
