@@ -14,7 +14,7 @@ import {
 } from "vscode-languageserver-protocol/node";
 import { startLspHarness, type LspHarness } from "./helpers/lsp-harness.js";
 
-const DIALECTS = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb"] as const;
+const DIALECTS = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"] as const;
 
 let h: LspHarness;
 beforeAll(async () => {

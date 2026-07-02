@@ -472,6 +472,82 @@ const DUCKDB: Record<string, FnSignature> = {
 	quantile_cont: { name: "quantile_cont", params: [p("x", "numeric"), p("pos", "double")] }, // quantile_cont(x, pos)
 };
 
+// ---------------------------------------------------------------------------
+// Trino — trino.io/docs/current/functions reference; cites the page per entry.
+// ---------------------------------------------------------------------------
+const TRINO: Record<string, FnSignature> = {
+	// date/time — functions/datetime.html
+	date_trunc: { name: "date_trunc", params: [p("unit", "varchar"), p("x", "timestamp")] }, // date_trunc(unit, x)
+	date_add: { name: "date_add", params: [p("unit", "varchar"), p("value", "bigint"), p("timestamp", "timestamp")] }, // date_add(unit, value, timestamp)
+	date_diff: {
+		name: "date_diff",
+		params: [p("unit", "varchar"), p("timestamp1", "timestamp"), p("timestamp2", "timestamp")],
+	}, // date_diff(unit, timestamp1, timestamp2)
+	date_format: { name: "date_format", params: [p("timestamp", "timestamp"), p("format", "varchar")] }, // date_format(timestamp, format)
+	date_parse: { name: "date_parse", params: [p("string", "varchar"), p("format", "varchar")] }, // date_parse(string, format)
+	from_unixtime: { name: "from_unixtime", params: [p("unixtime", "double"), p("zone", "varchar")] }, // from_unixtime(unixtime[, zone])
+	at_timezone: { name: "at_timezone", params: [p("timestamp", "timestamp"), p("zone", "varchar")] }, // at_timezone(timestamp, zone)
+	// string — functions/string.html
+	substr: { name: "substr", params: [p("string", "varchar"), p("start", "bigint"), p("length", "bigint")] }, // substr(string, start[, length])
+	split: { name: "split", params: [p("string", "varchar"), p("delimiter", "varchar"), p("limit", "bigint")] }, // split(string, delimiter[, limit])
+	split_part: {
+		name: "split_part",
+		params: [p("string", "varchar"), p("delimiter", "varchar"), p("index", "bigint")],
+	}, // split_part(string, delimiter, index)
+	strpos: { name: "strpos", params: [p("string", "varchar"), p("substring", "varchar"), p("instance", "bigint")] }, // strpos(string, substring[, instance])
+	replace: { name: "replace", params: [p("string", "varchar"), p("search", "varchar"), p("replace", "varchar")] }, // replace(string, search[, replace])
+	lpad: { name: "lpad", params: [p("string", "varchar"), p("size", "bigint"), p("padstring", "varchar")] }, // lpad(string, size, padstring)
+	rpad: { name: "rpad", params: [p("string", "varchar"), p("size", "bigint"), p("padstring", "varchar")] }, // rpad(string, size, padstring)
+	concat_ws: { name: "concat_ws", params: [p("separator", "varchar"), p("strings", "varchar...")] }, // concat_ws(separator, ...)
+	format: { name: "format", params: [p("format", "varchar"), p("args", "any...")] }, // format(format, args...)
+	// regexp — functions/regexp.html
+	regexp_like: { name: "regexp_like", params: [p("string", "varchar"), p("pattern", "varchar")] }, // regexp_like(string, pattern)
+	regexp_extract: {
+		name: "regexp_extract",
+		params: [p("string", "varchar"), p("pattern", "varchar"), p("group", "bigint")],
+	}, // regexp_extract(string, pattern[, group])
+	regexp_replace: {
+		name: "regexp_replace",
+		params: [p("string", "varchar"), p("pattern", "varchar"), p("replacement", "varchar")],
+	}, // regexp_replace(string, pattern[, replacement])
+	// json — functions/json.html
+	json_extract: { name: "json_extract", params: [p("json", "json"), p("json_path", "varchar")] }, // json_extract(json, json_path)
+	json_extract_scalar: { name: "json_extract_scalar", params: [p("json", "json"), p("json_path", "varchar")] }, // json_extract_scalar(json, json_path)
+	json_parse: { name: "json_parse", params: [p("string", "varchar")] }, // json_parse(string)
+	// array — functions/array.html
+	element_at: { name: "element_at", params: [p("collection", "array|map"), p("key", "any")] }, // element_at(x, key)
+	array_join: {
+		name: "array_join",
+		params: [p("x", "array"), p("delimiter", "varchar"), p("null_replacement", "varchar")],
+	}, // array_join(x, delimiter[, null_replacement])
+	sequence: { name: "sequence", params: [p("start", "bigint"), p("stop", "bigint"), p("step", "bigint")] }, // sequence(start, stop[, step])
+	transform: { name: "transform", params: [p("array", "array"), p("function", "lambda")] }, // transform(array, function) — functions/lambda.html
+	reduce: {
+		name: "reduce",
+		params: [
+			p("array", "array"),
+			p("initialState", "any"),
+			p("inputFunction", "lambda"),
+			p("outputFunction", "lambda"),
+		],
+	}, // reduce(array, s0, in, out)
+	// aggregate — functions/aggregate.html
+	count: { name: "count", params: [p("x", "any")] }, // count(x)
+	sum: { name: "sum", params: [p("x", "numeric")] }, // sum(x)
+	avg: { name: "avg", params: [p("x", "numeric")] }, // avg(x)
+	min: { name: "min", params: [p("x", "any"), p("n", "bigint")] }, // min(x[, n])
+	max: { name: "max", params: [p("x", "any"), p("n", "bigint")] }, // max(x[, n])
+	max_by: { name: "max_by", params: [p("x", "any"), p("y", "any"), p("n", "bigint")] }, // max_by(x, y[, n])
+	min_by: { name: "min_by", params: [p("x", "any"), p("y", "any"), p("n", "bigint")] }, // min_by(x, y[, n])
+	approx_percentile: { name: "approx_percentile", params: [p("x", "numeric"), p("percentile", "double")] }, // approx_percentile(x, percentile)
+	approx_distinct: { name: "approx_distinct", params: [p("x", "any"), p("e", "double")] }, // approx_distinct(x[, e])
+	listagg: { name: "listagg", params: [p("expression", "varchar"), p("separator", "varchar")] }, // listagg(expr[, sep]) WITHIN GROUP
+	// conditional — functions/conditional.html
+	coalesce: { name: "coalesce", params: [p("values", "any...")] }, // coalesce(value1, value2, ...)
+	nullif: { name: "nullif", params: [p("value1", "any"), p("value2", "any")] }, // nullif(value1, value2)
+	if: { name: "if", params: [p("condition", "boolean"), p("true_value", "any"), p("false_value", "any")] }, // if(cond, t[, f])
+};
+
 /** Curated parameter signatures, per dialect, keyed by LOWERCASED function name. */
 export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	databricks: DATABRICKS,
@@ -481,4 +557,5 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	redshift: REDSHIFT,
 	postgres: POSTGRES,
 	duckdb: DUCKDB,
+	trino: TRINO,
 };
