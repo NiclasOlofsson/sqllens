@@ -25,6 +25,9 @@ export interface ParseResult {
 	/** Every token the parser consumed (trivia included, EOF excluded), as neutral `Token`s. Built
 	 *  from the dot-path-rewritten stream, so spans match the consumed source. */
 	tokens: Token[];
+	/** True when the fast SLL prediction pass bailed and the parse re-ran under full LL. Same result
+	 *  either way — this just says which path produced it, for perf profiling (tools/profile-sll.ts). */
+	sllFallback: boolean;
 }
 
 /**
@@ -75,7 +78,7 @@ export function parseBigQuery(sql: string): ParseResult {
 	try {
 		const tree = parser.root();
 		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
-		return withTokens({ tree, errors: diagnostics.length, diagnostics });
+		return withTokens({ tree, errors: diagnostics.length, diagnostics, sllFallback: false });
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -87,6 +90,6 @@ export function parseBigQuery(sql: string): ParseResult {
 		parser.addErrorListener(collector.listener as never);
 		const tree = parser.root();
 		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
-		return withTokens({ tree, errors: diagnostics.length, diagnostics });
+		return withTokens({ tree, errors: diagnostics.length, diagnostics, sllFallback: true });
 	}
 }
