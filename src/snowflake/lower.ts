@@ -93,7 +93,9 @@ const SPLIT_TO_TABLE_COLUMNS = ["SEQ", "INDEX", "VALUE"];
  *  A single query statement lowers fully; anything else (DDL, DML, multi-statement
  *  batches) becomes a flagged non-query body — a valid parse never throws. */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "snowflake";
+	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {

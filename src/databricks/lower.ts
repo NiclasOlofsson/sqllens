@@ -134,7 +134,9 @@ function directTokenType(node: ParseTree, types: number[]): number | undefined {
 
 /** Lower a parsed Databricks statement (CST) into the IR, frozen — immutable after lower() (no pass writes back). */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "databricks";
+	return freezeIR(q);
 }
 
 /** An empty, flagged body — the stable non-throw shape for anything not modelled. */

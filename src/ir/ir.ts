@@ -20,6 +20,10 @@ export interface QueryExpr {
 	 *  statements). Reported to the semantic layer so consumers can tell query / dml / ddl / dcl /
 	 *  tcl / utility / compound apart without re-parsing. See src/ir/statement.ts. */
 	statement?: StatementCategory;
+	/** The dialect whose lower() produced this IR, set on the TOP-LEVEL statement only —
+	 *  lets resolveScopes/toScopes select the inference knowledge without the caller
+	 *  re-supplying it (issue #7). An explicit dialect argument overrides the tag. */
+	dialect?: string;
 	ctes: CteDef[];
 	body: QueryBody;
 	/** ORDER BY sort expressions, if present. */

@@ -57,7 +57,9 @@ const CAST_FUNCS = new Set(["CAST", "TRY_CAST", "CONVERT", "TRY_CONVERT", "PARSE
  * lowering — out of scope), returning a flagged-empty body that carries the category.
  */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "tsql";
+	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {

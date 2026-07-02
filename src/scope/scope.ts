@@ -79,8 +79,10 @@ export type ResolvedSource =
 	 *  computed from `base` and applied via applyPivotCols/applyUnpivotCols (schema-fed in qualify). */
 	| { kind: "pivot"; alias: string; base: ResolvedSource[]; pivot?: PivotInfo; unpivot?: UnpivotInfo };
 
-export function resolveScopes(query: QueryExpr, dialect: string = "databricks"): ScopeTree {
-	return { root: buildQueryScope(query, undefined, dialect), statement: query.statement ?? "other" };
+export function resolveScopes(query: QueryExpr, dialect?: string): ScopeTree {
+	const d = dialect ?? query.dialect;
+	if (!d) throw new Error("resolveScopes: no dialect — pass one, or use an IR produced by a dialect's lower()");
+	return { root: buildQueryScope(query, undefined, d), statement: query.statement ?? "other" };
 }
 
 export type ColumnResolution =

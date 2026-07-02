@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
 	analyze,
 	deriveSymbols,
+	formatType,
 	lineage,
 	parse,
 	qualify,
@@ -9,11 +10,11 @@ import {
 	Schema,
 	toAst,
 	toScopes,
+	TypeInfo,
 	type Dialect,
 	type Lineage,
 	type QueryExpr,
 	type ScopeTree,
-	type TypeInfo,
 } from "../src/index.js";
 
 const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery"];
@@ -172,3 +173,36 @@ describe("public API — immutable IR + independent passes", () => {
 function irReplacer(key: string, value: unknown): unknown {
 	return key === "cst" || key === "aliasCst" ? undefined : value;
 }
+
+describe("dialect rides on the IR (issue #7)", () => {
+	it("lower() stamps the dialect; toScopes needs no opts", () => {
+		const { ast } = parse("SELECT 10 / 4 AS r FROM t", "snowflake");
+		expect(ast.dialect).toBe("snowflake");
+
+		const scopes = toScopes(ast); // no opts — the tag drives it
+		if (ast.body.kind !== "select") throw new Error("expected a select body");
+
+		const types = new TypeInfo(new Schema({}));
+		const t = types.typeOf(ast.body.projections[0]!.expr, scopes.root);
+		// Snowflake division is decimal (int/int → decimal), NOT Spark's double —
+		// proof the tag (not a default) selected the inference rules.
+		expect(formatType(t)).toBe("decimal");
+	});
+
+	it("a bare hand-built IR with no dialect throws instead of guessing", () => {
+		const bare = {
+			kind: "query",
+			ctes: [],
+			body: {
+				kind: "select",
+				projections: [],
+				from: [],
+				columns: [],
+				aggregated: false,
+				cst: null as never,
+			},
+			cst: null as never,
+		};
+		expect(() => toScopes(bare as never)).toThrow(/dialect/);
+	});
+});

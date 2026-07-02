@@ -75,7 +75,9 @@ const AGGREGATES = new Set([
  *  A single SELECT statement lowers fully; anything else (DDL, DML, multi-statement batches)
  *  becomes a flagged non-query body — a valid parse never throws. Frozen — immutable after lower(). */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "redshift";
+	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {

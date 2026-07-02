@@ -140,14 +140,15 @@ export function toAst(x: string | QueryExpr, dialect?: Dialect): QueryExpr {
 }
 
 /** Lift to a ScopeTree. A ScopeTree returns unchanged; an IR is resolved; a string is parsed +
- *  lowered + resolved. The dialect is required only when entering from a string or a bare IR. */
+ *  lowered + resolved. The dialect is required only when entering from a string, or a bare
+ *  hand-built IR that carries no `dialect` tag — an IR from a dialect's lower() needs nothing. */
 export function toScopes(x: string | QueryExpr | ScopeTree, opts: DialectOpts = {}): ScopeTree {
 	if (isScopeTree(x)) return x;
 	if (typeof x === "string") {
 		if (!opts.dialect) throw new Error("toScopes(string) needs a dialect");
 		return resolveScopes(toAst(x, opts.dialect), opts.dialect);
 	}
-	return resolveScopes(x, opts.dialect ?? "databricks");
+	return resolveScopes(x, opts.dialect);
 }
 
 function isScopeTree(x: unknown): x is ScopeTree {

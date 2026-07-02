@@ -81,7 +81,9 @@ const AGGREGATES = new Set([
 
 /** Lower a parsed GoogleSQL file (`stmts`: a `;`-separated batch) into the IR. */
 export function lower(tree: ParserRuleContext): QueryExpr {
-	return freezeIR(lowerImpl(tree));
+	const q = lowerImpl(tree);
+	q.dialect = "bigquery";
+	return freezeIR(q);
 }
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {

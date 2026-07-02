@@ -185,7 +185,7 @@ function exprOrigins(expr: Expr, scope: Scope, schema: Schema, seen: Set<Scope>)
 			return exprOrigins(expr.body, scope, schema, seen); // param refs resolve to nothing
 		case "subquery":
 		case "exists":
-			return subqueryOrigins(expr.query, schema, seen);
+			return subqueryOrigins(expr.query, schema, seen, scope.dialect);
 		default:
 			return []; // literal / star / other
 	}
@@ -240,10 +240,10 @@ function derivedOrigins(
 	}
 }
 
-function subqueryOrigins(query: QueryExpr, schema: Schema, seen: Set<Scope>): Origin[] {
+function subqueryOrigins(query: QueryExpr, schema: Schema, seen: Set<Scope>, dialect: string): Origin[] {
 	// A scalar/EXISTS subquery contributes its output column's origins. Its scope is built fresh;
 	// correlated refs in the body bind to nothing here, which is fine — we trace the value column.
-	const root = resolveScopes(query).root;
+	const root = resolveScopes(query, dialect).root;
 	if (root.body.kind !== "select" || root.body.projections.length === 0) return [];
 	return exprOrigins(root.body.projections[0].expr, root, schema, seen);
 }
