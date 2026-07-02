@@ -1,4 +1,5 @@
 import { commonType, widenSum } from "./coerce.js";
+import type { Expr } from "../ir/ir.js";
 import type { FnRule } from "./functions.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
@@ -575,4 +576,12 @@ export const SNOWFLAKE_ALIASES: Record<string, string> = {
 
 export function snowflakeParseType(text: string): Type {
 	return parseType(text, SNOWFLAKE_ALIASES);
+}
+
+/** Pre-registry hook for calls a plain FnRule can't key. `<seq>.NEXTVAL` carries the sequence as a
+ *  (variable) qualifier, so no registry key can enumerate it; NEXTVAL always returns NUMBER(38,0)
+ *  regardless of the sequence, so match by name here. docs.snowflake.com/en/sql-reference/functions/nextval */
+export function snowflakeSpecial(fn: Extract<Expr, { kind: "function" }>): Type | undefined {
+	if (fn.name.toLowerCase() === "nextval") return DEC; // NUMBER → decimal
+	return undefined;
 }

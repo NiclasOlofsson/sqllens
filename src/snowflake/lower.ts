@@ -89,6 +89,10 @@ const AGGREGATES = new Set([
 const FLATTEN_COLUMNS = ["SEQ", "KEY", "PATH", "INDEX", "VALUE", "THIS"];
 const SPLIT_TO_TABLE_COLUMNS = ["SEQ", "INDEX", "VALUE"];
 
+/** The pseudo-column a CONNECT BY hierarchical query exposes (the node's depth, root = 1):
+ *  docs.snowflake.com/en/sql-reference/constructs/connect-by */
+const CONNECT_BY_PSEUDO_COLUMNS = ["LEVEL"];
+
 /** Lower a parsed Snowflake file (snowflake_file: a `;`-separated batch) into the IR.
  *  A single query statement lowers fully; anything else (DDL, DML, multi-statement
  *  batches) becomes a flagged non-query body — a valid parse never throws. */
@@ -289,8 +293,6 @@ function onlySelectStatement(ssip: ParserRuleContext): ParserRuleContext | undef
 // --- the SELECT body ---------------------------------------------------------
 
 function buildSelect(stmt: ParserRuleContext): SelectExpr {
-	const unsupported: string[] = [];
-
 	const selectList = firstOfRule(stmt, P.RULE_select_list);
 	const projections = selectList
 		? directChildrenOfRule(selectList, P.RULE_select_list_elem).map(buildProjection)
@@ -299,7 +301,13 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	const optional = directChildrenOfRule(stmt, P.RULE_select_optional_clauses)[0];
 	const fromClause = optional ? directChildrenOfRule(optional, P.RULE_from_clause)[0] : undefined;
 	const sources = fromClause ? shallowNodesOfRule(fromClause, P.RULE_object_ref) : [];
-	const from: Source[] = sources.map((o) => buildSource(o, unsupported));
+	const from: Source[] = sources.map(buildSource);
+
+	// CONNECT BY hierarchical query: its START WITH / CONNECT BY predicates are ordinary exprs whose
+	// columns are conserved (below); LEVEL enters scope as a lateral pseudo-source exposing "LEVEL".
+	const connectByNodes = fromClause ? connectByRefs(fromClause) : [];
+	const connectByExprs = connectByNodes.flatMap(connectByPredicates);
+	if (connectByNodes.length) from.push(levelPseudoSource(connectByNodes[0]));
 
 	const whereSc = optional
 		? directChildrenOfRule(
@@ -339,6 +347,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (having) columnsOf(having, columns, "having");
 	if (qualify) columnsOf(qualify, columns, "qualify");
+	for (const e of connectByExprs) columnsOf(e, columns, "where");
 
 	return {
 		kind: "select",
@@ -354,7 +363,6 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 		subqueries: subqueries.length ? subqueries : undefined,
 		pivot: fromClause ? extractPivot(fromClause) : undefined,
 		unpivot: fromClause ? extractUnpivot(fromClause) : undefined,
-		unsupported: unsupported.length ? unsupported : undefined,
 		cst: stmt,
 	};
 }
@@ -447,6 +455,63 @@ function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
 		if (match) out.push(lowerExpr(match));
 	}
 	return out;
+}
+
+// --- CONNECT BY --------------------------------------------------------------
+// object_ref: object_name START WITH predicate CONNECT BY prior_list?
+// docs.snowflake.com/en/sql-reference/constructs/connect-by
+
+/** The FROM object_refs that carry a CONNECT BY (hierarchical) clause. */
+function connectByRefs(fromClause: ParserRuleContext): ParserRuleContext[] {
+	return shallowNodesOfRule(fromClause, P.RULE_object_ref).filter((r) => hasDirectToken(r, P.CONNECT));
+}
+
+/** The START WITH predicate and each CONNECT BY prior-item equality, as ordinary exprs. Their column
+ *  refs are conserved into the select's `columns` (columnsOf) so scope/qualify see them; the exprs
+ *  themselves are not otherwise retained (mirrors join conditions' column conservation). */
+function connectByPredicates(ref: ParserRuleContext): Expr[] {
+	const out: Expr[] = [];
+	const startPred = directChildrenOfRule(ref, P.RULE_predicate)[0];
+	if (startPred) out.push(lowerPredicate(startPred));
+	const priorList = directChildrenOfRule(ref, P.RULE_prior_list)[0];
+	if (priorList)
+		for (const item of directChildrenOfRule(priorList, P.RULE_prior_item)) out.push(lowerPriorItem(item));
+	return out;
+}
+
+/** prior_item: PRIOR? id_ EQ PRIOR? id_ — an equality between two (possibly PRIOR-qualified) columns.
+ *  `PRIOR x` lowers as a `prior(x)` function over the column, so columnsOf still reaches `x`. */
+function lowerPriorItem(item: ParserRuleContext): Expr {
+	const sides: Expr[] = [];
+	let pendingPrior = false;
+	for (let i = 0; i < item.getChildCount(); i++) {
+		const c = item.getChild(i);
+		if (c instanceof TerminalNode && c.symbol.type === P.PRIOR) {
+			pendingPrior = true;
+			continue;
+		}
+		if (c instanceof ParserRuleContext && c.ruleIndex === P.RULE_id_) {
+			const col: Expr = { kind: "column", parts: [stripQuotes(c.getText())], cst: c };
+			sides.push(
+				pendingPrior
+					? { kind: "function", name: "prior", args: [col], aggregate: false, distinct: false, cst: item }
+					: col,
+			);
+			pendingPrior = false;
+		}
+	}
+	return {
+		kind: "binary",
+		op: "=",
+		left: sides[0] ?? otherExpr(item),
+		right: sides[1] ?? otherExpr(item),
+		cst: item,
+	};
+}
+
+/** A lateral pseudo-source exposing the CONNECT BY pseudo-column(s) so `SELECT LEVEL` resolves. */
+function levelPseudoSource(cst: ParserRuleContext): Source {
+	return { kind: "lateral", columns: CONNECT_BY_PSEUDO_COLUMNS, cst };
 }
 
 // --- PIVOT / UNPIVOT ---------------------------------------------------------
@@ -568,7 +633,7 @@ function aliasText(asAlias: ParserRuleContext): string {
 
 // --- sources -------------------------------------------------------------------
 
-function buildSource(ref: ParserRuleContext, unsupported: string[]): Source {
+function buildSource(ref: ParserRuleContext): Source {
 	const asAlias = directChildrenOfRule(ref, P.RULE_as_alias)[0];
 	const alias = asAlias ? aliasText(asAlias) : undefined;
 	const aliasCst = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
@@ -657,9 +722,9 @@ function buildSource(ref: ParserRuleContext, unsupported: string[]): Source {
 		return { kind: "table", name: [stage.getText()], alias, aliasCst, cst: ref };
 	}
 
-	// CONNECT BY hierarchies aren't modelled (LEVEL pseudo-column etc.) — flagged.
-	if (hasDirectToken(ref, P.CONNECT)) unsupported.push("connect-by");
-
+	// CONNECT BY hierarchies: object_name START WITH predicate CONNECT BY prior_list? — the base
+	// relation is this object_name (built below); the START WITH / CONNECT BY predicates and the LEVEL
+	// pseudo-column are handled at the select level (extractConnectBy / the LEVEL pseudo-source).
 	const objectName = directChildrenOfRule(ref, P.RULE_object_name)[0];
 	const parts = objectName ? nameParts(objectName) : [stripQuotes(ref.getText())];
 	return {
@@ -750,6 +815,23 @@ function exprListExprs(node: ParserRuleContext): ParserRuleContext[] {
 function lowerExpr(node: ParserRuleContext): Expr {
 	if (node.ruleIndex !== P.RULE_expr) return lowerExprChild(node);
 	const exprs = directChildrenOfRule(node, P.RULE_expr);
+
+	// <seq>.NEXTVAL — a sequence's next value; a NUMBER-returning pseudo-function. The sequence path
+	// rides as the `qualifier` (Task 1a's field); infer types it via the Snowflake `special` hook.
+	// docs.snowflake.com/en/sql-reference/functions/nextval
+	if (hasDirectToken(node, P.NEXTVAL)) {
+		const obj = directChildrenOfRule(node, P.RULE_object_name)[0];
+		const parts = obj ? nameParts(obj) : [];
+		return {
+			kind: "function",
+			name: "nextval",
+			qualifier: parts.length ? parts.join(".").toLowerCase() : undefined,
+			args: [],
+			aggregate: false,
+			distinct: false,
+			cst: node,
+		};
+	}
 
 	// expr :: data_type — cast
 	if (hasDirectToken(node, P.COLON_COLON)) {

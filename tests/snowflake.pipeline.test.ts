@@ -3,7 +3,7 @@ import { inferType } from "../src/infer/infer.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
-import { resolveScopes } from "../src/scope/scope.js";
+import { resolveColumn, resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 import { lower } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
@@ -38,6 +38,19 @@ describe("Snowflake scope resolution", () => {
 	it("exposes FLATTEN's lateral columns to the scope", () => {
 		const tree = scopes("SELECT f.value FROM t, LATERAL FLATTEN(input => t.v) f");
 		expect([...tree.root.sources.keys()]).toContain("f");
+	});
+
+	// CONNECT BY exposes the LEVEL pseudo-column: docs.snowflake.com/en/sql-reference/constructs/connect-by
+	it("binds LEVEL as a pseudo-column on a CONNECT BY hierarchical select", () => {
+		const tree = scopes(
+			"SELECT employee_ID, title, LEVEL FROM employees START WITH title = 'President' CONNECT BY manager_ID = PRIOR employee_id",
+		);
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		expect(body.unsupported).toBeUndefined();
+		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
+		expect(levelRef).toBeDefined();
+		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
 	});
 });
 
@@ -164,6 +177,11 @@ describe("Snowflake type inference (dialect-specific knowledge)", () => {
 		expect(typeOf("SELECT v:a.b AS x FROM t", T)).toEqual({ kind: "scalar", name: "variant" });
 		expect(typeOf("SELECT v:items[0] AS x FROM t", T)).toEqual({ kind: "scalar", name: "variant" });
 		expect(typeOf("SELECT v:a::STRING AS x FROM t", T)).toEqual({ kind: "scalar", name: "string" });
+	});
+
+	it("types <seq>.NEXTVAL as decimal (NUMBER)", () => {
+		// docs.snowflake.com/en/sql-reference/functions/nextval — NEXTVAL returns NUMBER(38,0).
+		expect(typeOf("SELECT seq_01.nextval AS x")).toEqual({ kind: "scalar", name: "decimal" });
 	});
 
 	it("division is decimal division: numeric/numeric → decimal, float operand → double", () => {

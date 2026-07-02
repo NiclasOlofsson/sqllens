@@ -923,6 +923,40 @@ describe("Snowflake lower -> IR", () => {
 		expect(lateral.columns).toEqual(["SEQ", "KEY", "PATH", "INDEX", "VALUE", "THIS"]);
 	});
 
+	// <seq>.NEXTVAL — a sequence's next value, a NUMBER-returning pseudo-function:
+	// docs.snowflake.com/en/sql-reference/functions/nextval
+	it("lowers <seq>.NEXTVAL to a nextval function carrying the sequence as qualifier", () => {
+		const { body } = selectBody("SELECT seq_01.nextval");
+		const fn = body.projections[0].expr;
+		expect(fn).toMatchObject({ kind: "function", name: "nextval", qualifier: "seq_01", args: [] });
+	});
+
+	it("keeps a dotted (db.schema) sequence path in the NEXTVAL qualifier", () => {
+		const { body } = selectBody("SELECT my_db.my_schema.seq_5.nextval x");
+		const fn = body.projections[0].expr;
+		expect(fn).toMatchObject({ kind: "function", name: "nextval", qualifier: "my_db.my_schema.seq_5" });
+	});
+
+	// CONNECT BY hierarchical query: docs.snowflake.com/en/sql-reference/constructs/connect-by
+	it("un-flags CONNECT BY and keeps the START WITH / CONNECT BY predicates as column refs", () => {
+		const { body } = selectBody(
+			"SELECT employee_ID, manager_ID, title FROM employees START WITH title = 'President' CONNECT BY manager_ID = PRIOR employee_id",
+		);
+		expect(body.unsupported).toBeUndefined();
+		// START WITH `title` and CONNECT BY `manager_id` / `employee_id` are conserved via columnsOf.
+		const whereCols = body.columns.filter((c) => c.clause === "where").map((c) => c.parts.join(".").toLowerCase());
+		expect(whereCols).toEqual(expect.arrayContaining(["title", "manager_id", "employee_id"]));
+	});
+
+	it("conserves both sides of a PRIOR equality from the CONNECT BY predicate", () => {
+		// `parent = PRIOR id` — columnsOf recurses through the `prior(id)` function, so both `parent`
+		// and `id` are conserved (a dropped PRIOR arg would lose `id`); no unsupported flag.
+		const { body } = selectBody("SELECT id FROM t START WITH parent IS NULL CONNECT BY parent = PRIOR id");
+		expect(body.unsupported).toBeUndefined();
+		const whereCols = body.columns.filter((c) => c.clause === "where").map((c) => c.parts.join(".").toLowerCase());
+		expect(whereCols).toEqual(expect.arrayContaining(["parent", "id"]));
+	});
+
 	it("lowers PIVOT to PivotInfo", () => {
 		const { body } = selectBody("SELECT * FROM monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB')) p");
 		expect(body.pivot).toBeDefined();

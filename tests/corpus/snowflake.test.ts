@@ -37,7 +37,7 @@ const QUERY_BASELINE = 2976; // documented floor for the query population (path-
 // in-scope, cleanly-parsed docs query bucket and ratchet the total (it may only fall; drive to 0 like
 // Databricks). This rides the SAME single parse the docs ratchet makes (onCleanQuery gets its tree),
 // so no file is parsed twice.
-const OTHER_BASELINE = 10; // measured 2026-07-01 over the parsed Snowflake docs query bucket; may only fall
+const OTHER_BASELINE = 0; // sequence refs (<seq>.NEXTVAL) now lower to typed function exprs (2026-07-02); may only fall
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {

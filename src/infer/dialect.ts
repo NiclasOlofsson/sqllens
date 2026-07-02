@@ -1,7 +1,7 @@
 import type { Expr } from "../ir/ir.js";
 import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType, bigquerySpecial } from "./bigquery.js";
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, tsqlSpecial, type FnRule } from "./functions.js";
-import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
+import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType, snowflakeSpecial } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
 import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from "./redshift.js";
 import { POSTGRES_FUNCTION_RETURNS, postgresLiteral, postgresParseType } from "./postgres.js";
@@ -49,6 +49,7 @@ const snowflake: InferDialect = {
 	literal: snowflakeLiteral,
 	parseType: snowflakeParseType,
 	division: "decimal",
+	special: snowflakeSpecial, // <seq>.NEXTVAL → NUMBER (the sequence rides as a variable qualifier)
 };
 
 const bigquery: InferDialect = {
