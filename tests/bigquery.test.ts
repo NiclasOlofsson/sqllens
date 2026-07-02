@@ -527,3 +527,82 @@ describe("BigQuery lowering", () => {
 		expect(cols).toContain("t.c");
 	});
 });
+
+// Task 7 (B/C/D closing wave): the ZetaSQL analyzer-corpus `other`-expression leakers — constructor
+// forms, expression-scoped WITH, REPLACE_FIELDS, and a parenthesized AND that was falling to `other`
+// through a lowering shape bug. Each now lowers to modelled IR with NO `other` node (the corpus ratchet
+// runs walkIr over the whole positive set; these pin the individual forms). Doc-cited to the GoogleSQL
+// reference (cloud.google.com/bigquery/docs/reference/standard-sql).
+import { walkIr } from "./helpers/ir-walk.js";
+
+/** Lower `sql` and return the `other`-node tally keyed by leaking CST-context name (empty == fully modelled). */
+function otherTally(sql: string): Map<string, number> {
+	const r = parseBigQuery(sql);
+	expect(r.errors, sql).toBe(0);
+	const tally = new Map<string, number>();
+	walkIr(lower(r.tree), tally, new Map());
+	return tally;
+}
+
+describe("BigQuery constructors / WITH / REPLACE_FIELDS / parenthesized-AND lower without `other`", () => {
+	// Braced proto/struct constructors — `{f: v}`, `STRUCT{…}`, `NEW T{…}` (proto-messages#value_syntax).
+	// Field VALUES are retained as args (interleaved name/value, the named_struct shape) so conservation
+	// keeps every field expr visible.
+	it("braced constructor `{f: v}` → a named_struct call with the field values as args", () => {
+		expect([...otherTally("SELECT {int64_key_1: 1, int64_key_2: 2}")]).toEqual([]);
+		const b = q("SELECT {int64_key_1: 1, int64_key_2: id + 1} FROM t");
+		const e = b.projections[0].expr;
+		expect(e).toMatchObject({ kind: "function", name: "named_struct" });
+		// interleaved [nameLiteral, value, …]; the second value carries the column ref
+		expect((e as Extract<typeof e, { kind: "function" }>).args).toHaveLength(4);
+		expect(b.columns.map((c) => c.parts.join("."))).toContain("id");
+	});
+
+	it("STRUCT braced constructor (bare and typed) lowers with no `other`", () => {
+		expect([...otherTally("SELECT STRUCT {}")]).toEqual([]);
+		expect([...otherTally("SELECT STRUCT<int64 x> {x: 5}")]).toEqual([]);
+	});
+
+	it("NEW braced + parenthesized proto constructors lower with no `other`, keeping arg values", () => {
+		expect([...otherTally("SELECT NEW googlesql_test.KitchenSinkPB {int64_key_1: 1, int64_key_2: 2}")]).toEqual([]);
+		expect([...otherTally("SELECT NEW googlesql_test.EmptyMessage()")]).toEqual([]);
+		const b = q("SELECT NEW googlesql_test.KitchenSinkPB(a AS int64_key_1, b + 1 AS int64_key_2) FROM t");
+		expect(b.projections[0].expr).toMatchObject({ kind: "function", name: "new" });
+		expect(b.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["a", "b"]));
+	});
+
+	it("REPLACE_FIELDS(expr, value AS path, …) → a function keeping the base + each replacement value", () => {
+		expect([...otherTally("SELECT REPLACE_FIELDS(KitchenSink, 123.4 AS double_val)")]).toEqual([]);
+		const b = q("SELECT REPLACE_FIELDS(root, v AS a.b, w AS c) FROM t");
+		const e = b.projections[0].expr as Extract<
+			ReturnType<typeof q>["projections"][number]["expr"],
+			{ kind: "function" }
+		>;
+		expect(e).toMatchObject({ kind: "function", name: "replace_fields" });
+		// base + two replacement values (the AS field-paths are labels, not value exprs)
+		expect(e.args).toHaveLength(3);
+		expect(b.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["root", "v", "w"]));
+	});
+
+	it("WITH(name AS expr, …, result) → a `with` expr that retains bindings and evaluates to result", () => {
+		expect([...otherTally("SELECT WITH(tmp AS a + 1, tmp)")]).toEqual([]);
+		const b = q("SELECT WITH(x AS id + 1, y AS x * 2, x + y) AS r FROM t");
+		const e = b.projections[0].expr;
+		expect(e).toMatchObject({ kind: "with" });
+		const w = e as Extract<typeof e, { kind: "with" }>;
+		expect(w.bindings.map((bd) => bd.name)).toEqual(["x", "y"]);
+		expect(w.result).toMatchObject({ kind: "binary", op: "+" });
+		// conservation: every binding value's column ref is collected (id from the first binding)
+		expect(b.columns.map((c) => c.parts.join("."))).toContain("id");
+	});
+
+	it("a parenthesized AND in a JOIN ON no longer falls through to `other`", () => {
+		// mutual-left-recursion artifact: expression_maybe_parenthesized_not_a_query carries a bare
+		// `and_expression` alt, so a parenthesized AND has no ehpa child and was reaching lowerLeaf's default.
+		expect([
+			...otherTally("SELECT 1 FROM a JOIN b ON (a.x = b.x and a.y = b.y and (a.z = b.z and a.w = b.w))"),
+		]).toEqual([]);
+		const b = q("SELECT 1 FROM a JOIN b ON (a.x = b.x AND a.y = b.y)");
+		expect(b.joinConditions?.[0]).toMatchObject({ kind: "binary", op: "and" });
+	});
+});

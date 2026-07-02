@@ -51,7 +51,12 @@ const NEGATIVE_BASELINE = 172; // 172/172 in-scope syntax-error negatives reject
 // The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
 // in-scope, cleanly-parsed positives and ratchet the total (it may only fall). The failure output
 // names the leaking CST node types — that list IS the lower() worklist for BigQuery.
-const OTHER_BASELINE = 234; // measured 2026-07-01 over the parsed in-scope positives; may only fall
+const OTHER_BASELINE = 0; // Task 7 (B/C/D closing wave): every leaker modelled — constructor forms
+// (braced `{f: v}` / `STRUCT{…}` / `NEW T{…}` / `NEW T(…)` → named_struct/new calls keeping field values),
+// the expression-scoped `WITH(name AS expr, …, result)` (→ the `with` IR node, bindings retained), the
+// `REPLACE_FIELDS(…)` call, and a parenthesized JOIN-ON `and` that had been falling to `other` through a
+// lowering shape bug (a bare `and_expression`/OR under expression_maybe_parenthesized_not_a_query). Down
+// from 234; BigQuery is now expression-corpus-complete like Databricks/Redshift/Postgres/DuckDB.
 
 // Collect every pipe stage the IR nests (main body, CTE bodies, subquery bodies, set-op operands, and
 // sub-pipelines) — ported verbatim from bigquery.pipe.test.ts's corpus gate.

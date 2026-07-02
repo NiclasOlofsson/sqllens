@@ -1300,6 +1300,17 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 		return lowerHigherPrec(subs[0]);
 	}
 
+	// An ehpa / expression_maybe_parenthesized_not_a_query can reduce DIRECTLY to a bare `and_expression`
+	// or `expression OR expression` (both rules carry those alts — a mutual-left-recursion artifact of the
+	// ZetaSQL grammar). With no ehpa child, `subs` is empty and these would otherwise fall to lowerLeaf's
+	// default `other` (the parenthesized-AND leak: `ON (a=b and c=d and (e=f and g=h))`). Route them here.
+	const andChild = directChildrenOfRule(node, P.RULE_and_expression)[0];
+	if (andChild) return lowerAnd(andChild);
+	const orParts = directChildrenOfRule(node, P.RULE_expression);
+	if (orParts.length === 2 && hasDirectToken(node, P.OR_SYMBOL)) {
+		return { kind: "binary", op: "or", left: lowerExpr(orParts[0]), right: lowerExpr(orParts[1]), cst: node };
+	}
+
 	// Leaf alternatives (no nested ehpa): a literal / identifier / call / constructor / subquery.
 	return lowerLeafAlternative(node);
 }
@@ -1405,6 +1416,28 @@ function lowerLeaf(node: ParserRuleContext): Expr {
 				distinct: false,
 				cst: node,
 			};
+		// Braced proto/struct constructors — `{f: v}`, `STRUCT{…}` / `STRUCT<…>{…}`, `NEW T{…}`
+		// (proto-messages#value_syntax). The field values are retained as args in the named_struct shape
+		// (interleaved [nameLiteral, value, …]) so infer types the STRUCT by its field names where knowable;
+		// a NEW-proto constructor names `new` (its message type is unknowable → infer stays UNKNOWN).
+		case P.RULE_braced_constructor:
+			return lowerBraced(node, "named_struct", node);
+		case P.RULE_struct_braced_constructor: {
+			const braced = firstShallow(node, P.RULE_braced_constructor);
+			return braced ? lowerBraced(braced, "named_struct", node) : otherExpr(node);
+		}
+		case P.RULE_braced_new_constructor: {
+			const braced = firstShallow(node, P.RULE_braced_constructor);
+			return braced
+				? lowerBraced(braced, "new", node)
+				: { kind: "function", name: "new", args: [], aggregate: false, distinct: false, cst: node };
+		}
+		case P.RULE_new_constructor:
+			return lowerNewConstructor(node);
+		case P.RULE_replace_fields_expression:
+			return lowerReplaceFields(node);
+		case P.RULE_with_expression:
+			return lowerWithExpression(node);
 		case P.RULE_expression_subquery_with_keyword:
 			return lowerSubqueryKeyword(node);
 		case P.RULE_parenthesized_expression_not_a_query: {
@@ -1564,6 +1597,97 @@ function collectArgExprs(node: ParserRuleContext): Expr[] {
 	return shallowNodesOfRule(node, P.RULE_expression).map(lowerExpr);
 }
 
+/** A braced constructor `{ f: v, g { … }, (pkg.Ext): w }` → a `function` expr whose args are the fields
+ *  interleaved [nameLiteral, valueExpr, …] (the named_struct shape). Field values are `: expression` or a
+ *  nested braced_constructor (recursed). Field names come from the lhs path / proto-extension text; they
+ *  ride as `literal` args (leaves — not column refs), so every real value expr stays visible to the walker
+ *  and to columnsOf. `cst` is the outer constructor node so the source span covers the whole form. */
+function lowerBraced(braced: ParserRuleContext, name: string, cst: ParserRuleContext): Expr {
+	return { kind: "function", name, args: bracedFields(braced), aggregate: false, distinct: false, cst };
+}
+
+function bracedFields(braced: ParserRuleContext): Expr[] {
+	const out: Expr[] = [];
+	for (const field of bracedFieldNodes(braced)) {
+		const lhs = firstShallow(field, P.RULE_braced_constructor_lhs);
+		out.push({ kind: "literal", text: lhs ? stripBackticks(lhs.getText()) : "", cst: lhs ?? field });
+		out.push(bracedFieldValue(field));
+	}
+	return out;
+}
+
+/** The `braced_constructor_field` nodes of THIS constructor only — the prefix chain is left-recursive, so
+ *  walk it, but stop at each field (its value, possibly a nested braced_constructor, belongs to the field)
+ *  and never descend into a nested braced_constructor. */
+function bracedFieldNodes(braced: ParserRuleContext): ParserRuleContext[] {
+	const out: ParserRuleContext[] = [];
+	const walk = (n: ParseTree): void => {
+		for (let i = 0; i < n.getChildCount(); i++) {
+			const c = n.getChild(i);
+			if (!(c instanceof ParserRuleContext)) continue;
+			if (c.ruleIndex === P.RULE_braced_constructor_field) out.push(c);
+			else if (c.ruleIndex === P.RULE_braced_constructor)
+				continue; // a nested value — its own fields
+			else walk(c);
+		}
+	};
+	walk(braced);
+	return out;
+}
+
+/** braced_constructor_field_value: `COLON expression` | nested braced_constructor. */
+function bracedFieldValue(field: ParserRuleContext): Expr {
+	const value = firstShallow(field, P.RULE_braced_constructor_field_value) ?? field;
+	const e = directChildrenOfRule(value, P.RULE_expression)[0];
+	if (e) return lowerExpr(e);
+	const nested = directChildrenOfRule(value, P.RULE_braced_constructor)[0];
+	return nested ? lowerBraced(nested, "named_struct", nested) : otherExpr(value);
+}
+
+/** NEW Type ( arg [AS field], … ) — a parenthesized proto constructor. Each arg keeps its VALUE expression
+ *  (the `AS <field>` is a label, not a value); infer stays UNKNOWN (the message type is unknowable). */
+function lowerNewConstructor(node: ParserRuleContext): Expr {
+	const args: Expr[] = [];
+	for (const arg of shallowNodesOfRule(node, P.RULE_new_constructor_arg)) {
+		const e = directChildrenOfRule(arg, P.RULE_expression)[0];
+		if (e) args.push(lowerExpr(e));
+	}
+	return { kind: "function", name: "new", args, aggregate: false, distinct: false, cst: node };
+}
+
+/** REPLACE_FIELDS(expr, value AS path, …) — replaces struct/proto fields (functions#replace_fields). Lowers
+ *  as a `replace_fields` call keeping the base expr plus each replacement VALUE (the `AS <path>` targets are
+ *  field labels, not value exprs). infer stays UNKNOWN — the modified proto/struct type is not knowable. */
+function lowerReplaceFields(node: ParserRuleContext): Expr {
+	const prefix = firstShallow(node, P.RULE_replace_fields_prefix) ?? node;
+	const args: Expr[] = [];
+	const baseExpr = directChildrenOfRule(prefix, P.RULE_expression)[0]; // the only direct `expression` — the base
+	if (baseExpr) args.push(lowerExpr(baseExpr));
+	for (const arg of shallowNodesOfRule(prefix, P.RULE_replace_fields_arg)) {
+		const e = directChildrenOfRule(arg, P.RULE_expression)[0];
+		if (e) args.push(lowerExpr(e));
+	}
+	return { kind: "function", name: "replace_fields", args, aggregate: false, distinct: false, cst: node };
+}
+
+/** WITH(name AS expr, …, result) — ZetaSQL's expression-scoped let-bindings (operators#with_expression).
+ *  Lowers to the `with` IR node: bindings are lowered and RETAINED (conservation — every binding value expr
+ *  stays visible to the walker and columnsOf), and `result` is the with_expression's own direct `expression`
+ *  (the tail after the variable prefix). Bindings are NOT substituted, so a binding reference inside result
+ *  resolves as a plain column ref — the accepted lowering boundary. */
+function lowerWithExpression(node: ParserRuleContext): Expr {
+	const prefix = firstShallow(node, P.RULE_with_expression_variable_prefix);
+	const bindings = prefix
+		? shallowNodesOfRule(prefix, P.RULE_with_expression_variable).map((v) => {
+				const id = directChildrenOfRule(v, P.RULE_identifier)[0];
+				const e = directChildrenOfRule(v, P.RULE_expression)[0];
+				return { name: id ? identText(id) : "", value: e ? lowerExpr(e) : otherExpr(v) };
+			})
+		: [];
+	const result = directChildrenOfRule(node, P.RULE_expression)[0];
+	return { kind: "with", bindings, result: result ? lowerExpr(result) : otherExpr(node), cst: node };
+}
+
 // --- column extraction (single source of truth for SelectExpr.columns) -----------
 
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
@@ -1603,6 +1727,12 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "lambda":
 			columnsOf(expr.body, acc, clause);
+			break;
+		case "with":
+			// Retained bindings + result: collect every referenced column so scope sees binding values too
+			// (a binding NAME referenced in result resolves as a plain column — the documented boundary).
+			expr.bindings.forEach((b) => columnsOf(b.value, acc, clause));
+			columnsOf(expr.result, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);
@@ -1648,6 +1778,8 @@ function hasAggregate(expr: Expr): boolean {
 			return hasAggregate(expr.operand) || expr.args.some(hasAggregate);
 		case "subscript":
 			return hasAggregate(expr.base);
+		case "with":
+			return expr.bindings.some((b) => hasAggregate(b.value)) || hasAggregate(expr.result);
 		default:
 			return false;
 	}

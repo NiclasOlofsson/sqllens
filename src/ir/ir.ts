@@ -179,6 +179,12 @@ export type Expr =
 	| { kind: "lambda"; params: string[]; body: Expr; cst: ParserRuleContext }
 	/** Element/array/map access: `arr[0]`, `m['k']`, `split(s,'-')[1]`. */
 	| { kind: "subscript"; base: Expr; index: Expr; cst: ParserRuleContext }
+	/** ZetaSQL's expression-scoped `WITH(name AS expr, …, result)` — SQL-scoped let-bindings whose scope
+	 *  is the result expression. Modelled faithfully: the lowered `bindings` are retained (conservation and
+	 *  the walker see every binding value expr) and `result` is the expression the WITH evaluates to. We do
+	 *  NOT substitute bindings, so a binding reference inside `result` resolves as a plain column ref — an
+	 *  accepted boundary (googlesql WITH-expression). Only BigQuery produces this node today. */
+	| { kind: "with"; bindings: { name: string; value: Expr }[]; result: Expr; cst: ParserRuleContext }
 	/** An expression the IR does not model yet — kept, not dropped. */
 	| { kind: "other"; text: string; cst: ParserRuleContext };
 

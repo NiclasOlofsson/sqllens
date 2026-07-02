@@ -120,3 +120,37 @@ describe("BigQuery never-wrong follow-ups: qualified keys, EXTRACT, computed avg
 		expect(typeOf("SELECT GENERATE_ARRAY(1.0, 5.0, 0.5) AS x")).toEqual({ kind: "array", element: dbl });
 	});
 });
+
+// Task 7 (B/C/D closing wave): the constructor / WITH / REPLACE_FIELDS forms flow through the semantic
+// layer. A braced struct constructor types as a STRUCT with its field names+types (named_struct shape);
+// proto constructors (NEW / REPLACE_FIELDS) stay `unknown` (the proto type is unknowable — never-wrong);
+// a WITH expression types as its result (bindings are not substituted — the documented boundary).
+describe("BigQuery constructor / WITH forms flow through inference", () => {
+	const int = { kind: "scalar", name: "int" } as const;
+	const S = new Schema({ "proj.ds.s": { id: "INT64", name: "STRING" } });
+
+	it("a braced struct constructor types as a STRUCT with its field names and value types", () => {
+		expect(typeOf("SELECT {a: 1, b: id} AS r FROM `proj.ds.s`", S)).toEqual({
+			kind: "struct",
+			fields: [
+				{ name: "a", type: int },
+				{ name: "b", type: int },
+			],
+		});
+	});
+
+	it("proto constructors stay unknown (never-wrong): NEW T{…} and REPLACE_FIELDS", () => {
+		expect(typeOf("SELECT NEW googlesql_test.KitchenSinkPB {int64_key_1: id} AS r FROM `proj.ds.s`", S)).toEqual({
+			kind: "unknown",
+		});
+		expect(typeOf("SELECT REPLACE_FIELDS(id, 1 AS f) AS r FROM `proj.ds.s`", S)).toEqual({ kind: "unknown" });
+	});
+
+	it("a WITH expression types as its result and resolves scopes without throwing", () => {
+		// bindings aren't substituted, so `x` in the result resolves as a plain column ref (unknown here) —
+		// the accepted boundary; the point is the pipeline runs and the form types as the result expression.
+		expect(typeOf("SELECT WITH(x AS id + 1, id * 2) AS r FROM `proj.ds.s`", S)).toEqual(int);
+		const tree = scopes("SELECT WITH(x AS id + 1, x) AS r FROM `proj.ds.s`");
+		expect(deriveSymbols(tree, S).length).toBeGreaterThan(0);
+	});
+});

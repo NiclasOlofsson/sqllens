@@ -42,6 +42,11 @@ function walkExpr(e: Expr, tally: Map<string, number>, samples: Map<string, stri
 			walkExpr(e.base, tally, samples);
 			walkExpr(e.index, tally, samples);
 			break;
+		case "with":
+			// Retained bindings + result are all visible to the walker (conservation: no dropped field expr).
+			e.bindings.forEach((b) => walkExpr(b.value, tally, samples));
+			walkExpr(e.result, tally, samples);
+			break;
 		// column, literal, star, subquery, exists → leaf or own-scope; nothing more to walk here
 	}
 }

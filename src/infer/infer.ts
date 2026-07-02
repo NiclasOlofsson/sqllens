@@ -69,6 +69,10 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 		}
 		case "subquery":
 			return subqueryType(expr.query, schema, ctx, scope.dialect);
+		case "with":
+			// ZetaSQL WITH-expr evaluates to its result. Bindings are not substituted, so a binding
+			// reference inside `result` types as a plain column ref (the documented lowering boundary).
+			return inferType(expr.result, scope, schema, ctx);
 		default:
 			// star / lambda (typed only inside its higher-order function) / other.
 			return UNKNOWN;
