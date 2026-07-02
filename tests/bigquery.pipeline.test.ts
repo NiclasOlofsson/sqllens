@@ -67,3 +67,56 @@ describe("BigQuery pipeline (semantic layer runs unchanged)", () => {
 		});
 	});
 });
+
+// Never-wrong engine follow-ups (parity-wave B/C/D closing wave, Task 1). Each probes a lowered call
+// through the full pipeline — not just the registry object — so the qualifier threading and the
+// EXTRACT special form are exercised end to end.
+describe("BigQuery never-wrong follow-ups: qualified keys, EXTRACT, computed avg/div/generate_array", () => {
+	const int = { kind: "scalar", name: "int" } as const;
+	const dbl = { kind: "scalar", name: "double" } as const;
+	const dec = { kind: "scalar", name: "decimal" } as const;
+	const N = new Schema({
+		"proj.ds.n": { i: "INT64", f: "FLOAT64", num: "NUMERIC", bnum: "BIGNUMERIC", ts: "TIMESTAMP", sk: "BYTES" },
+	});
+
+	// 1a — a qualified dotted call keys by its full path, so HLL_COUNT.EXTRACT regains its documented
+	// INT64 without colliding with bare EXTRACT.
+	it("HLL_COUNT.EXTRACT resolves to INT64 via its qualified key", () => {
+		expect(typeOf("SELECT HLL_COUNT.EXTRACT(sk) AS x FROM `proj.ds.n`", N)).toEqual(int);
+	});
+
+	// 1b — EXTRACT is typed by its datepart keyword.
+	it("EXTRACT types by its datepart keyword", () => {
+		expect(typeOf("SELECT EXTRACT(YEAR FROM ts) AS x FROM `proj.ds.n`", N)).toEqual(int);
+		expect(typeOf("SELECT EXTRACT(WEEK(MONDAY) FROM ts) AS x FROM `proj.ds.n`", N)).toEqual(int);
+		expect(typeOf("SELECT EXTRACT(DATE FROM ts) AS x FROM `proj.ds.n`", N)).toEqual({
+			kind: "scalar",
+			name: "date",
+		});
+		expect(typeOf("SELECT EXTRACT(TIME FROM ts) AS x FROM `proj.ds.n`", N)).toEqual({
+			kind: "scalar",
+			name: "time",
+		});
+		expect(typeOf("SELECT EXTRACT(DATETIME FROM ts) AS x FROM `proj.ds.n`", N)).toEqual({
+			kind: "scalar",
+			name: "timestamp",
+		});
+		expect(typeOf("SELECT EXTRACT(bogus FROM ts) AS x FROM `proj.ds.n`", N)).toEqual({ kind: "unknown" });
+	});
+
+	// 1c — avg / div / generate_array are argument-TYPE-computed (not value-dependent).
+	it("AVG follows the argument's numeric type", () => {
+		expect(typeOf("SELECT AVG(i) AS x FROM `proj.ds.n`", N)).toEqual(dbl); // INT64 → FLOAT64
+		expect(typeOf("SELECT AVG(f) AS x FROM `proj.ds.n`", N)).toEqual(dbl); // FLOAT64 → FLOAT64
+		expect(typeOf("SELECT AVG(num) AS x FROM `proj.ds.n`", N)).toEqual(dec); // NUMERIC → NUMERIC
+		expect(typeOf("SELECT AVG(bnum) AS x FROM `proj.ds.n`", N)).toEqual(dec); // BIGNUMERIC → BIGNUMERIC
+	});
+	it("DIV follows integer / numeric argument types", () => {
+		expect(typeOf("SELECT DIV(i, i) AS x FROM `proj.ds.n`", N)).toEqual(int); // INT64 → INT64
+		expect(typeOf("SELECT DIV(num, num) AS x FROM `proj.ds.n`", N)).toEqual(dec); // NUMERIC → NUMERIC
+	});
+	it("GENERATE_ARRAY element type follows the arguments", () => {
+		expect(typeOf("SELECT GENERATE_ARRAY(1, 10) AS x")).toEqual({ kind: "array", element: int });
+		expect(typeOf("SELECT GENERATE_ARRAY(1.0, 5.0, 0.5) AS x")).toEqual({ kind: "array", element: dbl });
+	});
+});

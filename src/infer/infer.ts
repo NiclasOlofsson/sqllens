@@ -50,7 +50,7 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 		case "unary":
 			return unaryType(expr.op, inferType(expr.operand, scope, schema, ctx));
 		case "function":
-			return functionType(expr.name.toLowerCase(), expr.args, scope, schema, ctx);
+			return functionType(expr, scope, schema, ctx);
 		case "case": {
 			const branches = expr.whens.map((w) => inferType(w.then, scope, schema, ctx));
 			if (expr.elseExpr) branches.push(inferType(expr.elseExpr, scope, schema, ctx));
@@ -163,12 +163,24 @@ function fieldType(type: Type, fields: string[]): Type {
 
 // --- functions, higher-order functions, constructors -----------------------
 
-function functionType(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type {
-	const hof = higherOrder(name, args, scope, schema, ctx);
-	if (hof !== undefined) return hof;
-	const ctor = constructor(name, args, scope, schema, ctx);
-	if (ctor !== undefined) return ctor;
-	const rule = inferDialect(scope.dialect).functions[name];
+function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
+	const name = fn.name.toLowerCase();
+	const args = fn.args;
+	const d = inferDialect(scope.dialect);
+	// Higher-order and constructor forms are BARE-name Spark/GoogleSQL builtins; a qualified/dotted
+	// call (e.g. a `dataset.transform(...)` UDF) must not borrow them.
+	if (fn.qualifier === undefined) {
+		const hof = higherOrder(name, args, scope, schema, ctx);
+		if (hof !== undefined) return hof;
+		const ctor = constructor(name, args, scope, schema, ctx);
+		if (ctor !== undefined) return ctor;
+	}
+	// A dialect pre-registry hook for calls no FnRule can type (e.g. BigQuery EXTRACT — the datepart
+	// keyword, not an argument type, decides the return type).
+	const special = d.special?.(fn);
+	if (special !== undefined) return special;
+	// Lookup order: registry[qualifier.name] (a dotted family) → registry[name] (bare) → unknown.
+	const rule = (fn.qualifier ? d.functions[`${fn.qualifier}.${name}`] : undefined) ?? d.functions[name];
 	return rule ? rule(args.map((a) => inferType(a, scope, schema, ctx))) : UNKNOWN;
 }
 

@@ -195,18 +195,20 @@ describe("T-SQL registry: 2022/2025 additions and system functions (docs-verifie
 //
 // BREADTH FLOOR NOTE: the parity-wave brief set a ≥400 breadth target. The genuinely-determinable
 // GoogleSQL scalar/aggregate/window surface, under the project's ABSOLUTE never-wrong contract
-// (a wrong return type is a defect; value-dependent returns are omitted), is 351 entries across all
-// 30 documented function families (corrected 2026-07-02: dropped 4 phantom KLL_QUANTILES *_uint64
-// keys — no UINT64 variant exists, only INT64/FLOAT64 — added the 2 real MERGE_POINT_INT64/
-// MERGE_POINT_FLOAT64 keys the phantom-key review turned up, and dropped `extract` — bare EXTRACT's
-// return type is datepart-value-dependent and no FnRule can see the datepart, and the same key
-// double-served hll_count.extract only by coincidence, not by a shared honest resolution). The
-// remaining functions are value-dependent (EXTRACT, PERCENTILE_CONT/DISC, APPROX_TOP_COUNT/SUM,
-// ARRAY_SUM/ARRAY_AVG, ST_BOUNDINGBOX/EXTENT/REGIONSTATS, KEYS.KEYSET_TO_JSON, JSON_FLATTEN),
-// table-valued (VECTOR_SEARCH, GAP_FILL, EXTERNAL_QUERY), or AI/ML (excluded by the project scope).
-// 400 typed entries cannot be reached without inventing return types, so the floor is pinned at the
-// achieved, defensible count. See task-4-report.md.
-const BQ_FLOOR = 351;
+// (a wrong return type is a defect; value-dependent returns are omitted), is 353 entries across all
+// 30 documented function families. (2026-07-02 B/C/D closing wave, Task 1: dotted families are now
+// keyed by their full qualified path — `hll_count.*`, `kll_quantiles.*`, `net.*`, `aead.*`, `keys.*`
+// — instead of the last path segment, which +2'd the count vs. the prior 351: `hll_count.extract`
+// regained its documented INT64 now that it no longer collides with bare EXTRACT, and the formerly
+// shared `merge_partial` key split into `hll_count.merge_partial` + `kll_quantiles.merge_partial`.
+// The prior corrections still hold: 4 phantom KLL_QUANTILES *_uint64 keys were dropped — no UINT64
+// variant exists, only INT64/FLOAT64 — and the 2 real MERGE_POINT_INT64/MERGE_POINT_FLOAT64 keys
+// were added.) The remaining functions are value-dependent (bare EXTRACT is now a typed special form,
+// see below; PERCENTILE_CONT/DISC, APPROX_TOP_COUNT/SUM, ARRAY_SUM/ARRAY_AVG, ST_BOUNDINGBOX/EXTENT/
+// REGIONSTATS, KEYS.KEYSET_TO_JSON, JSON_FLATTEN), table-valued (VECTOR_SEARCH, GAP_FILL,
+// EXTERNAL_QUERY), or AI/ML (excluded by the project scope). 400 typed entries cannot be reached
+// without inventing return types, so the floor is pinned at the achieved, defensible count.
+const BQ_FLOOR = 353;
 const bqRule = (n: string, args: Type[] = []) => BIGQUERY_FUNCTION_RETURNS[n]?.(args);
 const arr = (el: Type): Type => ({ kind: "array", element: el });
 
@@ -215,27 +217,36 @@ describe("BigQuery registry: breadth + family spot checks (docs-verified)", () =
 		expect(Object.keys(BIGQUERY_FUNCTION_RETURNS).length).toBeGreaterThanOrEqual(BQ_FLOOR);
 	});
 
-	// Dotted-name families (net.*, hll_count.*, kll_quantiles.*, aead.*, keys.*) key by the LAST path
-	// segment — lowerFunctionCall names a call `pathParts(path).slice(-1)[0]` — so these probe the
-	// bare segment the parser actually looks up, not the dotted source spelling.
-	it("dotted-name families key by the last path segment", () => {
-		expect(bqRule("ip_from_string")).toEqual(scalar("binary")); // net.ip_from_string → BYTES
-		expect(bqRule("ip_to_string")).toEqual(scalar("string")); // net.ip_to_string → STRING
-		expect(bqRule("ipv4_to_int64")).toEqual(scalar("int")); // net.ipv4_to_int64 → INT64
-		expect(bqRule("merge")).toEqual(scalar("int")); // hll_count.merge → INT64 cardinality
-		expect(bqRule("init")).toEqual(scalar("binary")); // hll_count.init → BYTES sketch
-		expect(bqRule("extract_point_float64")).toEqual(scalar("double")); // kll_quantiles.extract_point_float64
-		expect(bqRule("merge_float64")).toEqual(arr(scalar("double"))); // kll_quantiles.merge_float64 → ARRAY<FLOAT64>
-		expect(bqRule("encrypt")).toEqual(scalar("binary")); // aead.encrypt → BYTES
-		expect(bqRule("decrypt_string")).toEqual(scalar("string")); // aead.decrypt_string → STRING
+	// Dotted-name families (net.*, hll_count.*, kll_quantiles.*, aead.*, keys.*) key by their FULL
+	// qualified path — lowerFunctionCall sets `qualifier` from the segments before the last, and
+	// functionType looks up `qualifier.name` first — so these probe the qualified key the parser looks
+	// up, and the bare last segment must NOT resolve (a bare `merge(...)` is not HLL_COUNT.MERGE).
+	it("dotted-name families key by their full qualified path", () => {
+		expect(bqRule("net.ip_from_string")).toEqual(scalar("binary")); // net.ip_from_string → BYTES
+		expect(bqRule("net.ip_to_string")).toEqual(scalar("string")); // net.ip_to_string → STRING
+		expect(bqRule("net.ipv4_to_int64")).toEqual(scalar("int")); // net.ipv4_to_int64 → INT64
+		expect(bqRule("hll_count.merge")).toEqual(scalar("int")); // hll_count.merge → INT64 cardinality
+		expect(bqRule("hll_count.init")).toEqual(scalar("binary")); // hll_count.init → BYTES sketch
+		expect(bqRule("hll_count.extract")).toEqual(scalar("int")); // hll_count.extract → INT64 (regained; no longer collides with bare EXTRACT)
+		expect(bqRule("hll_count.merge_partial")).toEqual(scalar("binary")); // → BYTES
+		expect(bqRule("kll_quantiles.merge_partial")).toEqual(scalar("binary")); // → BYTES (formerly shared with hll_count)
+		expect(bqRule("kll_quantiles.extract_point_float64")).toEqual(scalar("double")); // kll_quantiles.extract_point_float64
+		expect(bqRule("kll_quantiles.merge_float64")).toEqual(arr(scalar("double"))); // → ARRAY<FLOAT64>
+		expect(bqRule("aead.encrypt")).toEqual(scalar("binary")); // aead.encrypt → BYTES
+		expect(bqRule("aead.decrypt_string")).toEqual(scalar("string")); // aead.decrypt_string → STRING
+		// Bare last segments no longer resolve — a bare call must NOT borrow a dotted family's rule.
+		expect(bqRule("merge")).toBeUndefined();
+		expect(bqRule("init")).toBeUndefined();
+		expect(bqRule("encrypt")).toBeUndefined();
+		expect(bqRule("ip_from_string")).toBeUndefined();
 	});
 
 	// Regression lock for the parity-wave Task 4 fix round: both were briefly wrong (a phantom KLL
 	// UINT64 review pass and an earlier net-family typing pass mis-typed them) before landing on the
 	// doc-verified types below. A re-reversal must fail this test.
 	it("holds the Task 4 fix round: ip_net_mask and merge_point_float64 stay correctly typed", () => {
-		expect(bqRule("ip_net_mask")).toEqual(scalar("binary")); // net.ip_net_mask → BYTES
-		expect(bqRule("merge_point_float64")).toEqual(scalar("double")); // kll_quantiles.merge_point_float64 → FLOAT64
+		expect(bqRule("net.ip_net_mask")).toEqual(scalar("binary")); // net.ip_net_mask → BYTES
+		expect(bqRule("kll_quantiles.merge_point_float64")).toEqual(scalar("double")); // kll_quantiles.merge_point_float64 → FLOAT64
 	});
 
 	it("geography returns GEOGRAPHY / FLOAT64 / BOOL / INT64 / STRING correctly", () => {
@@ -276,7 +287,7 @@ describe("BigQuery registry: breadth + family spot checks (docs-verified)", () =
 	it("math: FLOAT64 transcendentals, same-as-input rounding, INT64 div", () => {
 		expect(bqRule("sqrt")).toEqual(scalar("double"));
 		expect(bqRule("cosine_distance")).toEqual(scalar("double"));
-		expect(bqRule("div")).toEqual(scalar("int"));
+		expect(bqRule("div", [scalar("int"), scalar("int")])).toEqual(scalar("int")); // INT64 → INT64 (arg-type computed)
 		expect(bqRule("safe_divide")).toEqual(scalar("double"));
 		expect(bqRule("abs", [scalar("bigint")])).toEqual(scalar("bigint")); // same numeric type as input
 	});
@@ -296,10 +307,10 @@ describe("BigQuery registry: breadth + family spot checks (docs-verified)", () =
 		expect(bqRule("percentile_cont")).toBeUndefined();
 		expect(bqRule("st_boundingbox")).toBeUndefined();
 		expect(bqRule("array_sum")).toBeUndefined();
-		// EXTRACT(part FROM …) is datepart-value-dependent (DATE/TIME/DATETIME dateparts vs. the
-		// INT64-returning majority) and no FnRule can see the datepart — absent until an EXTRACT
-		// special form exists. The key also double-serves hll_count.extract by last-path-segment
-		// keying, so that dotted call resolves unknown too (tracked in PLAN.md Open Gaps).
+		// Bare EXTRACT(part FROM …) has NO registry key — its return type depends on the datepart
+		// keyword, which no FnRule can see, so it is a typed special form (functionType's EXTRACT
+		// hook), not a registry entry. The bare `extract` key stays absent; the dotted
+		// `hll_count.extract` is a separate qualified key (asserted above).
 		expect(BIGQUERY_FUNCTION_RETURNS["extract"]).toBeUndefined();
 	});
 });

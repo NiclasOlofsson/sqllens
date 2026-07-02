@@ -145,6 +145,10 @@ export type Expr =
 	| {
 			kind: "function";
 			name: string;
+			/** The dotted path before the last segment, lowercased (e.g. `hll_count` in
+			 *  `HLL_COUNT.EXTRACT`) — the qualifier under which a dotted-family call keys its return
+			 *  type. Absent for a bare call. Additive/optional; only BigQuery sets it today. */
+			qualifier?: string;
 			args: Expr[];
 			/** Heuristic: name is in a known-aggregate set (sum/count/avg/…). */
 			aggregate: boolean;

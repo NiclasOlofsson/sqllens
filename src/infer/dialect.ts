@@ -1,4 +1,5 @@
-import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType } from "./bigquery.js";
+import type { Expr } from "../ir/ir.js";
+import { BIGQUERY_FUNCTION_RETURNS, bigqueryLiteral, bigqueryParseType, bigquerySpecial } from "./bigquery.js";
 import { FUNCTION_RETURNS, TSQL_FUNCTION_RETURNS, type FnRule } from "./functions.js";
 import { SNOWFLAKE_FUNCTION_RETURNS, snowflakeLiteral, snowflakeParseType } from "./snowflake.js";
 import { databricksLiteral, tsqlLiteral } from "./literals.js";
@@ -22,6 +23,10 @@ export interface InferDialect {
 	 *  - "integer" — ordinary coercion (T-SQL: int/int → int, "typed division");
 	 *  - "decimal" — a scaled NUMBER unless a float is involved (Snowflake: 10/3 → 3.333333). */
 	division: "float" | "integer" | "decimal";
+	/** Optional pre-registry hook for calls whose return type a plain FnRule can't express because it
+	 *  depends on a non-argument-TYPE detail — e.g. BigQuery EXTRACT's datepart keyword. Given the
+	 *  function IR node, returns a Type to short-circuit the registry, or undefined to fall through. */
+	special?(fn: Extract<Expr, { kind: "function" }>): Type | undefined;
 }
 
 const databricks: InferDialect = {
@@ -50,6 +55,7 @@ const bigquery: InferDialect = {
 	literal: bigqueryLiteral,
 	parseType: bigqueryParseType,
 	division: "float", // BigQuery: INT64 / INT64 → FLOAT64
+	special: bigquerySpecial, // EXTRACT(part FROM …) typed by its datepart keyword
 };
 
 const redshift: InferDialect = {

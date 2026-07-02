@@ -1430,9 +1430,18 @@ function lowerSubqueryKeyword(node: ParserRuleContext): Expr {
 function lowerFunctionCall(node: ParserRuleContext): Expr {
 	const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
 	const keyword = directChildrenOfRule(node, P.RULE_function_name_from_keyword)[0];
-	const name = (
-		path ? pathParts(path).slice(-1)[0] : keyword ? keyword.getText() : (leftmostToken(node) ?? "")
-	).toLowerCase();
+	// The call name is the LAST path segment; the segments before it are the qualifier (lowercased),
+	// under which a dotted-family call (HLL_COUNT.EXTRACT, NET.IP_FROM_STRING, AEAD.ENCRYPT, …) keys
+	// its return type — see functionType's `qualifier.name` → `name` lookup order.
+	let name: string;
+	let qualifier: string | undefined;
+	if (path) {
+		const parts = pathParts(path);
+		name = (parts[parts.length - 1] ?? "").toLowerCase();
+		if (parts.length > 1) qualifier = parts.slice(0, -1).join(".").toLowerCase();
+	} else {
+		name = (keyword ? keyword.getText() : (leftmostToken(node) ?? "")).toLowerCase();
+	}
 
 	const suffix = directChildrenOfRule(node, P.RULE_function_call_expression_with_clauses_suffix)[0];
 	const args = suffix ? collectCallArgs(suffix) : [];
@@ -1440,7 +1449,7 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 	const window = over ? lowerOver(over) : undefined;
 	const distinct = hasDirectToken(node, P.DISTINCT_SYMBOL);
 
-	return { kind: "function", name, args, aggregate: AGGREGATES.has(name), distinct, window, cst: node };
+	return { kind: "function", name, qualifier, args, aggregate: AGGREGATES.has(name), distinct, window, cst: node };
 }
 
 /** function_call_argument children of the suffix (skipping nested calls' own args). */
@@ -1534,8 +1543,19 @@ function lowerCast(node: ParserRuleContext): Expr {
 	};
 }
 
+/** EXTRACT(part FROM source [AT TIME ZONE tz]) — the datepart keyword drives the return type
+ *  (functionType's EXTRACT special form), so it arrives as args[0], a recognizable literal carrying
+ *  the keyword text (YEAR / WEEK(MONDAY) / DATE / …), mirroring Databricks's lowerTimestampFn. The
+ *  base holds exactly two direct `expression` children — the datepart and the source — so it does
+ *  not deep-collect the source's own nested expressions. */
 function lowerExtract(node: ParserRuleContext): Expr {
-	const args = collectOfRule(node, P.RULE_expression).map(lowerExpr);
+	const base = firstOfRule(node, P.RULE_extract_expression_base) ?? node;
+	const [partExpr, sourceExpr] = directChildrenOfRule(base, P.RULE_expression);
+	const args: Expr[] = [{ kind: "literal", text: partExpr?.getText() ?? "", cst: partExpr ?? node }];
+	if (sourceExpr) args.push(lowerExpr(sourceExpr));
+	// AT TIME ZONE <tz>: the tz `expression` hangs off the extract_expression wrapper, not the base.
+	const tz = directChildrenOfRule(node, P.RULE_expression)[0];
+	if (tz) args.push(lowerExpr(tz));
 	return { kind: "function", name: "extract", args, aggregate: false, distinct: false, cst: node };
 }
 

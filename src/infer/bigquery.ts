@@ -1,3 +1,4 @@
+import type { Expr } from "../ir/ir.js";
 import { commonType } from "./coerce.js";
 import type { FnRule } from "./functions.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
@@ -91,14 +92,15 @@ function group(rule: FnRule, names: string[]): Record<string, FnRule> {
 // ARRAY_AVG (numeric widening), the RANGE constructor and RANGE_START/END (no canonical RANGE type
 // here) — a missing rule yields `unknown`.
 //
-// Dotted-name families (net.*, hll_count.*, kll_quantiles.*, aead.*, keys.*, deterministic_*) key by
-// the LAST path segment only: lowerFunctionCall names a call `pathParts(path).slice(-1)[0]`, so
-// `net.ip_from_string(x)` looks up `ip_from_string`, `hll_count.merge(s)` looks up `merge`,
-// `kll_quantiles.extract_point_int64(s)` looks up `extract_point_int64`, and `aead.encrypt(...)`
-// looks up `encrypt` (verified against the parser, 2026-07-02). The segments are unique across the
-// dotted families except merge_partial (hll_count + kll_quantiles both → BYTES — consistent) and
-// `extract` (hll_count.extract → INT64 is correct, but the key is absent — see the note by the query
-// below — so hll_count.extract resolves unknown too until dotted calls key by their qualified path).
+// Dotted-name families key by their FULL qualified path: lowerFunctionCall sets the call's
+// `qualifier` from the path segments before the last, and functionType looks up `qualifier.name`
+// before the bare `name`. So `net.ip_from_string(x)` keys `net.ip_from_string`, `hll_count.merge(s)`
+// keys `hll_count.merge`, `kll_quantiles.extract_point_int64(s)` keys `kll_quantiles.extract_point_int64`,
+// and `aead.encrypt(...)` keys `aead.encrypt`. Qualified keying resolved two former problems the
+// last-segment scheme created: `hll_count.extract` (→ INT64) no longer collides with bare EXTRACT
+// and regains its rule, and `merge_partial` (in both hll_count and kll_quantiles) is now two distinct
+// keys. DETERMINISTIC_ENCRYPT/DECRYPT_* stay bare (no qualifier) — they are documented without a
+// KEYS./AEAD. prefix (aead_encryption_functions, verified 2026-07-02).
 export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// === String functions ===
 	// → STRING
@@ -196,7 +198,16 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(firstArg, ["abs", "sign", "round", "trunc", "ceil", "ceiling", "floor", "mod", "safe_negate"]),
 	// "supertype of the arguments" — GREATEST/LEAST and the SAFE_ arithmetic widen to the common type.
 	...group(common, ["greatest", "least", "safe_add", "safe_subtract", "safe_multiply"]),
-	div: fixed(I),
+	// DIV(x, y) is argument-TYPE-computed: INT64 → INT64, NUMERIC → NUMERIC, BIGNUMERIC → BIGNUMERIC
+	// (both NUMERIC and BIGNUMERIC canonicalize to `decimal`). Anything else → unknown.
+	// zetasql docs mathematical_functions.md DIV "Return Data Type".
+	div: (args) => {
+		const a = args[0];
+		if (a?.kind !== "scalar") return UNKNOWN;
+		if (a.name === "int") return I;
+		if (a.name === "decimal") return DEC;
+		return UNKNOWN;
+	},
 	range_bucket: fixed(I),
 	is_inf: fixed(B),
 	is_nan: fixed(B),
@@ -255,15 +266,11 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	]),
 	// FORMAT_* → STRING; STRING(timestamp, tz) / STRING(json) → STRING.
 	...group(fixed(S), ["format_date", "format_datetime", "format_time", "format_timestamp", "string"]),
-	// EXTRACT(part FROM ...) has no `extract` key here. (a) The return type is datepart-value-dependent
-	// — EXTRACT(DATE FROM …) → DATE, EXTRACT(TIME …) → TIME, EXTRACT(DATETIME …) → DATETIME, only the
-	// remaining dateparts → INT64 — and an FnRule sees only argument TYPES, not the datepart keyword, so
-	// no rule can resolve it correctly; it stays absent by contract until the engine grows an EXTRACT
-	// special form (like the existing date_add/CURRENT_* special forms — tracked in PLAN.md Open Gaps).
-	// (b) Dotted calls key by the LAST path segment (see the file-header note), so this same key would
-	// also serve hll_count.extract (→ INT64, unconditionally correct there) — one key can't honestly
-	// resolve two different functions, so hll_count.extract resolves unknown too until dotted calls key
-	// by their qualified path (also tracked in PLAN.md Open Gaps).
+	// Bare EXTRACT(part FROM …) has no `extract` registry key: its return type depends on the datepart
+	// keyword (EXTRACT(DATE …) → DATE, EXTRACT(TIME …) → TIME, EXTRACT(DATETIME …) → DATETIME, the rest
+	// → INT64), which an FnRule can't see (it sees only argument TYPES). It is instead a typed special
+	// form — `bigquerySpecial` below reads the datepart literal that lowerExtract puts at args[0].
+	// (The dotted HLL_COUNT.EXTRACT is a separate qualified key, `hll_count.extract` → INT64, above.)
 
 	// === Interval functions ===
 	...group(fixed(INTERVAL), ["make_interval", "justify_days", "justify_hours", "justify_interval"]),
@@ -277,7 +284,17 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// === Aggregate functions ===
 	...group(fixed(I), ["count", "countif", "bit_and", "bit_or", "bit_xor", "grouping"]),
 	...group(firstArg, ["sum", "min", "max", "any_value", "min_by", "max_by"]),
-	avg: fixed(D), // FLOAT64 for the common numeric inputs (NUMERIC/INTERVAL inputs are value-dependent)
+	// AVG(x) is argument-TYPE-computed: INT64/FLOAT64 (all integer/float inputs) → FLOAT64; NUMERIC →
+	// NUMERIC, BIGNUMERIC → BIGNUMERIC (both → decimal); INTERVAL → INTERVAL. Anything else → unknown.
+	// zetasql docs aggregate_functions.md AVG "Return Data Types".
+	avg: (args) => {
+		const a = args[0];
+		if (a?.kind !== "scalar") return UNKNOWN;
+		if (a.name === "int" || a.name === "double") return D;
+		if (a.name === "decimal") return DEC;
+		if (a.name === "interval") return INTERVAL;
+		return UNKNOWN;
+	},
 	string_agg: fixed(S),
 	array_agg: arrayOfFirst,
 	array_concat_agg: firstArg, // ARRAY<T>, same as the input array type
@@ -301,21 +318,22 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// approx_top_count / approx_top_sum are absent: ARRAY<STRUCT<value <T>, count/sum INT64>> — the
 	// element type follows the input, which the argument list does not expose.
 
-	// --- HLL_COUNT.* (HyperLogLog++; keyed by last segment) ---
-	...group(fixed(BIN), ["init", "merge_partial"]), // HLL_COUNT.INIT / .MERGE_PARTIAL → BYTES sketch
-	merge: fixed(I), // HLL_COUNT.MERGE → INT64 cardinality
+	// --- HLL_COUNT.* (HyperLogLog++; keyed by full qualified path) — hll_functions ---
+	...group(fixed(BIN), ["hll_count.init", "hll_count.merge_partial"]), // → BYTES sketch
+	"hll_count.merge": fixed(I), // HLL_COUNT.MERGE → INT64 cardinality
+	"hll_count.extract": fixed(I), // HLL_COUNT.EXTRACT → INT64 cardinality (no longer collides with bare EXTRACT)
 
-	// --- KLL_QUANTILES.* (keyed by last segment; INIT/MERGE_PARTIAL → sketch BYTES). No UINT64
-	// variant exists (only INT64/FLOAT64) — cloud.google.com/bigquery/docs/reference/standard-sql/kll_functions.
-	...group(fixed(BIN), ["init_int64", "init_float64"]),
+	// --- KLL_QUANTILES.* (keyed by full qualified path; INIT_*/MERGE_PARTIAL → sketch BYTES). No
+	// UINT64 variant exists (only INT64/FLOAT64) — kll_functions.
+	...group(fixed(BIN), ["kll_quantiles.init_int64", "kll_quantiles.init_float64", "kll_quantiles.merge_partial"]),
 	// MERGE/EXTRACT return the quantile boundaries as an ARRAY of the sketch's value type.
-	...group(arrayOf(I), ["merge_int64", "extract_int64"]),
-	...group(arrayOf(D), ["merge_float64", "extract_float64"]),
+	...group(arrayOf(I), ["kll_quantiles.merge_int64", "kll_quantiles.extract_int64"]),
+	...group(arrayOf(D), ["kll_quantiles.merge_float64", "kll_quantiles.extract_float64"]),
 	// EXTRACT_POINT_* / MERGE_POINT_* return a single quantile boundary (scalar).
-	extract_point_int64: fixed(I),
-	extract_point_float64: fixed(D),
-	merge_point_int64: fixed(I),
-	merge_point_float64: fixed(D),
+	"kll_quantiles.extract_point_int64": fixed(I),
+	"kll_quantiles.extract_point_float64": fixed(D),
+	"kll_quantiles.merge_point_int64": fixed(I),
+	"kll_quantiles.merge_point_float64": fixed(D),
 
 	// === Navigation + numbering (window) functions ===
 	...group(fixed(I), ["row_number", "rank", "dense_rank", "ntile"]),
@@ -326,7 +344,13 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// === Array functions ===
 	array_length: fixed(I),
 	array_to_string: fixed(S),
-	generate_array: arrayOf(I),
+	// GENERATE_ARRAY(start, end[, step]) → ARRAY<T>, T = the arguments' common numeric type (INT64,
+	// NUMERIC, BIGNUMERIC, DOUBLE). Argument-TYPE-computed; undeterminable args → unknown.
+	// zetasql docs array_functions.md GENERATE_ARRAY.
+	generate_array: (args) => {
+		const el = commonType(args);
+		return el.kind === "unknown" ? UNKNOWN : { kind: "array", element: el };
+	},
 	generate_date_array: arrayOf(DATE),
 	generate_timestamp_array: arrayOf(TS),
 	...group(firstArg, ["array_reverse", "array_concat", "array_slice"]), // ARRAY<T> → same ARRAY<T>
@@ -448,30 +472,37 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	farm_fingerprint: fixed(I),
 	...group(fixed(BIN), ["md5", "sha1", "sha256", "sha512"]),
 
-	// === Net functions (net.*; keyed by last segment) ===
+	// === Net functions (net.*; keyed by full qualified path) ===
 	// IP_NET_MASK and IPV4_FROM_INT64 return BYTES, not STRING —
 	// cloud.google.com/bigquery/docs/reference/standard-sql/net_functions.
-	...group(fixed(S), ["host", "ip_to_string", "public_suffix", "reg_domain"]),
-	...group(fixed(BIN), ["ip_from_string", "safe_ip_from_string", "ip_trunc", "ip_net_mask", "ipv4_from_int64"]),
-	ipv4_to_int64: fixed(I),
-
-	// === AEAD encryption functions (aead.* / keys.* / deterministic_*; keyed by last segment) ===
+	...group(fixed(S), ["net.host", "net.ip_to_string", "net.public_suffix", "net.reg_domain"]),
 	...group(fixed(BIN), [
-		"new_keyset",
-		"new_wrapped_keyset",
-		"add_key_from_raw_bytes",
-		"keyset_chain",
-		"keyset_from_json",
-		"rewrap_keyset",
-		"rotate_keyset",
-		"rotate_wrapped_keyset",
-		"encrypt",
-		"decrypt_bytes",
+		"net.ip_from_string",
+		"net.safe_ip_from_string",
+		"net.ip_trunc",
+		"net.ip_net_mask",
+		"net.ipv4_from_int64",
+	]),
+	"net.ipv4_to_int64": fixed(I),
+
+	// === AEAD encryption functions — aead_encryption_functions. KEYS.* and AEAD.* key by their full
+	// qualified path; DETERMINISTIC_ENCRYPT/DECRYPT_* are bare functions (no qualifier). ===
+	...group(fixed(BIN), [
+		"keys.new_keyset",
+		"keys.new_wrapped_keyset",
+		"keys.add_key_from_raw_bytes",
+		"keys.keyset_chain",
+		"keys.keyset_from_json",
+		"keys.rewrap_keyset",
+		"keys.rotate_keyset",
+		"keys.rotate_wrapped_keyset",
+		"aead.encrypt",
+		"aead.decrypt_bytes",
 		"deterministic_encrypt",
 		"deterministic_decrypt_bytes",
 	]),
-	keyset_length: fixed(I),
-	...group(fixed(S), ["decrypt_string", "deterministic_decrypt_string"]),
+	"keys.keyset_length": fixed(I),
+	...group(fixed(S), ["aead.decrypt_string", "deterministic_decrypt_string"]),
 	// keys.keyset_to_json is absent: docs disagree on STRING vs JSON — omitted rather than risk a wrong type.
 
 	// === Range functions ===
@@ -487,3 +518,48 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// === Utility ===
 	generate_uuid: fixed(S),
 };
+
+// EXTRACT(part FROM …) return type by datepart keyword — cloud.google.com/bigquery/docs/reference/
+// standard-sql/timestamp_functions#extract (and the date/datetime/time _functions EXTRACT variants).
+// All calendar/time components return INT64; DATE/TIME/DATETIME extract the sub-value of that type.
+// DATETIME maps to the shared `timestamp` canonical (BQ_ALIASES). An unrecognized part → unknown.
+function bigqueryExtractType(part: Expr | undefined): Type {
+	if (part?.kind !== "literal") return UNKNOWN;
+	const kw = part.text
+		.trim()
+		.toUpperCase()
+		.replace(/\s*\(.*$/s, ""); // WEEK(MONDAY) → WEEK
+	switch (kw) {
+		case "MICROSECOND":
+		case "MILLISECOND":
+		case "SECOND":
+		case "MINUTE":
+		case "HOUR":
+		case "DAYOFWEEK":
+		case "DAY":
+		case "DAYOFYEAR":
+		case "WEEK":
+		case "ISOWEEK":
+		case "MONTH":
+		case "QUARTER":
+		case "YEAR":
+		case "ISOYEAR":
+			return I;
+		case "DATE":
+			return DATE;
+		case "TIME":
+			return TIME;
+		case "DATETIME":
+			return TS; // DATETIME → the shared `timestamp` canonical
+		default:
+			return UNKNOWN;
+	}
+}
+
+/** Pre-registry hook for BigQuery calls whose return type a plain FnRule can't express. Today: bare
+ *  EXTRACT(part FROM …), typed from the datepart keyword lowerExtract parks at args[0]. Returns a
+ *  Type to short-circuit the registry, or undefined to fall through to it. */
+export function bigquerySpecial(fn: Extract<Expr, { kind: "function" }>): Type | undefined {
+	if (fn.qualifier === undefined && fn.name.toLowerCase() === "extract") return bigqueryExtractType(fn.args[0]);
+	return undefined;
+}
