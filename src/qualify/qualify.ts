@@ -204,6 +204,10 @@ function expandStar(
 	let matched = false;
 	for (const [key, src] of scope.sources) {
 		if (want !== undefined && key !== want) continue;
+		// A pseudo-column source (Snowflake/Oracle CONNECT BY's LEVEL) resolves by name but is
+		// excluded from a bare `*` — real pseudo-column semantics. A qualified star can't target
+		// it anyway (it has no alias to qualify by), so this only affects the bare-`*` case.
+		if (want === undefined && src.kind === "lateral" && src.source.pseudo) continue;
 		matched = true;
 		const srcCols = columnsOfSource(src, schema, resolved, diagnostics);
 		if (srcCols === undefined) return undefined;

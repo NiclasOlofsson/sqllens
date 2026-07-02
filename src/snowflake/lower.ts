@@ -511,7 +511,7 @@ function lowerPriorItem(item: ParserRuleContext): Expr {
 
 /** A lateral pseudo-source exposing the CONNECT BY pseudo-column(s) so `SELECT LEVEL` resolves. */
 function levelPseudoSource(cst: ParserRuleContext): Source {
-	return { kind: "lateral", columns: CONNECT_BY_PSEUDO_COLUMNS, cst };
+	return { kind: "lateral", columns: CONNECT_BY_PSEUDO_COLUMNS, pseudo: true, cst };
 }
 
 // --- PIVOT / UNPIVOT ---------------------------------------------------------

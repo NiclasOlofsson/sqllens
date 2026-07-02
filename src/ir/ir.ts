@@ -387,6 +387,11 @@ export interface LateralViewSource {
 	aliasCst?: ParserRuleContext;
 	/** The columns it exposes (the AS list — `… AS c1, c2`). */
 	columns: string[];
+	/** True for a synthetic pseudo-column source (e.g. Snowflake/Oracle CONNECT BY's `LEVEL`):
+	 *  it resolves by name but is excluded from a bare `SELECT *` expansion, matching real
+	 *  pseudo-column semantics. Absent (or false) for a real lateral relation like FLATTEN,
+	 *  whose columns DO join `*`. */
+	pseudo?: true;
 	cst: ParserRuleContext;
 }
 

@@ -52,6 +52,42 @@ describe("Snowflake scope resolution", () => {
 		expect(levelRef).toBeDefined();
 		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
 	});
+
+	// LEVEL is a pseudo-column (like Oracle's): it must resolve by name but must NOT appear in a
+	// bare `*` expansion. docs.snowflake.com/en/sql-reference/constructs/connect-by
+	it("excludes LEVEL from a schema-fed `SELECT *` on a CONNECT BY query", () => {
+		const schema = new Schema({ employees: { employee_id: "number", title: "varchar", manager_id: "number" } });
+		const tree = scopes(
+			"SELECT * FROM employees START WITH title = 'President' CONNECT BY manager_ID = PRIOR employee_id",
+		);
+		expect(qualify(tree, schema).columnsOf(tree.root)).toEqual(["employee_id", "title", "manager_id"]);
+	});
+
+	it("still binds LEVEL by name alongside a `SELECT *` on a CONNECT BY query", () => {
+		const tree = scopes(
+			"SELECT *, LEVEL FROM employees START WITH title = 'President' CONNECT BY manager_ID = PRIOR employee_id",
+		);
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
+		expect(levelRef).toBeDefined();
+		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
+	});
+
+	// Non-regression: FLATTEN's lateral columns are real output columns and must keep joining `*`.
+	it("still joins FLATTEN's lateral columns into a schema-fed `SELECT *`", () => {
+		const schema = new Schema({ t: { v: "variant" } });
+		const tree = scopes("SELECT * FROM t, LATERAL FLATTEN(input => t.v) f");
+		expect(qualify(tree, schema).columnsOf(tree.root)).toEqual([
+			"v",
+			"SEQ",
+			"KEY",
+			"PATH",
+			"INDEX",
+			"VALUE",
+			"THIS",
+		]);
+	});
 });
 
 describe("UNION BY NAME output columns", () => {
