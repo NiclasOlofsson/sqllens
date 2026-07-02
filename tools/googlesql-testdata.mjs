@@ -11,11 +11,14 @@ export function blocks(text) {
 	return text.split(/^==$/m); // top-level test separator
 }
 
-// A `[options…]` directive line: `[` then a lowercase keyword then `=`, a space, or `]`
-// (`[language_features=…]`, `[default …]`, `[mode=…]`, `[reserve_graph_table]`). This deliberately
-// does NOT match a SQL array constructor on its own line (`[1,2,3]`, `[1, e]`, `[col, x]`), which
-// starts with a digit/expression — those must survive into the query (lambda/array cases).
-const DIRECTIVE_LINE = /^\s*\[[a-z][a-z0-9_]*\s*[=\] ]/;
+// A `[options…]` directive line: column 0, `[` (optionally followed by a space — a rare `[ language_
+// features=…]` typo in the testdata), then a lowercase keyword then `=`, a space, or `]`
+// (`[language_features=…]`, `[default …]`, `[mode=…]`, `[reserve_graph_table]`). Anchored at column 0
+// because every real directive sits there; an INDENTED single-element array literal used as SQL
+// (`  [int64]`, `  [string]` — a TVF arg, verified the only indented matches across the testdata) is a
+// query line, not a directive, and must survive. It also deliberately does NOT match a SQL array
+// constructor (`[1,2,3]`, `[1, e]`, `[col, x]`), which starts with a digit/expression or has a comma.
+const DIRECTIVE_LINE = /^\[\s*[a-z][a-z0-9_]*\s*[=\] ]/;
 
 export function cleanQuery(raw) {
 	// Drop directive lines and `#` comment lines; keep the SQL. The .test format escapes an INPUT line
@@ -26,8 +29,11 @@ export function cleanQuery(raw) {
 		raw
 			.split("\n")
 			// A directive line may itself carry an alternation (`[{{|no_}}qualify_reserved]`); test with the
-			// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array).
-			.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*#/.test(l))
+			// `{{…}}` removed so it's still recognized as a directive (and not mistaken for an array). Also
+			// drop `#` comment lines — including a `\#`-escaped one (the .test format escapes an input line
+			// that begins with `#`, which would otherwise read as a test directive; the `#` line is a SQL
+			// comment either way, so dropping it is faithful).
+			.filter((l) => !DIRECTIVE_LINE.test(l.replace(/\{\{[^}]*\}\}/g, "")) && !/^\s*\\?#/.test(l))
 			.map((l) => l.replace(/^\\(--|==)/, "$1"))
 			.join("\n")
 			.trim()
@@ -151,7 +157,20 @@ const isFeatureRejection = (expected) => /\bnot\s+(a\s+)?supported\b|\bnot\s+imp
 // Pass the right one to classifyVariants per extractor; the parser-corpus predicate is the default.
 export const isSyntaxError = (expected) =>
 	startsWithSyntaxError(expected) || (isError(expected) && !isFeatureRejection(expected));
-export const isAnalyzerSyntaxError = (expected) => startsWithSyntaxError(expected);
+// Parser-structural rejections ZetaSQL's PARSER emits WITHOUT the "Syntax error:" prefix — the parser
+// built no tree, so the case is a NEGATIVE for the analyzer corpus too (symmetric with the parser
+// corpus's isSyntaxError, which already treats these as negatives). Curated to messages that are
+// unambiguously parse-time (our own grammar emits the same rejection), never a semantic name/type error.
+const PARSER_STRUCTURAL_ERROR =
+	/is an expression, not a query|(?:Query parameters|System variables) cannot be used in place of table names/;
+// A case is a parse-negative for the ANALYZER corpus when ZetaSQL's PARSER rejected it. That shows up as
+// an "ERROR: Syntax error: …" line ANYWHERE in the expected — a leading analyzer preamble
+// ("Table resolution time:", the extract_table_names format) or an earlier resolved statement of a
+// multi-statement input can precede the error line — or as one of the curated parser-structural
+// rejections above. A semantic name/type error (the common analyzer ERROR) means the parser ACCEPTED and
+// stays a positive; hence the line-anchored "Syntax error" test, not a substring match.
+export const isAnalyzerSyntaxError = (expected) =>
+	/^ERROR:\s*Syntax error/im.test(stripExpectedDirectives(expected)) || PARSER_STRUCTURAL_ERROR.test(expected);
 
 // Expected-string feature-off / deliberate-divergence rules, shared by BOTH extractors so the two
 // corpora grade identically. A case whose ZetaSQL error fires only because a feature WE implement is

@@ -34,11 +34,20 @@ const negatives = () => [...sqlFiles(join(CORPUS, "negative"))];
 // PARSER accepts (isParserAcceptedPostParse — mixed set operations, hint-on-non-first set op), the
 // single-statement-mode boundary, and expression-mode query-wrap artifacts — all shared with the parser
 // extractor so the two corpora grade identically.
-const POSITIVE_BASELINE = 14695; // in-scope positives parsed (14695/14714); the 19 remaining are real
-// grammar gaps (pipe AGGREGATE WITH DIFFERENTIAL_PRIVACY, multi-level aggregation `agg(x GROUP BY …)`,
-// TVF TABLE/scalar args, WITH POSITION on param-table sources, chained braced call) plus a few mis-
-// bucketed ZetaSQL errors — see docs Open Gaps.
-const NEGATIVE_BASELINE = 166; // 166/166 in-scope syntax-error negatives rejected — zero accepted
+const POSITIVE_BASELINE = 14707; // in-scope positives parsed: 14707/14708. The former 19-file gap is now
+// 18 closed + 1 enumerated: 9 real grammar gaps fixed (pipe AGGREGATE `WITH <dp>` modifier, the full
+// grouping-item set inside an aggregate call `agg(x GROUP BY ()|ROLLUP|CUBE|GROUPING SETS)`, `TABLE t
+// WHERE …` TVF relation arg, `RUN <path>(…)`); 3 extractor bugs fixed (a `[ language_features…]`
+// bracket-space directive and indented `[int64]`/`[string]` array-arg lines both mis-cleaned, and a
+// `\#`-escaped comment line) that had corrupted otherwise-valid positives; and 6 mis-bucketed genuine
+// parse-negatives reclassified OUT to the negative bucket (a "Syntax error" behind a `Table resolution
+// time:` preamble / after an earlier statement, and the parser-structural "is an expression, not a query"
+// / "Query parameters cannot be used in place of table names" rejections). The 1 remaining Open Gap is
+// chained_function_call_special_cases_18 — a chained-call + braced UPDATE constructor `(p).f() {k: v}`;
+// adding the braced tail to the left-recursive chained-call alt regressed ATN prediction on deeply-nested
+// scalar subqueries, so it needs the chained call to flow through function_call_expression_with_clauses.
+const NEGATIVE_BASELINE = 172; // 172/172 in-scope syntax-error negatives rejected — zero accepted (was
+// 166; +6 from the reclassified parse-negatives above, symmetric with the parser corpus)
 // The cross-dialect `other` ratchet (D1, 2026-07-01 review): count `other` expression nodes over the
 // in-scope, cleanly-parsed positives and ratchet the total (it may only fall). The failure output
 // names the leaking CST node types — that list IS the lower() worklist for BigQuery.
@@ -123,6 +132,12 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 					`${otherExprs} \`other\` exprs (baseline ${OTHER_BASELINE}); ` +
 					`pipe stages ${stages.length} (${other.length} unmodelled "other")${top ? "\n" + top : ""}`,
 			);
+			// The failing in-scope positives — the triage worklist. Kept permanently so a regression names
+			// its files, not just a count.
+			if (fails.length) {
+				// eslint-disable-next-line no-console
+				console.log(`BigQuery positive FAILS (${fails.length}):\n${fails.map((f) => `  ${f}`).join("\n")}`);
+			}
 
 			expect(pass).toBeGreaterThanOrEqual(POSITIVE_BASELINE);
 			expect(throws, `lower/resolveScopes/deriveSymbols threw on:\n${throws.slice(0, 20).join("\n")}`).toEqual(

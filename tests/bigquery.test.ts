@@ -28,6 +28,59 @@ describe("BigQuery dot-identifier covers every keyword (complete by construction
 	});
 });
 
+// The ZetaSQL analyzer-corpus closing wave (task 6): five real grammar gaps the golden corpus exercises
+// but our grammar rejected. Each is doc-cited to googlesql.tm; ZetaSQL's PARSER accepts them (a later
+// semantic pass may reject — that is a positive for a parser gate), so we must parse them.
+describe("BigQuery — ZetaSQL analyzer-corpus grammar gaps (task 6)", () => {
+	it("pipe AGGREGATE carries the `WITH <differential privacy>` modifier", () => {
+		// googlesql.tm pipe_aggregate: "AGGREGATE" opt_with_modifier … (the same modifier SELECT carries).
+		expect(parseBigQuery("FROM t |> AGGREGATE WITH DIFFERENTIAL_PRIVACY COUNT(x WHERE b)").errors).toBe(0);
+		expect(parseBigQuery("FROM t |> AGGREGATE WITH ANONYMIZATION COUNT(x GROUP BY y)").errors).toBe(0);
+		expect(
+			parseBigQuery("FROM t |> AGGREGATE WITH DIFFERENTIAL_PRIVACY OPTIONS(epsilon = 1) COUNT(x)").errors,
+		).toBe(0);
+	});
+
+	it("an aggregate call's GROUP BY accepts the full grouping-item set", () => {
+		// googlesql.tm function_call_expression uses group_by_clause_prefix (grouping_item …), so `()`,
+		// ROLLUP, CUBE and GROUPING SETS parse inside a call — ZetaSQL rejects them only semantically.
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY ()) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY ROLLUP(a, b)) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY CUBE(a, b)) FROM t").errors).toBe(0);
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY GROUPING SETS(a, b)) FROM t").errors).toBe(0);
+		// the plain-key multi-level form (already supported) still parses
+		expect(parseBigQuery("SELECT SUM(ANY_VALUE(x) GROUP BY a HAVING a > 1) FROM t").errors).toBe(0);
+	});
+
+	it("a TVF TABLE relation argument takes an optional trailing WHERE", () => {
+		// googlesql.tm table_clause_no_keyword: `path_expression opt_where_clause`.
+		expect(parseBigQuery("SELECT * FROM tvf(TABLE KeyValue WHERE b)").errors).toBe(0);
+		expect(parseBigQuery("SELECT * FROM tvf(TABLE KeyValue)").errors).toBe(0);
+	});
+
+	it("RUN accepts a bare path with an argument list, not only a string path", () => {
+		// googlesql.tm run_statement second alternative: `"RUN" path_expression "(" run_statement_arg_list? ")"`.
+		expect(parseBigQuery("RUN some_script()\n|> SELECT x").errors).toBe(0);
+		expect(parseBigQuery('RUN "abc.sql"').errors).toBe(0); // the string-path form is unchanged
+	});
+
+	it("a plain call takes a trailing braced UPDATE constructor", () => {
+		// googlesql.tm function_call_expression_with_clauses: function_call_expression braced_constructor →
+		// ASTUpdateConstructor. The plain-call form is covered; the CHAINED-call form `(p).update() {…}` is
+		// an enumerated Open Gap (adding the braced tail to the left-recursive chained-call alt regressed ATN
+		// prediction on deeply-nested subqueries — see the analyzer-corpus baseline note).
+		expect(parseBigQuery("SELECT update(p) {double_val: 123.4} FROM t").errors).toBe(0);
+	});
+
+	it("still rejects the genuine parse-negatives the corpus reclassified out", () => {
+		// These are ZetaSQL parser rejections (mis-bucketed as positives before), and we must keep rejecting.
+		expect(parseBigQuery("SELECT array_length(select 1 union all select 2)").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT * FROM ? WITH POSITION pos").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT * FROM @param WITH POSITION pos").errors).toBeGreaterThan(0);
+		expect(parseBigQuery("SELECT 1 FROM select select").errors).toBeGreaterThan(0);
+	});
+});
+
 describe("parseBigQuery", () => {
 	it("parses a basic SELECT with zero errors", () => {
 		expect(parseBigQuery("SELECT a, b FROM t").errors).toBe(0);

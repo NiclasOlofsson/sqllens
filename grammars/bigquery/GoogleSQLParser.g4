@@ -315,12 +315,14 @@ statement_maybe_pipe_suffix: (
 		| show_statement
 	) pipe_operator*;
 
-// RUN '<path>' [( arg => 'v', … )] (run_statement in googlesql.tm). RUN BATCH is a separate batch
-// statement (run_batch_statement), distinguished by the BATCH keyword vs a string literal.
+// RUN '<path>' [( arg => 'v', … )] or RUN <path_expression>( … ) (googlesql.tm run_statement, both
+// alternatives — a script path as a string literal or a bare path with a required arg list). RUN BATCH
+// is a separate batch statement (run_batch_statement), distinguished by the BATCH keyword.
 run_statement:
 	RUN_SYMBOL string_literal (
 		LR_BRACKET_SYMBOL run_statement_arg_list? RR_BRACKET_SYMBOL
-	)?;
+	)?
+	| RUN_SYMBOL path_expression LR_BRACKET_SYMBOL run_statement_arg_list? RR_BRACKET_SYMBOL;
 
 run_statement_arg_list: run_statement_arg (COMMA_SYMBOL run_statement_arg)* COMMA_SYMBOL?;
 
@@ -1801,8 +1803,11 @@ pipe_drop: DROP_SYMBOL identifier (COMMA_SYMBOL identifier)* COMMA_SYMBOL?;
 
 // AGGREGATE: agg list may be empty; GROUP BY is the pipe variant (no GROUP BY ALL) but otherwise
 // the full grouping-item set (ROLLUP/CUBE/GROUPING SETS/(), AS alias, order suffix, GROUP AND ORDER).
+// The optional `WITH <identifier> [OPTIONS(...)]` differential-privacy/anonymization modifier is the
+// shared opt_with_modifier (googlesql.tm pipe_aggregate: "AGGREGATE" opt_with_modifier … — the same
+// modifier SELECT carries via opt_select_with).
 pipe_aggregate:
-	AGGREGATE_SYMBOL pipe_aggregate_item_list? pipe_group_by_clause?;
+	AGGREGATE_SYMBOL opt_select_with? pipe_aggregate_item_list? pipe_group_by_clause?;
 
 // Pipe GROUP BY: the pipe variant — `GROUP [AND ORDER] BY` and per-item alias/ordering suffixes,
 // which the standard GROUP BY (group_by_clause_prefix) does NOT allow (googlesql.tm grouping_item vs
@@ -2384,9 +2389,13 @@ descriptor_column_list:
 
 descriptor_column: identifier;
 
+// TABLE <tvf|path> with an optional trailing WHERE (googlesql.tm table_clause_no_keyword:
+// `path_expression opt_where_clause` / `tvf as_alias? pivot? opt_where_clause`). ZetaSQL's PARSER
+// accepts the WHERE and a later pass rejects it ("TABLE clause with WHERE is not supported"), so the
+// parse must succeed; tvf_with_suffixes already carries the alias/pivot suffixes.
 table_clause:
-	TABLE_SYMBOL tvf_with_suffixes
-	| TABLE_SYMBOL path_expression;
+	TABLE_SYMBOL tvf_with_suffixes where_clause?
+	| TABLE_SYMBOL path_expression where_clause?;
 
 model_clause: MODEL_SYMBOL path_expression;
 
@@ -2535,6 +2544,13 @@ expression_higher_prec_than_and:
 	| expression_higher_prec_than_and LS_BRACKET_SYMBOL expression RS_BRACKET_SYMBOL
 	| expression_higher_prec_than_and DOT_SYMBOL LR_BRACKET_SYMBOL path_expression RR_BRACKET_SYMBOL
 	// Chained function call: base.method(args) — functions-reference#chained_function_calls.
+	// NOTE: a trailing braced UPDATE constructor `(p).update() {f: v}` (googlesql.tm
+	// function_call_expression_with_clauses: function_call_expression braced_constructor) is NOT modelled
+	// here — adding an optional braced_constructor to this left-recursive alt destabilised ATN prediction
+	// on deeply-nested scalar subqueries (a real parse regression), and the clean fix needs the chained
+	// call to flow through function_call_expression_with_clauses. Enumerated as an Open Gap
+	// (chained_function_call_special_cases_18 in the analyzer corpus); the plain-call form is covered by
+	// the function_call_expression_with_clauses braced_constructor alt above.
 	| expression_higher_prec_than_and DOT_SYMBOL (
 		dot_identifier
 		| function_name_from_keyword
@@ -3064,16 +3080,19 @@ limit_offset_clause:
 	| LIMIT_SYMBOL ALL_SYMBOL;
 
 // Aggregate-call modifiers (ZetaSQL): the "HAVING MAX/MIN value" row-picker, and the
-// multi-level-aggregation "GROUP BY keys [HAVING <bool>]". The GROUP BY keys here are plain
-// expressions — no AND ORDER preamble, no ASC/DESC, no alias (those forms are errors inside an
-// aggregate, distinct from the top-level group_by_clause_prefix). Bare boolean HAVING is valid
+// multi-level-aggregation "GROUP BY keys [HAVING <bool>]". Bare boolean HAVING is valid
 // only after GROUP BY; standalone HAVING requires MAX/MIN.
 opt_having_or_group_by_modifier:
 	HAVING_SYMBOL (MAX_SYMBOL | MIN_SYMBOL) expression aggregate_group_by_modifier?
 	| aggregate_group_by_modifier (HAVING_SYMBOL expression)?;
 
+// The keys are full grouping_items (googlesql.tm function_call_expression uses group_by_clause_prefix =
+// group_by_preamble grouping_item …, the SAME rule top-level GROUP BY uses), so `GROUP BY ()`, ROLLUP,
+// CUBE and GROUPING SETS parse here too — ZetaSQL's PARSER accepts them and a later semantic pass
+// rejects them ("GROUP BY ROLLUP is not supported inside an aggregate function"), so the parse must
+// succeed. No AND ORDER preamble / ASC-DESC / alias (those are pipe-AGGREGATE-only, grouping_item_in_pipe).
 aggregate_group_by_modifier:
-	GROUP_SYMBOL hint? BY_SYMBOL expression (COMMA_SYMBOL expression)*;
+	GROUP_SYMBOL hint? BY_SYMBOL grouping_item (COMMA_SYMBOL grouping_item)*;
 
 group_by_clause_prefix:
 	group_by_preamble grouping_item (COMMA_SYMBOL grouping_item)*;
