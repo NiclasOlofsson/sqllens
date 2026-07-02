@@ -39,6 +39,14 @@ const QUERY_BASELINE = 2976; // documented floor for the query population (path-
 // so no file is parsed twice.
 const OTHER_BASELINE = 0; // sequence refs (<seq>.NEXTVAL) now lower to typed function exprs (2026-07-02); may only fall
 
+// The SLL→LL fallback ratchet (SLL-surgery wave, task-1-brief.md): Snowflake is grammar-sick — its
+// heaviest decisions (select_statement, expression_elem, select_list_elem, function_call) force the
+// two-stage parse to bail out of the fast SLL prediction path and reparse under full LL. Measured
+// 2026-07-03 via `node --import tsx tools/profile-sll.ts snowflake` over this same docs query bucket.
+// Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
+// re-parse. May only fall as the surgery wave's per-dialect tasks land; 0 is healthy (untracked again).
+const FALLBACK_RATCHET = 525;
+
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
 	const lexer = new SnowflakeLexer(CharStream.fromString(sql));
@@ -112,10 +120,12 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			let scoped = 0;
+			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
 				parse: (sql) => {
 					const r = parseSnowflake(sql);
+					if (r.sllFallback) fallbacks++;
 					return { errors: r.errors, tree: r.tree };
 				},
 				onCleanQuery: (rel, tree) => {
@@ -136,13 +146,17 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
 				.join("\n");
 			console.log(
-				`\n  snowflake: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+				`\n  snowflake: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE}), ${fallbacks} SLL fallbacks (ratchet ${FALLBACK_RATCHET})${top ? "\n" + top : ""}`,
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `pipeline threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);
+			expect(
+				fallbacks,
+				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
+			).toBeLessThanOrEqual(FALLBACK_RATCHET);
 		},
 	);
 });

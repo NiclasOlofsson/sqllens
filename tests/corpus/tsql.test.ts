@@ -40,6 +40,14 @@ const QUERY_BASELINE = 1555;
 const OTHER_BASELINE = 0; // driven to 0 (2026-07-02): XML data type methods, REGEXP_LIKE / quantified /
 // MATCH / CONTAINS predicates all modelled — T-SQL is expression-corpus-complete like Databricks. May only fall.
 
+// The SLL→LL fallback ratchet (SLL-surgery wave, task-1-brief.md): T-SQL is grammar-sick — its
+// heaviest decisions (function_call, select_statement, the batch/sql_clauses statement boundary,
+// full_table_name) force the two-stage parse to bail out of the fast SLL prediction path and reparse
+// under full LL. Measured 2026-07-03 via `node --import tsx tools/profile-sll.ts tsql` over this same
+// docs query bucket. Counted on the SAME single parse the docs ratchet makes (the `parse:` closure
+// below), never a re-parse. May only fall as the surgery wave's per-dialect tasks land.
+const FALLBACK_RATCHET = 259;
+
 /** Production parse (tsql_file, two-stage SLL→LL); returns the syntax-error count. */
 function parseErrors(sql: string): number {
 	return parseTSql(sql).errors;
@@ -115,10 +123,12 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			let scoped = 0;
+			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
 				parse: (sql) => {
 					const r = parseTSql(sql);
+					if (r.sllFallback) fallbacks++;
 					return { errors: r.errors, tree: r.tree };
 				},
 				onCleanQuery: (rel, tree) => {
@@ -139,13 +149,17 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
 				.join("\n");
 			console.log(
-				`\n  tsql: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+				`\n  tsql: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE}), ${fallbacks} SLL fallbacks (ratchet ${FALLBACK_RATCHET})${top ? "\n" + top : ""}`,
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `pipeline threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);
+			expect(
+				fallbacks,
+				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
+			).toBeLessThanOrEqual(FALLBACK_RATCHET);
 		},
 	);
 });
