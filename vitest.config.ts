@@ -9,7 +9,7 @@ export default defineConfig({
 		// Corpus conformance gates live in tests/corpus/ and run as their own tier (npm run test:corpus,
 		// vitest.corpus.config.ts). They parse thousands of files each and are the every-merge bar, not
 		// the every-run inner loop — excluding them here keeps `npm test` a fast units/features/LSP tier.
-		exclude: [...configDefaults.exclude, ".claude/worktrees/**", "tests/corpus/**"],
+		exclude: [...configDefaults.exclude, ".claude/worktrees/**", "tests/corpus/**", "temp_auto/**"],
 		// Use the worker-threads pool, not the default `forks` pool.
 		//
 		// On this toolchain (Windows + Node 24 + vitest 4) the forks pool intermittently dies
