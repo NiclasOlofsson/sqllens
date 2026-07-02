@@ -86,9 +86,10 @@ function group(rule: FnRule, names: string[]): Record<string, FnRule> {
 // (cloud.google.com/bigquery/docs/reference/standard-sql/<family>_functions). Each return type is
 // documented and fixed (or a documented "same as input" → firstArg / "supertype of args" → common /
 // "same as array element" → elementOfFirst). Value-dependent returns are absent by contract: EXTRACT
-// (return depends on the datepart), APPROX_TOP_COUNT/SUM (ARRAY<STRUCT> whose element follows the
-// input), PERCENTILE_CONT/DISC (WITHIN GROUP), ARRAY_SUM/ARRAY_AVG (numeric widening), the RANGE
-// constructor and RANGE_START/END (no canonical RANGE type here) — a missing rule yields `unknown`.
+// (return depends on the datepart — see the dedicated note by the query below), APPROX_TOP_COUNT/SUM
+// (ARRAY<STRUCT> whose element follows the input), PERCENTILE_CONT/DISC (WITHIN GROUP), ARRAY_SUM/
+// ARRAY_AVG (numeric widening), the RANGE constructor and RANGE_START/END (no canonical RANGE type
+// here) — a missing rule yields `unknown`.
 //
 // Dotted-name families (net.*, hll_count.*, kll_quantiles.*, aead.*, keys.*, deterministic_*) key by
 // the LAST path segment only: lowerFunctionCall names a call `pathParts(path).slice(-1)[0]`, so
@@ -96,7 +97,8 @@ function group(rule: FnRule, names: string[]): Record<string, FnRule> {
 // `kll_quantiles.extract_point_int64(s)` looks up `extract_point_int64`, and `aead.encrypt(...)`
 // looks up `encrypt` (verified against the parser, 2026-07-02). The segments are unique across the
 // dotted families except merge_partial (hll_count + kll_quantiles both → BYTES — consistent) and
-// `extract` (hll_count.extract → INT64, same as EXTRACT(part FROM ...) here → INT64 — consistent).
+// `extract` (hll_count.extract → INT64 is correct, but the key is absent — see the note by the query
+// below — so hll_count.extract resolves unknown too until dotted calls key by their qualified path).
 export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// === String functions ===
 	// → STRING
@@ -253,9 +255,15 @@ export const BIGQUERY_FUNCTION_RETURNS: Record<string, FnRule> = {
 	]),
 	// FORMAT_* → STRING; STRING(timestamp, tz) / STRING(json) → STRING.
 	...group(fixed(S), ["format_date", "format_datetime", "format_time", "format_timestamp", "string"]),
-	// EXTRACT(part FROM ...) → INT64 for the common dateparts (DATE/TIME/DATETIME dateparts are
-	// value-dependent but rare); this key also serves hll_count.extract → INT64.
-	extract: fixed(I),
+	// EXTRACT(part FROM ...) has no `extract` key here. (a) The return type is datepart-value-dependent
+	// — EXTRACT(DATE FROM …) → DATE, EXTRACT(TIME …) → TIME, EXTRACT(DATETIME …) → DATETIME, only the
+	// remaining dateparts → INT64 — and an FnRule sees only argument TYPES, not the datepart keyword, so
+	// no rule can resolve it correctly; it stays absent by contract until the engine grows an EXTRACT
+	// special form (like the existing date_add/CURRENT_* special forms — tracked in PLAN.md Open Gaps).
+	// (b) Dotted calls key by the LAST path segment (see the file-header note), so this same key would
+	// also serve hll_count.extract (→ INT64, unconditionally correct there) — one key can't honestly
+	// resolve two different functions, so hll_count.extract resolves unknown too until dotted calls key
+	// by their qualified path (also tracked in PLAN.md Open Gaps).
 
 	// === Interval functions ===
 	...group(fixed(INTERVAL), ["make_interval", "justify_days", "justify_hours", "justify_interval"]),

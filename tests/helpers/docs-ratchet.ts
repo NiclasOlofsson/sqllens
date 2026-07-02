@@ -139,6 +139,15 @@ export function runDocsRatchet(
 	// otherwise pass a 0/0 gate silently).
 	expect(query.total, "query bucket is empty — did reclassification misfile everything?").toBeGreaterThan(0);
 
+	// Soft population floor: the 100% gate below only proves every query/ file parses — it says nothing
+	// about how many files are IN query/. A reclassification that drained query/ into dml/ddl/unparsed
+	// would still pass a shrunken 100% gate silently. queryBaseline is the documented floor (see each
+	// caller's QUERY_BASELINE); dropping below it is a regression to investigate, not to lower the number.
+	expect(
+		query.total,
+		`query bucket shrank below its documented floor (${query.total} < ${queryBaseline}) — investigate the reclassification, don't lower the floor`,
+	).toBeGreaterThanOrEqual(queryBaseline);
+
 	// Inverted self-policing: each known-bad / deferred slug must STILL sit under unparsed/. If the
 	// docs were fixed or the grammar grew, the file now parses, the organizer moved it into query/,
 	// and it is no longer here — drop it from the list (and close the issue item).
