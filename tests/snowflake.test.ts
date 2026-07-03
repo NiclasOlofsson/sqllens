@@ -913,6 +913,31 @@ describe("Snowflake lower -> IR", () => {
 		expect(errorsOf("SELECT t.$ 1 FROM t")).toBeGreaterThan(0);
 	});
 
+	// SLL-surgery wave (2026-07-03): primitive_expression dropped its NULL_ alternative (literal
+	// already carries NULL_) and swapped full_column_name for degenerate_column_ref — exactly the
+	// empty-segment forms (docs.snowflake.com/en/sql-reference/name-resolution), the one part of
+	// full_column_name a plain id-chain cannot express. IR unchanged for every form.
+	it("keeps NULL literals and empty-segment column refs across the primitive_expression fix", () => {
+		const nul = selectBody("SELECT NULL AS n FROM t").body;
+		expect(nul.projections[0]).toMatchObject({ name: "n", expr: { kind: "literal", text: "NULL" } });
+		// Plain chains keep their column IR (and stay on the SLL path end-to-end).
+		const chain = parseSnowflake("SELECT db1.sch.tbl.col FROM db1.sch.tbl");
+		expect(chain.errors).toBe(0);
+		expect(chain.sllFallback).toBe(false);
+		const ir = selectBody("SELECT db1.sch.tbl.col FROM db1.sch.tbl").body;
+		expect(ir.projections[0].expr).toMatchObject({ kind: "column", parts: ["db1", "sch", "tbl", "col"] });
+		// Empty-segment refs (omitted db/schema/table) still parse, with the same collapsed parts.
+		for (const [sql, parts] of [
+			["SELECT a..c FROM t", ["a", "c"]],
+			["SELECT ..c FROM t", ["c"]],
+			["SELECT a.b..c FROM t", ["a", "b", "c"]],
+			["SELECT a...c FROM t", ["a", "c"]],
+		] as const) {
+			const b = selectBody(sql).body;
+			expect(b.projections[0].expr, sql).toMatchObject({ kind: "column", parts: [...parts] });
+		}
+	});
+
 	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
 		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });

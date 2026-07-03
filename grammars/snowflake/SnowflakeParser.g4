@@ -4730,15 +4730,32 @@ vector_element_type
     | FLOAT8
     ;
 
+// SLL-surgery wave (2026-07-03): the old `NULL_` alternative was a subset of `literal` (which
+// carries NULL_), and `full_column_name` overlapped `id_ ('.' id_)*` on every plain dotted
+// chain — together ambiguous on nearly every column reference. literal now owns NULL, the
+// id-chain alternative owns all plain chains, and degenerate_column_ref keeps only
+// full_column_name's empty-segment forms (`a..c`, `.b.c`), which a plain chain cannot express.
 primitive_expression
     : DEFAULT //?
-    | NULL_
     | id_ ('.' id_)* // json field access
     | id_ '.' STAR
-    | full_column_name
+    | degenerate_column_ref
     | literal
     //| json_literal
     //| arr_literal
+    ;
+
+// Exactly full_column_name's language minus plain id-chains: every alternative carries a
+// leading DOT or a doubled DOT (an omitted db/schema/table segment —
+// docs.snowflake.com/en/sql-reference/name-resolution), so it is disjoint from `id_ ('.' id_)*`.
+// full_column_name itself stays for COMMENT ON COLUMN, its only other user.
+degenerate_column_ref
+    : DOT id_? DOT id_? DOT id_ // .s?.t?.c (db omitted, 3 dots)
+    | DOT id_? DOT id_          // .t?.c    (schema omitted, 2 dots)
+    | DOT id_                   // .c       (table omitted, 1 dot)
+    | id_ DOT DOT id_? DOT id_  // d..t?.c
+    | id_ DOT id_ DOT DOT id_   // d.s..c
+    | id_ DOT DOT id_           // s..c
     ;
 
 order_by_expr

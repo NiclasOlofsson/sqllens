@@ -1076,7 +1076,8 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 	}
 }
 
-/** primitive_expression: DEFAULT | NULL_ | id_ ('.' id_)* | id_ '.' STAR | full_column_name | literal | … */
+/** primitive_expression: DEFAULT | id_ ('.' id_)* | id_ '.' STAR | degenerate_column_ref | literal | …
+ *  (NULL arrives via literal; empty-segment refs via degenerate_column_ref — SLL surgery 2026-07-03). */
 function lowerPrimitive(node: ParserRuleContext): Expr {
 	const lit = directChildrenOfRule(node, P.RULE_literal)[0];
 	if (lit) return { kind: "literal", text: lit.getText(), cst: node };
@@ -1087,7 +1088,9 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 		const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => stripQuotes(i.getText()));
 		return { kind: "star", qualifier: ids.length ? ids : undefined, cst: node };
 	}
-	const fcn = directChildrenOfRule(node, P.RULE_full_column_name)[0];
+	const fcn =
+		directChildrenOfRule(node, P.RULE_full_column_name)[0] ??
+		directChildrenOfRule(node, P.RULE_degenerate_column_ref)[0];
 	if (fcn) return { kind: "column", parts: nameParts(fcn), cst: node };
 	const ids = directChildrenOfRule(node, P.RULE_id_);
 	if (ids.length) return { kind: "column", parts: ids.map((i) => stripQuotes(i.getText())), cst: node };
