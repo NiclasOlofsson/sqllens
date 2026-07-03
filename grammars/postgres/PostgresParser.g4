@@ -4110,8 +4110,13 @@ target_list
    ;
 
 target_el
-   : columnref # target_columnref  // NOTE(parser): Add by Bytebase to handling table.* easily.
-   | a_expr target_alias? # target_label
+   // NOTE(perf): the Bytebase `columnref # target_columnref` alternative was a strict subset of
+   // `a_expr target_alias?` (a_expr → c_expr → columnref, incl. `t.*` via indirection `.STAR`), so SLL
+   // committed to it on every bare column and then bailed on a following alias (`SELECT x oid`), a
+   // string constant, etc. Deleting it: a_expr covers the whole language and lower() classifies the
+   // parsed shape (a `.*` columnref lowers to a qualified star). Fixes a latent lower bug too — bare
+   // columns and `t.*` previously fell through buildProjection to a phantom unqualified star.
+   : a_expr target_alias? # target_label
    | STAR # target_star
    ;
    

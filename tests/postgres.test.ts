@@ -119,3 +119,35 @@ describe("postgres grammar — fork additions (doc-cited)", () => {
 		ok("SELECT $tag$body 'x' $$$tag$, 1::int, '1'::numeric(10,2);");
 	});
 });
+
+// SLL-surgery wave (.superpowers/sdd/task-4-report.md), iteration 1: `target_el`'s
+// `columnref # target_columnref` alternative was a strict subset of `a_expr target_alias?` (a_expr →
+// c_expr → columnref, `t.*` included via indirection `.STAR`). Deleting it removed a select-list
+// ambiguity AND fixed a latent lower bug: `buildProjection` never read the `columnref` shape, so a
+// bare column and `t.*` fell through to a phantom (unqualified) star projection. a_expr now covers the
+// whole select item and lower classifies the parsed shape.
+describe("postgres target_el — bare columns lower as columns, not phantom stars", () => {
+	it("a plain column projects as a column", () => {
+		const body = lower(parsePostgres("SELECT foo FROM t").tree).body;
+		expect(body.kind === "select" && body.projections[0]?.isStar).toBe(false);
+		expect(body.kind === "select" && body.projections[0]?.expr.kind).toBe("column");
+	});
+
+	it("a dotted column keeps all parts", () => {
+		const body = lower(parsePostgres("SELECT a, b.c FROM t").tree).body;
+		expect(body.kind === "select" && body.projections.map((p) => p.expr.kind)).toEqual(["column", "column"]);
+		expect(
+			body.kind === "select" && body.projections[1]?.expr.kind === "column" && body.projections[1]?.expr.parts,
+		).toEqual(["b", "c"]);
+	});
+
+	it("a qualified star keeps its qualifier", () => {
+		const body = lower(parsePostgres("SELECT t.* FROM t").tree).body;
+		expect(body.kind === "select" && body.projections[0]?.isStar).toBe(true);
+		expect(
+			body.kind === "select" &&
+				body.projections[0]?.expr.kind === "star" &&
+				body.projections[0]?.expr.qualifier?.join("."),
+		).toBe("t");
+	});
+});
