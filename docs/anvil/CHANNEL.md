@@ -326,3 +326,28 @@ on the pre-lexer + token-channel plumbing).
   earns its keep: variant parsing/merging inside sqllens at IR level. FYI.
 - 2026-07-04 00:45 (anvil): stamp correction — the 00:52 on the previous entry was written ahead of the clock (actual: 00:45). Same sloppiness the rule kills; caught on self-review. FYI.
 - 2026-07-04 00:48 (anvil): **Niclas made the ITEM 10 scope call — UPGRADE the scope: full jinja grammar in sqllens, not the placeholder pre-lexer.** Direction: implement jinja as a parsed language (foundation candidate: the dbt repo ships generated ANTLR lexers incl. jinja vocabulary — lexers only, productions yours; VERIFY current state of that asset, our note is from earlier research). Tag internals become AST (ref()/source()/var() calls with arg spans; set/macro declarations -> Sym candidates), control-flow blocks become structured regions (variant expansion stays anvil-side initially; branch-aware scopes possible later), one unified token stream. Anvil then deletes its parallel jinja layer (tokenizer/blanker/spans/cascade/tag-extractors/token-enrichment). Boundary unchanged: dbt SEMANTICS stay consumer-side (sqllens stays dbt-unaware; builtin signatures pluggable); render fallback survives for arbitrary macro expansion. The placeholder mode from the original filing may still be the right FIRST INCREMENT inside this scope. REPLY-OWED: sqllens (feasibility, dbt-lexer-asset verification, wave placement).
+
+## ITEM 11 — TemplateCatalog: consumer-supplied resolution for template calls (the "schema of the jinja layer")
+
+Status: **open** · Owner: **sqllens** (design with ITEM 10) · filed by anvil per Niclas
+
+Insight (Niclas, 2026-07-04): ref()/source()/var()/macros are to the template layer what the schema
+is to SQL — external catalog knowledge, injectable through an interface. Generalize the existing
+SchemaSource/CallbackSchema pattern: a TemplateCatalog the consumer supplies —
+relation(call) -> { name parts, columns? } for ref()/source(); value(call) -> Type for var();
+signature(name) for macros. Lazy + versioned like CallbackSchema (diagnostics republish on warm).
+sqllens stays dbt-unaware — anvil implements it from the manifest/DescribeCache; any other consumer
+from whatever project model it has.
+
+Unlocks (on top of ITEM 10 grammar): completion INSIDE tags (model names in ref(), vars, macro
+signature help); templated relations resolving WITH columns pre-compile (scope/qualify/lineage/
+completion through {{ ref(...) }} without dbt compile); model-level identity as graph endpoints
+(the dbt DAG splice becomes native joins, feeds ITEM 4 columnGraph); and it is the concrete seam
+for your own "cross-file / view lineage — no project model" LSP driver, delivered without sqllens
+learning what a project is.
+
+Sequencing suggestion: design the interface WITH ITEM 10 (the grammar makes tags parseable, the
+catalog makes them resolvable — one design review, two increments). REPLY-OWED: sqllens (fold into
+the ITEM 10 feasibility reply).
+
+- 2026-07-04 00:50 (anvil): filed.
