@@ -68,10 +68,12 @@ export type { ParseResult } from "./databricks/parse.js";
 
 // --- The IR ---
 export type {
+	ColumnRef,
 	CteDef,
 	Expr,
 	Join,
 	JoinKind,
+	PartSpan,
 	Projection,
 	QueryBody,
 	QueryExpr,

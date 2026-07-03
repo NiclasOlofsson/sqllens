@@ -1,5 +1,8 @@
 import type { ParserRuleContext } from "antlr4ng";
+import type { PartSpan } from "./part-span.js";
 import type { StatementCategory } from "./statement.js";
+
+export type { PartSpan } from "./part-span.js";
 
 // ---------------------------------------------------------------------------
 // IR — a compact, DIALECT-NEUTRAL semantic model. Each dialect's `lower()` (e.g.
@@ -160,6 +163,11 @@ export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "q
 export interface ColumnRef {
 	/** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
 	parts: string[];
+	/** Per-part source spans, PARALLEL to `parts` (same length) — each covers that part's own
+	 *  token(s) including any quoting delimiters, excluding the dots. ADDITIVE/optional: present only
+	 *  when every part was read from a real token; absent (all-or-nothing) when any part is synthesized.
+	 *  Lets a consumer hit-test a cursor on `o` vs `order_id` in `o.order_id`. See src/ir/part-span.ts. */
+	partSpans?: PartSpan[];
 	/** Which clause the reference appears in — GROUP BY/HAVING/ORDER BY may reference a select alias. */
 	clause: Clause;
 	cst: ParserRuleContext;
@@ -172,7 +180,10 @@ export interface ColumnRef {
 // ---------------------------------------------------------------------------
 
 export type Expr =
-	| { kind: "column"; parts: string[]; cst: ParserRuleContext }
+	/** A column reference. `partSpans` (when present) is PARALLEL to `parts` — one span per part,
+	 *  covering that part's own token(s) incl. quotes, excluding dots; absent (all-or-nothing) when any
+	 *  part is synthesized rather than read from a token. See src/ir/part-span.ts. */
+	| { kind: "column"; parts: string[]; partSpans?: PartSpan[]; cst: ParserRuleContext }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
 	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. The optional
 	 *  modifiers transform the expansion (Snowflake `* EXCLUDE/ILIKE/RENAME/REPLACE …`,

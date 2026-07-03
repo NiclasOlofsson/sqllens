@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import type { Expr, Projection } from "../ir/ir.js";
+import type { Expr, PartSpan, Projection } from "../ir/ir.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
@@ -67,6 +67,11 @@ export interface Sym {
 	/** For a column symbol, the base-table columns it derives from (lineage). Absent when it
 	 *  traces to nothing resolvable (a pure literal, or an unresolved column). */
 	origins?: Origin[];
+	/** For a column REFERENCE symbol, the per-part source spans PARALLEL to a dotted `name`
+	 *  (`o.order_id` → one span for `o`, one for `order_id`) — lets a consumer hit-test the cursor
+	 *  on the qualifier vs the column. Copied from the `ColumnRef.partSpans`; absent (all-or-nothing)
+	 *  when any part was synthesized. See src/ir/part-span.ts. */
+	partSpans?: PartSpan[];
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
@@ -244,6 +249,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
 			definition: columnDefinition(res),
 			type: typeOrUndefined(inferType(colExpr, scope, schema)),
 			origins: originsOrUndefined(originsOf(colExpr, scope, schema)),
+			partSpans: ref.partSpans,
 		});
 	}
 }
