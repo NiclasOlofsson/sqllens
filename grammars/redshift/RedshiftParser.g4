@@ -4389,7 +4389,14 @@ simple_select_intersect
 simple_select_pramary
    // Redshift SELECT allows TOP n together with DISTINCT (docs.aws.amazon.com/redshift/latest/dg/r_SELECT_list.html):
    // SELECT TOP n DISTINCT ... — so the top alternative carries an optional distinct_clause.
-   : ( SELECT (opt_all_clause? into_clause? opt_target_list? | opt_top_clause? distinct_clause? into_clause? target_list | distinct_clause target_list)
+   // The select-list quantifier group is left-factored into two disjoint alternatives: one that ends in
+   // a REQUIRED target_list (any quantifier: ALL, or TOP n? DISTINCT?), and one with NO target_list
+   // (only ALL / nothing may precede an empty list — TOP/DISTINCT always require a target). This accepts
+   // exactly the same strings as the former three overlapping branches (ALL is mutually exclusive with
+   // TOP/DISTINCT; branch `distinct_clause target_list` was a strict subset), but removes the [1,2]/[2,3]
+   // ambiguity that forced full-LL prediction on every SELECT — the parser now decides locally by whether
+   // a target_list follows. lower() reads target_list via firstShallow, so the IR is unchanged.
+   : ( SELECT ((opt_all_clause | opt_top_clause? distinct_clause?)? into_clause? target_list | opt_all_clause? into_clause?)
            exclude_clause?
            into_clause?
            from_clause?

@@ -317,3 +317,47 @@ describe("Redshift SLL-surgery — c_expr aexprconst above func_expr/columnref",
 		expect(errorsOf("SELECT count(*) '5'")).toBeGreaterThan(0);
 	});
 });
+
+// SLL-surgery wave, iteration 3. simple_select_pramary's select-list was three overlapping branches
+// (`opt_all_clause? into_clause? opt_target_list?` | `opt_top_clause? distinct_clause? into_clause?
+// target_list` | `distinct_clause target_list`): branch 3 was a strict subset of branch 2, and branches
+// 1/2 overlapped on every plain `SELECT list`, so ANTLR ran a deep full-LL prediction (maxLook 66) on
+// EVERY select — the top prediction-cost sink (68.5% of profiled time). Left-factored into two disjoint
+// alternatives — one ending in a REQUIRED target_list (any quantifier), one with NO target (only ALL /
+// nothing may precede an empty list) — decided locally by whether a target follows (maxLook 66 → 1).
+// Accepts exactly the same strings (proven by the corpus gate at 1808/1808 and the IR hash diff); lower
+// reads target_list via firstShallow, so the IR is byte-identical.
+describe("Redshift SLL-surgery — simple_select_pramary select-list left-factor", () => {
+	function noFallback(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+	}
+
+	it("every SELECT quantifier form parses under SLL (no fallback)", () => {
+		for (const sql of [
+			"SELECT a, b FROM t",
+			"SELECT ALL a FROM t",
+			"SELECT TOP 5 a FROM t",
+			"SELECT DISTINCT a FROM t",
+			"SELECT TOP 5 DISTINCT a FROM t",
+			"SELECT DISTINCT ON (a) a, b FROM t",
+			"SELECT * FROM t",
+		]) {
+			noFallback(sql);
+		}
+	});
+
+	it("empty-target forms (INTO / ALL INTO) still parse — no narrowing", () => {
+		expect(errorsOf("SELECT INTO foo FROM t")).toBe(0);
+		expect(errorsOf("SELECT ALL INTO foo FROM t")).toBe(0);
+		expect(errorsOf("SELECT a INTO foo FROM t")).toBe(0);
+	});
+
+	it("TOP / DISTINCT still require a target list — no widening", () => {
+		// The former grammar rejected these (branch 2 required target_list; branch 1 barred TOP/DISTINCT).
+		expect(errorsOf("SELECT TOP 5 FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT DISTINCT FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT TOP 5 DISTINCT FROM t")).toBeGreaterThan(0);
+	});
+});

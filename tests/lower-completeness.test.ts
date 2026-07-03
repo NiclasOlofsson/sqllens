@@ -137,7 +137,12 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Redshift",
-		coverFloor: 152,
+		// 151 after the task-6 SLL-surgery select-list left-factor: merging simple_select_pramary's three
+		// overlapping branches removed the redundant `distinct_clause target_list` subset alternative, so
+		// the fuzzer's reachable-rule graph lost one node. lower() did NOT regress — throws stays 0 and the
+		// docs corpus gate proves full coverage + 0 `other` over the real query bucket; the deleted branch's
+		// language is covered identically by the merged alternative (lower reads target_list via firstShallow).
+		coverFloor: 151,
 		cfg: {
 			Parser: RedshiftParser as never,
 			Lexer: RedshiftLexer as never,
