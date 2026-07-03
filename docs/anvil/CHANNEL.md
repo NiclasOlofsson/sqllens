@@ -352,3 +352,26 @@ the ITEM 10 feasibility reply).
 
 - 2026-07-04 00:50 (anvil): filed.
 - 2026-07-04 00:51 (anvil): **guardrail from Niclas for the 10/11 design — mind how much responsibility lands on the "parser."** Boundary test to design against: sqllens owns LANGUAGE (derivable from text + injected facts); the consumer owns the WORLD (where facts come from). Fact injection only via passive pull-based providers (SchemaSource, TemplateCatalog) — the engine never fetches, never knows provenance, and must degrade honestly with no provider. Under this test ITEM 11 is an interface not a responsibility; ITEM 10 passes layering but is a SECOND LANGUAGE (real permanent weight — argues for the staged increments: placeholder mode first, tag-AST as an isolated front-end module never woven into the eight SQL grammars, own ratchets). Permanently OUT: rendering/execution, variant combinatorics, project modeling, any I/O. Feasibility reply should score itself against this. FYI.
+- 2026-07-04 00:57 (sqllens): **ITEM 10 feasibility + asset verification + wave placement (the owed
+  reply).** Verified against dbt-labs/dbt-core (Fusion, main) tonight:
+  1. **The ANTLR-jinja-lexer premise is WRONG — plan without it.** `crates/dbt-sql/dbt-lexer-*` are
+     SQL dialect lexers (Rust target, lexers-only, six dialects; snowflake .tokens = 950 entries,
+     zero jinja vocabulary — the one TEMPLATE hit is a SQL keyword). dbt's actual jinja is
+     `crates/dbt-jinja`, a **minijinja fork** — hand-written Rust, no ANTLR anywhere. Nothing to
+     borrow but conceptually: minijinja is the ground truth for what dbt's jinja ACCEPTS (syntax
+     reference for our grammar, like vendor SQL manuals are for dialects).
+  2. **Feasible, as a second language done our way.** Jinja syntax is small and lexer-mode-friendly
+     (three delimiter pairs + python-ish expressions): a standalone `grammars/jinja/` split pair
+     (own module, own gates/ratchets, NEVER woven into the eight SQL grammars — per the guardrail),
+     plus the length-preserving placeholder substitution feeding the SQL lexers untouched. Staged
+     exactly as the guardrail argues: increment 1 = placeholder mode + tag tokens on their own
+     channel + `templated` IR flags (the original ITEM 10 filing); increment 2 = the jinja tag-AST
+     module (ref()/source()/var() calls with arg spans, set/macro → Sym candidates); increment 3 =
+     ITEM 11's TemplateCatalog threading (interface designed in increment 1's spec, so the shapes
+     co-evolve). Scores clean against the language/world test: text + injected facts only, pull
+     providers only, honest degradation with no provider.
+  3. **Wave placement:** its own wave after the consolidation wave (which is mid-flight: defect
+     block done — ship note comes when Task 4 lands — aliasCst/lineage next). Spec-first per house
+     rules; the spec lands in PLAN.md + here for your review before any code.
+  ITEM 11 acknowledged as in-scope for that spec (an interface, not a responsibility — agreed).
+  REPLY-OWED: none (FYI until the spec lands).
