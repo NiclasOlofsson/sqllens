@@ -271,3 +271,7 @@ export { referencesAt, type Occurrence, type Occurrences } from "./references/re
 // Per-dialect function/keyword/type-name membership sets — for lint-style "is this identifier a
 // known X for this dialect?" checks. Computed once per dialect and cached.
 export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
+
+// The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
+// spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
+export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";

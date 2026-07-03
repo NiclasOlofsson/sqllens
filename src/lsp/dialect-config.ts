@@ -2,18 +2,18 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
-import { Schema, type Dialect, type SchemaMapping } from "../index.js";
+import { Schema, adapterDialect, type Dialect, type SchemaMapping } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // Dialect resolution: a document's dialect is configured, never guessed. Reads
 // <root>/.sqllens.json — ordered glob rules, first match wins, else `default`.
-// An optional `schema` key points at a JSON catalog (a SchemaMapping) used by the
-// semantic-diagnostics and hover tiers. A missing/malformed config falls back to
-// the "databricks" default and records a warning (surfaced over window/logMessage
-// by the server) — loading never throws.
+// A rule's `dialect` value is resolved through the library's adapter map, so it
+// accepts a dialect name OR a dbt adapter type (`athena` → trino, `fabric` →
+// tsql, …). An optional `schema` key points at a JSON catalog (a SchemaMapping)
+// used by the semantic-diagnostics and hover tiers. A missing/malformed config
+// falls back to the "databricks" default and records a warning (surfaced over
+// window/logMessage by the server) — loading never throws.
 // ---------------------------------------------------------------------------
-
-const KNOWN_DIALECTS: ReadonlySet<string> = new Set(["databricks", "tsql", "snowflake", "bigquery", "redshift"]);
 
 interface Rule {
 	files: string;
@@ -50,16 +50,18 @@ export function loadDialectConfig(rootDir: string): DialectConfig {
 				schema?: string;
 			};
 			for (const r of parsed.dialects ?? []) {
-				if (!KNOWN_DIALECTS.has(r.dialect)) {
+				const dialect = adapterDialect(r.dialect);
+				if (dialect === undefined) {
 					warnings.push(
 						`Unknown dialect "${r.dialect}" in .sqllens.json rule for "${r.files}"; rule ignored.`,
 					);
 					continue;
 				}
-				rules.push({ files: r.files, dialect: r.dialect as Dialect });
+				rules.push({ files: r.files, dialect });
 			}
 			if (parsed.default !== undefined) {
-				if (KNOWN_DIALECTS.has(parsed.default)) fallback = parsed.default as Dialect;
+				const dialect = adapterDialect(parsed.default);
+				if (dialect !== undefined) fallback = dialect;
 				else warnings.push(`Unknown default dialect "${parsed.default}" in .sqllens.json; using databricks.`);
 			}
 			if (parsed.schema !== undefined) {

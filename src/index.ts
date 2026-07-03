@@ -37,6 +37,8 @@ export {
 	type Occurrences,
 	dialectSymbols,
 	type DialectSymbols,
+	ADAPTER_DIALECTS,
+	adapterDialect,
 	type SignatureInfo,
 	type FnSignature,
 	type ParamSig,
