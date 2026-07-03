@@ -147,3 +147,45 @@ describe("T-SQL flows through the dialect-agnostic semantic layer", () => {
 		expect(syms.some((s) => s.name === "x")).toBe(true);
 	});
 });
+
+// SLL-surgery probes (see .superpowers/sdd/task-3-report.md). Each pins BOTH that the surviving
+// forms still parse cleanly AND that the pruned/left-factored decision no longer mispredicts
+// (sllFallback === false), plus reject probes for the nearby invalid forms.
+describe("T-SQL SLL-surgery — grammar-health probes", () => {
+	/** Parses cleanly (0 syntax errors) AND without an SLL→LL bail. */
+	function clean(sql: string): void {
+		const r = parseTSql(sql);
+		expect(r.errors, `expected a clean parse of: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected no SLL→LL fallback on: ${sql}`).toBe(false);
+	}
+	/** A syntactically invalid form: must still be rejected (errors > 0). */
+	function rejected(sql: string): void {
+		expect(parseTSql(sql).errors, `expected a syntax error for: ${sql}`).toBeGreaterThan(0);
+	}
+
+	// Iteration 1 — declare_statement: the scalar-data_type alternative was a subset of declare_local.
+	// Pruning it (and requiring a qualifier on the table-name alternative) keeps every valid DECLARE
+	// while ending the `= expr` / `, @v2` mispredict.
+	// learn.microsoft.com/en-us/sql/t-sql/language-elements/declare-local-variable-transact-sql
+	describe("declare_statement (iter 1)", () => {
+		it("declares a scalar variable, with and without an initializer, no fallback", () => {
+			clean("DECLARE @ID NVARCHAR(MAX) = N'x';");
+			clean("DECLARE @n INT;");
+			clean("DECLARE @n AS INT;");
+			clean("DECLARE @d DECIMAL(10, 2) = 1.5;");
+		});
+		it("declares multiple variables in one comma list", () => {
+			clean("DECLARE @s AS NVARCHAR(4000), @h AS hierarchyid;");
+			clean("DECLARE @a INT, @b VARCHAR(10) = 'x', @c BIT;");
+		});
+		it("declares a table variable — inline TABLE(...) and a user-defined table type", () => {
+			clean("DECLARE @t TABLE (c INT, d VARCHAR(10));");
+			clean("DECLARE @t AS dbo.MyTableType;"); // qualified UDT — the declare_as_table_name path
+			clean("DECLARE @t MyTableType;"); // bare UDT name — rides declare_local's data_type
+		});
+		it("rejects a DECLARE with no type and a bare initializer", () => {
+			rejected("DECLARE @x;");
+			rejected("DECLARE = 5;");
+		});
+	});
+});

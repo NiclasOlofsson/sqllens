@@ -2985,10 +2985,26 @@ opendatasource
 
 // https://msdn.microsoft.com/en-us/library/ms188927.aspx
 declare_statement
-    : DECLARE LOCAL_ID AS? (data_type | table_type_definition | table_name)
+    // The scalar-`data_type` case here was a strict subset of `declare_local` below (which is
+    // `LOCAL_ID AS? data_type ('=' expression)?`, comma-listed), so SLL committed to this alternative
+    // on every `DECLARE @v <type>` and then bailed on the `= expr` / `, @v2` that only declare_local
+    // accepts. Dropped it — declare_local covers every bare/scaled scalar type, incl. bare user-defined
+    // (table-)type names, since `data_type`'s `unscaled_type = id_` and `id_` covers `keyword`. What
+    // declare_local can NOT express is a schema/database-QUALIFIED type name, so `table_name` is
+    // replaced by `declare_as_table_name` (its prefix made mandatory) — disjoint from declare_local's
+    // bare id, which is what removes the misprediction.
+    // learn.microsoft.com/en-us/sql/t-sql/language-elements/declare-local-variable-transact-sql
+    : DECLARE LOCAL_ID AS? (table_type_definition | declare_as_table_name)
     | DECLARE loc += declare_local (',' loc += declare_local)*
     | DECLARE LOCAL_ID AS? xml_type_definition
     | WITH XMLNAMESPACES '(' xml_dec += xml_declaration (',' xml_dec += xml_declaration)* ')'
+    ;
+
+// table_name with its (optional) qualifying prefix made mandatory — the DECLARE-only path for a
+// schema/database-qualified user-defined table type (`DECLARE @t dbo.MyTableType`). The bare form is
+// declare_local's job; keeping this qualified-only keeps the two alternatives disjoint.
+declare_as_table_name
+    : (database = id_ '.' schema = id_? '.' | schema = id_ '.') (table = id_ | blocking_hierarchy = BLOCKING_HIERARCHY)
     ;
 
 xml_declaration
