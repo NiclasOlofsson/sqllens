@@ -41,6 +41,7 @@ import {
 	SelectionRangeRequest,
 	InlayHintRequest,
 	DocumentDiagnosticRequest,
+	DiagnosticSeverity,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
@@ -177,6 +178,18 @@ describe("LSP acceptance", () => {
 		const uri = open("ok.sql", "SELECT amount FROM sales");
 		const d = await waitForDiagnostics(uri);
 		expect(d.diagnostics).toEqual([]);
+	});
+
+	it("a call-arity diagnostic squiggles the RIGHT statement (per-cell, statement 2)", async () => {
+		// Statement 1 is clean; nullif takes exactly 2 args, so nullif(amount) in statement 2 is a
+		// wrong-arity WARNING — and it must land on statement 2's line (line 1), proving the per-cell
+		// qualification merge carries the diagnostic to the right document position.
+		const uri = open("calls.sql", "SELECT amount FROM sales;\nSELECT nullif(amount) FROM sales;");
+		const d = await waitForDiagnosticsWhere(uri, (x) => x.diagnostics.some((y) => /nullif/i.test(msg(y.message))));
+		const arity = d.diagnostics.find((y) => /nullif/i.test(msg(y.message)));
+		expect(arity).toBeDefined();
+		expect(arity!.range.start.line).toBe(1);
+		expect(arity!.severity).toBe(DiagnosticSeverity.Warning);
 	});
 
 	it("hover returns the inferred type of a column", async () => {

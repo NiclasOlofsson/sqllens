@@ -15,6 +15,7 @@ import {
 } from "../scope/scope.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
+import { checkCalls } from "./check-calls.js";
 import { type SchemaSource } from "./schema-source.js";
 
 // ---------------------------------------------------------------------------
@@ -25,7 +26,13 @@ import { type SchemaSource } from "./schema-source.js";
 // ---------------------------------------------------------------------------
 
 export interface Diagnostic {
-	kind: "unknown-table" | "unknown-column" | "ambiguous-column" | "unknown-field";
+	kind:
+		| "unknown-table"
+		| "unknown-column"
+		| "ambiguous-column"
+		| "unknown-field"
+		| "wrong-arity"
+		| "wrong-argument-type";
 	message: string;
 	/** Start of the offending node: 1-based line, 0-based column. */
 	line: number;
@@ -54,6 +61,10 @@ export function qualify(tree: ScopeTree, schema: SchemaSource): Qualification {
 		for (const ref of bodyColumns(scope)) checkColumn(scope, ref, schema, resolved, diagnostics);
 	};
 	visit(tree.root);
+
+	// Call-signature diagnostics (arity + operand types) — a separate walk over the modelled function
+	// calls, emitting into the same diagnostics list. Never-wrong; curated-only. See check-calls.ts.
+	checkCalls(tree, schema, diagnostics);
 
 	return {
 		diagnostics,

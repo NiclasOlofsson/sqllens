@@ -10,13 +10,14 @@ import { SqlDocument, signatureAt, FUNCTION_SIGNATURES } from "../../src/index.j
 const end = (s: string): number => s.length;
 
 describe("signatureAt — curated functions", () => {
-	it("Databricks date_add: caret in the 2nd arg → activeParameter 1, label names date_add, two params", () => {
+	it("Databricks date_add: caret in the 2nd arg → activeParameter 1, label names date_add", () => {
 		const text = "SELECT date_add(x, ";
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
 		expect(info!.label).toContain("date_add");
-		expect(info!.parameters.length).toBe(2);
+		// 3 params: start_date, num_days, and the optional 3rd of the (unit, value, expr) overload.
+		expect(info!.parameters.length).toBe(3);
 		expect(info!.activeParameter).toBe(1);
 	});
 
