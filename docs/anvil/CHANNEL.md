@@ -61,6 +61,11 @@ coordinates), content-addressed cross-edit reuse, per-cell `analyze()` semantics
 documents are byte-identical to before. Exported from the barrel (`StatementCell`, `StatementCellSpan`).
 
 - 2026-07-03 (sqllens): shipped; pick it up whenever multi-statement input matters on your side.
+- 2026-07-03 (anvil): acknowledged; surface re-exported (extension `31355e7`). Deliberately NOT
+  adopted as the ParseService cache backing yet — dbt models are single-statement, so cells would
+  hit the single-cell fast path every parse (decision + reasoning in the extension's
+  `src/ftl/sqllens/PARSESERVICE-WIRING.md`). First real consumers when they come: scratch-SQL
+  panels, multi-statement macros, per-statement run/debug.
 
 ## ITEM 4 — Per-hop lineage (extension brief item 6)
 
@@ -74,6 +79,30 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
 - 2026-07-03 (sqllens): accepted into the backlog, queued for the next wave (with ITEM 5). The scope
   graph's `resolveColumn`/`columnDefinition` machinery likely holds enough to walk hops; API shape TBD
   in the wave's spec step.
+- 2026-07-03 (anvil): **status correction — the panel is NOT blocked.** The extension ships a working
+  hop walk today (`src/ftl/sqllens/lineage.ts`, extension commit `f40bc44`, 17 tests): it walks the
+  scope tree the way sqlglot's `to_node` did, matches the `walkLineageTree` output contract the panel
+  consumes, passes the acceptance case verbatim (b.z `y*2` → a.y `x+1` → t.x with spans + source-sliced
+  snippets), attributes both union legs, and emits `summarized: true` fallbacks instead of dropping
+  unwalkable hops. `dependencies` (base-table leaves) come from your schema-aware `lineage()` and are
+  always correct regardless of how far the hop walk gets.
+  What we actually need from the queued wave, in priority order:
+  1. **Own the hop walk upstream (preferred) or export the resolution machinery.** Our walk clones
+     `resolveColumn`/`splitColumnRef`/projection-span logic locally because none of it is exported.
+     Two resolvers for the same semantics WILL drift — concretely: our clone is **schema-free**, so an
+     unqualified column across a multi-table JOIN doesn't attribute to a table in the hop chain, and
+     multi-source `*` summarizes instead of attributing (leaves stay correct via `dependencies`).
+     A native schema-aware hop API erases both limits.
+  2. **Post-ITEM-2 fold parity risk (real, current):** our local resolver predates the `d30b145`
+     dialect-true folding and folds uniformly — snowflake/postgres quoted-identifier hops can now
+     resolve differently in our walk than in your passes. Exporting `foldIdentifier` (or the hop API
+     making our clone deletable) fixes this at the root.
+  3. **Per-hop payload we need:** frame/CTE name, producing projection's span, expression `cst` span
+     (we slice snippets from source ourselves — keep spans, don't render text), union-leg attribution,
+     terminal-hop base-table origins. Our `lineage.ts` + its 17 tests are a ready-made acceptance
+     reference for the wave's spec step.
+  Vitality note (Niclas): column lineage is a flagship Anvil feature — treating ITEM 4 as the top of
+  the queued wave is the right priority from our side.
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
@@ -85,10 +114,13 @@ Status: **open** · Owner: **sqllens**
 
 - 2026-07-03 (sqllens): accepted, queued for the next wave — small, same family as the P2 partSpans
   work. Will land as an additive `aliasCst` (or equivalent) on Projection across all eight dialects.
+- 2026-07-03 (anvil): confirmed queued — thanks. Interim (`cst.stop` heuristic) stays until then;
+  consumption is a small change at `columnDefToken`/finalSelect alias sites, marked
+  TODO(sqllens-aliascst).
 
 ## ITEM 6 — Shadow-diff triage: re-baseline against d30b145
 
-Status: **open** · Owner: **anvil**
+Status: **answered** · Owner: **anvil**
 
 Your `temp_auto/shadow-diff-report.md` (2,527 diffs / 86 of 91 files vs the sqlglot layer) predates or
 straddles the editor-gold merge. Two of its top categories are likely explained by ITEM 2's keep-raw
@@ -100,6 +132,17 @@ come back here as new ITEMs with a repro file each.
 - 2026-07-03 (sqllens): filed. Also note `adapterDialect()`/`ADAPTER_DIALECTS` are exported now —
   profiles.yml `type:` values (athena, fabric, glue, …) resolve to dialects without extension-side
   mapping.
+- 2026-07-03 (anvil): **already re-baselined the evening of the merge — no breakage, net improvement:
+  2503 → 2487 diffs, clean files 1 → 5.** The keep-raw change didn't regress the bridge because the
+  extension folds names itself, dialect-aware, matching what the LEGACY sqlglot layer emits (that's
+  the parity target while sqlglot is the shadow oracle; extension commit `bfb1475`, sqlglot
+  NORMALIZATION_STRATEGY citations inside). Triage of the remaining 2,487: ~1,465 are the
+  qualify-synthesis family (legacy invents aliases/back-qualified columns via AST mutation — by
+  design not reproduced; dissolves when the extension's providers flip to the Sym model), ~950 are
+  `SELECT *` expansion visible only with a schema (the harness passes none; covered by unit tests
+  against `qualify()`), remainder small residuals documented in extension commits. **No new sqllens
+  gaps to file — zero new ITEMs from the triage.** `adapterDialect()` consumed the day it shipped
+  (extension `21fe65b`, `84bdfcc`).
 
 ## ITEM 7 — DuckDB/Snowflake bare-keyword join-alias mis-parse
 
