@@ -5,6 +5,7 @@ import { endPosition } from "../ir/span.js";
 import type { ColumnRef, Expr, QueryExpr } from "../ir/ir.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import type { Span, SymbolKind } from "../symbols/symbols.js";
@@ -59,7 +60,12 @@ const originKey = (o: Origin, dialect: string | undefined): string =>
  * needs the schema (without it, only the in-query occurrences are returned). Returns null when
  * the cursor is not on a resolvable symbol. Never throws.
  */
-export function referencesAt(scopes: ScopeTree, offset: number, schema?: Schema, ast?: QueryExpr): Occurrences | null {
+export function referencesAt(
+	scopes: ScopeTree,
+	offset: number,
+	schema?: SchemaSource,
+	ast?: QueryExpr,
+): Occurrences | null {
 	try {
 		return compute(scopes, offset, schema ?? new Schema({}), ast);
 	} catch {
@@ -67,7 +73,7 @@ export function referencesAt(scopes: ScopeTree, offset: number, schema?: Schema,
 	}
 }
 
-function compute(scopes: ScopeTree, offset: number, schema: Schema, ast?: QueryExpr): Occurrences | null {
+function compute(scopes: ScopeTree, offset: number, schema: SchemaSource, ast?: QueryExpr): Occurrences | null {
 	// 1. Prefer a column Expr under the cursor (an actual reference node).
 	const hit = nodeAt(scopes, offset, ast);
 	if (hit && hit.expr.kind === "column") {
@@ -87,7 +93,7 @@ function compute(scopes: ScopeTree, offset: number, schema: Schema, ast?: QueryE
 
 // --- column identity -------------------------------------------------------
 
-function columnIdentity(scope: Scope, ref: ColumnRef, schema: Schema): Identity | undefined {
+function columnIdentity(scope: Scope, ref: ColumnRef, schema: SchemaSource): Identity | undefined {
 	const d = scope.dialect;
 	// Schema-fed: a base-table Origin unifies the column across CTE/subquery boundaries.
 	const origins = originsOf({ kind: "column", parts: ref.parts, cst: ref.cst }, scope, schema);
@@ -112,7 +118,7 @@ function boundColumn(scope: Scope, ref: ColumnRef): { source: ResolvedSource; co
 }
 
 /** True if two column refs (resolved from possibly different scopes) share the target identity. */
-function columnMatches(id: Identity, scope: Scope, ref: ColumnRef, schema: Schema): boolean {
+function columnMatches(id: Identity, scope: Scope, ref: ColumnRef, schema: SchemaSource): boolean {
 	if (id.tag === "name") return false;
 	if (id.tag === "origins") {
 		const origins = originsOf({ kind: "column", parts: ref.parts, cst: ref.cst }, scope, schema);
@@ -124,7 +130,7 @@ function columnMatches(id: Identity, scope: Scope, ref: ColumnRef, schema: Schem
 	return b !== undefined && b.source === id.source && foldIdentifier(b.column, scope.dialect) === id.column;
 }
 
-function collectColumn(scopes: ScopeTree, id: Identity, schema: Schema, symbol: string): Occurrences {
+function collectColumn(scopes: ScopeTree, id: Identity, schema: SchemaSource, symbol: string): Occurrences {
 	const occ: Occurrence[] = [];
 	const seen = new Set<string>();
 	const add = (cst: ParserRuleContext, role: Occurrence["role"]): void => {
@@ -152,7 +158,7 @@ function collectColumn(scopes: ScopeTree, id: Identity, schema: Schema, symbol: 
 }
 
 /** The span of the projection (in some scope) that PRODUCES the target column — its declaration. */
-function columnDeclaration(root: Scope, id: Identity, schema: Schema): ParserRuleContext | undefined {
+function columnDeclaration(root: Scope, id: Identity, schema: SchemaSource): ParserRuleContext | undefined {
 	if (id.tag === "name") return undefined;
 	const want = id.column;
 	let best: ParserRuleContext | undefined;
@@ -176,7 +182,7 @@ function columnDeclaration(root: Scope, id: Identity, schema: Schema): ParserRul
 	return best;
 }
 
-function projectionMatches(id: Identity, scope: Scope, expr: Expr, schema: Schema): boolean {
+function projectionMatches(id: Identity, scope: Scope, expr: Expr, schema: SchemaSource): boolean {
 	if (id.tag === "name") return false;
 	if (expr.kind !== "column") {
 		// A computed projection of the right NAME still declares the output column for a source-identity

@@ -1,6 +1,6 @@
 import { CompletionItemKind } from "vscode-languageserver-types";
 import type { CompletionItem, Position } from "vscode-languageserver-types";
-import { complete, type Completion, type Dialect, type Schema, type SqlDocument } from "../../index.js";
+import { complete, type Completion, type Dialect, type SchemaSource, type SqlDocument } from "../../index.js";
 
 // ---------------------------------------------------------------------------
 // Completion: the interactive editor feature that lives in the BROKEN-input
@@ -19,7 +19,7 @@ const KIND: Record<Completion["kind"], CompletionItemKind> = {
 	function: CompletionItemKind.Function,
 };
 
-export function computeCompletion(doc: SqlDocument, position: Position, schema?: Schema): CompletionItem[] {
+export function computeCompletion(doc: SqlDocument, position: Position, schema?: SchemaSource): CompletionItem[] {
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const items = complete(doc, off, schema);
 	return items.map((c) => {

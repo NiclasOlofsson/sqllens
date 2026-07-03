@@ -1,5 +1,11 @@
 import { type DocumentSymbol, SymbolKind } from "vscode-languageserver-types";
-import { formatType, type Schema, type Sym, type SymbolKind as SqlSymbolKind, type SqlDocument } from "../../index.js";
+import {
+	formatType,
+	type SchemaSource,
+	type Sym,
+	type SymbolKind as SqlSymbolKind,
+	type SqlDocument,
+} from "../../index.js";
 import { rangeFromSpan } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -28,7 +34,7 @@ function include(s: Sym): boolean {
 	return false;
 }
 
-export function computeDocumentSymbols(doc: SqlDocument, schema?: Schema): DocumentSymbol[] {
+export function computeDocumentSymbols(doc: SqlDocument, schema?: SchemaSource): DocumentSymbol[] {
 	const out: DocumentSymbol[] = [];
 	for (const s of doc.analyze(schema).symbols) {
 		if (!include(s)) continue;

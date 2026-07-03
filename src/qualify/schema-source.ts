@@ -59,6 +59,8 @@ export class CallbackSchema implements SchemaSource {
 	/** Distinct folded miss keys, in first-seen order. */
 	private readonly _misses: string[][] = [];
 	private readonly missSeen = new Set<string>();
+	/** The in-flight prime(), or null when idle — the coalescing guard (see prime()). */
+	private inFlight: Promise<boolean> | null = null;
 	/** Folded dotted path -> folded parts, for every table the resolver has revealed so far. */
 	private readonly revealed = new Map<string, string[]>();
 
@@ -95,9 +97,28 @@ export class CallbackSchema implements SchemaSource {
 	/** Drain the recorded misses through the resolver's async fetch, re-probe, and — if any missed
 	 *  table now resolves — remove it from the miss list and bump `version`. Resolves to true when
 	 *  anything new arrived (so the consumer should re-analyze). 100%-sync analysis is preserved:
-	 *  this is the one async seam. */
-	async prime(): Promise<boolean> {
-		if (this._misses.length === 0) return false;
+	 *  this is the one async seam.
+	 *
+	 *  In-flight coalescing: a second prime() while one is already running returns the SAME promise
+	 *  rather than starting a fresh drain. Without this, two concurrent primes (e.g. the LSP fires one
+	 *  per publish, and open triggers two publishes) would both snapshot the miss list and both fetch +
+	 *  bump the version — a double fetch and a spurious extra invalidation. Returning the in-flight
+	 *  promise (rather than chaining a second pass) is deliberate: it keeps the fetch count at one and
+	 *  the version bump at one; a miss recorded during the in-flight fetch is drained-then-dropped by
+	 *  this pass (see the truncation note below) and re-recorded by the next analyze() — never-wrong
+	 *  holds, so the coalesced caller loses nothing permanently, it just warms one prime later. */
+	prime(): Promise<boolean> {
+		if (this.inFlight) return this.inFlight;
+		if (this._misses.length === 0) return Promise.resolve(false);
+		const run = this.drain().finally(() => {
+			this.inFlight = null;
+		});
+		this.inFlight = run;
+		return run;
+	}
+
+	/** One prime pass: fetch the current misses, re-probe, drain the resolved ones, bump version. */
+	private async drain(): Promise<boolean> {
 		const pending = this._misses.map((p) => [...p]);
 		if (this.resolver.fetch) await this.resolver.fetch(pending);
 
@@ -115,6 +136,11 @@ export class CallbackSchema implements SchemaSource {
 				this.revealed.set(folded.join("."), folded);
 			}
 		}
+		// Re-entrant miss note: a table missed by a columnsFor() that ran DURING the `await fetch` above
+		// is in `this._misses` now but NOT in `pending`, so this truncation drops it. That is benign and
+		// intentional — the next analyze() re-probes the cache, re-records the still-cold table, and the
+		// next prime() warms it (never-wrong: it shows as unknown only until then). Merging it into
+		// `stillMissing` would be wrong anyway — its folded parts were never handed to this pass's fetch.
 		this._misses.length = 0;
 		this._misses.push(...stillMissing);
 		if (anyNew) this._version++;

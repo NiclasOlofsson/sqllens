@@ -46,7 +46,7 @@ import {
 } from "vscode-languageserver-protocol/node";
 import { SEMANTIC_LEGEND } from "../src/lsp/features/semantic-tokens.js";
 import { startServer } from "../src/lsp/server.js";
-import { SqlDocument } from "../src/index.js";
+import { SqlDocument, CallbackSchema, type TableResolver } from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
 const msg = (m: string | { value: string }): string => (typeof m === "string" ? m : m.value);
@@ -135,6 +135,17 @@ async function waitForDiagnostics(uri: string): Promise<PublishDiagnosticsParams
 		await new Promise((r) => setTimeout(r, 10));
 	}
 	throw new Error("no diagnostics published for " + uri);
+}
+
+/** Poll `fn` until it returns a defined value (used by the lazy-catalog suite, which collects every
+ *  publish rather than only the latest-per-uri). */
+async function waitFor<T>(fn: () => T | undefined): Promise<T> {
+	for (let i = 0; i < 50; i++) {
+		const v = fn();
+		if (v !== undefined) return v;
+		await new Promise((r) => setTimeout(r, 10));
+	}
+	throw new Error("waitFor: predicate never satisfied");
 }
 
 describe("LSP acceptance", () => {
@@ -852,5 +863,92 @@ describe("LSP multi-statement semantics (Task 6)", () => {
 		// The innermost range covers `id` on doc line 1 (proves the CST-node range shifted to doc coords).
 		expect(result[0].range.start.line).toBe(1);
 		expect(result[0].range.start.character).toBeLessThanOrEqual(idStart);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 8 — lazy catalog. A host embeds the server with a CallbackSchema (the
+// resolve-on-demand catalog) instead of a static file schema. The FIRST publish
+// resolves against a cold host cache, so an unknown table squiggles. The server's
+// publish loop then warms the resolver in the background (prime()) and — when a
+// table is revealed — RE-publishes; the second publish drops the diagnostic. This
+// is the whole lazy-catalog contract: never-wrong on the cold read, self-healing
+// when the resolver warms.
+// ---------------------------------------------------------------------------
+describe("LSP lazy catalog (Task 8)", () => {
+	let lazyRoot: string;
+	let lazyClient: ReturnType<typeof createProtocolConnection>;
+	const publishes: PublishDiagnosticsParams[] = [];
+	let fetchCalls = 0;
+
+	beforeAll(async () => {
+		lazyRoot = mkdtempSync(join(tmpdir(), "sqllens-lazy-"));
+		writeFileSync(
+			join(lazyRoot, ".sqllens.json"),
+			JSON.stringify({ dialects: [{ files: "**/*.sql", dialect: "databricks" }], default: "databricks" }),
+		);
+
+		// The host's warm cache — empty at first. `resolve` is a sync read of it (a cold miss returns
+		// undefined → the CallbackSchema records the miss); `fetch` is the background warm that reveals
+		// `orders` on the first prime.
+		const cache = new Map<string, { name: string; type?: string }[]>();
+		const resolver: TableResolver = {
+			resolve: (parts) => cache.get(parts.join(".")),
+			fetch: async (missing) => {
+				fetchCalls++;
+				for (const parts of missing) {
+					if (parts.join(".") === "orders") cache.set("orders", [{ name: "id", type: "int" }]);
+				}
+			},
+		};
+		const schema = new CallbackSchema(resolver);
+
+		const up = new TestStream();
+		const down = new TestStream();
+		const serverConnection = createConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
+		// The embedding entry point: the host hands the server a SchemaSource.
+		startServer(serverConnection, { schema });
+
+		lazyClient = createProtocolConnection(new StreamMessageReader(down), new StreamMessageWriter(up));
+		lazyClient.onNotification(PublishDiagnosticsNotification.type, (p) => {
+			publishes.push(p);
+		});
+		lazyClient.listen();
+
+		await lazyClient.sendRequest(InitializeRequest.type, {
+			processId: null,
+			rootUri: pathToFileURL(lazyRoot).toString(),
+			capabilities: {},
+			workspaceFolders: null,
+		});
+	});
+
+	afterAll(() => {
+		lazyClient.dispose();
+		rmSync(lazyRoot, { recursive: true, force: true });
+	});
+
+	it("first publish flags the unknown table; a later publish drops it once the resolver warms", async () => {
+		const uri = pathToFileURL(join(lazyRoot, "lazy.sql")).toString();
+		// `SELECT *` forces star-expansion, which needs the table's columns — so a cold `orders`
+		// yields an unknown-table diagnostic that a warm one (columns revealed) clears.
+		void lazyClient.sendNotification(DidOpenTextDocumentNotification.type, {
+			textDocument: { uri, languageId: "sql", version: 1, text: "SELECT * FROM orders" },
+		});
+
+		// First publish: the host cache is cold, so `orders` is unknown and squiggles.
+		const dirty = await waitFor(() =>
+			publishes.find((p) => p.uri === uri && p.diagnostics.some((d) => /orders/i.test(msg(d.message)))),
+		);
+		expect(dirty.diagnostics.some((d) => /orders/i.test(msg(d.message)))).toBe(true);
+
+		// The prime microtask warms the resolver, then a SECOND publish arrives — diagnostic-clean.
+		const clean = await waitFor(() => publishes.find((p) => p.uri === uri && p.diagnostics.length === 0));
+		expect(clean.diagnostics).toEqual([]);
+
+		// It is a RE-publish (came after the dirty one), and the resolver was fetched exactly once
+		// (in-flight coalescing — no double fetch on the single open).
+		expect(publishes.indexOf(clean)).toBeGreaterThan(publishes.indexOf(dirty));
+		expect(fetchCalls).toBe(1);
 	});
 });

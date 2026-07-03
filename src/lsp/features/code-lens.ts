@@ -1,5 +1,5 @@
 import type { CodeLens } from "vscode-languageserver-types";
-import { referencesAt, type Schema, type Sym, type SqlDocument } from "../../index.js";
+import { referencesAt, type SchemaSource, type Sym, type SqlDocument } from "../../index.js";
 import { rangeFromSpan } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -15,7 +15,7 @@ import { rangeFromSpan } from "../ranges.js";
 
 const COUNTABLE = new Set<Sym["kind"]>(["cte", "alias", "column", "subquery"]);
 
-export function computeCodeLens(doc: SqlDocument, schema?: Schema): CodeLens[] {
+export function computeCodeLens(doc: SqlDocument, schema?: SchemaSource): CodeLens[] {
 	try {
 		const out: CodeLens[] = [];
 		for (const s of doc.analyze(schema).symbols) {

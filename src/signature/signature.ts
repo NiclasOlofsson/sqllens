@@ -22,7 +22,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SqlDocument } from "../document/document.js";
-import type { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import type { Token } from "../token/token.js";
 import { inferDialect } from "../infer/dialect.js";
 import { hasSignature, lookupSignature, type FnSignature, type ParamSig } from "./signatures.js";
@@ -42,7 +42,7 @@ export interface SignatureInfo {
  * recognizable call. `schema` is accepted for parity with the other features (and future
  * overload selection) but the curated tables don't need it today. NEVER throws.
  */
-export function signatureAt(doc: SqlDocument, offset: number, _schema?: Schema): SignatureInfo | null {
+export function signatureAt(doc: SqlDocument, offset: number, _schema?: SchemaSource): SignatureInfo | null {
 	try {
 		return compute(doc, offset);
 	} catch {

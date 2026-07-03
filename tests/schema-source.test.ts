@@ -98,6 +98,37 @@ describe("CallbackSchema — analyze over a resolve-on-demand catalog", () => {
 		expect(cb.misses).toEqual([["t3"]]); // still missing
 	});
 
+	it("(b3) two concurrent prime() calls coalesce — one fetch, one version bump (Task 8)", async () => {
+		// The LSP fires prime() per publish, and opening a document triggers two publishes — so two
+		// prime() calls can race. Without coalescing both snapshot the same miss and both fetch + bump.
+		// Guard: the second prime() returns the first's in-flight promise, so exactly one fetch runs and
+		// version advances by exactly one.
+		const cache = new Map<string, Column[]>();
+		let fetches = 0;
+		const resolver: TableResolver = {
+			resolve: (parts) => cache.get(parts.join(".")),
+			fetch: async (missing) => {
+				fetches++;
+				await new Promise((r) => setTimeout(r, 5)); // a real async gap so the second prime() overlaps
+				for (const m of missing) if (m.join(".") === "t2") cache.set("t2", [{ name: "b", type: "int" }]);
+			},
+		};
+		const cb = new CallbackSchema(resolver);
+		const doc = SqlDocument.create("SELECT * FROM t2", "databricks");
+		doc.analyze(cb);
+		expect(cb.misses).toEqual([["t2"]]);
+
+		const [r1, r2] = await Promise.all([cb.prime(), cb.prime()]);
+		expect(r1).toBe(true);
+		expect(r2).toBe(true);
+		expect(fetches).toBe(1); // coalesced — not two fetches
+		expect(cb.version).toBe(1); // one bump, not two
+		expect(cb.misses).toEqual([]); // drained
+
+		// After it settles, a fresh prime() with no misses is a clean no-op false.
+		expect(await cb.prime()).toBe(false);
+	});
+
 	it("(c) a plain Schema memoizes analyze() exactly as before (version constant 0)", () => {
 		const schema = new Schema({ t1: { a: "int" } });
 		expect(schema.version).toBe(0);

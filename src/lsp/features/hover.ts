@@ -1,5 +1,5 @@
 import type { Hover, Position } from "vscode-languageserver-types";
-import { formatType, type Schema, type SqlDocument } from "../../index.js";
+import { formatType, type SchemaSource, type SqlDocument } from "../../index.js";
 import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.js";
 import { symbolAt } from "../sym-at.js";
 
@@ -11,7 +11,7 @@ import { symbolAt } from "../sym-at.js";
 // Meta: Claude Code's LSP tool speaks this method (hover).
 // ---------------------------------------------------------------------------
 
-export function computeHover(doc: SqlDocument, position: Position, schema?: Schema): Hover | null {
+export function computeHover(doc: SqlDocument, position: Position, schema?: SchemaSource): Hover | null {
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const hit = doc.nodeAt(off);
 	if (hit) {
