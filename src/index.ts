@@ -47,6 +47,8 @@ export {
 	type Token,
 	type TokenRole,
 	type DocumentAnalysis,
+	type StatementCell,
+	type StatementCellSpan,
 } from "./api.js";
 
 // --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---

@@ -1,0 +1,162 @@
+import { describe, it, expect } from "vitest";
+import { SqlDocument } from "../src/document/document.js";
+import { parse, toScopes } from "../src/api.js";
+import { shiftDiagnostic } from "../src/document/shift.js";
+import type { SyntaxDiagnostic } from "../src/parse-diagnostics.js";
+
+// ---------------------------------------------------------------------------
+// SqlDocument statement cells (Task 5). A document splits into per-statement
+// cells (src/document/split.ts), each parsed independently, with a content-
+// addressed cache so an edit reuses the unchanged cells across withText().
+// The single-cell facade stays byte-identical to today; multi-cell keeps a
+// compound-flagged facade, with statements/cellAt as the real surface.
+// ---------------------------------------------------------------------------
+
+/** Strip the foreign antlr cst back-refs so two independent parses compare structurally. */
+function stripCst(o: unknown): unknown {
+	return JSON.parse(JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" ? undefined : v)));
+}
+
+describe("shiftDiagnostic", () => {
+	it("a diagnostic on the cell's first line shifts line + column + offset", () => {
+		const d: SyntaxDiagnostic = { message: "x", line: 1, column: 3, offset: 5, length: 2 };
+		const s = shiftDiagnostic(d, 2, 10, 100);
+		expect(s.line).toBe(3); // 1 + baseLine 2
+		expect(s.column).toBe(13); // first line → 3 + baseCol 10
+		expect(s.offset).toBe(105); // 5 + baseOffset 100
+		expect(s.length).toBe(2);
+	});
+
+	it("a diagnostic on a later line shifts only the line (column unchanged)", () => {
+		const d: SyntaxDiagnostic = { message: "y", line: 3, column: 4, offset: 7, length: 1 };
+		const s = shiftDiagnostic(d, 2, 10, 100);
+		expect(s.line).toBe(5); // 3 + baseLine 2
+		expect(s.column).toBe(4); // later line → unchanged
+		expect(s.offset).toBe(107);
+	});
+
+	it("a zero base is an identity (returns the same values)", () => {
+		const d: SyntaxDiagnostic = { message: "z", line: 2, column: 1, offset: 9, length: 3 };
+		const s = shiftDiagnostic(d, 0, 0, 0);
+		expect(s).toEqual(d);
+	});
+});
+
+describe("SqlDocument single-cell back-compat (byte-exact)", () => {
+	const text = "SELECT amount FROM sales";
+
+	it("tokens / diagnostics / errors deep-equal a raw parse() (pre-refactor snapshot)", () => {
+		const doc = SqlDocument.create(text, "databricks");
+		const p = parse(text, "databricks");
+		expect(doc.tokens).toEqual(p.tokens);
+		expect(doc.diagnostics).toEqual(p.diagnostics);
+		expect(doc.errors).toBe(p.errors);
+	});
+
+	it("ast deep-equals a raw parse() (cst-stripped)", () => {
+		const doc = SqlDocument.create(text, "databricks");
+		const p = parse(text, "databricks");
+		expect(stripCst(doc.ast)).toEqual(stripCst(p.ast));
+		expect(doc.ast.statement).toBe("query");
+	});
+
+	it("scopes match a raw resolve (statement + output columns)", () => {
+		const doc = SqlDocument.create(text, "databricks");
+		const scopes = toScopes(parse(text, "databricks").ast, { dialect: "databricks" });
+		expect(doc.scopes.statement).toBe(scopes.statement);
+		expect(doc.scopes.root.outputs).toEqual(scopes.root.outputs);
+	});
+
+	it("has exactly one statement cell, reference-identical to the facade fields", () => {
+		const doc = SqlDocument.create(text, "databricks");
+		expect(doc.statements.length).toBe(1);
+		expect(doc.statements[0].ast).toBe(doc.ast);
+		expect(doc.statements[0].cst).toBe(doc.cst);
+		expect(doc.statements[0].scopes).toBe(doc.scopes);
+	});
+});
+
+describe("SqlDocument multi-cell", () => {
+	it("two statements become two real (non-compound) cells", () => {
+		const text = "SELECT amount FROM sales; SELECT id FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		expect(doc.statements.length).toBe(2);
+		expect(doc.statements[0].ast.statement).toBe("query");
+		expect(doc.statements[1].ast.statement).toBe("query");
+		// facade keeps the compound-flagged shape for back-compat
+		expect(doc.ast.statement).toBe("compound");
+		expect(doc.scopes.statement).toBe("compound");
+	});
+
+	it("token spans are in doc coordinates and tile monotonically", () => {
+		const text = "SELECT amount FROM sales; SELECT id FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		// tokens are non-decreasing in doc offsets, and each matches the source slice
+		let prev = -1;
+		for (const t of doc.tokens) {
+			expect(t.start).toBeGreaterThanOrEqual(prev);
+			expect(text.slice(t.start, t.stop + 1)).toBe(t.text);
+			prev = t.start;
+		}
+		// the second statement's `id` token sits at its real doc offset
+		const idTok = doc.tokens.find((t) => t.text === "id");
+		expect(idTok).toBeDefined();
+		expect(idTok!.start).toBe(text.indexOf("id"));
+	});
+
+	it("a syntax error in statement 2 is positioned in statement 2's lines; statement 1 is clean", () => {
+		const text = "SELECT amount FROM sales;\nSELECT (1";
+		const doc = SqlDocument.create(text, "databricks");
+		expect(doc.statements[0].errors).toBe(0);
+		expect(doc.statements[0].diagnostics.length).toBe(0);
+		expect(doc.statements[1].errors).toBeGreaterThan(0);
+		// stmt 2 lives on doc line 2 (1-based) — diagnostics shifted there, not line 1
+		for (const d of doc.statements[1].diagnostics) expect(d.line).toBe(2);
+		// facade concat: doc.errors is the sum, doc.diagnostics the concat
+		expect(doc.errors).toBe(doc.statements[1].errors);
+		expect(doc.diagnostics.length).toBe(doc.statements[1].diagnostics.length);
+	});
+
+	it("cellAt() binary-searches to the cell owning an offset", () => {
+		const text = "SELECT amount FROM sales; SELECT id FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		expect(doc.cellAt(text.indexOf("amount"))).toBe(doc.statements[0]);
+		expect(doc.cellAt(text.indexOf("id"))).toBe(doc.statements[1]);
+		expect(doc.cellAt(0)).toBe(doc.statements[0]);
+		expect(doc.cellAt(text.length - 1)).toBe(doc.statements[1]);
+	});
+
+	it("cells are frozen", () => {
+		const text = "SELECT amount FROM sales; SELECT id FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		expect(Object.isFrozen(doc.statements)).toBe(true);
+		expect(Object.isFrozen(doc.statements[0])).toBe(true);
+	});
+});
+
+describe("SqlDocument content-addressed cell reuse across edits", () => {
+	it("editing only statement 2 reuses statement 1's cell (cst reference identity)", () => {
+		const d1 = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
+		const d2 = d1.withText("SELECT amount FROM sales;\nSELECT other FROM sales", 1);
+		expect(d2.statements[0].cst).toBe(d1.statements[0].cst); // reused
+		expect(d2.statements[1].cst).not.toBe(d1.statements[1].cst); // re-parsed
+	});
+
+	it("reordering two statements cache-hits both cells (content addressing)", () => {
+		const d1 = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y;", "databricks");
+		expect(d1.statements.length).toBe(2);
+		const [c1, c2] = d1.statements;
+		// concatenating the exact cell slices in swapped order reproduces both cell texts
+		const d2 = d1.withText(c2.text + c1.text, 1);
+		expect(d2.statements.length).toBe(2);
+		const d1csts = new Set([c1.cst, c2.cst]);
+		expect(d1csts.has(d2.statements[0].cst)).toBe(true);
+		expect(d1csts.has(d2.statements[1].cst)).toBe(true);
+	});
+
+	it("a fresh create() does NOT reuse a prior document's cache", () => {
+		const d1 = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
+		const fresh = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
+		expect(fresh.statements[0].cst).not.toBe(d1.statements[0].cst);
+	});
+});
