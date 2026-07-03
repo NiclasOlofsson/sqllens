@@ -194,7 +194,7 @@ export function foldIdentifier(raw: string, dialect: string | undefined, kind: I
  *  apply NO case change — the string a UI shows for a name. Never use this for comparison; two
  *  displayName results being equal proves nothing about identity. */
 export function displayName(raw: string, dialect: string | undefined): string {
-	const rule = (dialect && RULES[dialect]) || DEFAULT_RULE;
+	const rule = (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
 	return unwrap(raw, rule)[0];
 }
 

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { foldIdentifier } from "../src/ident/fold.js";
+import { displayName, foldIdentifier } from "../src/ident/fold.js";
 
 // Case-folding is the identity key for name comparison across the pipeline (scope/qualify/
 // references/…). Each dialect's rule is doc-cited in src/ident/fold.ts; this suite pins the
@@ -139,5 +139,8 @@ describe("undefined/unknown dialect", () => {
 	it("does not read Object.prototype keys off the rule table", () => {
 		expect(foldIdentifier("x", "constructor")).toBe("x");
 		expect(foldIdentifier("`MyTable`", "constructor")).toBe("mytable");
+	});
+	it("displayName does not read Object.prototype keys off the rule table", () => {
+		expect(displayName("`MyTable`", "constructor")).toBe("MyTable");
 	});
 });
