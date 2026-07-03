@@ -5,6 +5,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	PivotInfo,
 	Projection,
@@ -332,7 +334,10 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	const qualifyP = qualifyClause ? directChildrenOfRule(qualifyClause, P.RULE_predicate)[0] : undefined;
 	const qualify = qualifyExpr ? lowerExpr(qualifyExpr) : qualifyP ? lowerPredicate(qualifyP) : undefined;
 
-	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
+	const joinConditions: Expr[] = [];
+	const onByCst = new Map<ParserRuleContext, Expr>();
+	if (fromClause) extractJoinConditions(fromClause, joinConditions, onByCst);
+	const joins = fromClause ? buildJoins(fromClause, from, onByCst) : [];
 	const subqueries = extractExpressionSubqueries(stmt, fromSubqueryNodes(from));
 
 	const aggregated =
@@ -357,6 +362,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 		columns,
 		where: whereExpr,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having,
 		qualify,
@@ -449,17 +455,72 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 	return items.length ? items : undefined;
 }
 
-function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
-	const out: Expr[] = [];
+function extractJoinConditions(
+	fromClause: ParserRuleContext,
+	out: Expr[],
+	onByCst: Map<ParserRuleContext, Expr>,
+): void {
 	for (const jc of shallowNodesOfRule(fromClause, P.RULE_join_clause)) {
 		const onUsing = directChildrenOfRule(jc, P.RULE_on_using_clause)[0];
 		const sc = onUsing ? directChildrenOfRule(onUsing, P.RULE_search_condition)[0] : undefined;
-		if (sc) out.push(lowerSearch(sc));
-		// ASOF JOIN … MATCH_CONDITION ( expr ): the temporal-match predicate.
+		// Lower the ON once, keyed by its search_condition CST so buildJoins shares the same Expr.
+		if (sc) {
+			const e = lowerSearch(sc);
+			out.push(e);
+			onByCst.set(sc, e);
+		}
+		// ASOF JOIN … MATCH_CONDITION ( expr ): the temporal-match predicate. Conserved in joinConditions
+		// (order unchanged) but not separately linked onto the Join (its `on` is the ON search_condition).
 		const match = directChildrenOfRule(jc, P.RULE_expr)[0];
 		if (match) out.push(lowerExpr(match));
 	}
-	return out;
+}
+
+/** The FROM-clause JOIN chain as Join[]: one per join_clause, in tree (source) order. `join.source` is
+ *  the reference-identical `from` entry (matched by the join's object_ref CST); `join.on` is the shared
+ *  ON Expr from onByCst; USING columns come from the on_using_clause. */
+function buildJoins(fromClause: ParserRuleContext, from: Source[], onByCst: Map<ParserRuleContext, Expr>): Join[] {
+	const sourceByCst = new Map<ParserRuleContext, Source>();
+	for (const s of from) sourceByCst.set(s.cst, s);
+	const joins: Join[] = [];
+	for (const jc of shallowNodesOfRule(fromClause, P.RULE_join_clause)) {
+		const ref = directChildrenOfRule(jc, P.RULE_object_ref)[0];
+		const source = ref ? sourceByCst.get(ref) : undefined;
+		if (!source) continue;
+		const { kind, natural } = snowflakeJoinKind(jc);
+		const onUsing = directChildrenOfRule(jc, P.RULE_on_using_clause)[0];
+		let on: Expr | undefined;
+		let using: string[] | undefined;
+		if (onUsing) {
+			const sc = directChildrenOfRule(onUsing, P.RULE_search_condition)[0];
+			if (sc) on = onByCst.get(sc);
+			else using = columnListAliases(onUsing);
+		}
+		joins.push({ kind, source, on, using, natural: natural || undefined, cst: jc });
+	}
+	return joins;
+}
+
+/** Kind + NATURAL flag for a Snowflake `join_clause` (join_type? | NATURAL | CROSS | ASOF). join_type
+ *  is INNER or an outer_join child (LEFT|RIGHT|FULL OUTER?). */
+function snowflakeJoinKind(jc: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = directTokenType(jc, [P.NATURAL]) !== undefined;
+	if (directTokenType(jc, [P.CROSS]) !== undefined) return { kind: "cross", natural: false };
+	if (directTokenType(jc, [P.ASOF]) !== undefined) return { kind: "asof", natural: false };
+	const jt = directChildrenOfRule(jc, P.RULE_join_type)[0];
+	let ansi: JoinKind | undefined;
+	if (jt) {
+		if (directTokenType(jt, [P.INNER]) !== undefined) {
+			ansi = "inner";
+		} else {
+			const oj = directChildrenOfRule(jt, P.RULE_outer_join)[0] ?? jt;
+			const t = directTokenType(oj, [P.LEFT, P.RIGHT, P.FULL]);
+			if (t === P.LEFT) ansi = "left";
+			else if (t === P.RIGHT) ansi = "right";
+			else if (t === P.FULL) ansi = "full";
+		}
+	}
+	return { kind: ansi ?? (natural ? "natural" : "inner"), natural };
 }
 
 // --- CONNECT BY --------------------------------------------------------------
