@@ -48,9 +48,9 @@ const o = (name: string, type?: string): ParamSig =>
 const DATABRICKS: Record<string, FnSignature> = {
 	// date/time — Spark "Date and timestamp functions"
 	// date_add/datediff carry a 2-arg (start_date, num_days) and a 3-arg unit form
-	// (date_add(unit, value, expr)); num_days accepts a string (Spark implicitly casts).
-	date_add: { name: "date_add", params: [p("start_date", "date"), p("num_days"), o("expr")] }, // date_add function
-	date_sub: { name: "date_sub", params: [p("start_date", "date"), p("num_days"), o("expr")] }, // date_sub function
+	// (date_add(unit, value, expr)).
+	date_add: { name: "date_add", params: [p("start_date", "date"), p("num_days", "int"), o("expr")] }, // date_add function
+	date_sub: { name: "date_sub", params: [p("start_date", "date"), p("num_days", "int"), o("expr")] }, // date_sub function
 	datediff: { name: "datediff", params: [p("endDate", "date"), p("startDate", "date"), o("endTs")] }, // datediff function
 	date_trunc: { name: "date_trunc", params: [p("fmt", "string"), p("ts", "timestamp")] }, // date_trunc function
 	trunc: { name: "trunc", params: [p("date", "date"), p("fmt", "string")] }, // trunc function
@@ -61,9 +61,9 @@ const DATABRICKS: Record<string, FnSignature> = {
 	// string — Spark "String functions"
 	concat: { name: "concat", params: [p("expr", "string")], variadic: true }, // concat function (variadic)
 	concat_ws: { name: "concat_ws", params: [p("sep", "string"), p("expr", "string")], variadic: true }, // concat_ws function
-	// pos accepts a string (Spark implicitly casts); len is optional (to end of string).
-	substring: { name: "substring", params: [p("str", "string"), p("pos"), o("len", "int")] }, // substring function
-	substr: { name: "substr", params: [p("str", "string"), o("pos"), o("len", "int")] }, // substr function (pos optional per fn-invocation ref)
+	// len is optional (to end of string); substr's pos too (bare substr('hello') per fn-invocation ref).
+	substring: { name: "substring", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // substring function
+	substr: { name: "substr", params: [p("str", "string"), o("pos", "int"), o("len", "int")] }, // substr function
 	split: { name: "split", params: [p("str", "string"), p("regex", "string"), o("limit", "int")] }, // split function (limit optional)
 	split_part: { name: "split_part", params: [p("str", "string"), p("delimiter", "string"), p("partNum", "int")] }, // split_part function
 	replace: { name: "replace", params: [p("str", "string"), p("search", "string"), o("replace", "string")] }, // replace function (replace optional → '')

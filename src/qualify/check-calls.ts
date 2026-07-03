@@ -226,10 +226,12 @@ function arityAccepts(sig: FnSignature, n: number): boolean {
 
 // ---------------------------------------------------------------------------
 // Coercion — conservative acceptance of an argument type for a declared param type. Never-wrong:
-// return true (accept) unless we are CONFIDENT the two are incompatible. SQL implicit conversions are
-// lenient, so only a minimal, directional set of scalar-family mismatches is rejected. `string` is a
-// universal sink (any scalar renders as text), so a widening TO string is always accepted; a narrowing
-// FROM string to a numeric/boolean is the suspect direction.
+// return true (accept) unless we are CONFIDENT the two are incompatible FOR THIS DIALECT. Implicit
+// conversion rules are dialect law, not shared SQL law — the same str→num mismatch is a hard type
+// error in BigQuery and perfectly valid Spark — so the reject decision is per-dialect capability,
+// not a global set. `string` is a universal sink (any scalar renders as text), so a widening TO
+// string is always accepted; only two directional mismatches are ever rejected, each gated on the
+// dialect NOT bridging it implicitly.
 // ---------------------------------------------------------------------------
 
 type Family = "num" | "str" | "bool" | "temporal" | "binary" | "other";
@@ -246,10 +248,41 @@ function familyOf(name: string): Family {
 	return "other";
 }
 
-/** Confident argument→param incompatibilities. Kept deliberately small: only mismatches no dialect
- *  implicitly bridges. Corpus-tuned — every entry survives the zero-false-positive sweep over all
- *  eight dialects' valid `query/` corpora. */
-const REJECT = new Set(["str→num", "bool→num", "num→bool"]);
+/** Dialects that implicitly bridge STRING→numeric in a function argument, so a str→num mismatch must
+ *  NOT be flagged. Doc-cited per dialect:
+ *  - databricks: implicit crosscasting casts STRING to the expected numeric type
+ *    (docs.databricks.com/sql/language-manual/sql-ref-datatype-rules — the docs corpus itself carries
+ *    `substring('hello', '1', 2)` and `date_add(date'2011-11-30', '5')` as documented-valid examples);
+ *  - tsql: char/varchar→int/decimal is an implicit conversion in the CAST/CONVERT conversion chart
+ *    (learn.microsoft.com/sql/t-sql/functions/cast-and-convert-transact-sql) — `ABS('1')` is valid;
+ *  - snowflake: VARCHAR containing a number coerces to NUMBER
+ *    (docs.snowflake.com/en/sql-reference/data-type-conversion — implicit casting/coercion);
+ *  - redshift: PG-8.0 lineage keeps pre-8.3 implicit text→numeric casts
+ *    (docs.aws.amazon.com/redshift/latest/dg/c_Supported_data_types.html — type compatibility:
+ *    CHAR/VARCHAR→numeric implicit);
+ *  - postgres / duckdb: a quoted constant is initially of UNKNOWN type (postgresql.org/docs/18
+ *    sql-syntax-lexical §4.1.2.1) and coerces to whatever the call needs — `abs('1')` is valid — but
+ *    our inference types every quoted literal as `string`, so a str-typed arg may really be an
+ *    untyped literal; rejecting would false-fire on valid SQL.
+ *  NOT in the set (rejection stays live, corpus-proven): bigquery — no STRING→numeric coercion in the
+ *  conversion rules (`ABS('1')` is "No matching signature"; 14.7k analyzer positives sweep clean);
+ *  trino — implicit coercion is numeric/character widening only (`abs('1')` is "Unexpected
+ *  parameters"; 635 docs-corpus positives sweep clean). */
+const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
+	"databricks",
+	"tsql",
+	"snowflake",
+	"redshift",
+	"postgres",
+	"duckdb",
+]);
+
+/** Dialects that implicitly bridge boolean↔numeric: T-SQL only, whose `bit` (aliased to boolean by
+ *  TSQL_ALIASES) converts to/from int implicitly per the same CAST/CONVERT chart. Everywhere else
+ *  bool→num / num→bool rejection is safe (Spark: "cannot resolve 'abs(true)' due to data type
+ *  mismatch"; Snowflake: "Invalid argument types for function 'ABS': (BOOLEAN)"; PG/DuckDB/BigQuery/
+ *  Trino likewise reject) — and corpus-proven across all eight sweeps. */
+const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql"]);
 
 function accepts(argType: Type, paramText: string | undefined, dialect: Dialect): boolean {
 	if (!paramText) return true; // untyped param → no information, accept
@@ -257,8 +290,10 @@ function accepts(argType: Type, paramText: string | undefined, dialect: Dialect)
 	if (param.kind !== "scalar" || argType.kind !== "scalar") return true; // complex/unknown → accept
 	const fa = familyOf(argType.name);
 	const fp = familyOf(param.name);
-	if (fa === "other" || fp === "other" || fa === fp) return true; // same family / unclassified → accept
-	return !REJECT.has(`${fa}→${fp}`);
+	if (fa === fp) return true; // same family → accept
+	if (fa === "str" && fp === "num") return IMPLICIT_STR_TO_NUM.has(dialect);
+	if ((fa === "bool" && fp === "num") || (fa === "num" && fp === "bool")) return IMPLICIT_BOOL_NUM.has(dialect);
+	return true; // every other cross-family pair (incl. → str, temporal, binary, other) — accept
 }
 
 // ---------------------------------------------------------------------------

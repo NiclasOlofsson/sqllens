@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
+import { lower as lowerBigQuery } from "../src/bigquery/lower.js";
+import { parseBigQuery } from "../src/bigquery/parse.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
@@ -17,6 +19,11 @@ function diags(sql: string, schema: Schema = new Schema({})) {
 
 function kinds(sql: string, schema?: Schema): string[] {
 	return diags(sql, schema).map((d) => d.kind);
+}
+
+function bqKinds(sql: string): string[] {
+	const tree = resolveScopes(lowerBigQuery(parseBigQuery(sql).tree), "bigquery");
+	return qualify(tree, new Schema({})).diagnostics.map((d) => d.kind);
 }
 
 describe("call-signature diagnostics — arity", () => {
@@ -48,16 +55,33 @@ describe("call-signature diagnostics — arity", () => {
 });
 
 describe("call-signature diagnostics — operand type", () => {
-	it("flags abs('x'): a provably-string arg where the only overload takes numeric", () => {
-		expect(kinds("SELECT abs('x')")).toContain("wrong-argument-type");
+	it("BigQuery flags ABS('x'): string→numeric with NO implicit coercion path (strict typing)", () => {
+		// BigQuery's conversion rules have no STRING→numeric coercion — ABS('x') is
+		// "No matching signature" in BigQuery, so flagging it is never wrong.
+		expect(bqKinds("SELECT ABS('x')")).toContain("wrong-argument-type");
+	});
+
+	it("Databricks does NOT flag abs('x'): Spark implicitly crosscasts STRING→numeric", () => {
+		// docs.databricks.com sql-ref-datatype-rules (implicit crosscasting): a STRING argument is
+		// implicitly cast to the expected numeric type, so abs('x') is VALID Spark SQL (NULL /
+		// ANSI-runtime concern, not a call-signature error). Corpus-proven: the docs corpus carries
+		// substring('hello', '1', 2) and date_add(date'2011-11-30', '5') as documented examples.
+		expect(kinds("SELECT abs('x')")).not.toContain("wrong-argument-type");
 	});
 
 	it("does NOT flag abs(1): a numeric literal into a numeric param", () => {
 		expect(kinds("SELECT abs(1)")).not.toContain("wrong-argument-type");
+		expect(bqKinds("SELECT ABS(1)")).not.toContain("wrong-argument-type");
 	});
 
 	it("accepts a numeric arg into a string param (implicit widening to string)", () => {
 		// concat's params are string; a numeric literal renders as a string — valid, must not flag.
 		expect(kinds("SELECT concat(1, 'x')")).not.toContain("wrong-argument-type");
+	});
+
+	it("Databricks still flags a boolean arg into a numeric param (no implicit bool→num in Spark)", () => {
+		// Spark rejects boolean→numeric ("cannot resolve 'abs(true)' due to data type mismatch"),
+		// so this rejection is safe — it keeps the operand-type rule live for databricks.
+		expect(kinds("SELECT abs(true)")).toContain("wrong-argument-type");
 	});
 });
