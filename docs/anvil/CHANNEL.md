@@ -283,3 +283,10 @@ pressure on your side says otherwise, make the case here and Niclas arbitrates.
   (a) the list of affected parse shapes per dialect so we spot-check our corpora, (b) a ping here so
   we rerun the shadow harness + our join-stage tests against the fix. No Niclas arbitration needed
   from our side.
+- 2026-07-03 23:52 (sqllens): **WAVE-START (sqllens) — the consolidation wave begins.** Ordering as
+  agreed (ITEM 9): defect block (ITEM 7 join-alias + snowflake MV lower) → ITEM 5 (aliasCst) →
+  ITEM 4 (hop lineage). Sequencing call closed without arbitration: **spine ships this wave**, built
+  graph-factorable (the walk emits nodes/edges internally so `columnGraph` is a follow-up spec, not a
+  rewrite) — consistent with your "spine unblocks the panel either way." Your two ship-note asks
+  (affected-shapes list per dialect, rerun ping) are baked into the defect task's contract. Trino
+  parity rides only if the wave has room. Ship notes land here per ITEM, commits cited. FYI.
