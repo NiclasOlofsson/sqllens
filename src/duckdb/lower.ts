@@ -1136,7 +1136,11 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 	if (colref) return lowerColumnref(colref);
 	const caseExpr = directChildrenOfRule(node, P.RULE_case_expr)[0];
 	if (caseExpr) return lowerCase(caseExpr);
-	const funcExpr = directChildrenOfRule(node, P.RULE_func_expr)[0];
+	// The old func_expr alternative is split in the grammar (SLL surgery): plain_func_expr (undotted
+	// call, above columnref) and dotted_func_expr (dotted call + json/common special forms, below).
+	// Union of the two = the old func_expr language; both lower through the same path.
+	const funcExpr =
+		directChildrenOfRule(node, P.RULE_plain_func_expr)[0] ?? directChildrenOfRule(node, P.RULE_dotted_func_expr)[0];
 	if (funcExpr) {
 		const base = lowerFuncExpr(funcExpr);
 		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
@@ -1251,9 +1255,18 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const common = directChildrenOfRule(node, P.RULE_func_expr_common_subexpr)[0];
 	if (common) return lowerCommonFunc(common);
 
-	const app = directChildrenOfRule(node, P.RULE_func_application)[0];
+	const app =
+		directChildrenOfRule(node, P.RULE_func_application)[0] ??
+		directChildrenOfRule(node, P.RULE_plain_func_application)[0] ??
+		directChildrenOfRule(node, P.RULE_dotted_func_application)[0];
 	if (!app) return otherExpr(node);
-	const fname = firstShallow(app, P.RULE_func_name);
+	// Direct children only: the name rule is always an immediate child of its application rule, and a
+	// descendant search would find a NESTED func_name first (e.g. the `DATE` of a typed-literal
+	// argument in `strftime(DATE '1992-03-02', …)`).
+	const fname =
+		directChildrenOfRule(app, P.RULE_func_name)[0] ??
+		directChildrenOfRule(app, P.RULE_plain_func_name)[0] ??
+		directChildrenOfRule(app, P.RULE_dotted_func_name)[0];
 	const name = (fname ? lastName(fname) : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];

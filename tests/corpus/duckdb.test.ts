@@ -27,14 +27,15 @@ const OTHER_BASELINE = 0;
 // Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
 // re-parse. Shares its TVL-lineage decisions with postgres/redshift; may only fall.
 //
-// RAISED 21 → 338 on 2026-07-03 (the one sanctioned direction-up move: correcting an unsound fix).
-// Task-5 review REJECTED the func_expr-above-columnref reorder that had reached 21: it flipped the
-// winning reading of ALIASED dotted calls (`sch.f(a) AS score` lowered as f(a) — receiver dropped —
-// instead of the method chain f(sch, a)), because the dotted call is a GENUINE columnref/func_expr
-// ambiguity in this fork (indirection_el carries `.attr(args)` method parens) and min-alt ordering
-// decides the reading. The reorder was reverted; the aexprconst-above-columnref reorder (typed
-// literals) was adjudicated clean and stays. 338 is the measured post-revert count.
-const FALLBACK_RATCHET = 338;
+// History: 361 → 52 (func_expr-above-columnref reorder — REJECTED in review: it flipped the reading
+// of ALIASED dotted calls, `sch.f(a) AS score` → f(a) with the receiver dropped, because the dotted
+// call is a GENUINE columnref/func_expr ambiguity in this fork and min-alt ordering decides the
+// reading) → 21 (aexprconst reorder, adjudicated clean) → RAISED to 338 by the revert (the one
+// sanctioned direction-up move: correcting an unsound fix) → 25 via the STRUCTURAL cure: the old
+// func_expr split into plain_func_expr (undotted call, disjoint from columnref on a full match by
+// construction, above it) and dotted_func_expr (below columnref — method-chain reading preserved).
+// The split is IR-identical over this whole corpus vs the pre-surgery grammar (hash-diffed, 1037/1037).
+const FALLBACK_RATCHET = 25;
 
 // Documented-broken query examples — each verified against its duckdb.org source page as
 // deliberately-invalid SQL. They fail to parse, so the organizer files them under unparsed/;

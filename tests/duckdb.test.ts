@@ -180,11 +180,12 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 		};
 	};
 
-	it("c_expr — plain function calls f(args) parse and lower as calls", () => {
-		// The func_expr-above-columnref reorder that made these predict under SLL was REVERTED (Task-5
-		// review: it flipped the reading of ALIASED dotted calls — see the method-chain guard below).
-		// Plain calls still parse correctly (via the LL fallback); a structural cure that keeps the
-		// method-chain reading intact may restore the noFallback assertion here.
+	it("c_expr — plain function calls f(args) predict under SLL (plain/dotted func_expr split)", () => {
+		// Cured STRUCTURALLY, not by ordering: the old func_expr is split into plain_func_expr (undotted
+		// name + required parens — disjoint from columnref on a full match by construction, so it sits
+		// above it) and dotted_func_expr (below columnref, preserving the method-chain resolution). The
+		// earlier func_expr-above-columnref reorder was REVERTED (Task-5 review: it flipped the reading
+		// of ALIASED dotted calls — see the method-chain guard below).
 		for (const sql of [
 			"SELECT f(1)",
 			"SELECT f(1, 2)",
@@ -192,10 +193,20 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 			"SELECT getenv('HOME') AS home",
 			"SELECT a, f(1), g(x, y)",
 			"SELECT mod(x, 2) = 0 FROM t",
+			"SELECT count(*) FILTER (WHERE x > 1) FROM t",
+			"SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY x) FROM t",
+			"SELECT LEFT(x, 1), RIGHT(x, 1) FROM t",
 		]) {
 			ok(sql);
+			noFallback(sql);
 		}
 		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
+		// The name comes from the application's own direct name child, never a nested one — a typed
+		// literal argument must not hijack the call name (strftime, not date).
+		expect(projExpr("SELECT strftime(DATE '1992-03-02', '%d/%m/%Y')")).toMatchObject({
+			kind: "function",
+			name: "strftime",
+		});
 	});
 
 	it("c_expr — the method-chain reading wins in EVERY follow context (MANDATORY guard)", () => {

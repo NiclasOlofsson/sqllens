@@ -3893,25 +3893,36 @@ c_expr
    // aexprconst drops out. The constinterval forms are INTERVAL-keyword-led (no identifier overlap). No
    // language change; lower() still routes aexprconst → literal (dispatch is by child rule, not order).
    //
-   // NOTE(perf): columnref stays ABOVE func_expr — do NOT port postgres's func_expr-above-columnref
-   // reorder here. In this fork indirection_el carries `.attr(args)` method-call parens (duckdb.org
+   // NOTE(perf): the old `func_expr opt_indirection` alternative is SPLIT here (see plain_func_expr /
+   // dotted_func_expr below — union of their languages = old func_expr exactly), because the two halves
+   // need OPPOSITE placement relative to columnref:
+   //
+   // plain_func_expr (undotted `f(args)` + suffixes) sits ABOVE columnref: disjoint on a full match by
+   // construction — the name carries no dot and columnref can never consume a top-level `(` (its
+   // indirection_el starts only with DOT or `[`) — so SLL resolves a plain call locally in every follow
+   // context instead of committing to columnref (the old min alt) and bailing on the argument token.
+   // This was DuckDB's dominant fallback (`SELECT f(1)` bailed; `f()` / `f(*)` were clean).
+   //
+   // dotted_func_expr (`colid indirection '(' args ')'` + the keyword-led json/common special forms)
+   // stays BELOW columnref — do NOT move it up, and do NOT port postgres's func_expr-above-columnref
+   // reorder wholesale. In this fork indirection_el carries `.attr(args)` method-call parens (duckdb.org
    // function-chaining), so a dotted call `sch.f(a)` is a GENUINE ambiguity: it full-matches BOTH
-   // columnref (method chain, `.f(a)` as one indirection_el) AND func_expr (qualified call, func_name =
-   // `colid indirection` matching `sch.f` non-greedily when the caller's `(` needs the parens). Min-alt
-   // ordering decides which reading wins, and the project's pinned convention is the method chain
-   // (`sch.f(a)` → f(sch, a)). Porting the reorder flipped ALIASED dotted calls (`sch.f(a) AS score` →
-   // f(a), receiver dropped) while unaliased follows kept the chain — caught in Task-5 review; reverted.
-   // Guard probes pin the method-chain reading across every follow context in tests/duckdb.test.ts.
-   // The cost: SLL commits to columnref on plain `f(args)` too and bails downstream — cured structurally
-   // (not by ordering) if possible; see the task-5 report.
+   // columnref (method chain, `.f(a)` as one indirection_el) AND dotted_func_expr (qualified call,
+   // `sch.f` matched non-greedily). Min-alt ordering decides which reading wins, and the project's
+   // pinned convention is the method chain (`sch.f(a)` → f(sch, a)). A first attempt that ordered the
+   // whole func_expr above columnref flipped ALIASED dotted calls (`sch.f(a) AS score` → f(a), receiver
+   // dropped) while unaliased follows kept the chain — caught in Task-5 review, reverted, then replaced
+   // by this split. Guard probes pin the method-chain reading across every follow context in
+   // tests/duckdb.test.ts.
    | aexprconst # c_expr_expr
+   | plain_func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
    // opt_indirection added in this fork: subscript/slice on a call result — array_value(1,2,3)[2]
    // (sql/data_types/array.md) and method chains on calls.
-   | func_expr opt_indirection # c_expr_expr
+   | dotted_func_expr opt_indirection # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
    | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr
@@ -3949,10 +3960,60 @@ func_application
      ) CLOSE_PAREN
    ;
 
-func_expr
-   : func_application within_group_clause? filter_clause? over_clause?
+// NOTE(perf): c_expr-local split of the old `func_expr` (its ONLY user was c_expr) into a PLAIN and a
+// DOTTED half, so the plain call can sit above columnref while the dotted call stays below it:
+//   plain_func_expr  = (type_function_name | LEFT | RIGHT) '(' args ')' + suffixes
+//   dotted_func_expr = colid indirection '(' args ')' + suffixes, plus the keyword-led
+//                      json_aggregate_func / func_expr_common_subexpr alternatives
+// L(plain_func_expr) ∪ L(dotted_func_expr) = L(old func_expr) exactly — the split is by func_name's own
+// alternatives (`type_function_name | colid indirection | LEFT | RIGHT`), with the same argument body
+// and the same within-group/filter/over suffixes. func_application/func_name themselves are UNTOUCHED
+// (other users: CALL, func_expr_windowless, aexprconst, DDL). Why: a plain call `f(args)` is disjoint
+// from columnref on a full match by construction (the name carries no dot and columnref can never
+// consume a top-level `(`), so it is safe ABOVE columnref in every follow context — SLL resolves
+// `f(args)` locally instead of committing to columnref and bailing on the argument. The dotted call is
+// a GENUINE ambiguity against columnref's `.attr(args)` method chain, so it keeps the upstream original
+// resolution (columnref first = method chain wins) — see the c_expr NOTE.
+plain_func_expr
+   : plain_func_application within_group_clause? filter_clause? over_clause?
+   ;
+
+plain_func_application
+   : plain_func_name OPEN_PAREN (
+        func_arg_list (COMMA VARIADIC func_arg_expr)? opt_sort_clause?
+        | VARIADIC func_arg_expr opt_sort_clause?
+        | (ALL | DISTINCT) func_arg_list opt_sort_clause?
+        | STAR
+        |
+     ) CLOSE_PAREN
+   ;
+
+// func_name's undotted alternatives, verbatim (func_name: type_function_name | colid indirection | LEFT | RIGHT).
+plain_func_name
+   : type_function_name
+   | LEFT
+   | RIGHT
+   ;
+
+dotted_func_expr
+   : dotted_func_application within_group_clause? filter_clause? over_clause?
    | json_aggregate_func filter_clause? over_clause?
    | func_expr_common_subexpr
+   ;
+
+dotted_func_application
+   : dotted_func_name OPEN_PAREN (
+        func_arg_list (COMMA VARIADIC func_arg_expr)? opt_sort_clause?
+        | VARIADIC func_arg_expr opt_sort_clause?
+        | (ALL | DISTINCT) func_arg_list opt_sort_clause?
+        | STAR
+        |
+     ) CLOSE_PAREN
+   ;
+
+// func_name's dotted alternative, verbatim.
+dotted_func_name
+   : colid indirection
    ;
 
 func_expr_windowless
