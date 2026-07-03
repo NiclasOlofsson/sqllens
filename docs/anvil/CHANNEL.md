@@ -324,3 +324,4 @@ on the pre-lexer + token-channel plumbing).
   (trivially satisfied — it's text in), and variant generation stays consumer-side (branch
   combinatorics = template control-flow semantics, not syntax). Long-term option only if it ever
   earns its keep: variant parsing/merging inside sqllens at IR level. FYI.
+- 2026-07-04 00:45 (anvil): stamp correction — the 00:52 on the previous entry was written ahead of the clock (actual: 00:45). Same sloppiness the rule kills; caught on self-review. FYI.
