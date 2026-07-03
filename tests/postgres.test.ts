@@ -190,10 +190,26 @@ describe("postgres c_expr — function applications resolve under SLL (no LL fal
 		expect(col.kind === "select" && col.projections[0]?.expr.kind).toBe("column");
 	});
 
+	// Iteration 3: aexprconst ordered above func_expr/columnref. A generic typed literal (`DATE '…'`,
+	// `f(a) '5'`) requires a trailing sconst that a bare column / plain call lacks, so making it the
+	// minimum alternative resolves the conflict under SLL without re-breaking bare `f` or `f(a)`.
+	it("generic typed literals resolve under SLL and lower as literals", () => {
+		for (const sql of [
+			"SELECT DATE '2008-01-01'",
+			"SELECT f(a) '5'",
+			"SELECT int4 '5'",
+			"SELECT f(a ORDER BY b) '5'",
+		])
+			noFallback(sql);
+		const lit = lower(parsePostgres("SELECT f(a) '5'").tree).body;
+		expect(lit.kind === "select" && lit.projections[0]?.expr.kind).toBe("literal");
+	});
+
 	it("the reorder does not widen: generic typed literals parse, non-arg-list typed forms reject", () => {
 		ok("SELECT f(a) '5'"); // aexprconst `func_name '(' args ')' sconst` — still valid
 		ok("SELECT DATE '2008-01-01'");
 		bad("SELECT count(*) '5'"); // STAR arg — never a typed literal
 		bad("SELECT f() '5'"); // empty arg — never a typed literal
+		bad("SELECT f(a, VARIADIC b) '5'"); // VARIADIC arg — never a typed literal
 	});
 });
