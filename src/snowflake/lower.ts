@@ -117,14 +117,34 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		return q;
 	}
 	const qs = shallowFirstOfRule(commands[0], P.RULE_query_statement);
-	if (!qs) {
-		const q = nonQuery(commands[0], "non-query");
+	if (qs) {
+		const q = lowerQueryStatement(qs);
 		q.statement = statement;
 		return q;
 	}
-	const q = lowerQueryStatement(qs);
+	// create_materialized_view's body is `AS select_statement`, not `AS query_statement` like its
+	// sibling CREATE forms (grammars/snowflake/SnowflakeParser.g4 create_materialized_view — upstream
+	// comment: "MATERIALIZED VIEW accept only simple select statement at this time"), so the
+	// query_statement search above misses it; fall back to a bare select_statement.
+	const stmt = shallowFirstOfRule(commands[0], P.RULE_select_statement);
+	if (stmt) {
+		const q = selectStatementToQuery(stmt);
+		q.statement = statement;
+		return q;
+	}
+	const q = nonQuery(commands[0], "non-query");
 	q.statement = statement;
 	return q;
+}
+
+/** A bare select_statement (no WITH, no set ops — e.g. create_materialized_view's `AS select_statement`)
+ *  as a standalone QueryExpr, mirroring ssipToQuery/lowerQueryStatement for the wrapped forms. */
+function selectStatementToQuery(stmt: ParserRuleContext): QueryExpr {
+	const body = buildSelect(stmt);
+	const orderBy = extractOrderBy(stmt);
+	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	const limit = extractLimit(stmt);
+	return { kind: "query", ctes: [], body, orderBy, limit, cst: stmt };
 }
 
 /**
