@@ -62,7 +62,8 @@ A document's dialect is configured, never guessed. On initialize, the server rea
 or malformed config is non-fatal: every file falls back to the `databricks` dialect
 and a warning is logged over the LSP `window/logMessage` channel.
 
-Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`.
+Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`, `postgres`,
+`duckdb`, `trino`.
 
 Example `.sqllens.json`:
 

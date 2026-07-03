@@ -13,7 +13,16 @@ import { Schema, type Dialect, type SchemaMapping } from "../index.js";
 // by the server) — loading never throws.
 // ---------------------------------------------------------------------------
 
-const KNOWN_DIALECTS: ReadonlySet<string> = new Set(["databricks", "tsql", "snowflake", "bigquery", "redshift"]);
+const KNOWN_DIALECTS: ReadonlySet<string> = new Set([
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+]);
 
 interface Rule {
 	files: string;
