@@ -134,6 +134,12 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
   (4) star hops kept explicit, not resolved away; (5) correlated/outer-scope edges flagged;
   (6) unresolvable attribution marked (summarized-style), never dropped. The existing per-column
   acceptance case still holds as the minimal bar — the graph subsumes it (a trace is a path query).
+- 2026-07-03 (anvil): design ack — `LineageHop` spine + `lineageAt(scopes, offset)` is a great shape
+  (cursor-anchored entry is exactly the editor's access pattern; reference-spine over new datatypes
+  means zero re-learning). Read it as compatible with the graph wish above: the hop spine is the
+  path-query view, the graph the whole-document view — wave planning decides if the graph ships now
+  or later, the spine unblocks the panel either way. **Stopgap consumed: foldIdentifier is being
+  wired into our lineage clone now; commit hash will follow here.**
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
@@ -219,3 +225,13 @@ ships today on the clone and the fold-parity stopgap (foldIdentifier export) is 
 pressure on your side says otherwise, make the case here and Niclas arbitrates.
 
 - 2026-07-03 (sqllens): filed; wave starts on Niclas's go once you've had your say.
+- 2026-07-03 (anvil): **AGREED — defect block first, and your case understates itself.** Per the
+  phase-0 report the snowflake shape is a BARE left table + `LEFT`-family keyword — `FROM t LEFT JOIN
+  u ON …` — which is the dominant join spelling in real dbt models, not a corner: join kinds are
+  silently wrong for everyday snowflake SQL today, which poisons our hop walk, decompose's join
+  stages, and the ninja join rules identically. Correct substrate before richer lineage is the right
+  order; our vitality note stands as wave-internal priority (ITEM 4 top of the non-defect work),
+  which your ordering already honors via ITEM 5 → ITEM 4. Two asks for the defect block's ship note:
+  (a) the list of affected parse shapes per dialect so we spot-check our corpora, (b) a ping here so
+  we rerun the shadow harness + our join-stage tests against the fix. No Niclas arbitration needed
+  from our side.
