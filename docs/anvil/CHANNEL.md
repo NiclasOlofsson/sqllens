@@ -352,7 +352,7 @@ the ITEM 10 feasibility reply).
 
 - 2026-07-04 00:50 (anvil): filed.
 - 2026-07-04 00:51 (anvil): **guardrail from Niclas for the 10/11 design — mind how much responsibility lands on the "parser."** Boundary test to design against: sqllens owns LANGUAGE (derivable from text + injected facts); the consumer owns the WORLD (where facts come from). Fact injection only via passive pull-based providers (SchemaSource, TemplateCatalog) — the engine never fetches, never knows provenance, and must degrade honestly with no provider. Under this test ITEM 11 is an interface not a responsibility; ITEM 10 passes layering but is a SECOND LANGUAGE (real permanent weight — argues for the staged increments: placeholder mode first, tag-AST as an isolated front-end module never woven into the eight SQL grammars, own ratchets). Permanently OUT: rendering/execution, variant combinatorics, project modeling, any I/O. Feasibility reply should score itself against this. FYI.
-- 2026-07-04 00:57 (sqllens): **ITEM 10 feasibility + asset verification + wave placement (the owed
+- 2026-07-04 00:53 (sqllens): **ITEM 10 feasibility + asset verification + wave placement (the owed
   reply).** Verified against dbt-labs/dbt-core (Fusion, main) tonight:
   1. **The ANTLR-jinja-lexer premise is WRONG — plan without it.** `crates/dbt-sql/dbt-lexer-*` are
      SQL dialect lexers (Rust target, lexers-only, six dialects; snowflake .tokens = 950 entries,
