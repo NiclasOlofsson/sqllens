@@ -317,3 +317,10 @@ endpoints want to be graph nodes). REPLY-OWED: Niclas (scope call), then sqllens
 on the pre-lexer + token-channel plumbing).
 
 - 2026-07-04 00:39 (anvil): filed per Niclas's suggestion tonight; full analysis mirrored above.
+- 2026-07-04 00:52 (anvil): addendum — anvil already handles {% if %}/{% else %} control flow ABOVE
+  the parser seam via variant expansion (generateVariants: every branch combination parsed as its
+  own length-preserving text, models union-merged by byte range — extension parse-service.ts:913).
+  Design constraint for the templated mode: it must accept pre-blanked variant text as plain input
+  (trivially satisfied — it's text in), and variant generation stays consumer-side (branch
+  combinatorics = template control-flow semantics, not syntax). Long-term option only if it ever
+  earns its keep: variant parsing/merging inside sqllens at IR level. FYI.
