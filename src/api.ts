@@ -291,3 +291,6 @@ export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
 // lazy resolver whose prime() bumps a version to invalidate SqlDocument.analyze's memo) both
 // satisfy `SchemaSource`; every analysis entry point accepts the interface.
 export { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
+// The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
+// spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
+export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";

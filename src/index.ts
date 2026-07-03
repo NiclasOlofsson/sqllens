@@ -41,6 +41,8 @@ export {
 	CallbackSchema,
 	type SchemaSource,
 	type TableResolver,
+	ADAPTER_DIALECTS,
+	adapterDialect,
 	type SignatureInfo,
 	type FnSignature,
 	type ParamSig,

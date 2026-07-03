@@ -97,6 +97,35 @@ describe("loadDialectConfig", () => {
 		rmSync(unk, { recursive: true, force: true });
 	});
 
+	it("all eight dialects are accepted in rules (regression: postgres/duckdb/trino were silently dropped)", () => {
+		const eight = mkdtempSync(join(tmpdir(), "sqllens-eight-"));
+		const dialects = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+		writeFileSync(
+			join(eight, ".sqllens.json"),
+			JSON.stringify({ dialects: dialects.map((d) => ({ files: `**/*.${d}.sql`, dialect: d })) }),
+		);
+		const c = loadDialectConfig(eight);
+		expect(c.warnings).toEqual([]);
+		for (const d of dialects) expect(c.dialectFor(`models/x.${d}.sql`)).toBe(d);
+		rmSync(eight, { recursive: true, force: true });
+	});
+
+	it("a dbt adapter type resolves through the adapter map (athena → trino, fabric → tsql)", () => {
+		const ad = mkdtempSync(join(tmpdir(), "sqllens-adapter-"));
+		writeFileSync(
+			join(ad, ".sqllens.json"),
+			JSON.stringify({
+				dialects: [{ files: "**/*.athena.sql", dialect: "athena" }],
+				default: "fabric",
+			}),
+		);
+		const c = loadDialectConfig(ad);
+		expect(c.warnings).toEqual([]);
+		expect(c.dialectFor("models/x.athena.sql")).toBe("trino");
+		expect(c.dialectFor("models/other.sql")).toBe("tsql");
+		rmSync(ad, { recursive: true, force: true });
+	});
+
 	it("unknown default: never throws, falls back to databricks + a warning", () => {
 		const unkDef = mkdtempSync(join(tmpdir(), "sqllens-unkdefault-"));
 		writeFileSync(join(unkDef, ".sqllens.json"), JSON.stringify({ default: "oracle" }));

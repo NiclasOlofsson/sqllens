@@ -54,7 +54,28 @@ exported as lower-level building blocks. The editor-facing surface — `tokenize
 
 ## Usage
 
-`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`. The surface is
+`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`.
+
+Those eight grammars serve more dbt adapters than that, because several adapters
+are SQL front ends over an engine already covered. `adapterDialect` resolves a
+profiles.yml `type:` value (or a dialect name) to the dialect that parses its
+SQL — so consumers don't re-derive the family knowledge:
+
+```ts
+import { adapterDialect, ADAPTER_DIALECTS } from "sqllens";
+
+adapterDialect("athena");    // "trino"      — Athena engine v3 executes on Trino
+adapterDialect("glue");      // "databricks" — AWS Glue runs Spark; Databricks SQL = Spark SQL
+adapterDialect("fabric");    // "tsql"       — same for "synapse" and "sqlserver"
+adapterDialect("presto");    // "trino"      — the pre-rename Trino adapter
+adapterDialect("oracle");    // undefined    — not served; never a guess
+```
+
+The map is exact by contract: only adapters whose SQL surface the corpus gates
+genuinely represent are listed. The LSP's `.sqllens.json` accepts adapter types
+through the same map, so `{ "dialect": "athena" }` works in rules and `default`.
+
+The surface is
 **layered** — each tier is a terminal value you can stop at — and **composable**:
 every semantic method takes the closest upstream result (so passing it does no
 rework) or a raw string / IR via an idempotent lift helper.
@@ -93,8 +114,9 @@ deriveSymbols(scopes);     // independent results, no cross-contamination
 ```
 
 The per-dialect entries (`parseDatabricks` / `parseTSql` / `parseSnowflake` /
-`parseBigQuery` / `parseRedshift`, each `lower`, and the raw `resolveScopes` /
-`inferType`) remain exported for callers that want a single stage.
+`parseBigQuery` / `parseRedshift` / `parsePostgres` / `parseDuckdb` / `parseTrino`,
+each `lower`, and the raw `resolveScopes` / `inferType`) remain exported for
+callers that want a single stage.
 
 ## Editor / language tooling
 
