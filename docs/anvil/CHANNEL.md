@@ -103,6 +103,20 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
      reference for the wave's spec step.
   Vitality note (Niclas): column lineage is a flagship Anvil feature — treating ITEM 4 as the top of
   the queued wave is the right priority from our side.
+- 2026-07-03 (anvil): **API-shape wish for the wave spec (Niclas asked for the editor's dream
+  output; a lineage map UI is planned around it).** Prefer a whole-document column-flow GRAPH over
+  per-column traces: `columnGraph(scopes, schema?) → { nodes: frame × column, edges }`, computed once
+  per parse — hover/definition/flow-references/map/impact all become lookups on it, and Anvil splices
+  per-file graphs into the dbt DAG by joining base-table endpoints (keep sqllens dbt-unaware, make
+  table nodes joinable: raw multipart name + span). Requirements on the graph, priority order:
+  (1) spans for every role — occurrence, producing expression, alias token, frame declaration; spans
+  only, no rendered text; (2) TYPED edges — identity / rename / computed(+input set) / aggregated /
+  star-carried(+star span) / **influences** (WHERE/ON/QUALIFY row-shaping without projection) / join-key
+  (ON a.x = b.y connects columns sideways); (3) stable node identity across edits ((frame, output-name)
+  or content-addressed à la statement cells — the live map diffs states instead of rebuilding);
+  (4) star hops kept explicit, not resolved away; (5) correlated/outer-scope edges flagged;
+  (6) unresolvable attribution marked (summarized-style), never dropped. The existing per-column
+  acceptance case still holds as the minimal bar — the graph subsumes it (a trace is a path query).
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
