@@ -85,6 +85,36 @@ describe("splitStatements", () => {
 		expect(cellTexts(text, spans)).toEqual(["BEGIN SELECT 1; SELECT 2; END;", " SELECT 3"]);
 	});
 
+	it("END IF inside a compound does not close the compound's depth level", () => {
+		// The END of `END IF` closes an IF, and IF never incremented depth — so it must not
+		// decrement either, or the inner `;` after it would wrongly split the compound.
+		const text = "BEGIN IF c THEN SELECT 1; END IF; SELECT 2; END; SELECT 3";
+		const spans = split(text, "databricks");
+		expect(cellTexts(text, spans)).toEqual(["BEGIN IF c THEN SELECT 1; END IF; SELECT 2; END;", " SELECT 3"]);
+	});
+
+	it("a CASE statement's END CASE closes the level without the CASE re-incrementing", () => {
+		// `END CASE` = one closer: END decrements, and the trailing CASE keyword must be
+		// consumed, not treated as a new opener — else depth sticks +1 and later ; never split.
+		const text = "BEGIN CASE WHEN a THEN SELECT 1; END CASE; END; SELECT 2;";
+		const spans = split(text, "databricks");
+		expect(cellTexts(text, spans)).toEqual(["BEGIN CASE WHEN a THEN SELECT 1; END CASE; END;", " SELECT 2;"]);
+	});
+
+	it("an expression CASE...END followed by a comma still balances", () => {
+		// Regression guard for the END lookahead: here END's next channel-0 token is `,`,
+		// which is neither a scripting-END suffix nor CASE — the plain decrement must fire.
+		const text = "SELECT CASE WHEN a THEN b END, x FROM t; SELECT 2";
+		const spans = split(text, "databricks");
+		expect(cellTexts(text, spans)).toEqual(["SELECT CASE WHEN a THEN b END, x FROM t;", " SELECT 2"]);
+	});
+
+	it("adjacent separators yield an empty middle cell and still tile", () => {
+		const text = "SELECT 1;;SELECT 2";
+		const spans = split(text, "databricks");
+		expect(cellTexts(text, spans)).toEqual(["SELECT 1;", ";", "SELECT 2"]);
+	});
+
 	it("T-SQL: GO alone on its own line splits", () => {
 		const text = "SELECT 1\nGO\nSELECT 2";
 		const spans = split(text, "tsql");

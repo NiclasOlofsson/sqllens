@@ -29,6 +29,11 @@ export interface StatementCellSpan {
 
 const TRAN_WORDS = new Set(["TRAN", "TRANSACTION", "DISTRIBUTED"]);
 
+// Scripting closers whose OPENER never incremented depth (Databricks/Spark scripting:
+// `IF … END IF`, `WHILE … END WHILE`, `FOR/LOOP/REPEAT` likewise). Only BEGIN and CASE
+// increment, so an END followed by one of these must not decrement.
+const NON_OPENER_END_SUFFIXES = new Set(["IF", "WHILE", "FOR", "LOOP", "REPEAT"]);
+
 /** The single-cell fallback: exactly today's behavior (whole doc, one cell). */
 function wholeDoc(text: string): StatementCellSpan[] {
 	return [{ start: 0, end: text.length }];
@@ -52,7 +57,22 @@ function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[
 		} else if (upper === "CASE") {
 			depth++;
 		} else if (upper === "END") {
-			depth = Math.max(0, depth - 1);
+			// Channel-0 lookahead (same mechanism as the BEGIN TRAN exception above):
+			// - `END IF/WHILE/FOR/LOOP/REPEAT` closes a construct whose opener never
+			//   incremented depth, so this END must not decrement.
+			// - `END CASE` closes the CASE statement: decrement, and CONSUME the trailing
+			//   CASE keyword so it can't re-increment as a fresh opener.
+			const next = channel0[i + 1];
+			const nextUpper = next?.text.toUpperCase();
+			if (nextUpper !== undefined && NON_OPENER_END_SUFFIXES.has(nextUpper)) {
+				// no depth change; the suffix keyword is harmless to leave (IF/WHILE/… never
+				// increment), so no consume is needed.
+			} else if (nextUpper === "CASE") {
+				depth = Math.max(0, depth - 1);
+				i++; // consume the CASE of `END CASE`
+			} else {
+				depth = Math.max(0, depth - 1);
+			}
 		} else if (t.text === ";") {
 			if (depth === 0) ends.push(t.stop + 1);
 		} else if (dialect === "tsql" && upper === "GO" && depth === 0) {
