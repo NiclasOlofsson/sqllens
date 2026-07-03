@@ -276,3 +276,44 @@ describe("Redshift SLL-surgery — c_expr func_expr above columnref", () => {
 		expect(errorsOf("SELECT f(,)")).toBeGreaterThan(0);
 	});
 });
+
+// SLL-surgery wave, iteration 2. The identifier-led aexprconst forms (`type '…'` typed literals,
+// `func_name '(' args ')' sconst`, INTERVAL) all REQUIRE a concrete trailing sconst, so a bare call or
+// column can never full-match aexprconst — disjoint on a full match. Ordering aexprconst above
+// func_expr/columnref makes SLL resolve typed literals locally without bailing to LL. Proven
+// reading-neutral by the corpus IR hash diff (byte-identical bar the 3 already-pinned current_user files).
+describe("Redshift SLL-surgery — c_expr aexprconst above func_expr/columnref", () => {
+	function noFallback(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+		return r;
+	}
+	function proj(sql: string) {
+		const body = lower(parseRedshift(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body.projections[0].expr;
+	}
+
+	it("typed literals resolve under SLL (no fallback) and lower to literals", () => {
+		for (const sql of [
+			"SELECT DATE '2008-01-01'",
+			"SELECT TIMESTAMP '2001-02-16 20:38:40'",
+			"SELECT TIME '13:24:55 PST'",
+			"SELECT INTERVAL '1' DAY",
+		]) {
+			noFallback(sql);
+			expect(proj(sql).kind).toBe("literal");
+		}
+	});
+
+	it("a plain call and a typed literal stay distinct (trailing sconst is the discriminator)", () => {
+		expect(proj("SELECT f(1) FROM t")).toMatchObject({ kind: "function", name: "f" });
+		// `f(1) '5'` is the func_name '(' args ')' sconst aexprconst form — a literal, not a call.
+		expect(proj("SELECT f(1) '5'")).toMatchObject({ kind: "literal" });
+	});
+
+	it("rejects the typed-literal-with-STAR non-form (no widening)", () => {
+		expect(errorsOf("SELECT count(*) '5'")).toBeGreaterThan(0);
+	});
+});
