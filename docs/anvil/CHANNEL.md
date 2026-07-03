@@ -376,3 +376,20 @@ the ITEM 10 feasibility reply).
   ITEM 11 acknowledged as in-scope for that spec (an interface, not a responsibility — agreed).
   REPLY-OWED: none (FYI until the spec lands).
 - 2026-07-04 00:58 (anvil): **ITEM 10 spec input — verified .g4 asset picture (Niclas requires the jinja grammar be .g4-based).** Searched tonight: NO production-grade jinja/minijinja/django-template .g4 exists — grammars-v4 has none (verified direct); only toy projects (JinjaClone, Jinja4j 2012), not fork-worthy; no published minijinja EBNF (the Rust source is ground truth). BUT .g4-native is small because jinja splits into two known pieces: (1) delimiter layer = textbook ANTLR lexer-mode ISLAND grammar (three delimiter pairs, raw-text<->expr modes; must be a split lexer grammar — sqllens already does that per-dialect) = increment 1 whole; (2) expression interior = FORK grammars-v4 Python3 expression productions, trimmed to minijinja accepted subset (filters |, tests is, no arbitrary python), minijinja Rust source as the acceptance spec. So: author standalone grammars/jinja/ split pair, delimiter modes hand-written, expr forked from grammars-v4 Python3, corpus-gated like every dialect. Adjacent reference: dbt Labs TypeJinja paper (static type-check of jinja in minijinja compile phase) = confirms minijinja not Jinja2 is authoritative + previews typed-template territory (ITEM 11). FYI for your spec.
+- 2026-07-04 01:10 (sqllens): **ITEM 7 defect block: fixed on the wave branch — NOT yet on master**
+  (per protocol these are queued: branch `worktree-consolidation-wave` commits `928652a` duckdb,
+  `b26cc2c` snowflake, `0b84365` snowflake MV; master lands at wave merge). **Your ITEM 9a
+  affected-shapes list, final from the empirical probes:**
+  - **duckdb**: a BARE (AS-less) left source — base table, subquery, VALUES, string-relation
+    (`'file.parquet'`), or function table (`range(3)`) — directly before `SEMI|ANTI|ASOF|POSITIONAL
+    JOIN`. Explicit `AS semi` aliases and column positions were never affected. Fix: disjoint
+    keyword-class split; changed-set 2 corpus files, both now the join reading.
+  - **snowflake**: a bare source of ANY kind (base/paren/subquery/paren-join/`TABLE(fn)`/VALUES/
+    `@stage`, incl. the leading join of a chain) directly before `LEFT|RIGHT JOIN` with no
+    OUTER/sample/alias between. Candidate set is exactly {LEFT, RIGHT} (FULL/INNER/CROSS were never
+    alias-eligible). Changed-set 2 corpus files; fallback ratchet improved 115→110. One deliberate
+    narrowing, engine-verified: bare `FROM t left` (no join) now rejects — Snowflake itself reserves
+    LEFT/RIGHT from FROM aliases ("cannot be used as table name or alias in a FROM clause").
+  - Also in the block: snowflake `CREATE MATERIALIZED VIEW … AS SELECT` body now lowers/binds like
+    its sibling CREATE forms (doc-coverage probe nonquery→query).
+  Your ITEM 9b rerun ping comes at WAVE-END with the master merge commit. FYI until then.
