@@ -5,6 +5,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	PivotInfo,
 	Projection,
@@ -380,12 +382,13 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const fromClause = directChildrenOfRule(node, P.RULE_from_clause)[0];
 	const from: Source[] = [];
 	const joinConditions: Expr[] = [];
+	const joins: Join[] = [];
 	if (fromClause) {
 		for (const tr of directChildrenOfRule(
 			directChildrenOfRule(fromClause, P.RULE_from_list)[0] ?? fromClause,
 			P.RULE_table_ref,
 		)) {
-			collectTableRef(tr, from, joinConditions, unsupported);
+			collectTableRef(tr, from, joinConditions, joins, unsupported);
 		}
 	}
 
@@ -443,6 +446,7 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 		columns,
 		where: whereExpr,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having: havingExpr,
 		qualify: qualifyExpr,
@@ -476,15 +480,71 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 /** Flatten a table_ref (its primary + trailing joined_table*) into Sources + ON conditions. The
  *  pivot_clause / unpivot_clause suffix and the PartiQL SUPER UNPIVOT reshape the output columns; they
  *  are modelled onto PivotInfo/UnpivotInfo by extractPivot/extractUnpivot at the select level. */
-function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
+function collectTableRef(
+	tr: ParserRuleContext,
+	from: Source[],
+	joinConditions: Expr[],
+	joins: Join[],
+	unsupported: string[],
+): void {
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
-		if (inner) collectTableRef(inner, from, joins, unsupported);
+		const idx = from.length;
+		if (inner) collectTableRef(inner, from, joinConditions, joins, unsupported);
+		// The join's right source is the FIRST source the inner table_ref contributed — the same object
+		// now sitting in `from` (reference-identical, so scope keys line up).
+		const source = from[idx] ?? from[from.length - 1];
 		const qual = directChildrenOfRule(jt, P.RULE_join_qual)[0];
-		const on = qual ? directChildrenOfRule(qual, P.RULE_a_expr)[0] : undefined;
-		if (on) joins.push(lowerExpr(on));
+		const onA = qual ? directChildrenOfRule(qual, P.RULE_a_expr)[0] : undefined;
+		let on: Expr | undefined;
+		// Lower the ON once and share it with joinConditions (order unchanged: pushed AFTER the recursion,
+		// exactly as before) so join.on is reference-EQUAL to the joinConditions entry.
+		if (onA) {
+			on = lowerExpr(onA);
+			joinConditions.push(on);
+		}
+		if (source) joins.push(buildJoin(jt, source, on, qual));
 	}
+}
+
+/** Assemble a Join from a `joined_table` (postgres-lineage grammar): kind + NATURAL flag from its
+ *  tokens/join_type, USING columns from its join_qual. Redshift/Postgres share this shape. */
+function buildJoin(
+	jt: ParserRuleContext,
+	source: Source,
+	on: Expr | undefined,
+	qual: ParserRuleContext | undefined,
+): Join {
+	const { kind, natural } = joinKindAndNatural(jt);
+	const using = on === undefined && qual ? usingColumns(qual) : undefined;
+	return { kind, source, on, using, natural: natural || undefined, cst: jt };
+}
+
+/** Kind + NATURAL flag for a postgres-lineage `joined_table` (CROSS/NATURAL direct tokens + a
+ *  join_type child of FULL/LEFT/RIGHT/INNER). NATURAL with an ANSI type → that type + natural flag;
+ *  NATURAL alone → kind "natural". */
+function joinKindAndNatural(jt: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = hasDirectToken(jt, P.NATURAL);
+	if (hasDirectToken(jt, P.CROSS)) return { kind: "cross", natural: false };
+	const jtype = directChildrenOfRule(jt, P.RULE_join_type)[0];
+	let ansi: JoinKind | undefined;
+	if (jtype) {
+		if (hasDirectToken(jtype, P.LEFT)) ansi = "left";
+		else if (hasDirectToken(jtype, P.RIGHT)) ansi = "right";
+		else if (hasDirectToken(jtype, P.FULL)) ansi = "full";
+		else ansi = "inner"; // INNER_P
+	}
+	if (natural) return { kind: ansi ?? "natural", natural: true };
+	return { kind: ansi ?? "inner", natural: false };
+}
+
+/** The identifier names of a `join_qual`'s `USING (name_list)`, or undefined for an ON qual. */
+function usingColumns(qual: ParserRuleContext): string[] | undefined {
+	const nl = directChildrenOfRule(qual, P.RULE_name_list)[0];
+	if (!nl) return undefined;
+	const cols = collectOfRule(nl, P.RULE_name).map((n) => textOf(n));
+	return cols.length ? cols : undefined;
 }
 
 /** The primary of a table_ref: relation_expr | select_with_parens | func_table | LATERAL … | (join). */
@@ -541,8 +601,10 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 		// '(' table_ref join… ')' — flatten the inner join group into this source list.
 		const innerFrom: Source[] = [];
 		const innerJoins: Expr[] = [];
-		collectTableRef(nestedTr, innerFrom, innerJoins, unsupported);
-		// The inner ON conditions belong to the enclosing select; collect via a side channel.
+		// A parenthesized join group flattens into this source; its inner ON conditions surface into the
+		// enclosing joinConditions (below). The join NODES of a paren group are not modelled (only the
+		// top-level FROM chain builds Join[] — see the spec); the inner ON exprs stay conserved.
+		collectTableRef(nestedTr, innerFrom, innerJoins, [], unsupported);
 		nestedJoinConditions.push(...innerJoins);
 		if (innerFrom.length) return innerFrom[0];
 	}
