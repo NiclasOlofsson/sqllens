@@ -1,4 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
+import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
 import type { ColumnRef } from "../ir/ir.js";
 import {
 	applyPivotCols,
@@ -84,18 +85,18 @@ function resolveColumns(
 		if (!scope.branches) return "unknown";
 		const left = resolved.get(scope.branches.left) ?? "unknown";
 		if (!body.byName) return left;
-		return mergeByName(left, resolved.get(scope.branches.right) ?? "unknown");
+		return mergeByName(left, resolved.get(scope.branches.right) ?? "unknown", scope.dialect);
 	}
 	// A PIVOT/UNPIVOT that transforms the select directly (Spark/BigQuery — no result alias) reshapes the
 	// FROM relation's columns: expand the sources, then apply the transform. (The T-SQL aliased form is a
 	// synthetic source registered in scope; it expands via the normal star path.)
 	if (body.pivot && !body.pivot.alias) {
 		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
-		return base === undefined ? "unknown" : applyPivotCols(base, body.pivot);
+		return base === undefined ? "unknown" : applyPivotCols(base, body.pivot, scope.dialect);
 	}
 	if (body.unpivot && !body.unpivot.alias) {
 		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
-		return base === undefined ? "unknown" : applyUnpivotCols(base, body.unpivot);
+		return base === undefined ? "unknown" : applyUnpivotCols(base, body.unpivot, scope.dialect);
 	}
 	return projectionColumns(scope, body.projections, schema, resolved, diagnostics);
 }
@@ -115,7 +116,7 @@ function projectionColumns(
 			const star = p.expr.kind === "star" ? p.expr : undefined;
 			let cols = expandStar(scope, schema, resolved, diagnostics, star?.qualifier);
 			if (cols === undefined) return "unknown";
-			if (star) cols = applyStarModifiers(cols, star);
+			if (star) cols = applyStarModifiers(cols, star, scope.dialect);
 			out.push(...cols);
 		} else if (p.name !== undefined) {
 			out.push(p.name);
@@ -155,19 +156,24 @@ function resolvePipeStage(
 			}
 			return [...aggs, ...keys];
 		}
-		case "drop":
+		case "drop": {
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
 			return incoming === "unknown"
 				? "unknown"
-				: incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c)));
+				: incoming.filter((c) => !stage.drop.some((d) => fold(d) === fold(c)));
+		}
 		case "rename": {
 			if (incoming === "unknown") return "unknown";
-			const map = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
-			return incoming.map((c) => map.get(normalizeName(c)) ?? c);
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const map = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
+			return incoming.map((c) => map.get(fold(c)) ?? c);
 		}
 		case "join": {
 			if (incoming === "unknown") return "unknown";
 			const joinSrc = [...scope.sources.entries()].find(([k]) => k !== "")?.[1];
-			const joinCols = joinSrc ? columnsOfSource(joinSrc, schema, resolved, diagnostics) : undefined;
+			const joinCols = joinSrc
+				? columnsOfSource(joinSrc, schema, resolved, diagnostics, scope.dialect)
+				: undefined;
 			return joinCols === undefined ? "unknown" : [...incoming, ...joinCols];
 		}
 		case "where":
@@ -199,17 +205,17 @@ function expandStar(
 ): string[] | undefined {
 	// A qualified star `t.*` expands only the source keyed by `t` (its last name part); a bare
 	// `*` expands every source in order.
-	const want = qualifier ? normalizeName(qualifier[qualifier.length - 1] ?? "") : undefined;
+	const want = qualifier ? (qualifier[qualifier.length - 1] ?? "") : undefined;
 	const cols: string[] = [];
 	let matched = false;
 	for (const [key, src] of scope.sources) {
-		if (want !== undefined && key !== want) continue;
+		if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
 		// A pseudo-column source (Snowflake/Oracle CONNECT BY's LEVEL) resolves by name but is
 		// excluded from a bare `*` — real pseudo-column semantics. A qualified star can't target
 		// it anyway (it has no alias to qualify by), so this only affects the bare-`*` case.
 		if (want === undefined && src.kind === "lateral" && src.source.pseudo) continue;
 		matched = true;
-		const srcCols = columnsOfSource(src, schema, resolved, diagnostics);
+		const srcCols = columnsOfSource(src, schema, resolved, diagnostics, scope.dialect);
 		if (srcCols === undefined) return undefined;
 		cols.push(...srcCols);
 	}
@@ -225,10 +231,11 @@ function columnsOfSource(
 	schema: Schema,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
+	dialect?: string,
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		const cols = schema.columnsFor(src.name);
+		const cols = schema.columnsFor(foldTableName(src.name, dialect));
 		if (!cols) {
 			diagnostics.push(unknownTable(src.name, src.source.cst));
 			return undefined;
@@ -240,7 +247,9 @@ function columnsOfSource(
 	if (src.kind === "relation") return known(resolved.get(src.scope));
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot") {
-		return known(pivotSourceOutputs(src, (s) => columnsOfSource(s, schema, resolved, diagnostics) ?? "unknown"));
+		return known(
+			pivotSourceOutputs(src, (s) => columnsOfSource(s, schema, resolved, diagnostics, dialect) ?? "unknown"),
+		);
 	}
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
@@ -269,14 +278,14 @@ function checkColumn(
 	// path `f` against `c`'s struct type — resolved from a table schema or threaded through a
 	// derived (CTE/subquery) column; see checkFieldPath.
 	const split = splitColumnRefInScope(scope, ref.parts);
-	const name = normalizeName(split.column);
+	const name = foldIdentifier(split.column, scope.dialect);
 
 	if (split.qualifier !== undefined) {
 		for (let s: Scope | undefined = scope; s; s = s.parent) {
 			const src = s.sources.get(split.qualifier);
 			if (!src) continue;
-			const cols = sourceColumns(src, schema, resolved);
-			if (cols && !cols.some((c) => normalizeName(c) === name)) {
+			const cols = sourceColumns(src, schema, resolved, s.dialect);
+			if (cols && !cols.some((c) => foldIdentifier(c, s.dialect) === name)) {
 				diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
 				return; // base column missing — don't also walk its (nonexistent) fields
 			}
@@ -293,12 +302,12 @@ function checkColumn(
 		let matches = 0;
 		let unknown = 0;
 		for (const src of sources) {
-			const cols = sourceColumns(src, schema, resolved);
+			const cols = sourceColumns(src, schema, resolved, s.dialect);
 			if (!cols) unknown++;
-			else if (cols.some((c) => normalizeName(c) === name)) matches++;
+			else if (cols.some((c) => foldIdentifier(c, s.dialect) === name)) matches++;
 		}
 		if (matches > 1) {
-			diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${name}`));
+			diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${split.column}`));
 			return;
 		}
 		if (matches === 1) {
@@ -308,7 +317,8 @@ function checkColumn(
 		if (unknown > 0) return; // might live in a source whose columns we don't know
 		// all sources here known, none has it — try an enclosing scope (correlation)
 	}
-	diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${name}`));
+	// The message shows the reference as WRITTEN (display), never the folded identity key.
+	diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${split.column}`));
 }
 
 /**
@@ -330,7 +340,9 @@ function checkFieldPath(
 	let type = inferType({ kind: "column", parts: baseParts, cst: ref.cst }, scope, schema);
 	for (const field of fields) {
 		if (type.kind !== "struct") return; // unknown / non-struct — don't flag
-		const hit = type.fields.find((f) => normalizeName(f.name) === normalizeName(field));
+		// Struct-field names on a Type are stored FOLDED (parseType folds them at parse time), so
+		// only the reference side folds here — re-folding a preserved-case stored name would corrupt it.
+		const hit = type.fields.find((f) => f.name === foldIdentifier(field, scope.dialect));
 		if (!hit) {
 			diagnostics.push(columnDiag("unknown-field", ref, `Unknown field: ${ref.parts.join(".")}`));
 			return;
@@ -344,17 +356,18 @@ function sourceColumns(
 	src: ResolvedSource,
 	schema: Schema,
 	resolved: Map<Scope, string[] | "unknown">,
+	dialect?: string,
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		return schema.columnsFor(src.name)?.map((c) => c.name);
+		return schema.columnsFor(foldTableName(src.name, dialect))?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return known(resolved.get(src.scope));
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot")
-		return known(pivotSourceOutputs(src, (s) => sourceColumns(s, schema, resolved) ?? "unknown"));
+		return known(pivotSourceOutputs(src, (s) => sourceColumns(s, schema, resolved, dialect) ?? "unknown"));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
@@ -376,11 +389,6 @@ function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine
 
 function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): Diagnostic {
 	return { kind, message, ...spanOf(ref.cst) };
-}
-
-function normalizeName(name: string): string {
-	const unquoted = name.startsWith("`") && name.endsWith("`") ? name.slice(1, -1) : name;
-	return unquoted.toLowerCase();
 }
 
 function unknownTable(name: string[], cst: ParserRuleContext): Diagnostic {

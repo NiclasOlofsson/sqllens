@@ -57,11 +57,13 @@ describe("T-SQL lower -> IR", () => {
 		expect(q.body.columns.some((c) => c.clause === "where" && c.parts.join(".") === "a")).toBe(true);
 	});
 
-	it("strips [bracketed] identifiers", () => {
+	it("keeps [bracketed] identifiers RAW in the IR (identity via foldIdentifier, not stripping)", () => {
+		// Task 2 (quotedness survives lowering): delimiters stay in the IR; comparisons fold
+		// ([a] ≡ a under T-SQL's default-CI fold), display goes through displayName.
 		const { q } = ir("SELECT [a] FROM [dbo].[t]");
 		if (q.body.kind !== "select") throw new Error("select");
-		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["dbo", "t"] });
-		expect(q.body.projections[0].expr).toMatchObject({ kind: "column", parts: ["a"] });
+		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["[dbo]", "[t]"] });
+		expect(q.body.projections[0].expr).toMatchObject({ kind: "column", parts: ["[a]"] });
 	});
 
 	it("models a JOIN with two sources and an ON condition", () => {

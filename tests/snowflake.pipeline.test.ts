@@ -30,14 +30,17 @@ describe("Snowflake scope resolution", () => {
 	it("resolves CTEs and table aliases", () => {
 		const tree = scopes("WITH c AS (SELECT a FROM t) SELECT c.a FROM c");
 		expect(tree.root.body.kind).toBe("select");
-		// the CTE is visible as a source in the root scope
+		// The CTE is visible as a source in the root scope, keyed by its FOLDED identity — an
+		// unquoted Snowflake identifier is "stored and resolved as uppercase" (docs.snowflake.com/
+		// en/sql-reference/identifiers-syntax), so unquoted `c` keys as C (and `C.a`/`c.a` both bind).
 		const names = [...tree.root.sources.keys()];
-		expect(names).toContain("c");
+		expect(names).toContain("C");
 	});
 
 	it("exposes FLATTEN's lateral columns to the scope", () => {
+		// Same fold rule: the unquoted lateral alias `f` keys as F.
 		const tree = scopes("SELECT f.value FROM t, LATERAL FLATTEN(input => t.v) f");
-		expect([...tree.root.sources.keys()]).toContain("f");
+		expect([...tree.root.sources.keys()]).toContain("F");
 	});
 
 	// CONNECT BY exposes the LEVEL pseudo-column: docs.snowflake.com/en/sql-reference/constructs/connect-by

@@ -575,7 +575,7 @@ export const SNOWFLAKE_ALIASES: Record<string, string> = {
 };
 
 export function snowflakeParseType(text: string): Type {
-	return parseType(text, SNOWFLAKE_ALIASES);
+	return parseType(text, SNOWFLAKE_ALIASES, "snowflake");
 }
 
 /** Pre-registry hook for calls a plain FnRule can't key. `<seq>.NEXTVAL` carries the sequence as a

@@ -40,7 +40,7 @@ export const REDSHIFT_ALIASES: Record<string, string> = {
 };
 
 export function redshiftParseType(text: string): Type {
-	return parseType(text, REDSHIFT_ALIASES);
+	return parseType(text, REDSHIFT_ALIASES, "redshift");
 }
 
 const BOOLEAN = scalar("boolean");

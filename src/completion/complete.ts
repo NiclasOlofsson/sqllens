@@ -16,6 +16,7 @@
 
 import { Token } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
+import { displayName, foldIdentifier, foldTableName } from "../ident/fold.js";
 import { inferDialect } from "../infer/dialect.js";
 import type { Schema } from "../qualify/schema.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
@@ -87,7 +88,7 @@ function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
 		for (const c of visibleColumns(doc, offset, schema)) add(c);
-		if (schema) for (const c of fromRelationColumns(m, cfg, schema)) add(c);
+		if (schema) for (const c of fromRelationColumns(m, cfg, schema, dialect)) add(c);
 	}
 
 	// functions — value/column slot: the dialect's inference-registry function names.
@@ -134,7 +135,7 @@ function intersects(a: Set<number>, b: Set<number>): boolean {
  * surface those tables' schema columns. Token-driven, so it survives the mis-parse; gated by config
  * token sets, so the core stays dialect-neutral.
  */
-function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schema): Completion[] {
+function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schema, dialect?: string): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
 	// Default-channel tokens only — hidden whitespace/comments sit between FROM and the name.
 	const toks = m.tokenStream.getTokens().filter((t) => t.channel === Token.DEFAULT_CHANNEL);
@@ -145,7 +146,7 @@ function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schem
 		if (!t || !n) continue;
 		if (!cfg.relationKeywordTokens.has(t.type)) continue;
 		if (!cfg.nameTokens.has(n.type)) continue;
-		const cols = schema.columnsFor([n.text ?? ""]);
+		const cols = schema.columnsFor(foldTableName([n.text ?? ""], dialect));
 		if (!cols) continue;
 		for (const c of cols) out.push({ label: c.name, kind: "column", detail: c.type });
 	}
@@ -160,11 +161,12 @@ function visibleColumns(doc: SqlDocument, offset: number, schema?: Schema): Comp
 	const out: Completion[] = [];
 	const seen = new Set<string>();
 	for (const src of scope.sources.values()) {
-		for (const col of columnsOf(src, schema)) {
-			const key = col.label.toLowerCase();
+		for (const col of columnsOf(src, doc.dialect, schema)) {
+			// Dedup by folded IDENTITY (quoted/unquoted twins collapse); labels render via displayName.
+			const key = foldIdentifier(col.label, doc.dialect);
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push(col);
+			out.push({ ...col, label: displayName(col.label, doc.dialect) });
 		}
 	}
 	return out;
@@ -202,12 +204,12 @@ function deepestScopeAt(tree: ScopeTree, offset: number): Scope | undefined {
 /** The completion items for one visible source's columns. Derived sources (CTE / subquery / pipe
  *  relation / lateral) carry their output column names directly; a base table's columns come from
  *  the schema (with types as `detail`). A source whose columns aren't determinable contributes none. */
-function columnsOf(src: ResolvedSource, schema?: Schema): Completion[] {
+function columnsOf(src: ResolvedSource, dialect: string, schema?: Schema): Completion[] {
 	if (src.kind === "table") {
 		// Declared column aliases win; otherwise look the table up in the schema (names + types).
 		const declared = src.source.columnAliases;
 		if (declared) return declared.map((name) => ({ label: name, kind: "column" as const }));
-		const cols = schema?.columnsFor(src.name);
+		const cols = schema?.columnsFor(foldTableName(src.name, dialect));
 		return (cols ?? []).map((c) => ({ label: c.name, kind: "column" as const, detail: c.type }));
 	}
 	const names = derivedOutputs(src);

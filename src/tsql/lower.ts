@@ -19,6 +19,7 @@ import type {
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { displayName, foldIdentifier } from "../ident/fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — T-SQL (grammars-v4 sql/tsql) CST -> the shared, dialect-neutral IR
@@ -180,11 +181,9 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 	const name = directChildrenOfRule(cte, P.RULE_id_)[0]?.getText() ?? "";
 	const inner = directChildrenOfRule(cte, P.RULE_select_statement)[0];
 	const colList = directChildrenOfRule(cte, P.RULE_column_name_list)[0];
-	const columnAliases = colList
-		? directChildrenOfRule(colList, P.RULE_id_).map((i) => stripQuotes(i.getText()))
-		: undefined;
+	const columnAliases = colList ? directChildrenOfRule(colList, P.RULE_id_).map((i) => i.getText()) : undefined;
 	return {
-		name: stripQuotes(name),
+		name,
 		columnAliases: columnAliases?.length ? columnAliases : undefined,
 		body: inner ? lowerSelect(inner) : emptyQuery(cte),
 		cst: cte,
@@ -341,7 +340,7 @@ function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
 	const clause = firstOfRule(pivot, P.RULE_pivot_clause);
 	if (!clause) return undefined;
 	const list = directChildrenOfRule(clause, P.RULE_column_alias_list)[0];
-	const values = list ? directChildrenOfRule(list, P.RULE_column_alias).map((c) => stripQuotes(c.getText())) : [];
+	const values = list ? directChildrenOfRule(list, P.RULE_column_alias).map((c) => c.getText()) : [];
 	const forCol = directChildrenOfRule(clause, P.RULE_full_column_name)[0];
 	const forColumns = forCol ? [lastPart(nameParts(forCol))] : [];
 	const agg = firstOfRule(clause, P.RULE_aggregate_windowed_function);
@@ -358,7 +357,7 @@ function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined 
 	if (!clause) return undefined;
 	const valueExpr = directChildrenOfRule(clause, P.RULE_expression)[0];
 	const valueFcn = valueExpr ? firstOfRule(valueExpr, P.RULE_full_column_name) : undefined;
-	const valueColumn = valueFcn ? lastPart(nameParts(valueFcn)) : stripQuotes(valueExpr?.getText() ?? "");
+	const valueColumn = valueFcn ? lastPart(nameParts(valueFcn)) : (valueExpr?.getText() ?? "");
 	const nameCol = directChildrenOfRule(clause, P.RULE_full_column_name)[0];
 	const nameColumn = nameCol ? lastPart(nameParts(nameCol)) : "";
 	const listNode = firstOfRule(clause, P.RULE_full_column_name_list);
@@ -407,7 +406,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 
 function aliasText(alias: ParserRuleContext): string {
 	const id = firstOfRule(alias, P.RULE_id_);
-	return stripQuotes(id ? id.getText() : alias.getText());
+	return id ? id.getText() : alias.getText();
 }
 
 /** An XML data type method in a select list — `receiver.method('arg', …)` (grammar rule `udt_elem`:
@@ -423,7 +422,7 @@ function lowerUdtElem(udt: ParserRuleContext): Expr {
 	const receiverExpr: Expr = receiver
 		? {
 				kind: "column",
-				parts: [stripQuotes(receiver.getText())],
+				parts: [receiver.getText()],
 				partSpans: partSpansOf([receiver]),
 				cst: receiver,
 			}
@@ -438,7 +437,7 @@ function lowerUdtElem(udt: ParserRuleContext): Expr {
 		: [];
 	return {
 		kind: "function",
-		name: method ? stripQuotes(method.getText()).toLowerCase() : "",
+		name: method ? displayName(method.getText(), "tsql").toLowerCase() : "",
 		args: [receiverExpr, ...methodArgs],
 		aggregate: false,
 		distinct: false,
@@ -474,7 +473,7 @@ function buildSource(item: ParserRuleContext): Source {
 		// names on columnAliases for compatibility. https://learn.microsoft.com/en-us/sql/t-sql/functions/openjson-transact-sql
 		const declared = collectOfRule(openNode, P.RULE_column_declaration)
 			.map((cd) => ({
-				name: stripQuotes(firstOfRule(cd, P.RULE_id_)?.getText() ?? ""),
+				name: firstOfRule(cd, P.RULE_id_)?.getText() ?? "",
 				type: directChildrenOfRule(cd, P.RULE_data_type)[0]?.getText(),
 			}))
 			.filter((c) => c.name.length > 0);
@@ -526,7 +525,7 @@ function buildSource(item: ParserRuleContext): Source {
 	}
 
 	const full = directChildrenOfRule(item, P.RULE_full_table_name)[0];
-	const parts = full ? nameParts(full) : [stripQuotes(item.getText())];
+	const parts = full ? nameParts(full) : [item.getText()];
 	return { kind: "table", name: parts, alias: alias?.text, aliasCst: alias?.cst, cst: item };
 }
 
@@ -534,19 +533,19 @@ function buildSource(item: ParserRuleContext): Source {
 function innerTableAlias(node: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
 	const asAlias = firstOfRule(node, P.RULE_as_table_alias);
 	const id = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
-	return id ? { text: stripQuotes(id.getText()), cst: id } : undefined;
+	return id ? { text: id.getText(), cst: id } : undefined;
 }
 
 function tableAlias(item: ParserRuleContext): { text: string; cst: ParserRuleContext } | undefined {
 	const asAlias = directChildrenOfRule(item, P.RULE_as_table_alias)[0];
 	const id = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
-	return id ? { text: stripQuotes(id.getText()), cst: id } : undefined;
+	return id ? { text: id.getText(), cst: id } : undefined;
 }
 
 function columnAliasList(item: ParserRuleContext): string[] | undefined {
 	const list = directChildrenOfRule(item, P.RULE_column_alias_list)[0];
 	if (!list) return undefined;
-	const cols = directChildrenOfRule(list, P.RULE_column_alias).map((c) => stripQuotes(c.getText()));
+	const cols = directChildrenOfRule(list, P.RULE_column_alias).map((c) => c.getText());
 	return cols.length ? cols : undefined;
 }
 
@@ -940,7 +939,7 @@ function resolveNamedWindow(
 	name: string,
 	seen: Set<string>,
 ): { partitionBy: Expr[]; orderBy: Expr[] } | undefined {
-	const key = stripQuotes(name).toLowerCase();
+	const key = foldIdentifier(name, "tsql");
 	if (seen.has(key)) return undefined;
 	seen.add(key);
 
@@ -952,7 +951,7 @@ function resolveNamedWindow(
 
 	for (const def of directChildrenOfRule(clause, P.RULE_window_definition)) {
 		const defName = directChildrenOfRule(def, P.RULE_id_)[0]?.getText();
-		if (!defName || stripQuotes(defName).toLowerCase() !== key) continue;
+		if (!defName || foldIdentifier(defName, "tsql") !== key) continue;
 		const ws = directChildrenOfRule(def, P.RULE_window_specification)[0];
 		if (!ws) return undefined;
 		const parts = windowParts(ws);
@@ -1250,29 +1249,16 @@ function columnPartSpans(node: ParserRuleContext) {
 
 function nameParts(node: ParserRuleContext): string[] {
 	const ids = collectOfRule(node, P.RULE_id_);
-	if (ids.length) return ids.map((i) => stripQuotes(i.getText()));
+	if (ids.length) return ids.map((i) => i.getText());
 	return node
 		.getText()
 		.split(".")
-		.map(stripQuotes)
 		.filter((p) => p.length > 0);
 }
 
 function lastNamePart(text: string): string {
 	const dot = text.lastIndexOf(".");
 	return dot >= 0 ? text.slice(dot + 1) : text;
-}
-
-/** Strip T-SQL `[bracket]` / "quoted" identifier delimiters for name comparison. */
-function stripQuotes(text: string): string {
-	if (text.length >= 2) {
-		const a = text[0],
-			z = text[text.length - 1];
-		if ((a === "[" && z === "]") || (a === '"' && z === '"') || (a === "`" && z === "`")) {
-			return text.slice(1, -1);
-		}
-	}
-	return text;
 }
 
 function otherExpr(node: ParserRuleContext): Expr {

@@ -1,3 +1,4 @@
+import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
 import type { Schema } from "../qualify/schema.js";
 import {
 	applyPivotCols,
@@ -33,39 +34,44 @@ export function resolveColumnSource(scope: Scope, parts: string[], schema: Schem
 		}
 		return undefined;
 	}
-	const name = normalizeName(split.column);
+	const name = foldIdentifier(split.column, scope.dialect);
 	// Resolve LOCALLY first, then correlate to enclosing scopes — so a column binds to a local
 	// source (even one with unknown columns) before it can match an enclosing one by name.
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
 		const sources = [...s.sources.values()];
 		for (const src of sources) {
-			const cols = columnNamesOf(src, schema);
-			if (cols?.some((c) => normalizeName(c) === name)) {
+			const cols = columnNamesOf(src, schema, undefined, s.dialect);
+			if (cols?.some((c) => foldIdentifier(c, s.dialect) === name)) {
 				return { source: src, column: split.column, fields: split.fields };
 			}
 		}
 		// Schema-free fallback: a single source here with unknown columns owns the column (valid SQL
 		// assumed). If this scope has sources but can't resolve it, fall through to correlate outward.
-		const unknown = sources.filter((src) => columnNamesOf(src, schema) === undefined);
+		const unknown = sources.filter((src) => columnNamesOf(src, schema, undefined, s.dialect) === undefined);
 		if (unknown.length === 1) return { source: unknown[0], column: split.column, fields: split.fields };
 	}
 	return undefined;
 }
 
 /** The output column names a source exposes — schema for a table, the (schema-expanded) output
- *  names for a derived relation (column aliases rename them), the AS columns for a lateral view. */
+ *  names for a derived relation (column aliases rename them), the AS columns for a lateral view.
+ *  `dialect` folds a table's name parts for the catalog lookup (quoted names reach the schema in
+ *  raw form); when absent, the default fold (backtick-strip + lower) reproduces legacy behavior. */
 export function columnNamesOf(
 	src: ResolvedSource,
 	schema: Schema,
 	visited: Set<Scope> = new Set(),
+	dialect?: string,
 ): string[] | undefined {
-	if (src.kind === "table") return src.source.columnAliases ?? schema.columnsFor(src.name)?.map((c) => c.name);
+	if (src.kind === "table") {
+		return src.source.columnAliases ?? schema.columnsFor(foldTableName(src.name, dialect))?.map((c) => c.name);
+	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? outputNames(src.ref.scope, schema, visited);
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);
 	if (src.kind === "relation") return outputNames(src.scope, schema, visited); // a prior pipe stage
 	if (src.kind === "graphtable") return outputNames(src.scope, schema, visited);
 	if (src.kind === "pivot") {
-		const r = pivotSourceOutputs(src, (s) => columnNamesOf(s, schema, visited) ?? "unknown");
+		const r = pivotSourceOutputs(src, (s) => columnNamesOf(s, schema, visited, dialect) ?? "unknown");
 		return r === "unknown" ? undefined : r;
 	}
 	return src.source.columns; // lateral
@@ -87,17 +93,21 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 		if (!scope.branches) return undefined;
 		const left = outputNames(scope.branches.left, schema, visited);
 		if (!body.byName) return left;
-		const merged = mergeByName(left ?? "unknown", outputNames(scope.branches.right, schema, visited) ?? "unknown");
+		const merged = mergeByName(
+			left ?? "unknown",
+			outputNames(scope.branches.right, schema, visited) ?? "unknown",
+			scope.dialect,
+		);
 		return merged === "unknown" ? undefined : merged;
 	}
 	// A PIVOT/UNPIVOT with no result alias reshapes the FROM relation — expand the sources, transform.
 	if (body.pivot && !body.pivot.alias) {
 		const base = sourceColumnsAll(scope, schema, visited);
-		return base ? applyPivotCols(base, body.pivot) : undefined;
+		return base ? applyPivotCols(base, body.pivot, scope.dialect) : undefined;
 	}
 	if (body.unpivot && !body.unpivot.alias) {
 		const base = sourceColumnsAll(scope, schema, visited);
-		return base ? applyUnpivotCols(base, body.unpivot) : undefined;
+		return base ? applyUnpivotCols(base, body.unpivot, scope.dialect) : undefined;
 	}
 	return projectionNames(scope, body.projections, schema, visited);
 }
@@ -106,7 +116,7 @@ export function outputNames(scope: Scope, schema: Schema, visited: Set<Scope> = 
 function sourceColumnsAll(scope: Scope, schema: Schema, visited: Set<Scope>): string[] | undefined {
 	const out: string[] = [];
 	for (const src of scope.sources.values()) {
-		const cols = columnNamesOf(src, schema, visited);
+		const cols = columnNamesOf(src, schema, visited, scope.dialect);
 		if (!cols) return undefined;
 		out.push(...cols);
 	}
@@ -124,15 +134,15 @@ function projectionNames(
 	for (const p of projections) {
 		if (p.isStar) {
 			const star = p.expr.kind === "star" ? p.expr : undefined;
-			const want = star?.qualifier ? normalizeName(star.qualifier[star.qualifier.length - 1] ?? "") : undefined;
+			const want = star?.qualifier ? (star.qualifier[star.qualifier.length - 1] ?? "") : undefined;
 			const expanded: string[] = [];
 			for (const [key, src] of scope.sources) {
-				if (want !== undefined && key !== want) continue;
-				const cols = columnNamesOf(src, schema, visited);
+				if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
+				const cols = columnNamesOf(src, schema, visited, scope.dialect);
 				if (!cols) return undefined;
 				expanded.push(...cols);
 			}
-			out.push(...(star ? applyStarModifiers(expanded, star) : expanded));
+			out.push(...(star ? applyStarModifiers(expanded, star, scope.dialect) : expanded));
 		} else if (p.name !== undefined) {
 			out.push(p.name);
 		} else {
@@ -165,19 +175,20 @@ function pipeStageNames(scope: Scope, schema: Schema, visited: Set<Scope>): stri
 			}
 			return [...aggs, ...keys];
 		}
-		case "drop":
-			return incoming
-				? incoming.filter((c) => !stage.drop.some((d) => normalizeName(d) === normalizeName(c)))
-				: undefined;
+		case "drop": {
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			return incoming ? incoming.filter((c) => !stage.drop.some((d) => fold(d) === fold(c))) : undefined;
+		}
 		case "rename": {
 			if (!incoming) return undefined;
-			const m = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
-			return incoming.map((c) => m.get(normalizeName(c)) ?? c);
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const m = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
+			return incoming.map((c) => m.get(fold(c)) ?? c);
 		}
 		case "join": {
 			if (!incoming) return undefined;
 			const joinSrc = [...scope.sources.entries()].find(([k]) => k !== "")?.[1];
-			const jc = joinSrc ? columnNamesOf(joinSrc, schema, visited) : undefined;
+			const jc = joinSrc ? columnNamesOf(joinSrc, schema, visited, scope.dialect) : undefined;
 			return jc ? [...incoming, ...jc] : undefined;
 		}
 		case "where":
@@ -196,9 +207,4 @@ function pipeStageNames(scope: Scope, schema: Schema, visited: Set<Scope>): stri
 		default:
 			return undefined; // call / pivot / unpivot / matchRecognize / describe / branching / sinks
 	}
-}
-
-/** Databricks identifiers are case-insensitive; strip surrounding backticks too. */
-export function normalizeName(s: string): string {
-	return (s.startsWith("`") && s.endsWith("`") ? s.slice(1, -1) : s).toLowerCase();
 }

@@ -189,3 +189,24 @@ export function foldIdentifier(raw: string, dialect: string | undefined, kind: I
 	if (kind === "table" && rule.tableCase) return applyCase(body, rule.tableCase);
 	return applyCase(body, wasQuoted ? rule.quoted : rule.unquoted);
 }
+
+/** PRESENTATION twin of foldIdentifier: strip the dialect's delimiters (unescaping the body) but
+ *  apply NO case change — the string a UI shows for a name. Never use this for comparison; two
+ *  displayName results being equal proves nothing about identity. */
+export function displayName(raw: string, dialect: string | undefined): string {
+	const rule = (dialect && RULES[dialect]) || DEFAULT_RULE;
+	return unwrap(raw, rule)[0];
+}
+
+/** Fold a multipart table name for a catalog lookup — every part folded with kind "table" (only
+ *  BigQuery treats table parts specially; everywhere else this is the plain fold). */
+export function foldTableName(parts: string[], dialect: string | undefined): string[] {
+	return parts.map((p) => foldIdentifier(p, dialect, "table"));
+}
+
+/** True when a source-map KEY (already folded — an alias folded as "other", or a table's last name
+ *  part folded as "table") matches a RAW qualifier part. Tries both folds; they differ only for
+ *  BigQuery, whose table identifiers preserve case while aliases/columns fold lower. */
+export function matchesSourceKey(key: string, rawPart: string, dialect: string | undefined): boolean {
+	return key === foldIdentifier(rawPart, dialect) || key === foldIdentifier(rawPart, dialect, "table");
+}

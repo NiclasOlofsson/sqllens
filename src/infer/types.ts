@@ -3,7 +3,13 @@
 // (`int`, `decimal(10,2)`, `array<string>`, `struct<a:int,b:string>`) parse into
 // this ADT so coercion and the function registry can compare and combine types.
 // `unknown` is the bottom: anything we can't type yet (no schema, no rule).
+//
+// Struct FIELD NAMES are stored FOLDED (foldIdentifier, per the parsing dialect) — they are
+// identity keys. Comparisons against a raw reference fold only the reference side; re-folding a
+// stored name would corrupt a preserved-case (quoted snowflake/postgres) field.
 // ---------------------------------------------------------------------------
+
+import { foldIdentifier } from "../ident/fold.js";
 
 export type Type =
 	| { kind: "scalar"; name: string }
@@ -26,18 +32,24 @@ export function scalar(name: string): Type {
 
 /** Parse a SQL type string into a `Type`; `unknown` if it's empty/unparseable. `aliases` maps a
  *  dialect's scalar names onto the shared canonical names (Spark by default; pass TSQL_ALIASES for
- *  T-SQL, e.g. bit→boolean, datetime→timestamp, nvarchar→string). */
-export function parseType(text: string, aliases: Record<string, string> = SCALAR_ALIASES): Type {
+ *  T-SQL, e.g. bit→boolean, datetime→timestamp, nvarchar→string). `dialect` folds struct field
+ *  names with that dialect's identifier rules (fields are stored folded — identity keys); absent,
+ *  the default fold (backtick-strip + lower) reproduces the legacy behavior. */
+export function parseType(text: string, aliases: Record<string, string> = SCALAR_ALIASES, dialect?: string): Type {
 	const s = text.trim();
 	if (s === "") return UNKNOWN;
 
 	const array = /^array\s*<(.*)>$/is.exec(s);
-	if (array) return { kind: "array", element: parseType(array[1]) };
+	if (array) return { kind: "array", element: parseType(array[1], undefined, dialect) };
 
 	const map = /^map\s*<(.*)>$/is.exec(s);
 	if (map) {
 		const [key, value] = splitTopLevel(map[1]);
-		return { kind: "map", key: parseType(key ?? ""), value: parseType(value ?? "") };
+		return {
+			kind: "map",
+			key: parseType(key ?? "", undefined, dialect),
+			value: parseType(value ?? "", undefined, dialect),
+		};
 	}
 
 	const struct = /^struct\s*<(.*)>$/is.exec(s);
@@ -46,8 +58,10 @@ export function parseType(text: string, aliases: Record<string, string> = SCALAR
 		for (const part of splitTopLevel(struct[1])) {
 			const colon = topLevelColon(part);
 			if (colon < 0) continue;
-			const name = unquote(part.slice(0, colon).trim());
-			if (name) fields.push({ name, type: parseType(stripComment(part.slice(colon + 1).trim())) });
+			const name = foldIdentifier(part.slice(0, colon).trim(), dialect);
+			if (name) {
+				fields.push({ name, type: parseType(stripComment(part.slice(colon + 1).trim()), undefined, dialect) });
+			}
 		}
 		return { kind: "struct", fields };
 	}
@@ -145,10 +159,6 @@ function topLevelColon(s: string): number {
 function stripComment(type: string): string {
 	const c = type.search(/\s+comment\s+'/i);
 	return c >= 0 ? type.slice(0, c).trim() : type;
-}
-
-function unquote(name: string): string {
-	return name.startsWith("`") && name.endsWith("`") ? name.slice(1, -1).toLowerCase() : name.toLowerCase();
 }
 
 /** Render a Type as a display string (scalar name, array<…>, map<…,…>, struct<f:…>, unknown).

@@ -98,8 +98,10 @@ describe("aliased PIVOT … AS p — the named pivoted relation resolves schema-
 	const P = "FROM t PIVOT (SUM(sales) FOR quarter IN ([Q1], [Q2])) AS p";
 
 	it("SELECT * exposes the pivoted columns (base consumed)", () => {
+		// The IN-list names are stored RAW (Task 2 keep-raw); [Q1] ≡ Q1 under the T-SQL fold —
+		// resolution is proven by the no-false-diagnostics case below.
 		const tree = resolveScopes(lowerTsql(parseTSql(`SELECT * ${P}`).tree), "tsql");
-		expect(qualify(tree, T).columnsOf(tree.root)).toEqual(["product", "Q1", "Q2"]);
+		expect(qualify(tree, T).columnsOf(tree.root)).toEqual(["product", "[Q1]", "[Q2]"]);
 	});
 
 	it("a qualified p.col and an unqualified value column both resolve (no false diagnostics)", () => {
