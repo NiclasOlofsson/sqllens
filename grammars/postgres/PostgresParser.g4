@@ -3616,12 +3616,17 @@ c_expr
    // so they drop out). No language change (§4.1.2.7 AexprConst; duckdb/redshift share this rule).
    | aexprconst # c_expr_expr
    | func_expr # c_expr_expr
+   // NOTE(perf): explicit_row (`ROW '(' … ')'`) sits above columnref for the same most-specific-first
+   // reason — `ROW` is a non-reserved keyword, so a columnref reads `ROW` as a bare column and the `(…)`
+   // becomes a phantom follow, giving SLL a columnref-vs-explicit_row context-sensitivity that bails on
+   // `ROW(1,2) = ROW(3,4)`. They are disjoint on a full match (explicit_row carries the `(`), so
+   // explicit_row first resolves it; a bare `row` column still falls to columnref. No language change.
+   | explicit_row # c_expr_expr
    | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
    | select_with_parens indirection? # c_expr_expr
-   | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr
    | row OVERLAPS row /* 14*/
 

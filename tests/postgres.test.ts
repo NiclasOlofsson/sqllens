@@ -205,6 +205,21 @@ describe("postgres c_expr — function applications resolve under SLL (no LL fal
 		expect(lit.kind === "select" && lit.projections[0]?.expr.kind).toBe("literal");
 	});
 
+	// Iteration 4: explicit_row (`ROW(…)`) ordered above columnref — ROW is a non-reserved keyword, so a
+	// columnref reads it as a bare column and gives SLL a context-sensitivity that bails on `ROW(…)`.
+	it("ROW constructors resolve under SLL; a bare `row` stays a column", () => {
+		for (const sql of [
+			"SELECT ROW(1, 2.5, 'x') = ROW(1, 3, 'y')",
+			"SELECT ROW(a, b) FROM t",
+			"SELECT ROW(c.*) FROM t c",
+		])
+			noFallback(sql);
+		const rowCall = lower(parsePostgres("SELECT ROW(a, b) FROM t").tree).body;
+		expect(rowCall.kind === "select" && rowCall.projections[0]?.expr.kind).toBe("function");
+		const col = lower(parsePostgres("SELECT row FROM t").tree).body;
+		expect(col.kind === "select" && col.projections[0]?.expr.kind).toBe("column");
+	});
+
 	it("the reorder does not widen: generic typed literals parse, non-arg-list typed forms reject", () => {
 		ok("SELECT f(a) '5'"); // aexprconst `func_name '(' args ')' sconst` — still valid
 		ok("SELECT DATE '2008-01-01'");

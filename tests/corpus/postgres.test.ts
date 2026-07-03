@@ -30,14 +30,14 @@ const OTHER_BASELINE = 0;
 
 // The SLL→LL fallback ratchet (SLL-surgery wave, task-4-report.md): Postgres was grammar-sick — its
 // heaviest decisions forced the two-stage parse to bail out of the fast SLL prediction path and reparse
-// under full LL. Grammar edits cut it from 112 to 12: (1) deleting `target_el`'s `columnref` subset
-// alternative, (2) ordering c_expr's alternatives most-specific-first — `aexprconst` (typed literals)
-// then `func_expr` (calls) then `columnref` (bare ids) — so the correct reading is the minimum
-// alternative in each identifier-prefix conflict. Measured via
+// under full LL. Grammar edits cut it from 112 to 7: (1) deleting `target_el`'s `columnref` subset
+// alternative, (2) ordering c_expr's identifier-prefix alternatives most-specific-first — `aexprconst`
+// (typed literals) then `func_expr` (calls) then `explicit_row` (`ROW(…)`) then `columnref` (bare ids)
+// — so the correct reading is the minimum alternative in each conflict. Measured via
 // `node --import tsx tools/profile-sll.ts postgres` over this same docs query bucket. Counted on the
 // SAME single parse the docs ratchet makes (the `parse:` closure below), never a re-parse. This is the
 // dress rehearsal for duckdb/redshift's identical TVL-lineage decisions; may only fall.
-const FALLBACK_RATCHET = 12;
+const FALLBACK_RATCHET = 7;
 
 // Documented-broken query examples — each verified against its postgresql.org/docs/18 source page
 // as deliberately-invalid or template SQL (not a grammar gap, not scraper noise). By construction
