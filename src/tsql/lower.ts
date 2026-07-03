@@ -17,6 +17,7 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -420,7 +421,12 @@ function lowerUdtElem(udt: ParserRuleContext): Expr {
 	const receiver = ids[0];
 	const method = ids[1];
 	const receiverExpr: Expr = receiver
-		? { kind: "column", parts: [stripQuotes(receiver.getText())], cst: receiver }
+		? {
+				kind: "column",
+				parts: [stripQuotes(receiver.getText())],
+				partSpans: partSpansOf([receiver]),
+				cst: receiver,
+			}
 		: otherExpr(udt);
 	const argsNode = directChildrenOfRule(udt, P.RULE_udt_method_arguments)[0];
 	const methodArgs: Expr[] = argsNode
@@ -665,6 +671,7 @@ function lowerPredicate(pred: ParserRuleContext): Expr {
 		const cols: Expr[] = collectOfRule(ft, P.RULE_full_column_name).map((c) => ({
 			kind: "column",
 			parts: nameParts(c),
+			partSpans: columnPartSpans(c),
 			cst: c,
 		}));
 		const searches = directChildrenOfRule(ft, P.RULE_expression).map(lowerExpression);
@@ -784,7 +791,7 @@ function lowerExpression(node: ParserRuleContext): Expr {
 			return inner ? lowerExpression(inner) : otherExpr(node);
 		}
 		case P.RULE_full_column_name:
-			return { kind: "column", parts: nameParts(node), cst: node };
+			return { kind: "column", parts: nameParts(node), partSpans: columnPartSpans(node), cst: node };
 		case P.RULE_primitive_expression:
 		case P.RULE_primitive_constant:
 			return { kind: "literal", text: node.getText(), cst: node };
@@ -1006,7 +1013,7 @@ function lowerSubquery(sub: ParserRuleContext): QueryExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1052,7 +1059,7 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_subquery || child.ruleIndex === P.RULE_select_statement) continue;
 		if (child.ruleIndex === P.RULE_full_column_name) {
-			acc.push({ parts: nameParts(child), clause, cst: child });
+			acc.push({ parts: nameParts(child), clause, cst: child, partSpans: columnPartSpans(child) });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
@@ -1234,6 +1241,13 @@ function leftmostToken(node: ParseTree): string | undefined {
 }
 
 /** The dotted name parts of a full_table_name / table_name / full_column_name (id_ leaves in order). */
+/** Per-part spans PARALLEL to nameParts(node) — one span per `id_` (its bracket/quote delimiters
+ *  included), all-or-nothing: undefined when there are no id_ children (nameParts falls back to a
+ *  dotted split then). One shared span-capture seam (reused by the editor-gold rewrite). */
+function columnPartSpans(node: ParserRuleContext) {
+	return partSpansOf(collectOfRule(node, P.RULE_id_));
+}
+
 function nameParts(node: ParserRuleContext): string[] {
 	const ids = collectOfRule(node, P.RULE_id_);
 	if (ids.length) return ids.map((i) => stripQuotes(i.getText()));

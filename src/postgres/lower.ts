@@ -16,6 +16,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -1140,7 +1141,26 @@ function lowerColumnref(node: ParserRuleContext): Expr {
 	const head = colid ? textOf(colid) : node.getText();
 	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
 	const base: Expr = { kind: "column", parts: [head], cst: node };
-	return ind ? applyIndirection(base, ind, node) : base;
+	const expr = ind ? applyIndirection(base, ind, node) : base;
+	// Attach per-part spans only when the reference stayed a pure dotted column (no `.*`/subscript);
+	// all-or-nothing, so a synthesized part omits the whole array. See src/ir/part-span.ts.
+	return expr.kind === "column" ? { ...expr, partSpans: columnPartSpans(node) } : expr;
+}
+
+/** The per-part CST nodes of a `columnref`, PARALLEL to nameParts(node) — one shared span-capture seam
+ *  (reused by the editor-gold identifier-folding rewrite). Mirrors nameParts/applyIndirection exactly:
+ *  the colid head plus each `.attr_name`; a missing attr_name (keyword segment / empty `..`) yields
+ *  undefined for that part, so partSpansOf omits the whole ref. */
+function columnPartSpans(node: ParserRuleContext) {
+	const nodes: (ParseTree | undefined)[] = [directChildrenOfRule(node, P.RULE_colid)[0]];
+	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
+	if (ind) {
+		for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
+			if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR))
+				nodes.push(firstShallow(el, P.RULE_attr_name));
+		}
+	}
+	return partSpansOf(nodes);
 }
 
 /** Apply indirection_el+ to a base expr: `.attr` extends a column path, `.*` makes a qualified
@@ -1321,7 +1341,7 @@ function extractExpressionSubqueries(node: ParserRuleContext, fromQueries: Set<P
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1367,16 +1387,15 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_select_with_parens) continue; // own scope
 		if (child.ruleIndex === P.RULE_columnref) {
-			acc.push({ parts: lowerColumnrefParts(child), clause, cst: child });
+			// Route through lowerColumnref so parts + partSpans stay aligned (partSpans present only for a
+			// pure dotted column; a star/subscript columnref keeps its fused single part and no spans).
+			const e = lowerColumnref(child);
+			if (e.kind === "column") acc.push({ parts: e.parts, clause, cst: child, partSpans: e.partSpans });
+			else acc.push({ parts: [child.getText()], clause, cst: child });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
 	}
-}
-
-function lowerColumnrefParts(colref: ParserRuleContext): string[] {
-	const e = lowerColumnref(colref);
-	return e.kind === "column" ? e.parts : [colref.getText()];
 }
 
 function hasAggregate(expr: Expr): boolean {

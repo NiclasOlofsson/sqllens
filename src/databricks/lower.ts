@@ -63,6 +63,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -983,7 +984,7 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	}
 	if (node instanceof ColumnReferenceContext || node instanceof DereferenceContext) {
 		const parts = columnParts(node);
-		return parts ? { kind: "column", parts, cst: node } : otherExpr(node);
+		return parts ? { kind: "column", parts, partSpans: columnPartSpans(node), cst: node } : otherExpr(node);
 	}
 	if (node instanceof StarContext) {
 		return { kind: "star", qualifier: starQualifier(node), exclude: starExclude(node), cst: node };
@@ -1327,7 +1328,7 @@ function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1387,12 +1388,30 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
 			const parts = columnParts(child);
 			if (parts) {
-				acc.push({ parts, clause, cst: child });
+				acc.push({ parts, clause, cst: child, partSpans: columnPartSpans(child) });
 				continue;
 			}
 		}
 		cstColumnRefs(child, acc, clause);
 	}
+}
+
+/** Per-part spans PARALLEL to columnParts(primary) — each identifier's own token (backticks included),
+ *  all-or-nothing: undefined when the primary isn't a pure column-path chain. One shared span-capture
+ *  seam (reused by the editor-gold identifier-folding rewrite). */
+function columnPartSpans(primary: PrimaryExpressionContext) {
+	const nodes = columnPartNodes(primary);
+	return nodes ? partSpansOf(nodes) : undefined;
+}
+
+function columnPartNodes(primary: PrimaryExpressionContext): ParseTree[] | undefined {
+	if (primary instanceof ColumnReferenceContext) return [primary.identifier()];
+	if (primary instanceof DereferenceContext) {
+		const base = columnPartNodes(primary.primaryExpression());
+		if (!base) return undefined;
+		return [...base, primary.identifier()];
+	}
+	return undefined;
 }
 
 /** The identifier parts of a column-reference primaryExpression, or undefined if it isn't one. */

@@ -23,6 +23,7 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpanOf, partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -1362,7 +1363,11 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 				(dotId ? directChildrenOfRule(dotId, P.RULE_identifier)[0] : undefined);
 			const fieldName = id ? identText(id) : dotId ? stripBackticks(dotId.getText()) : undefined;
 			if (fieldName !== undefined && base.kind === "column") {
-				return { kind: "column", parts: [...base.parts, fieldName], cst: node };
+				// Extend the base's per-part spans with the field's own identifier span; omit (all-or-nothing)
+				// if the base had none or the field is a DOT_IDENTIFIER (dot-fused, no clean identifier node).
+				const fieldSpan = id ? partSpanOf(id) : undefined;
+				const partSpans = base.partSpans && fieldSpan ? [...base.partSpans, fieldSpan] : undefined;
+				return { kind: "column", parts: [...base.parts, fieldName], partSpans, cst: node };
 			}
 			const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
 			const idxText = fieldName ?? (path ? path.getText() : "field");
@@ -1462,9 +1467,9 @@ function lowerLeaf(node: ParserRuleContext): Expr {
 		case P.RULE_system_variable_expression:
 			return { kind: "literal", text: node.getText(), cst: node };
 		case P.RULE_identifier:
-			return { kind: "column", parts: [identText(node)], cst: node };
+			return { kind: "column", parts: [identText(node)], partSpans: partSpansOf([node]), cst: node };
 		case P.RULE_path_expression:
-			return { kind: "column", parts: pathParts(node), cst: node };
+			return { kind: "column", parts: pathParts(node), partSpans: pathPartSpans(node), cst: node };
 		case P.RULE_function_call_expression_with_clauses:
 			return lowerFunctionCall(node);
 		case P.RULE_case_expression:
@@ -1772,7 +1777,7 @@ function lowerWithExpression(node: ParserRuleContext): Expr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1827,11 +1832,11 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_parenthesized_query) continue; // its own scope
 		if (child.ruleIndex === P.RULE_path_expression) {
-			acc.push({ parts: pathParts(child), clause, cst: child });
+			acc.push({ parts: pathParts(child), clause, cst: child, partSpans: pathPartSpans(child) });
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_identifier) {
-			acc.push({ parts: [identText(child)], clause, cst: child });
+			acc.push({ parts: [identText(child)], clause, cst: child, partSpans: partSpansOf([child]) });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
@@ -1915,6 +1920,28 @@ function pathParts(node: ParserRuleContext): string[] {
 		.split(".")
 		.map(stripBackticks)
 		.filter((p) => p.length > 0);
+}
+
+/** Per-part spans PARALLEL to pathParts(node) — one span per path node (its backticks included),
+ *  all-or-nothing: undefined when any node fuses dots (a backtick-quoted `a.b` head or a dot-fused
+ *  DOT_IDENTIFIER — pathParts splits those into multiple parts from one token, so no per-part span is
+ *  possible) or the getText() fallback fires. Each tail's inner identifier is preferred so the span
+ *  excludes the leading dot. One shared span-capture seam (reused by the editor-gold rewrite). */
+function pathPartSpans(node: ParserRuleContext) {
+	const head = directChildrenOfRule(node, P.RULE_identifier)[0];
+	const tail = directChildrenOfRule(node, P.RULE_dot_identifier);
+	if (!head && !tail.length) return undefined;
+	const nodes: ParserRuleContext[] = [];
+	if (head) {
+		if (stripBackticks(head.getText()).includes(".")) return undefined;
+		nodes.push(head);
+	}
+	for (const d of tail) {
+		const partNode = directChildrenOfRule(d, P.RULE_identifier)[0] ?? d;
+		if (stripBackticks(partNode.getText()).includes(".")) return undefined;
+		nodes.push(partNode);
+	}
+	return partSpansOf(nodes);
 }
 
 /** A dashed/slashed path (BigQuery `project-id.dataset.table`) used as a table name. */

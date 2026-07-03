@@ -1,4 +1,4 @@
-import { ParserRuleContext, type TerminalNode } from "antlr4ng";
+import { ParserRuleContext, type ParseTree, type TerminalNode } from "antlr4ng";
 import {
 	AndContext,
 	ArithmeticBinaryContext,
@@ -122,6 +122,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -548,7 +549,8 @@ function lowerRelation(
 			}
 			const ids = crit.identifier();
 			if (ids.length) using = ids.map((id) => idText(id));
-			for (const id of ids) columns.push({ parts: [idText(id)], clause: "join", cst: id });
+			for (const id of ids)
+				columns.push({ parts: [idText(id)], clause: "join", cst: id, partSpans: partSpansOf([id]) });
 		}
 		if (source) joins.push(buildTrinoJoin(j, source, on, using));
 		return;
@@ -1021,11 +1023,11 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		};
 	}
 	if (pe instanceof ColumnReferenceContext) {
-		return { kind: "column", parts: [idText(pe.identifier())], cst: pe };
+		return { kind: "column", parts: [idText(pe.identifier())], partSpans: partSpansOf([pe.identifier()]), cst: pe };
 	}
 	if (pe instanceof DereferenceContext) {
 		const parts = pathParts(pe);
-		if (parts) return { kind: "column", parts, cst: pe };
+		if (parts) return { kind: "column", parts, partSpans: pathPartSpans(pe), cst: pe };
 		// Field access on a non-name base ((CAST(… AS ROW(…))).x): subscript with a literal field —
 		// element access whose type stays unknown unless the base type is known (never-wrong).
 		return {
@@ -1081,7 +1083,9 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		return fn(
 			pe,
 			"grouping",
-			pe.qualifiedName().map((qn) => ({ kind: "column", parts: nameParts(qn), cst: qn }) as Expr),
+			pe
+				.qualifiedName()
+				.map((qn) => ({ kind: "column", parts: nameParts(qn), partSpans: namePartSpans(qn), cst: qn }) as Expr),
 		);
 	}
 	if (pe instanceof JsonExistsContext || pe instanceof JsonValueContext || pe instanceof JsonQueryContext) {
@@ -1219,10 +1223,36 @@ function pathParts(pe: ParserRuleContext): string[] | null {
 	return null;
 }
 
+/** Per-part spans PARALLEL to nameParts(qn) — one span per identifier (its quote delimiters
+ *  included), all-or-nothing: undefined when qn has no identifier children (nameParts then falls
+ *  back to getText()). One shared span-capture seam (reused by the editor-gold rewrite). */
+function namePartSpans(qn: ParserRuleContext | null) {
+	if (!qn) return undefined;
+	const ids = (qn as ParserRuleContext & { identifier(): ParserRuleContext[] }).identifier?.() ?? [];
+	return ids.length ? partSpansOf(ids) : undefined;
+}
+
+/** Per-part spans PARALLEL to pathParts(pe) — the identifier chain's per-part spans, all-or-nothing:
+ *  undefined when pe isn't a pure dotted-name chain (matches pathParts returning null). */
+function pathPartSpans(pe: ParserRuleContext) {
+	const nodes = pathPartNodes(pe);
+	return nodes ? partSpansOf(nodes) : undefined;
+}
+
+function pathPartNodes(pe: ParserRuleContext): ParseTree[] | null {
+	if (pe instanceof ColumnReferenceContext) return [pe.identifier()];
+	if (pe instanceof DereferenceContext) {
+		const base = pe._base ? pathPartNodes(pe._base) : null;
+		if (!base || !pe._fieldName) return null;
+		return [...base, pe._fieldName];
+	}
+	return null;
+}
+
 function collectColumns(e: Expr, clause: Clause, out: ColumnRef[]): void {
 	switch (e.kind) {
 		case "column":
-			out.push({ parts: e.parts, clause, cst: e.cst });
+			out.push({ parts: e.parts, clause, cst: e.cst, partSpans: e.partSpans });
 			return;
 		case "star":
 			return;
