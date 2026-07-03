@@ -60,7 +60,10 @@ export function parseType(text: string, aliases: Record<string, string> = SCALAR
 	return base === "" ? UNKNOWN : { kind: "scalar", name: normalizeScalar(base, aliases) };
 }
 
-const SCALAR_ALIASES: Record<string, string> = {
+/** Spark/Databricks scalar type aliases → the shared canonical names (also the default table for
+ *  `parseType` below). Exported so `src/dialect-symbols.ts` can build the databricks `types` set from
+ *  it without duplicating the table. */
+export const SCALAR_ALIASES: Record<string, string> = {
 	integer: "int",
 	long: "bigint",
 	short: "smallint",

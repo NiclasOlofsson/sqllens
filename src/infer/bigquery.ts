@@ -10,8 +10,9 @@ import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 // argument-value-dependent or unstated. A missing rule yields `unknown`, never a wrong type, so
 // partial coverage is safe; the registry expands from the reference over time.
 
-// GoogleSQL scalar type aliases → the shared canonical types.
-const BQ_ALIASES: Record<string, string> = {
+// GoogleSQL scalar type aliases → the shared canonical types. Exported so
+// `src/dialect-symbols.ts` can build the bigquery `types` set from it without duplicating the table.
+export const BQ_ALIASES: Record<string, string> = {
 	int64: "int",
 	float64: "double",
 	numeric: "decimal",

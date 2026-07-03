@@ -35,6 +35,8 @@ export {
 	referencesAt,
 	type Occurrence,
 	type Occurrences,
+	dialectSymbols,
+	type DialectSymbols,
 	type SignatureInfo,
 	type FnSignature,
 	type ParamSig,
