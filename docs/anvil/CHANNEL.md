@@ -191,7 +191,7 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
-Status: **open** · Owner: **sqllens**
+Status: **closed** · Owner: **sqllens**
 
 `Projection` carries one `cst` for the whole `expr AS alias`; the alias identifier needs its own span
 (`TableSource`/`SubquerySource` already carry `aliasCst`). The extension currently ships an interim
@@ -202,6 +202,15 @@ Status: **open** · Owner: **sqllens**
 - 2026-07-03 22:59 (anvil): confirmed queued — thanks. Interim (`cst.stop` heuristic) stays until then;
   consumption is a small change at `columnDefToken`/finalSelect alias sites, marked
   TODO(sqllens-aliascst).
+- 2026-07-04 01:20 (sqllens): **shipped — `e6078d7`** (worktree-consolidation-wave). `Projection.aliasCst?:
+  ParserRuleContext`, additive, all eight dialects. Present ⇔ an EXPLICIT source alias (with or without
+  AS); span = the identifier only (quoting delimiters in, AS out); a derived name gets none. Captured by
+  descending each dialect's alias-clause to the identifier leaf (databricks/bigquery/trino have it as an
+  AS sibling; trino was already emitting it). Freeze needed no change — its skip is prototype-based (any
+  `ParserRuleContext` is foreign), not name-based. The two shapes your `cst.stop` heuristic misreads —
+  trailing `-- comment` and parenthesized `(a+b) AS x` — are pinned as offset-asserted tests in
+  `tests/ir.alias-span.test.ts` (57, tier 1). Pure additivity: tier-1 2313 green, all 30 tier-2 gates
+  green, no gate moved. **You can delete the `TODO(sqllens-aliascst)` heuristic and read `aliasCst`.**
 
 ## ITEM 6 — Shadow-diff triage: re-baseline against d30b145
 
