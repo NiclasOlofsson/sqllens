@@ -110,6 +110,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	Projection,
 	QueryBody,
@@ -440,8 +442,11 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 	for (const item of spec.selectItem()) select.projections.push(lowerSelectItem(item, local));
 
 	const joinConditions: Expr[] = [];
-	for (const rel of spec.relation()) lowerRelation(rel, select.from, joinConditions, select.columns, flags, local);
+	const joins: Join[] = [];
+	for (const rel of spec.relation())
+		lowerRelation(rel, select.from, joinConditions, joins, select.columns, flags, local);
 	if (joinConditions.length) select.joinConditions = joinConditions;
+	if (joins.length) select.joins = joins;
 
 	if (spec._where) {
 		select.where = lowerBoolean(spec._where, local);
@@ -516,31 +521,68 @@ function lowerRelation(
 	rel: RelationContext,
 	out: Source[],
 	joinConditions: Expr[],
+	joins: Join[],
 	columns: ColumnRef[],
 	flags: Set<string>,
 	ctx: Ctx,
 ): void {
 	if (rel.constructor.name === "JoinRelationContext") {
 		const j = rel as JoinRelationContext;
-		if (j._left) lowerRelation(j._left, out, joinConditions, columns, flags, ctx);
-		if (j._rightRelation) lowerRelation(j._rightRelation, out, joinConditions, columns, flags, ctx);
+		if (j._left) lowerRelation(j._left, out, joinConditions, joins, columns, flags, ctx);
+		// The right operand's FIRST source is the join's right source (reference-identical to the from
+		// entry just pushed). `relation` is left-recursive, so `j`'s span includes the left input — the
+		// join.cst is therefore cumulative (base…ON), unlike the isolated `JOIN x ON …` of other dialects.
+		const idx = out.length;
+		if (j._rightRelation) lowerRelation(j._rightRelation, out, joinConditions, joins, columns, flags, ctx);
 		if (j._right) lowerSampledRelation(j._right, out, flags, ctx);
+		const source = out[idx] ?? out[out.length - 1];
 		const crit = j.joinCriteria();
+		let on: Expr | undefined;
+		let using: string[] | undefined;
 		if (crit) {
-			const on = crit.booleanExpression();
-			if (on) {
-				const e = lowerBoolean(on, ctx);
-				joinConditions.push(e);
-				collectColumns(e, "join", columns);
+			const onB = crit.booleanExpression();
+			if (onB) {
+				on = lowerBoolean(onB, ctx);
+				joinConditions.push(on);
+				collectColumns(on, "join", columns);
 			}
-			for (const id of crit.identifier()) columns.push({ parts: [idText(id)], clause: "join", cst: id });
+			const ids = crit.identifier();
+			if (ids.length) using = ids.map((id) => idText(id));
+			for (const id of ids) columns.push({ parts: [idText(id)], clause: "join", cst: id });
 		}
+		if (source) joins.push(buildTrinoJoin(j, source, on, using));
 		return;
 	}
 	const sampled = (
 		rel as ParserRuleContext & { sampledRelation(): SampledRelationContext | null }
 	).sampledRelation?.();
 	if (sampled) lowerSampledRelation(sampled, out, flags, ctx);
+}
+
+/** Assemble a Join from a Trino JoinRelation: CROSS / joinType JOIN / NATURAL joinType JOIN. */
+function buildTrinoJoin(
+	j: JoinRelationContext,
+	source: Source,
+	on: Expr | undefined,
+	using: string[] | undefined,
+): Join {
+	const natural = j.NATURAL() != null;
+	let kind: JoinKind;
+	if (j.CROSS() != null) {
+		kind = "cross";
+	} else {
+		const jt = j.joinType();
+		let ansi: JoinKind | undefined;
+		if (jt) {
+			if (jt.LEFT()) ansi = "left";
+			else if (jt.RIGHT()) ansi = "right";
+			else if (jt.FULL()) ansi = "full";
+			else if (jt.INNER()) ansi = "inner";
+			// else: a bare (empty) joinType — leave ansi undefined so `NATURAL JOIN` reads as "natural"
+		}
+		kind = ansi ?? (natural ? "natural" : "inner");
+	}
+	return { kind, source, on, using, natural: natural || undefined, cst: j };
 }
 
 function lowerSampledRelation(sr: SampledRelationContext, out: Source[], flags: Set<string>, ctx: Ctx): void {
@@ -619,7 +661,9 @@ function lowerRelationPrimary(
 		const inner: Source[] = [];
 		const conditions: Expr[] = [];
 		const cols: ColumnRef[] = [];
-		lowerRelation(rp.relation(), inner, conditions, cols, flags, ctx);
+		// A paren-group's join nodes aren't modelled (only the top-level FROM chain builds Join[] — see
+		// the spec); its sources + ON conditions flow up as before.
+		lowerRelation(rp.relation(), inner, conditions, [], cols, flags, ctx);
 		// A parenthesized JOIN contributes all its sources; a single relation passes through.
 		if (inner.length === 1 && conditions.length === 0) return inner[0] as Source & { alias?: string };
 		for (const s of inner) out.push(s);
@@ -637,7 +681,7 @@ function lowerRelationPrimary(
 		// modelled as a subquery over the inner relation so its columns flow through.
 		const inner: SelectExpr = emptySelect(rp);
 		const conditions: Expr[] = [];
-		lowerRelation(rp.relation(), inner.from, conditions, inner.columns, flags, ctx);
+		lowerRelation(rp.relation(), inner.from, conditions, [], inner.columns, flags, ctx);
 		inner.projections.push({ isStar: true, expr: { kind: "star", cst: rp }, cst: rp });
 		if (rp._where) {
 			inner.where = lowerBoolean(rp._where, ctx);
