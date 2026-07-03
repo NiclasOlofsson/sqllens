@@ -43,7 +43,7 @@ const OTHER_BASELINE = 0; // measured 2026-07-01 over the parsed Redshift docs q
 // Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
 // re-parse. Task 6 (blocked on the B/C/D branch merge) is expected to port the postgres/duckdb fixes
 // here first; may only fall.
-const FALLBACK_RATCHET = 1004;
+const FALLBACK_RATCHET = 70;
 
 // Documented-broken query examples — each verified against its AWS doc source as genuinely malformed
 // SQL (not a grammar gap, not scraper noise). They fail to parse, so the organizer files them under

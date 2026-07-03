@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseRedshift } from "../src/redshift/parse.js";
+import { lower } from "../src/redshift/lower.js";
 
 // Redshift is the fifth dialect: grammar forked from bytebase/parser redshift/ (a PostgreSQL-
 // grammar fork focused on Redshift), the Go superClass bases ported inline to antlr4ng @members.
@@ -203,5 +204,75 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 	it("GROUP BY ALL (the corrected r_GROUP_BY_clause example)", () => {
 		// r_GROUP_BY_clause.html — GROUP BY ALL; the doc's own example has a typo (missing comma).
 		expect(errorsOf("SELECT col1, col2, sum(col3) FROM testtable GROUP BY ALL")).toBe(0);
+	});
+});
+
+// SLL-surgery wave (task-6-report.md). Redshift's c_expr listed columnref above func_expr, so every
+// `f(args)` mispredicted a bare column and bailed to full LL. Ordering func_expr above columnref makes
+// SLL resolve calls locally: columnref never full-matches a call (indirection_el is DOT/`[`-led, never
+// `(` — the sole paren columnref carries is the Oracle `(+)` marker), so the two are disjoint on a full
+// match and the reorder changes no accepted string. These probes pin parse-clean + sllFallback===false,
+// and — the mandatory reading guard (Task-5 review) — the exact lowered IR of aliased dotted calls,
+// which must NOT flip (redshift has no `.attr(args)` method form, so the duckdb failure mode is absent).
+describe("Redshift SLL-surgery — c_expr func_expr above columnref", () => {
+	function parsed(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		return r;
+	}
+	function proj(sql: string) {
+		const body = lower(parsed(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body.projections[0].expr;
+	}
+
+	it("plain function calls resolve under SLL (no fallback)", () => {
+		for (const sql of [
+			"SELECT f(a) FROM t",
+			"SELECT f(1) FROM t",
+			"SELECT st_geomfromtext('POINT(1 2)')",
+			"SELECT convert_timezone('GMT', 'PST', ts) FROM t",
+			"SELECT abs(-1)",
+		]) {
+			const r = parsed(sql);
+			expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+		}
+	});
+
+	it("reading guard — aliased dotted calls keep their exact IR (receiver-as-name, not flipped)", () => {
+		// Pre-surgery baseline: a dotted call takes its LAST name part as the function name and drops the
+		// qualifier. The reorder must preserve this exactly (proven byte-identical by the corpus IR hash).
+		expect(proj("SELECT sch.f(a) AS x FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ kind: "column", parts: ["a"] }],
+		});
+		expect(proj("SELECT sch.f(a) x FROM t")).toMatchObject({ kind: "function", name: "f" });
+		expect(proj("SELECT a.b.f(x) AS y FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ kind: "column", parts: ["x"] }],
+		});
+		// bare dotted column stays a column (func_expr needs the `(`).
+		expect(proj("SELECT x.y.z FROM t")).toMatchObject({ kind: "column", parts: ["x", "y", "z"] });
+	});
+
+	it("pinned more-faithful fix — CURRENT_USER lowers to the niladic function, not a phantom column", () => {
+		// r_CURRENT_USER.html: CURRENT_USER is a special value/function returning the current user, NOT a
+		// column. Pre-surgery, columnref (above func_expr) intercepted it and produced a phantom column
+		// named "current_user"; the reorder routes it through func_expr_common_subexpr (the correct form).
+		// 3 corpus files changed IR here (datashare-views/4,5; r_CURRENT_USER/1) — a pinned bug fix.
+		expect(proj("SELECT current_user")).toMatchObject({ kind: "function", name: "current_user", args: [] });
+		expect(proj("SELECT user")).toMatchObject({ kind: "function", name: "user" });
+	});
+
+	it("the redshift-specific (+) outer-join marker still rides columnref (not a call)", () => {
+		const r = parsed("SELECT count(*) FROM a, b WHERE a.id(+) = b.id");
+		expect(r.errors).toBe(0);
+	});
+
+	it("rejects malformed calls (no widening from the reorder)", () => {
+		expect(errorsOf("SELECT f(")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT f(,)")).toBeGreaterThan(0);
 	});
 });

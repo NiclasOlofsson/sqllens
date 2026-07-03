@@ -5176,12 +5176,12 @@ c_expr
    | /*22*/
 
    UNIQUE select_with_parens # c_expr_expr
+   | func_expr # c_expr_expr
    | columnref # c_expr_expr
    | aexprconst # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
-   | func_expr # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
    | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr
