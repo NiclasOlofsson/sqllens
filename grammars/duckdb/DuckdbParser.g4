@@ -3885,31 +3885,33 @@ c_expr
    | /*22*/
 
    UNIQUE select_with_parens # c_expr_expr
-   // NOTE(perf): func_expr sits ABOVE columnref on purpose (ported from PostgresParser.g4's c_expr fix
-   // and re-derived for this fork — see below). Both can begin with an identifier and a bare column is a
-   // viable *prefix* of a function call, so SLL's stackless merge keeps `columnref` (the lower alt) alive
-   // on every `f(args)` and bails downstream on the argument token. For a BARE call `f(args)` the two are
-   // disjoint on a full match — columnref's indirection cannot begin with a top-level `(` (only DOT/`[`),
-   // so columnref matches just the prefix `f` while func_expr consumes `f(args)` — and ordering func_expr
-   // first makes it the minimum viable alternative there. DIVERGENCE FROM POSTGRES: this fork's
-   // indirection_el gained `.attr(args)` method-call parens (duckdb.org function-chaining), so a DOTTED
-   // call `x.f(a)` matches BOTH columnref (via `.f(a)`) and func_expr (func_name `colid indirection`).
-   // For that form func_name's own indirection greedily swallows the `(a)`, so func_expr does NOT reach a
-   // full match and columnref stays the sole full match — its method-chain reading (`x.f(a)` → `f(x,a)`)
-   // is preserved even with func_expr listed first (pinned in tests/duckdb.test.ts). No language change.
-   // NOTE(perf): aexprconst sits ABOVE func_expr/columnref, most-specific-first (ported from postgres
+   // NOTE(perf): aexprconst sits ABOVE columnref/func_expr, most-specific-first (ported from postgres
    // c_expr iter 3). Its identifier-led forms — `func_name sconst`, `func_name '(' args ')' sconst`,
    // `consttypename sconst` — all REQUIRE a trailing sconst, so they are disjoint on a FULL match from a
    // bare `f(args)` (func_expr) or a bare column (columnref): for `DATE '…'` / `f(1) '5'` aexprconst is
    // the minimum viable alt, while for `f(1)` / a bare `f` the required trailing sconst is absent and
    // aexprconst drops out. The constinterval forms are INTERVAL-keyword-led (no identifier overlap). No
    // language change; lower() still routes aexprconst → literal (dispatch is by child rule, not order).
+   //
+   // NOTE(perf): columnref stays ABOVE func_expr — do NOT port postgres's func_expr-above-columnref
+   // reorder here. In this fork indirection_el carries `.attr(args)` method-call parens (duckdb.org
+   // function-chaining), so a dotted call `sch.f(a)` is a GENUINE ambiguity: it full-matches BOTH
+   // columnref (method chain, `.f(a)` as one indirection_el) AND func_expr (qualified call, func_name =
+   // `colid indirection` matching `sch.f` non-greedily when the caller's `(` needs the parens). Min-alt
+   // ordering decides which reading wins, and the project's pinned convention is the method chain
+   // (`sch.f(a)` → f(sch, a)). Porting the reorder flipped ALIASED dotted calls (`sch.f(a) AS score` →
+   // f(a), receiver dropped) while unaliased follows kept the chain — caught in Task-5 review; reverted.
+   // Guard probes pin the method-chain reading across every follow context in tests/duckdb.test.ts.
+   // The cost: SLL commits to columnref on plain `f(args)` too and bails downstream — cured structurally
+   // (not by ordering) if possible; see the task-5 report.
    | aexprconst # c_expr_expr
-   | func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
+   // opt_indirection added in this fork: subscript/slice on a call result — array_value(1,2,3)[2]
+   // (sql/data_types/array.md) and method chains on calls.
+   | func_expr opt_indirection # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
    | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr

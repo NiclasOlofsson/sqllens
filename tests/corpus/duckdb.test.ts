@@ -26,7 +26,15 @@ const OTHER_BASELINE = 0;
 // 2026-07-03 via `node --import tsx tools/profile-sll.ts duckdb` over this same docs query bucket.
 // Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
 // re-parse. Shares its TVL-lineage decisions with postgres/redshift; may only fall.
-const FALLBACK_RATCHET = 21;
+//
+// RAISED 21 → 338 on 2026-07-03 (the one sanctioned direction-up move: correcting an unsound fix).
+// Task-5 review REJECTED the func_expr-above-columnref reorder that had reached 21: it flipped the
+// winning reading of ALIASED dotted calls (`sch.f(a) AS score` lowered as f(a) — receiver dropped —
+// instead of the method chain f(sch, a)), because the dotted call is a GENUINE columnref/func_expr
+// ambiguity in this fork (indirection_el carries `.attr(args)` method parens) and min-alt ordering
+// decides the reading. The reorder was reverted; the aexprconst-above-columnref reorder (typed
+// literals) was adjudicated clean and stays. 338 is the measured post-revert count.
+const FALLBACK_RATCHET = 338;
 
 // Documented-broken query examples — each verified against its duckdb.org source page as
 // deliberately-invalid SQL. They fail to parse, so the organizer files them under unparsed/;

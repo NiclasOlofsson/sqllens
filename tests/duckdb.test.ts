@@ -180,9 +180,11 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 		};
 	};
 
-	it("c_expr — bare function calls f(args) predict under SLL (ported postgres c_expr reorder)", () => {
-		// func_expr ordered above columnref: `f(arg)` used to bail (SLL committed to columnref `f`
-		// then died on the argument). Non-empty / non-STAR args were the trigger; f() / f(*) never bailed.
+	it("c_expr — plain function calls f(args) parse and lower as calls", () => {
+		// The func_expr-above-columnref reorder that made these predict under SLL was REVERTED (Task-5
+		// review: it flipped the reading of ALIASED dotted calls — see the method-chain guard below).
+		// Plain calls still parse correctly (via the LL fallback); a structural cure that keeps the
+		// method-chain reading intact may restore the noFallback assertion here.
 		for (const sql of [
 			"SELECT f(1)",
 			"SELECT f(1, 2)",
@@ -192,26 +194,67 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 			"SELECT mod(x, 2) = 0 FROM t",
 		]) {
 			ok(sql);
-			noFallback(sql);
 		}
+		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
 	});
 
-	it("c_expr — dotted method chains keep their receiver-first IR (fork divergence guard)", () => {
-		// DuckDB's `.attr(args)` method indirection means `x.f(a)` matches both columnref and func_expr;
-		// func_name's greedy method-paren blocks func_expr's full match, so columnref (method chain) still
-		// wins with func_expr listed first. IR must stay f(receiver, …), not a plain call.
+	it("c_expr — the method-chain reading wins in EVERY follow context (MANDATORY guard)", () => {
+		// DuckDB's `.attr(args)` method indirection means a dotted call `x.f(a)` is a GENUINE ambiguity:
+		// it full-matches both columnref (method chain) and func_expr (qualified call, func_name matching
+		// `x.f` non-greedily). The project convention is the method chain — `x.f(a)` → f(x, a), receiver
+		// first. A c_expr reorder that puts func_expr above columnref flips the reading for ALIASED
+		// dotted calls (`sch.f(a) AS score` lowered to f(a), the receiver silently dropped) while leaving
+		// unaliased follows intact — exactly how Task 5's first attempt broke (review REJECT, reverted).
+		// These probes pin the reading across every follow context and must stay green forever,
+		// regardless of any future c_expr reordering.
+		const recv = (parts: string[]) => ({ kind: "column", parts });
+
+		// AS alias — the follow context the broken reorder flipped.
+		expect(projExpr("SELECT sch.f(a) AS score")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// Bare-word alias.
+		expect(projExpr("SELECT sch.f(a) score")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// Chained method call with alias — the inner chain must survive: g(f(x, a), b).
+		expect(projExpr("SELECT x.f(a).g(b) AS r")).toMatchObject({
+			kind: "function",
+			name: "g",
+			args: [{ kind: "function", name: "f", args: [recv(["x"]), recv(["a"])] }, recv(["b"])],
+		});
+		// Zero-arg chain with alias.
+		expect(projExpr("SELECT col.lower() AS l")).toMatchObject({
+			kind: "function",
+			name: "lower",
+			args: [recv(["col"])],
+		});
+		// Comma follow.
+		expect(projExpr("SELECT sch.f(a), b")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// FROM follow.
+		expect(projExpr("SELECT sch.f(a) FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// EOF follow.
 		expect(projExpr("SELECT sch.f(a)")).toMatchObject({
 			kind: "function",
 			name: "f",
-			args: [
-				{ kind: "column", parts: ["sch"] },
-				{ kind: "column", parts: ["a"] },
-			],
+			args: [recv(["sch"]), recv(["a"])],
 		});
 		expect(projExpr("SELECT col.lower()")).toMatchObject({
 			kind: "function",
 			name: "lower",
-			args: [{ kind: "column", parts: ["col"] }],
+			args: [recv(["col"])],
 		});
 		// A plain dotted path stays a column, not a call.
 		expect(projExpr("SELECT x.y.z")).toMatchObject({ kind: "column", parts: ["x", "y", "z"] });
