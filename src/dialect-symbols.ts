@@ -55,9 +55,16 @@
 //   LIMIT: compound-type keywords (ARRAY/MAP/STRUCT) are only in this set if they
 //   happen to appear in the alias table (they don't, on any dialect here) — they
 //   still surface via `keywords` instead, since ARRAY/STRUCT/MAP are reserved lexer
-//   literals in these grammars. A type name with no alias-table entry (most concrete
-//   types are already canonical, e.g. `int`, `boolean`) is still present via the
-//   table's *values*, so this is not merely "aliases," despite the source name.
+//   literals in these grammars. A canonical type name that's already correctly
+//   spelled (e.g. `int`, `boolean`) is still present via the table's *values*, so
+//   this is not merely "aliases," despite the source name — but that only covers
+//   names some *other* spelling normalizes to. A genuine gap class remains:
+//   canonical, non-reserved type names that never appear as an alias target at
+//   all — because
+//   the grammar lexes them as plain identifiers, not fixed keyword tokens, and no
+//   other spelling maps onto them — are absent from `types` entirely (e.g.
+//   postgres JSONB/UUID/INET/CIDR/MACADDR/POINT and the equivalent
+//   contextually-lexed type names in other dialects).
 // ---------------------------------------------------------------------------
 
 import { CharStream, type Lexer } from "antlr4ng";
