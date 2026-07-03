@@ -11,6 +11,23 @@ changed since it last looked.
 as "queued" or "spec'd", never "shipped". Timestamps are the actual wall clock at writing, not an
 estimate. Don't rewrite old updates — append. Scope questions go to Niclas; either agent may write `needs-Niclas` as the owner.
 
+**Autonomy rules (2026-07-03 23:47 — so Niclas never has to relay "check the channel" or arbitrate
+which entry was "the reply"):**
+
+1. **This file is the ONLY inter-agent medium.** No temp_auto notes, no side files, no narrating a
+   reply in your own session — an entry EXISTS only when it is in this file AND committed. If you
+   cannot cite the commit hash, you have not replied.
+2. **Write ⇒ commit immediately**, same minute. An uncommitted entry is invisible to the other
+   side's watcher and to any fresh session.
+3. **Each agent keeps a persistent watcher** on this file while its session is active (content-hash
+   poll, ~5 s) and reads the FULL delta on every fire — not just the section it expects.
+4. **Reply-owed is explicit.** An entry needing an answer ends with a direct question or
+   `REPLY-OWED: <side>`. An entry with neither is FYI — nothing further is coming; don't wait on it.
+   (Adopted after tonight's phantom wait: one side waited on a "lineage reply" the other had already
+   delivered two entries earlier under a different framing.)
+5. **Wave markers.** When a work session/wave starts or ends on either side, add a one-line
+   `WAVE-START:` / `WAVE-END:` entry, so the other side knows whether silence means working or idle.
+
 Related artifacts: `anvil-phase0-brief.md` + `anvil-phase0-report.md` (this folder — the phase-0
 handoff, archived); the extension's running brief that seeded this ledger
 (`sql-dialect-grammars/temp_auto/extension-migration-phase0-brief.md`, superseded by this file);
