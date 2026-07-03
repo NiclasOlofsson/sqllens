@@ -195,7 +195,11 @@ function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, sch
 // call without a lambda there is a name collision (e.g. BigQuery multi-level `AGGREGATE(x ORDER BY
 // key)`, not Spark `aggregate(array, init, merge)`) — bail so it falls through to the registry
 // instead of indexing a missing arg. This keeps the engine total on cross-dialect input.
-const HOF_LAMBDA_ARG: Record<string, number> = {
+// Exported so `src/dialect-symbols.ts` can fold these genuine Spark builtin names into databricks's
+// `functions` set — they're real functions (spark.apache.org/docs/latest/api/sql/#aggregate etc.)
+// that never get a FnRule registry entry because they're typed via this special higher-order path
+// instead, so they'd otherwise be invisible to a registry-keys-only membership check.
+export const HOF_LAMBDA_ARG: Record<string, number> = {
 	transform: 1,
 	zip_with: 2,
 	aggregate: 2,

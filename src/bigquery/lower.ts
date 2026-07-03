@@ -7,6 +7,8 @@ import type {
 	Expr,
 	GraphElement,
 	GraphTableSource,
+	Join,
+	JoinKind,
 	LimitInfo,
 	PipeBranch,
 	PipeExpr,
@@ -21,6 +23,7 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpanOf, partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -254,7 +257,10 @@ function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
 	const fromClause = directChildrenOfRule(fromQuery, P.RULE_from_clause)[0];
 	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
 	const from = fromContents ? buildSources(fromContents, unsupported) : [];
-	const joinConditions = fromContents ? extractJoinConditions(fromContents) : [];
+	const joinConditions: Expr[] = [];
+	const onByCst = new Map<ParserRuleContext, Expr>();
+	if (fromContents) extractJoinConditions(fromContents, joinConditions, onByCst);
+	const joins = fromContents ? buildJoins(fromContents, from, onByCst) : [];
 	const columns: ColumnRef[] = [];
 	for (const j of joinConditions) columnsOf(j, columns, "join");
 	// A bare FROM-query (`FROM t`) is implicitly `SELECT * FROM t` — carry the star so its outputs expand.
@@ -264,6 +270,7 @@ function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
 		from,
 		columns,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		aggregated: false,
 		unsupported: unsupported.length ? unsupported : undefined,
 		cst: fromQuery,
@@ -747,7 +754,10 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 	const fromClause = directChildrenOfRule(select, P.RULE_from_clause)[0];
 	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
 	const from = fromContents ? buildSources(fromContents, unsupported) : [];
-	const joinConditions = fromContents ? extractJoinConditions(fromContents) : [];
+	const joinConditions: Expr[] = [];
+	const onByCst = new Map<ParserRuleContext, Expr>();
+	if (fromContents) extractJoinConditions(fromContents, joinConditions, onByCst);
+	const joins = fromContents ? buildJoins(fromContents, from, onByCst) : [];
 
 	const following = directChildrenOfRule(select, P.RULE_opt_clauses_following_from)[0];
 	const whereClause = following ? firstShallow(following, P.RULE_where_clause) : undefined;
@@ -787,6 +797,7 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 		columns,
 		where,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having,
 		qualify,
@@ -1095,16 +1106,85 @@ function offsetAliasOf(pathExpr: ParserRuleContext): { alias: string; cst: Parse
 	return id ? { alias: identText(id), cst: id } : undefined;
 }
 
-function extractJoinConditions(contents: ParserRuleContext): Expr[] {
-	const out: Expr[] = [];
-	const walk = (node: ParseTree): void => {
-		for (const oc of shallowNodesOfRule(node, P.RULE_on_clause)) {
-			const e = directChildrenOfRule(oc, P.RULE_expression)[0];
-			if (e) out.push(lowerExpr(e));
+function extractJoinConditions(contents: ParserRuleContext, out: Expr[], onByCst: Map<ParserRuleContext, Expr>): void {
+	// Every ON expr (top-level suffixes AND nested parenthesized joins), in tree order. Lowered once and
+	// keyed by its on_clause CST so buildJoins can share the same Expr on the matching top-level Join.
+	for (const oc of shallowNodesOfRule(contents, P.RULE_on_clause)) {
+		const e = directChildrenOfRule(oc, P.RULE_expression)[0];
+		if (!e) continue;
+		const lowered = lowerExpr(e);
+		out.push(lowered);
+		onByCst.set(oc, lowered);
+	}
+}
+
+/** The top-level FROM join chain as Join[]: one per JOIN from_clause_contents_suffix, in source order.
+ *  COMMA suffixes are not joins; nested parenthesized-join `join_item`s aren't modelled here (their ON
+ *  exprs stay conserved in joinConditions). `join.source` is the reference-identical `from` entry — found
+ *  by positional count (buildSource sets `cst` to an inner node per source kind, so a CST map can't
+ *  match), which is the FIRST leaf source the suffix's table_primary contributes. `join.on`/`using` come
+ *  from on_or_using_clause_list. */
+function buildJoins(contents: ParserRuleContext, from: Source[], onByCst: Map<ParserRuleContext, Expr>): Join[] {
+	const joins: Join[] = [];
+	const first = directChildrenOfRule(contents, P.RULE_table_primary)[0];
+	let idx = first ? countPrimarySources(first) : 0; // sources contributed by the base relation
+	for (const suffix of directChildrenOfRule(contents, P.RULE_from_clause_contents_suffix)) {
+		const tp = directChildrenOfRule(suffix, P.RULE_table_primary)[0];
+		if (!tp) continue;
+		const before = idx;
+		idx += countPrimarySources(tp);
+		if (directTokenType(suffix, [P.JOIN_SYMBOL]) === undefined) continue; // COMMA suffix — not a join
+		const source = from[before];
+		if (!source) continue;
+		const { kind, natural } = bigqueryJoinKind(suffix);
+		const list = directChildrenOfRule(suffix, P.RULE_on_or_using_clause_list)[0];
+		let on: Expr | undefined;
+		let using: string[] | undefined;
+		if (list) {
+			const oc = firstShallow(list, P.RULE_on_clause);
+			if (oc) on = onByCst.get(oc);
+			const uc = firstShallow(list, P.RULE_using_clause);
+			if (uc && !on) using = directChildrenOfRule(uc, P.RULE_identifier).map((i) => i.getText());
 		}
-	};
-	walk(contents);
-	return out;
+		joins.push({ kind, source, on, using, natural: natural || undefined, cst: suffix });
+	}
+	return joins;
+}
+
+/** How many leaf sources collectTablePrimary pushes for `tp` (1 for a plain relation; the sum of a
+ *  parenthesized `join`'s inputs; the inner primary's count through a match_recognize/sample wrapper).
+ *  Mirrors collectTablePrimary exactly so the running index aligns with `from`. */
+function countPrimarySources(tp: ParserRuleContext): number {
+	const join = directChildrenOfRule(tp, P.RULE_join)[0];
+	if (join) {
+		let n = 0;
+		const inner = directChildrenOfRule(join, P.RULE_table_primary)[0];
+		if (inner) n += countPrimarySources(inner);
+		for (const ji of directChildrenOfRule(join, P.RULE_join_item)) {
+			const t = directChildrenOfRule(ji, P.RULE_table_primary)[0];
+			if (t) n += countPrimarySources(t);
+		}
+		return n;
+	}
+	const innerPrimary = directChildrenOfRule(tp, P.RULE_table_primary)[0];
+	return innerPrimary ? countPrimarySources(innerPrimary) : 1;
+}
+
+/** Kind + NATURAL flag for a GoogleSQL join suffix (opt_natural? join_type? JOIN …). join_type:
+ *  CROSS | FULL opt_outer? | INNER | LEFT opt_outer? | RIGHT opt_outer?. */
+function bigqueryJoinKind(suffix: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = directChildrenOfRule(suffix, P.RULE_opt_natural).length > 0;
+	const jt = directChildrenOfRule(suffix, P.RULE_join_type)[0];
+	let ansi: JoinKind | undefined;
+	if (jt) {
+		const t = directTokenType(jt, [P.CROSS_SYMBOL, P.FULL_SYMBOL, P.INNER_SYMBOL, P.LEFT_SYMBOL, P.RIGHT_SYMBOL]);
+		if (t === P.CROSS_SYMBOL) ansi = "cross";
+		else if (t === P.FULL_SYMBOL) ansi = "full";
+		else if (t === P.INNER_SYMBOL) ansi = "inner";
+		else if (t === P.LEFT_SYMBOL) ansi = "left";
+		else if (t === P.RIGHT_SYMBOL) ansi = "right";
+	}
+	return { kind: ansi ?? (natural ? "natural" : "inner"), natural };
 }
 
 // --- GROUP BY / ORDER BY / LIMIT -------------------------------------------------
@@ -1283,7 +1363,11 @@ function lowerHigherPrec(node: ParserRuleContext): Expr {
 				(dotId ? directChildrenOfRule(dotId, P.RULE_identifier)[0] : undefined);
 			const fieldName = id ? identText(id) : dotId ? stripBackticks(dotId.getText()) : undefined;
 			if (fieldName !== undefined && base.kind === "column") {
-				return { kind: "column", parts: [...base.parts, fieldName], cst: node };
+				// Extend the base's per-part spans with the field's own identifier span; omit (all-or-nothing)
+				// if the base had none or the field is a DOT_IDENTIFIER (dot-fused, no clean identifier node).
+				const fieldSpan = id ? partSpanOf(id) : undefined;
+				const partSpans = base.partSpans && fieldSpan ? [...base.partSpans, fieldSpan] : undefined;
+				return { kind: "column", parts: [...base.parts, fieldName], partSpans, cst: node };
 			}
 			const path = directChildrenOfRule(node, P.RULE_path_expression)[0];
 			const idxText = fieldName ?? (path ? path.getText() : "field");
@@ -1383,9 +1467,9 @@ function lowerLeaf(node: ParserRuleContext): Expr {
 		case P.RULE_system_variable_expression:
 			return { kind: "literal", text: node.getText(), cst: node };
 		case P.RULE_identifier:
-			return { kind: "column", parts: [identText(node)], cst: node };
+			return { kind: "column", parts: [identText(node)], partSpans: partSpansOf([node]), cst: node };
 		case P.RULE_path_expression:
-			return { kind: "column", parts: pathParts(node), cst: node };
+			return { kind: "column", parts: pathParts(node), partSpans: pathPartSpans(node), cst: node };
 		case P.RULE_function_call_expression_with_clauses:
 			return lowerFunctionCall(node);
 		case P.RULE_case_expression:
@@ -1693,7 +1777,7 @@ function lowerWithExpression(node: ParserRuleContext): Expr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1748,11 +1832,11 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_parenthesized_query) continue; // its own scope
 		if (child.ruleIndex === P.RULE_path_expression) {
-			acc.push({ parts: pathParts(child), clause, cst: child });
+			acc.push({ parts: pathParts(child), clause, cst: child, partSpans: pathPartSpans(child) });
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_identifier) {
-			acc.push({ parts: [identText(child)], clause, cst: child });
+			acc.push({ parts: [identText(child)], clause, cst: child, partSpans: partSpansOf([child]) });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
@@ -1836,6 +1920,28 @@ function pathParts(node: ParserRuleContext): string[] {
 		.split(".")
 		.map(stripBackticks)
 		.filter((p) => p.length > 0);
+}
+
+/** Per-part spans PARALLEL to pathParts(node) — one span per path node (its backticks included),
+ *  all-or-nothing: undefined when any node fuses dots (a backtick-quoted `a.b` head or a dot-fused
+ *  DOT_IDENTIFIER — pathParts splits those into multiple parts from one token, so no per-part span is
+ *  possible) or the getText() fallback fires. Each tail's inner identifier is preferred so the span
+ *  excludes the leading dot. One shared span-capture seam (reused by the editor-gold rewrite). */
+function pathPartSpans(node: ParserRuleContext) {
+	const head = directChildrenOfRule(node, P.RULE_identifier)[0];
+	const tail = directChildrenOfRule(node, P.RULE_dot_identifier);
+	if (!head && !tail.length) return undefined;
+	const nodes: ParserRuleContext[] = [];
+	if (head) {
+		if (stripBackticks(head.getText()).includes(".")) return undefined;
+		nodes.push(head);
+	}
+	for (const d of tail) {
+		const partNode = directChildrenOfRule(d, P.RULE_identifier)[0] ?? d;
+		if (stripBackticks(partNode.getText()).includes(".")) return undefined;
+		nodes.push(partNode);
+	}
+	return partSpansOf(nodes);
 }
 
 /** A dashed/slashed path (BigQuery `project-id.dataset.table`) used as a table name. */

@@ -5,6 +5,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	Projection,
 	QueryBody,
@@ -14,6 +16,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -442,12 +445,13 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const fromClause = directChildrenOfRule(node, P.RULE_from_clause)[0];
 	const from: Source[] = [];
 	const joinConditions: Expr[] = [];
+	const joins: Join[] = [];
 	if (fromClause) {
 		for (const tr of directChildrenOfRule(
 			directChildrenOfRule(fromClause, P.RULE_from_list)[0] ?? fromClause,
 			P.RULE_table_ref,
 		)) {
-			collectTableRef(tr, from, joinConditions, unsupported);
+			collectTableRef(tr, from, joinConditions, joins, unsupported);
 		}
 	}
 	joinConditions.push(...nestedJoinConditions.splice(0));
@@ -494,6 +498,7 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 		columns,
 		where: whereExpr,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having: havingExpr,
 		qualify: qualifyExpr,
@@ -522,18 +527,76 @@ function lowerValues(values: ParserRuleContext): SelectExpr {
 
 // --- sources / joins ----------------------------------------------------------
 
-function collectTableRef(tr: ParserRuleContext, from: Source[], joins: Expr[], unsupported: string[]): void {
+function collectTableRef(
+	tr: ParserRuleContext,
+	from: Source[],
+	joinConditions: Expr[],
+	joins: Join[],
+	unsupported: string[],
+): void {
 	// FROM-level PIVOT/UNPIVOT reshape the source's output columns; flagged, not silently dropped.
 	if (directChildrenOfRule(tr, P.RULE_from_pivot_suffix).length) unsupported.push("pivot");
 	if (directChildrenOfRule(tr, P.RULE_from_unpivot_suffix).length) unsupported.push("unpivot");
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
 		const inner = directChildrenOfRule(jt, P.RULE_table_ref)[0];
-		if (inner) collectTableRef(inner, from, joins, unsupported);
+		const idx = from.length;
+		if (inner) collectTableRef(inner, from, joinConditions, joins, unsupported);
+		// The join's right source is the FIRST source the inner table_ref contributed (reference-identical).
+		const source = from[idx] ?? from[from.length - 1];
 		const qual = directChildrenOfRule(jt, P.RULE_join_qual)[0];
-		const on = qual ? directChildrenOfRule(qual, P.RULE_a_expr)[0] : undefined;
-		if (on) joins.push(lowerExpr(on));
+		const onA = qual ? directChildrenOfRule(qual, P.RULE_a_expr)[0] : undefined;
+		let on: Expr | undefined;
+		// Lower ON once, shared with joinConditions (order unchanged) → join.on reference-equal to the entry.
+		if (onA) {
+			on = lowerExpr(onA);
+			joinConditions.push(on);
+		}
+		if (source) joins.push(buildJoin(jt, source, on, qual));
 	}
+}
+
+/** Assemble a Join from a DuckDB `joined_table`: kind (incl. POSITIONAL/ASOF/SEMI/ANTI) + NATURAL flag,
+ *  USING columns from its join_qual. */
+function buildJoin(
+	jt: ParserRuleContext,
+	source: Source,
+	on: Expr | undefined,
+	qual: ParserRuleContext | undefined,
+): Join {
+	const { kind, natural } = joinKindAndNatural(jt);
+	const using = on === undefined && qual ? usingColumns(qual) : undefined;
+	return { kind, source, on, using, natural: natural || undefined, cst: jt };
+}
+
+/** Kind + NATURAL flag for a DuckDB `joined_table`. DuckDB adds CROSS/POSITIONAL/ASOF direct-token
+ *  forms and SEMI_P/ANTI_P inside join_type (duckdb.org/docs/current/sql/query_syntax/from). ASOF's
+ *  optional ANSI join_type (ASOF LEFT JOIN) is subsumed under kind "asof". */
+function joinKindAndNatural(jt: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = hasDirectToken(jt, P.NATURAL);
+	if (hasDirectToken(jt, P.CROSS)) return { kind: "cross", natural: false };
+	if (hasDirectToken(jt, P.POSITIONAL)) return { kind: "positional", natural: false };
+	if (hasDirectToken(jt, P.ASOF)) return { kind: "asof", natural: false };
+	const jtype = directChildrenOfRule(jt, P.RULE_join_type)[0];
+	let ansi: JoinKind | undefined;
+	if (jtype) {
+		if (hasDirectToken(jtype, P.SEMI_P)) ansi = "semi";
+		else if (hasDirectToken(jtype, P.ANTI_P)) ansi = "anti";
+		else if (hasDirectToken(jtype, P.LEFT)) ansi = "left";
+		else if (hasDirectToken(jtype, P.RIGHT)) ansi = "right";
+		else if (hasDirectToken(jtype, P.FULL)) ansi = "full";
+		else ansi = "inner"; // INNER_P
+	}
+	if (natural) return { kind: ansi ?? "natural", natural: true };
+	return { kind: ansi ?? "inner", natural: false };
+}
+
+/** The identifier names of a `join_qual`'s `USING (name_list)`, or undefined for an ON qual. */
+function usingColumns(qual: ParserRuleContext): string[] | undefined {
+	const nl = directChildrenOfRule(qual, P.RULE_name_list)[0];
+	if (!nl) return undefined;
+	const cols = collectOfRule(nl, P.RULE_name).map((n) => textOf(n));
+	return cols.length ? cols : undefined;
 }
 
 function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Source {
@@ -597,7 +660,9 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 	if (nestedTr) {
 		const innerFrom: Source[] = [];
 		const innerJoins: Expr[] = [];
-		collectTableRef(nestedTr, innerFrom, innerJoins, unsupported);
+		// Paren-group join NODES aren't modelled (only the top-level FROM chain builds Join[] — see the
+		// spec); the inner ON exprs stay conserved into the enclosing joinConditions.
+		collectTableRef(nestedTr, innerFrom, innerJoins, [], unsupported);
 		nestedJoinConditions.push(...innerJoins);
 		if (innerFrom.length) return innerFrom[0];
 	}
@@ -1195,7 +1260,26 @@ function lowerColumnref(node: ParserRuleContext): Expr {
 	const head = colid ? textOf(colid) : node.getText();
 	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
 	const base: Expr = { kind: "column", parts: [head], cst: node };
-	return ind ? applyIndirection(base, ind, node) : base;
+	const expr = ind ? applyIndirection(base, ind, node) : base;
+	// Attach per-part spans only when the reference stayed a pure dotted column (no `.*`/`.f(...)`/
+	// subscript); all-or-nothing, so a synthesized part omits the whole array. See src/ir/part-span.ts.
+	return expr.kind === "column" ? { ...expr, partSpans: columnPartSpans(node) } : expr;
+}
+
+/** The per-part CST nodes of a `columnref`, PARALLEL to its parts — one shared span-capture seam
+ *  (reused by the editor-gold identifier-folding rewrite). Mirrors lowerColumnref/applyIndirection:
+ *  the colid head plus each plain `.attr_name` (a `.*`, `.f(...)` method call or `[idx]` subscript el
+ *  makes the ref non-column, so the wrapper never reaches here for those). */
+function columnPartSpans(node: ParserRuleContext) {
+	const nodes: (ParseTree | undefined)[] = [directChildrenOfRule(node, P.RULE_colid)[0]];
+	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
+	if (ind) {
+		for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
+			if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR) && !hasDirectToken(el, P.OPEN_PAREN))
+				nodes.push(firstShallow(el, P.RULE_attr_name));
+		}
+	}
+	return partSpansOf(nodes);
 }
 
 /** Apply indirection_el+ to a base expr: `.attr` extends a column path, `.*` makes a qualified
@@ -1386,7 +1470,7 @@ function extractExpressionSubqueries(node: ParserRuleContext, fromQueries: Set<P
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1431,16 +1515,15 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_select_with_parens) continue;
 		if (child.ruleIndex === P.RULE_columnref) {
-			acc.push({ parts: lowerColumnrefParts(child), clause, cst: child });
+			// Route through lowerColumnref so parts + partSpans stay aligned (partSpans present only for a
+			// pure dotted column; a star/method/subscript columnref keeps its fused single part, no spans).
+			const e = lowerColumnref(child);
+			if (e.kind === "column") acc.push({ parts: e.parts, clause, cst: child, partSpans: e.partSpans });
+			else acc.push({ parts: [child.getText()], clause, cst: child });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
 	}
-}
-
-function lowerColumnrefParts(colref: ParserRuleContext): string[] {
-	const e = lowerColumnref(colref);
-	return e.kind === "column" ? e.parts : [colref.getText()];
 }
 
 function hasAggregate(expr: Expr): boolean {

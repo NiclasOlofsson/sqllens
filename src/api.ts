@@ -267,3 +267,7 @@ export {
 // cursor offset. The core primitive behind LSP references / documentHighlight / codeLens / rename.
 // Total: never throws; returns null off-symbol.
 export { referencesAt, type Occurrence, type Occurrences } from "./references/references.js";
+
+// Per-dialect function/keyword/type-name membership sets — for lint-style "is this identifier a
+// known X for this dialect?" checks. Computed once per dialect and cached.
+export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";

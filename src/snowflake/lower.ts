@@ -5,6 +5,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	PivotInfo,
 	Projection,
@@ -15,6 +17,7 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -332,7 +335,10 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 	const qualifyP = qualifyClause ? directChildrenOfRule(qualifyClause, P.RULE_predicate)[0] : undefined;
 	const qualify = qualifyExpr ? lowerExpr(qualifyExpr) : qualifyP ? lowerPredicate(qualifyP) : undefined;
 
-	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
+	const joinConditions: Expr[] = [];
+	const onByCst = new Map<ParserRuleContext, Expr>();
+	if (fromClause) extractJoinConditions(fromClause, joinConditions, onByCst);
+	const joins = fromClause ? buildJoins(fromClause, from, onByCst) : [];
 	const subqueries = extractExpressionSubqueries(stmt, fromSubqueryNodes(from));
 
 	const aggregated =
@@ -357,6 +363,7 @@ function buildSelect(stmt: ParserRuleContext): SelectExpr {
 		columns,
 		where: whereExpr,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having,
 		qualify,
@@ -414,7 +421,7 @@ function lowerOrderItem(item: ParserRuleContext): Expr {
 	const expr = directChildrenOfRule(item, P.RULE_expr)[0];
 	if (expr) return lowerExpr(expr);
 	const id = directChildrenOfRule(item, P.RULE_id_)[0];
-	if (id) return { kind: "column", parts: [stripQuotes(id.getText())], cst: id };
+	if (id) return { kind: "column", parts: [stripQuotes(id.getText())], partSpans: partSpansOf([id]), cst: id };
 	const num = directChildrenOfRule(item, P.RULE_num)[0];
 	if (num) return { kind: "literal", text: num.getText(), cst: num };
 	return otherExpr(item);
@@ -449,17 +456,72 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 	return items.length ? items : undefined;
 }
 
-function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
-	const out: Expr[] = [];
+function extractJoinConditions(
+	fromClause: ParserRuleContext,
+	out: Expr[],
+	onByCst: Map<ParserRuleContext, Expr>,
+): void {
 	for (const jc of shallowNodesOfRule(fromClause, P.RULE_join_clause)) {
 		const onUsing = directChildrenOfRule(jc, P.RULE_on_using_clause)[0];
 		const sc = onUsing ? directChildrenOfRule(onUsing, P.RULE_search_condition)[0] : undefined;
-		if (sc) out.push(lowerSearch(sc));
-		// ASOF JOIN … MATCH_CONDITION ( expr ): the temporal-match predicate.
+		// Lower the ON once, keyed by its search_condition CST so buildJoins shares the same Expr.
+		if (sc) {
+			const e = lowerSearch(sc);
+			out.push(e);
+			onByCst.set(sc, e);
+		}
+		// ASOF JOIN … MATCH_CONDITION ( expr ): the temporal-match predicate. Conserved in joinConditions
+		// (order unchanged) but not separately linked onto the Join (its `on` is the ON search_condition).
 		const match = directChildrenOfRule(jc, P.RULE_expr)[0];
 		if (match) out.push(lowerExpr(match));
 	}
-	return out;
+}
+
+/** The FROM-clause JOIN chain as Join[]: one per join_clause, in tree (source) order. `join.source` is
+ *  the reference-identical `from` entry (matched by the join's object_ref CST); `join.on` is the shared
+ *  ON Expr from onByCst; USING columns come from the on_using_clause. */
+function buildJoins(fromClause: ParserRuleContext, from: Source[], onByCst: Map<ParserRuleContext, Expr>): Join[] {
+	const sourceByCst = new Map<ParserRuleContext, Source>();
+	for (const s of from) sourceByCst.set(s.cst, s);
+	const joins: Join[] = [];
+	for (const jc of shallowNodesOfRule(fromClause, P.RULE_join_clause)) {
+		const ref = directChildrenOfRule(jc, P.RULE_object_ref)[0];
+		const source = ref ? sourceByCst.get(ref) : undefined;
+		if (!source) continue;
+		const { kind, natural } = snowflakeJoinKind(jc);
+		const onUsing = directChildrenOfRule(jc, P.RULE_on_using_clause)[0];
+		let on: Expr | undefined;
+		let using: string[] | undefined;
+		if (onUsing) {
+			const sc = directChildrenOfRule(onUsing, P.RULE_search_condition)[0];
+			if (sc) on = onByCst.get(sc);
+			else using = columnListAliases(onUsing);
+		}
+		joins.push({ kind, source, on, using, natural: natural || undefined, cst: jc });
+	}
+	return joins;
+}
+
+/** Kind + NATURAL flag for a Snowflake `join_clause` (join_type? | NATURAL | CROSS | ASOF). join_type
+ *  is INNER or an outer_join child (LEFT|RIGHT|FULL OUTER?). */
+function snowflakeJoinKind(jc: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = directTokenType(jc, [P.NATURAL]) !== undefined;
+	if (directTokenType(jc, [P.CROSS]) !== undefined) return { kind: "cross", natural: false };
+	if (directTokenType(jc, [P.ASOF]) !== undefined) return { kind: "asof", natural: false };
+	const jt = directChildrenOfRule(jc, P.RULE_join_type)[0];
+	let ansi: JoinKind | undefined;
+	if (jt) {
+		if (directTokenType(jt, [P.INNER]) !== undefined) {
+			ansi = "inner";
+		} else {
+			const oj = directChildrenOfRule(jt, P.RULE_outer_join)[0] ?? jt;
+			const t = directTokenType(oj, [P.LEFT, P.RIGHT, P.FULL]);
+			if (t === P.LEFT) ansi = "left";
+			else if (t === P.RIGHT) ansi = "right";
+			else if (t === P.FULL) ansi = "full";
+		}
+	}
+	return { kind: ansi ?? (natural ? "natural" : "inner"), natural };
 }
 
 // --- CONNECT BY --------------------------------------------------------------
@@ -496,7 +558,12 @@ function lowerPriorItem(item: ParserRuleContext): Expr {
 			continue;
 		}
 		if (c instanceof ParserRuleContext && c.ruleIndex === P.RULE_id_) {
-			const col: Expr = { kind: "column", parts: [stripQuotes(c.getText())], cst: c };
+			const col: Expr = {
+				kind: "column",
+				parts: [stripQuotes(c.getText())],
+				partSpans: partSpansOf([c]),
+				cst: c,
+			};
 			sides.push(
 				pendingPrior
 					? { kind: "function", name: "prior", args: [col], aggregate: false, distinct: false, cst: item }
@@ -630,12 +697,17 @@ function lowerColumnElem(colElem: ParserRuleContext): Expr {
 		directChildrenOfRule(colElem, P.RULE_object_name)[0];
 	const qParts = qualifier ? nameParts(qualifier) : [];
 	if (hasDirectToken(colElem, P.DOLLAR)) {
+		// `$n` positional — the last part is synthesized (not a token), so partSpans is omitted (all-or-nothing).
 		const pos = directChildrenOfRule(colElem, P.RULE_column_position)[0];
 		return { kind: "column", parts: [...qParts, `$${pos?.getText() ?? ""}`], cst: colElem };
 	}
 	const col = directChildrenOfRule(colElem, P.RULE_column_name)[0];
 	const cParts = col ? nameParts(col) : [];
-	return { kind: "column", parts: [...qParts, ...cParts], cst: colElem };
+	// Concat the qualifier's and column's per-part spans; undefined if either falls back to a dotted split.
+	const qSpans = qualifier ? namePartSpans(qualifier) : [];
+	const cSpans = col ? namePartSpans(col) : [];
+	const partSpans = qSpans && cSpans ? [...qSpans, ...cSpans] : undefined;
+	return { kind: "column", parts: [...qParts, ...cParts], partSpans, cst: colElem };
 }
 
 function aliasText(asAlias: ParserRuleContext): string {
@@ -875,7 +947,9 @@ function lowerExpr(node: ParserRuleContext): Expr {
 		if (rhs) {
 			const access = lowerExpr(rhs);
 			if (base.kind === "column" && access.kind === "column") {
-				return { kind: "column", parts: [...base.parts, ...access.parts], cst: node };
+				const partSpans =
+					base.partSpans && access.partSpans ? [...base.partSpans, ...access.partSpans] : undefined;
+				return { kind: "column", parts: [...base.parts, ...access.parts], partSpans, cst: node };
 			}
 			return {
 				kind: "subscript",
@@ -1001,7 +1075,7 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 		case P.RULE_literal:
 			return { kind: "literal", text: node.getText(), cst: node };
 		case P.RULE_full_column_name:
-			return { kind: "column", parts: nameParts(node), cst: node };
+			return { kind: "column", parts: nameParts(node), partSpans: namePartSpans(node), cst: node };
 		case P.RULE_case_expression:
 			return lowerCase(node);
 		case P.RULE_iff_expr:
@@ -1092,9 +1166,15 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 	const fcn =
 		directChildrenOfRule(node, P.RULE_full_column_name)[0] ??
 		directChildrenOfRule(node, P.RULE_degenerate_column_ref)[0];
-	if (fcn) return { kind: "column", parts: nameParts(fcn), cst: node };
+	if (fcn) return { kind: "column", parts: nameParts(fcn), partSpans: namePartSpans(fcn), cst: node };
 	const ids = directChildrenOfRule(node, P.RULE_id_);
-	if (ids.length) return { kind: "column", parts: ids.map((i) => stripQuotes(i.getText())), cst: node };
+	if (ids.length)
+		return {
+			kind: "column",
+			parts: ids.map((i) => stripQuotes(i.getText())),
+			partSpans: partSpansOf(ids),
+			cst: node,
+		};
 	return { kind: "literal", text: node.getText(), cst: node };
 }
 
@@ -1258,7 +1338,7 @@ function lowerSubquery(sub: ParserRuleContext): QueryExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1304,12 +1384,12 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_subquery || child.ruleIndex === P.RULE_select_statement) continue;
 		if (child.ruleIndex === P.RULE_full_column_name) {
-			acc.push({ parts: nameParts(child), clause, cst: child });
+			acc.push({ parts: nameParts(child), clause, cst: child, partSpans: namePartSpans(child) });
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_primitive_expression) {
 			const e = lowerPrimitive(child);
-			if (e.kind === "column") acc.push({ parts: e.parts, clause, cst: child });
+			if (e.kind === "column") acc.push({ parts: e.parts, clause, cst: child, partSpans: e.partSpans });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
@@ -1494,6 +1574,14 @@ function leftmostToken(node: ParseTree): string | undefined {
 }
 
 /** The dotted name parts of an object_name / column_name / object_name_or_alias (id_ leaves in order). */
+/** Per-part spans PARALLEL to nameParts(node) — one span per `id_` (its quote delimiters included),
+ *  all-or-nothing: undefined when there are no id_ children (nameParts then falls back to a dotted
+ *  split, whose parts have no single token). One shared span-capture seam. */
+function namePartSpans(node: ParserRuleContext) {
+	const ids = collectOfRule(node, P.RULE_id_);
+	return ids.length ? partSpansOf(ids) : undefined;
+}
+
 function nameParts(node: ParserRuleContext): string[] {
 	const ids = collectOfRule(node, P.RULE_id_);
 	if (ids.length) return ids.map((i) => stripQuotes(i.getText()));

@@ -1,5 +1,8 @@
 import type { ParserRuleContext } from "antlr4ng";
+import type { PartSpan } from "./part-span.js";
 import type { StatementCategory } from "./statement.js";
+
+export type { PartSpan } from "./part-span.js";
 
 // ---------------------------------------------------------------------------
 // IR — a compact, DIALECT-NEUTRAL semantic model. Each dialect's `lower()` (e.g.
@@ -60,6 +63,13 @@ export interface SelectExpr {
 	where?: Expr;
 	/** JOIN ON predicates at this query level, modelled. */
 	joinConditions?: Expr[];
+	/** The explicit JOIN operations of the FROM clause, in source order (left-to-right, as written).
+	 *  ADDITIVE: `from` + `joinConditions` stay populated exactly as before; `joins` is a first-class,
+	 *  span-addressable view over the same objects (each `join.source` is reference-identical to its
+	 *  `from` entry, each `join.on` reference-equal to its `joinConditions` entry). Absent (undefined)
+	 *  when the select has no explicit JOIN — comma-separated sources are plain `from` entries, not joins.
+	 *  See the Join-node spec in docs/PLAN.md. */
+	joins?: Join[];
 	/** GROUP BY expressions, if present. */
 	groupBy?: Expr[];
 	/** The HAVING predicate, modelled. */
@@ -105,11 +115,59 @@ export interface UnpivotInfo {
 	alias?: string;
 }
 
+// ---------------------------------------------------------------------------
+// Join — a first-class, span-addressable model of one FROM-clause JOIN operation. ADDITIVE over
+// `from` + `joinConditions` (which stay exactly as before): `Join.source` is the SAME object as the
+// matching `from` entry, `Join.on` the SAME object as the matching `joinConditions` entry — a Join
+// carries no unique expr/source, only the kind + the full-construct span. The dbt Anvil formatter
+// tests span containment against it; the SQL debugger slices the query text at join boundaries. See
+// the Join-node spec in docs/PLAN.md. Semantics (scope/qualify/lineage/symbols) are NOT migrated onto
+// `joins` in this task — they keep reading `from` + `joinConditions`.
+// ---------------------------------------------------------------------------
+
+export type JoinKind =
+	| "inner"
+	| "left"
+	| "right"
+	| "full"
+	| "cross"
+	| "semi"
+	| "anti"
+	| "asof"
+	| "positional"
+	| "natural"
+	| "lateral";
+
+export interface Join {
+	/** The join category. NATURAL/LATERAL ride as the `natural`/`lateral` flags with `kind` set to the
+	 *  ANSI type when one is also present (NATURAL LEFT → kind "left", natural true); `kind` is
+	 *  "natural"/"lateral" only for a bare NATURAL/LATERAL join with no ANSI type. */
+	kind: JoinKind;
+	/** The joined (right-side) source — REFERENCE-IDENTICAL to the matching `SelectExpr.from` entry. */
+	source: Source;
+	/** The ON predicate — REFERENCE-EQUAL to the matching `SelectExpr.joinConditions` entry (not a copy).
+	 *  Mutually exclusive with `using`. */
+	on?: Expr;
+	/** USING (col, …) column names. Mutually exclusive with `on`. */
+	using?: string[];
+	/** NATURAL modifier (kind still carries the ANSI type, e.g. NATURAL LEFT → kind "left", natural true). */
+	natural?: boolean;
+	/** LATERAL modifier (the right source is correlated to earlier sources). */
+	lateral?: boolean;
+	/** Spans the full `[type] JOIN … [ON …|USING …]` construct. */
+	cst: ParserRuleContext;
+}
+
 export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "qualify" | "orderBy";
 
 export interface ColumnRef {
 	/** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
 	parts: string[];
+	/** Per-part source spans, PARALLEL to `parts` (same length) — each covers that part's own
+	 *  token(s) including any quoting delimiters, excluding the dots. ADDITIVE/optional: present only
+	 *  when every part was read from a real token; absent (all-or-nothing) when any part is synthesized.
+	 *  Lets a consumer hit-test a cursor on `o` vs `order_id` in `o.order_id`. See src/ir/part-span.ts. */
+	partSpans?: PartSpan[];
 	/** Which clause the reference appears in — GROUP BY/HAVING/ORDER BY may reference a select alias. */
 	clause: Clause;
 	cst: ParserRuleContext;
@@ -122,7 +180,10 @@ export interface ColumnRef {
 // ---------------------------------------------------------------------------
 
 export type Expr =
-	| { kind: "column"; parts: string[]; cst: ParserRuleContext }
+	/** A column reference. `partSpans` (when present) is PARALLEL to `parts` — one span per part,
+	 *  covering that part's own token(s) incl. quotes, excluding dots; absent (all-or-nothing) when any
+	 *  part is synthesized rather than read from a token. See src/ir/part-span.ts. */
+	| { kind: "column"; parts: string[]; partSpans?: PartSpan[]; cst: ParserRuleContext }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
 	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. The optional
 	 *  modifiers transform the expansion (Snowflake `* EXCLUDE/ILIKE/RENAME/REPLACE …`,

@@ -47,6 +47,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LateralViewSource,
 	PipeExpr,
 	PipeSetItem,
@@ -61,6 +63,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -630,7 +633,12 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 	const qualifyCtx = clauses.get(P.RULE_qualifyClause);
 	const qualify = qualifyCtx ? lowerClausePredicate(qualifyCtx) : undefined;
 
-	const joinConditions = fromClause ? extractJoinConditions(fromClause) : [];
+	// ON predicates are lowered ONCE here and shared: `joinConditions` (byte-identical to before) and
+	// each Join.on hold the SAME Expr object (looked up by the ON CST via onByCst).
+	const joinConditions: Expr[] = [];
+	const onByCst = new Map<ParserRuleContext, Expr>();
+	if (fromClause) extractJoinConditions(fromClause, joinConditions, onByCst);
+	const joins = fromClause ? buildJoins(fromClause, from, onByCst) : [];
 
 	const aggregated =
 		(groupBy !== undefined && groupBy.length > 0) ||
@@ -654,6 +662,7 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 		columns,
 		where,
 		joinConditions: joinConditions.length ? joinConditions : undefined,
+		joins: joins.length ? joins : undefined,
 		groupBy,
 		having,
 		qualify,
@@ -665,12 +674,78 @@ function buildSelect(querySpec: ParserRuleContext): SelectExpr {
 	};
 }
 
-/** ON predicates (joinCriteria -> ON booleanExpression) at this query level, lowered. */
-function extractJoinConditions(fromClause: ParserRuleContext): Expr[] {
-	return shallowNodesOfRule(fromClause, P.RULE_joinCriteria)
-		.map((jc) => firstOfRule(jc, P.RULE_booleanExpression))
-		.filter((b): b is ParserRuleContext => b !== undefined)
-		.map(lowerExpression);
+/** ON predicates (joinCriteria -> ON booleanExpression) at this query level, lowered in tree order.
+ *  Fills `out` (the joinConditions array, unchanged from before) AND records each ON's Expr keyed by its
+ *  booleanExpression CST, so buildJoins can attach the SAME Expr object to the matching Join (no re-lower,
+ *  reference-equal). */
+function extractJoinConditions(
+	fromClause: ParserRuleContext,
+	out: Expr[],
+	onByCst: Map<ParserRuleContext, Expr>,
+): void {
+	for (const jc of shallowNodesOfRule(fromClause, P.RULE_joinCriteria)) {
+		const bool = firstOfRule(jc, P.RULE_booleanExpression);
+		if (!bool) continue;
+		const e = lowerExpression(bool);
+		out.push(e);
+		onByCst.set(bool, e);
+	}
+}
+
+/** The FROM-clause JOIN chain as Join[]: one per joinRelation, in source order. `join.source` is the
+ *  reference-identical `from` entry (matched by the right relationPrimary CST); `join.on` is the shared
+ *  ON Expr from onByCst. Comma-separated relations and lateral views are not joins. */
+function buildJoins(fromClause: ParserRuleContext, from: Source[], onByCst: Map<ParserRuleContext, Expr>): Join[] {
+	const sourceByCst = new Map<ParserRuleContext, Source>();
+	for (const s of from) sourceByCst.set(s.cst, s);
+	const joins: Join[] = [];
+	for (const relation of directChildrenOfRule(fromClause, P.RULE_relation)) {
+		for (const ext of directChildrenOfRule(relation, P.RULE_relationExtension)) {
+			const jr = directChildrenOfRule(ext, P.RULE_joinRelation)[0];
+			if (!jr) continue; // pivot/unpivot extension, not a join
+			const rightRp = directChildrenOfRule(jr, P.RULE_relationPrimary)[0];
+			const source = rightRp ? sourceByCst.get(rightRp) : undefined;
+			if (!source) continue;
+			const { kind, natural } = databricksJoinKind(jr);
+			const lateral = directTokenType(jr, [P.LATERAL]) !== undefined;
+			const crit = directChildrenOfRule(jr, P.RULE_joinCriteria)[0];
+			let on: Expr | undefined;
+			let using: string[] | undefined;
+			if (crit) {
+				const bool = firstOfRule(crit, P.RULE_booleanExpression);
+				if (bool) on = onByCst.get(bool);
+				else using = columnAliasList(crit);
+			}
+			joins.push({
+				kind,
+				source,
+				on,
+				using,
+				natural: natural || undefined,
+				lateral: lateral || undefined,
+				cst: jr,
+			});
+		}
+	}
+	return joins;
+}
+
+/** Kind + NATURAL flag for a Spark `joinRelation`. joinType carries CROSS / LEFT SEMI / LEFT ANTI /
+ *  LEFT|RIGHT|FULL OUTER? / INNER; a bare NATURAL JOIN (empty joinType) → kind "natural". */
+function databricksJoinKind(jr: ParserRuleContext): { kind: JoinKind; natural: boolean } {
+	const natural = directTokenType(jr, [P.NATURAL]) !== undefined;
+	const jt = directChildrenOfRule(jr, P.RULE_joinType)[0];
+	const has = (tok: number): boolean => jt !== undefined && directTokenType(jt, [tok]) !== undefined;
+	let ansi: JoinKind | undefined;
+	// SEMI/ANTI first: `LEFT SEMI`/`LEFT ANTI` carry a leading LEFT that must not win over the modifier.
+	if (has(P.CROSS)) ansi = "cross";
+	else if (has(P.SEMI)) ansi = "semi";
+	else if (has(P.ANTI)) ansi = "anti";
+	else if (has(P.LEFT)) ansi = "left";
+	else if (has(P.RIGHT)) ansi = "right";
+	else if (has(P.FULL)) ansi = "full";
+	else if (has(P.INNER)) ansi = "inner";
+	return { kind: ansi ?? (natural ? "natural" : "inner"), natural };
 }
 
 /** GROUP BY keys — every grouping expression, including each one inside ROLLUP / CUBE /
@@ -909,7 +984,7 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	}
 	if (node instanceof ColumnReferenceContext || node instanceof DereferenceContext) {
 		const parts = columnParts(node);
-		return parts ? { kind: "column", parts, cst: node } : otherExpr(node);
+		return parts ? { kind: "column", parts, partSpans: columnPartSpans(node), cst: node } : otherExpr(node);
 	}
 	if (node instanceof StarContext) {
 		return { kind: "star", qualifier: starQualifier(node), exclude: starExclude(node), cst: node };
@@ -1253,7 +1328,7 @@ function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst });
+			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1313,12 +1388,30 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
 			const parts = columnParts(child);
 			if (parts) {
-				acc.push({ parts, clause, cst: child });
+				acc.push({ parts, clause, cst: child, partSpans: columnPartSpans(child) });
 				continue;
 			}
 		}
 		cstColumnRefs(child, acc, clause);
 	}
+}
+
+/** Per-part spans PARALLEL to columnParts(primary) — each identifier's own token (backticks included),
+ *  all-or-nothing: undefined when the primary isn't a pure column-path chain. One shared span-capture
+ *  seam (reused by the editor-gold identifier-folding rewrite). */
+function columnPartSpans(primary: PrimaryExpressionContext) {
+	const nodes = columnPartNodes(primary);
+	return nodes ? partSpansOf(nodes) : undefined;
+}
+
+function columnPartNodes(primary: PrimaryExpressionContext): ParseTree[] | undefined {
+	if (primary instanceof ColumnReferenceContext) return [primary.identifier()];
+	if (primary instanceof DereferenceContext) {
+		const base = columnPartNodes(primary.primaryExpression());
+		if (!base) return undefined;
+		return [...base, primary.identifier()];
+	}
+	return undefined;
 }
 
 /** The identifier parts of a column-reference primaryExpression, or undefined if it isn't one. */

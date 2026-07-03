@@ -1,4 +1,4 @@
-import { ParserRuleContext, type TerminalNode } from "antlr4ng";
+import { ParserRuleContext, type ParseTree, type TerminalNode } from "antlr4ng";
 import {
 	AndContext,
 	ArithmeticBinaryContext,
@@ -110,6 +110,8 @@ import type {
 	ColumnRef,
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	LimitInfo,
 	Projection,
 	QueryBody,
@@ -120,6 +122,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -440,8 +443,11 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 	for (const item of spec.selectItem()) select.projections.push(lowerSelectItem(item, local));
 
 	const joinConditions: Expr[] = [];
-	for (const rel of spec.relation()) lowerRelation(rel, select.from, joinConditions, select.columns, flags, local);
+	const joins: Join[] = [];
+	for (const rel of spec.relation())
+		lowerRelation(rel, select.from, joinConditions, joins, select.columns, flags, local);
 	if (joinConditions.length) select.joinConditions = joinConditions;
+	if (joins.length) select.joins = joins;
 
 	if (spec._where) {
 		select.where = lowerBoolean(spec._where, local);
@@ -516,31 +522,69 @@ function lowerRelation(
 	rel: RelationContext,
 	out: Source[],
 	joinConditions: Expr[],
+	joins: Join[],
 	columns: ColumnRef[],
 	flags: Set<string>,
 	ctx: Ctx,
 ): void {
 	if (rel.constructor.name === "JoinRelationContext") {
 		const j = rel as JoinRelationContext;
-		if (j._left) lowerRelation(j._left, out, joinConditions, columns, flags, ctx);
-		if (j._rightRelation) lowerRelation(j._rightRelation, out, joinConditions, columns, flags, ctx);
+		if (j._left) lowerRelation(j._left, out, joinConditions, joins, columns, flags, ctx);
+		// The right operand's FIRST source is the join's right source (reference-identical to the from
+		// entry just pushed). `relation` is left-recursive, so `j`'s span includes the left input — the
+		// join.cst is therefore cumulative (base…ON), unlike the isolated `JOIN x ON …` of other dialects.
+		const idx = out.length;
+		if (j._rightRelation) lowerRelation(j._rightRelation, out, joinConditions, joins, columns, flags, ctx);
 		if (j._right) lowerSampledRelation(j._right, out, flags, ctx);
+		const source = out[idx] ?? out[out.length - 1];
 		const crit = j.joinCriteria();
+		let on: Expr | undefined;
+		let using: string[] | undefined;
 		if (crit) {
-			const on = crit.booleanExpression();
-			if (on) {
-				const e = lowerBoolean(on, ctx);
-				joinConditions.push(e);
-				collectColumns(e, "join", columns);
+			const onB = crit.booleanExpression();
+			if (onB) {
+				on = lowerBoolean(onB, ctx);
+				joinConditions.push(on);
+				collectColumns(on, "join", columns);
 			}
-			for (const id of crit.identifier()) columns.push({ parts: [idText(id)], clause: "join", cst: id });
+			const ids = crit.identifier();
+			if (ids.length) using = ids.map((id) => idText(id));
+			for (const id of ids)
+				columns.push({ parts: [idText(id)], clause: "join", cst: id, partSpans: partSpansOf([id]) });
 		}
+		if (source) joins.push(buildTrinoJoin(j, source, on, using));
 		return;
 	}
 	const sampled = (
 		rel as ParserRuleContext & { sampledRelation(): SampledRelationContext | null }
 	).sampledRelation?.();
 	if (sampled) lowerSampledRelation(sampled, out, flags, ctx);
+}
+
+/** Assemble a Join from a Trino JoinRelation: CROSS / joinType JOIN / NATURAL joinType JOIN. */
+function buildTrinoJoin(
+	j: JoinRelationContext,
+	source: Source,
+	on: Expr | undefined,
+	using: string[] | undefined,
+): Join {
+	const natural = j.NATURAL() != null;
+	let kind: JoinKind;
+	if (j.CROSS() != null) {
+		kind = "cross";
+	} else {
+		const jt = j.joinType();
+		let ansi: JoinKind | undefined;
+		if (jt) {
+			if (jt.LEFT()) ansi = "left";
+			else if (jt.RIGHT()) ansi = "right";
+			else if (jt.FULL()) ansi = "full";
+			else if (jt.INNER()) ansi = "inner";
+			// else: a bare (empty) joinType — leave ansi undefined so `NATURAL JOIN` reads as "natural"
+		}
+		kind = ansi ?? (natural ? "natural" : "inner");
+	}
+	return { kind, source, on, using, natural: natural || undefined, cst: j };
 }
 
 function lowerSampledRelation(sr: SampledRelationContext, out: Source[], flags: Set<string>, ctx: Ctx): void {
@@ -619,7 +663,9 @@ function lowerRelationPrimary(
 		const inner: Source[] = [];
 		const conditions: Expr[] = [];
 		const cols: ColumnRef[] = [];
-		lowerRelation(rp.relation(), inner, conditions, cols, flags, ctx);
+		// A paren-group's join nodes aren't modelled (only the top-level FROM chain builds Join[] — see
+		// the spec); its sources + ON conditions flow up as before.
+		lowerRelation(rp.relation(), inner, conditions, [], cols, flags, ctx);
 		// A parenthesized JOIN contributes all its sources; a single relation passes through.
 		if (inner.length === 1 && conditions.length === 0) return inner[0] as Source & { alias?: string };
 		for (const s of inner) out.push(s);
@@ -637,7 +683,7 @@ function lowerRelationPrimary(
 		// modelled as a subquery over the inner relation so its columns flow through.
 		const inner: SelectExpr = emptySelect(rp);
 		const conditions: Expr[] = [];
-		lowerRelation(rp.relation(), inner.from, conditions, inner.columns, flags, ctx);
+		lowerRelation(rp.relation(), inner.from, conditions, [], inner.columns, flags, ctx);
 		inner.projections.push({ isStar: true, expr: { kind: "star", cst: rp }, cst: rp });
 		if (rp._where) {
 			inner.where = lowerBoolean(rp._where, ctx);
@@ -977,11 +1023,11 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		};
 	}
 	if (pe instanceof ColumnReferenceContext) {
-		return { kind: "column", parts: [idText(pe.identifier())], cst: pe };
+		return { kind: "column", parts: [idText(pe.identifier())], partSpans: partSpansOf([pe.identifier()]), cst: pe };
 	}
 	if (pe instanceof DereferenceContext) {
 		const parts = pathParts(pe);
-		if (parts) return { kind: "column", parts, cst: pe };
+		if (parts) return { kind: "column", parts, partSpans: pathPartSpans(pe), cst: pe };
 		// Field access on a non-name base ((CAST(… AS ROW(…))).x): subscript with a literal field —
 		// element access whose type stays unknown unless the base type is known (never-wrong).
 		return {
@@ -1037,7 +1083,9 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		return fn(
 			pe,
 			"grouping",
-			pe.qualifiedName().map((qn) => ({ kind: "column", parts: nameParts(qn), cst: qn }) as Expr),
+			pe
+				.qualifiedName()
+				.map((qn) => ({ kind: "column", parts: nameParts(qn), partSpans: namePartSpans(qn), cst: qn }) as Expr),
 		);
 	}
 	if (pe instanceof JsonExistsContext || pe instanceof JsonValueContext || pe instanceof JsonQueryContext) {
@@ -1175,10 +1223,36 @@ function pathParts(pe: ParserRuleContext): string[] | null {
 	return null;
 }
 
+/** Per-part spans PARALLEL to nameParts(qn) — one span per identifier (its quote delimiters
+ *  included), all-or-nothing: undefined when qn has no identifier children (nameParts then falls
+ *  back to getText()). One shared span-capture seam (reused by the editor-gold rewrite). */
+function namePartSpans(qn: ParserRuleContext | null) {
+	if (!qn) return undefined;
+	const ids = (qn as ParserRuleContext & { identifier(): ParserRuleContext[] }).identifier?.() ?? [];
+	return ids.length ? partSpansOf(ids) : undefined;
+}
+
+/** Per-part spans PARALLEL to pathParts(pe) — the identifier chain's per-part spans, all-or-nothing:
+ *  undefined when pe isn't a pure dotted-name chain (matches pathParts returning null). */
+function pathPartSpans(pe: ParserRuleContext) {
+	const nodes = pathPartNodes(pe);
+	return nodes ? partSpansOf(nodes) : undefined;
+}
+
+function pathPartNodes(pe: ParserRuleContext): ParseTree[] | null {
+	if (pe instanceof ColumnReferenceContext) return [pe.identifier()];
+	if (pe instanceof DereferenceContext) {
+		const base = pe._base ? pathPartNodes(pe._base) : null;
+		if (!base || !pe._fieldName) return null;
+		return [...base, pe._fieldName];
+	}
+	return null;
+}
+
 function collectColumns(e: Expr, clause: Clause, out: ColumnRef[]): void {
 	switch (e.kind) {
 		case "column":
-			out.push({ parts: e.parts, clause, cst: e.cst });
+			out.push({ parts: e.parts, clause, cst: e.cst, partSpans: e.partSpans });
 			return;
 		case "star":
 			return;

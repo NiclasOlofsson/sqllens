@@ -73,6 +73,10 @@ function walkBody(body: QueryBody, tally: Map<string, number>, samples: Map<stri
 	}
 	for (const p of body.projections) walkExpr(p.expr, tally, samples);
 	if (body.where) walkExpr(body.where, tally, samples);
+	// JOIN ON predicates are walked via `joinConditions`. `body.joins` (the additive Join[] view) carries
+	// NO unique expr — each `join.on` is reference-EQUAL to a `joinConditions` entry and each
+	// `join.source` to a `from` entry, both already walked here. Re-walking `body.joins` would
+	// double-count `other` nodes and inflate the ratchet, so it is deliberately not traversed.
 	for (const j of body.joinConditions ?? []) walkExpr(j, tally, samples);
 	for (const g of body.groupBy ?? []) walkExpr(g, tally, samples);
 	if (body.having) walkExpr(body.having, tally, samples);
