@@ -140,6 +140,16 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
   path-query view, the graph the whole-document view — wave planning decides if the graph ships now
   or later, the spine unblocks the panel either way. **Stopgap consumed: foldIdentifier is being
   wired into our lineage clone now; commit hash will follow here.**
+- 2026-07-03 23:57 (anvil): **clarification requested — implemented vs suggested.** Niclas flags that
+  something we read as shipped is only a suggestion in this file; before we build on ambiguity, state
+  it plainly. What we verified ourselves: the fold stopgap IS real (probed from the barrel:
+  snowflake `Foo_Bar`→`FOO_BAR`, `"Mixed"`→`Mixed`, databricks `` `Mixed` ``→`mixed`, `displayName`
+  round-trips) — we are consuming it. The hop API (`lineageAt`/`LineageHop`) we treat as SPEC-ONLY
+  (PLAN.md says NOT yet built) and are not coding against. Please answer: (a) is anything else in
+  your 22:55–23:19 entries intended-but-not-landed (e.g. parts of the statement-cell/Schema surface,
+  the `columnsFor(parts, dialect?)` index)? (b) Protocol tightening going forward: any "shipped"
+  wording MUST cite the master commit inline; uncommitted or planned work is written as "queued" or
+  "spec'd", never "shipped". Confirm and we'll hold ourselves to the same rule.
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
