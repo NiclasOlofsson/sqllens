@@ -1,6 +1,6 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
-import type { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
@@ -29,7 +29,7 @@ const INT = scalar("int");
 
 const freshCtx = (): Ctx => ({ seen: new Set(), env: new Map() });
 
-export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = freshCtx()): Type {
+export function inferType(expr: Expr, scope: Scope, schema: SchemaSource, ctx: Ctx = freshCtx()): Type {
 	const d = inferDialect(scope.dialect);
 	switch (expr.kind) {
 		case "literal":
@@ -82,7 +82,7 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 
 // --- columns ---------------------------------------------------------------
 
-function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
+function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
 	if (col.parts.length === 1) {
 		const param = ctx.env.get(foldIdentifier(col.parts[0], scope.dialect)); // a lambda parameter shadows columns
 		if (param) return param;
@@ -96,7 +96,7 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 function sourceColumnType(
 	src: ResolvedSource,
 	column: string,
-	schema: Schema,
+	schema: SchemaSource,
 	ctx: Ctx,
 	d: InferDialect,
 	dialect: string,
@@ -119,7 +119,7 @@ function derivedColumnType(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: Schema,
+	schema: SchemaSource,
 	ctx: Ctx,
 ): Type {
 	if (ctx.seen.has(child) || child.body.kind !== "select") return UNKNOWN;
@@ -142,7 +142,7 @@ function derivedColumnType(
  *  resolve it inside the producing scope, honouring EXCLUDE/ILIKE (removed → unknown),
  *  RENAME (the output name maps back to the source column) and REPLACE (the column's type
  *  is the replacing expression's). */
-function starPassthroughType(child: Scope, column: string, schema: Schema, ctx: Ctx): Type {
+function starPassthroughType(child: Scope, column: string, schema: SchemaSource, ctx: Ctx): Type {
 	for (const p of child.body.kind === "select" ? child.body.projections : []) {
 		if (!p.isStar || p.expr.kind !== "star") continue;
 		const star = p.expr;
@@ -180,7 +180,7 @@ function fieldType(type: Type, fields: string[], dialect: string): Type {
 
 // --- functions, higher-order functions, constructors -----------------------
 
-function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
+function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
 	const name = fn.name.toLowerCase();
 	const args = fn.args;
 	const d = inferDialect(scope.dialect);
@@ -220,7 +220,7 @@ export const HOF_LAMBDA_ARG: Record<string, number> = {
 
 /** Higher-order functions: bind the lambda parameters to the right element/value types, type the
  *  lambda body, and build the result. Returns undefined when `name` isn't a higher-order function. */
-function higherOrder(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type | undefined {
+function higherOrder(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
 	const lambdaArg = HOF_LAMBDA_ARG[name];
 	if (lambdaArg !== undefined && args[lambdaArg]?.kind !== "lambda") return undefined;
 	switch (name) {
@@ -264,7 +264,7 @@ function lambdaResult(
 	lambda: Expr | undefined,
 	paramTypes: Type[],
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	ctx: Ctx,
 ): Type | undefined {
 	if (lambda?.kind !== "lambda") return undefined;
@@ -278,7 +278,7 @@ function arrayElem(t: Type): Type {
 }
 
 /** map(), struct()/named_struct(), from_json() — types built from the arguments. */
-function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type | undefined {
+function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
 	if (name === "map") {
 		const keys: Type[] = [];
 		const values: Type[] = [];
@@ -315,7 +315,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
 
 // --- subqueries ------------------------------------------------------------
 
-function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx, dialect: string): Type {
+function subqueryType(query: QueryExpr, schema: SchemaSource, ctx: Ctx, dialect: string): Type {
 	const root = resolveScopes(query, dialect).root;
 	if (root.body.kind !== "select" || root.body.projections.length === 0) return UNKNOWN;
 	return inferType(root.body.projections[0].expr, root, schema, { seen: ctx.seen, env: ctx.env });

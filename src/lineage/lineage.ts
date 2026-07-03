@@ -1,6 +1,6 @@
 import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
 import type { Expr, QueryExpr } from "../ir/ir.js";
-import type { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { columnNamesOf, resolveColumnSource } from "../sema/resolve.js";
 
@@ -30,16 +30,16 @@ export interface ColumnLineage {
 }
 
 /** Lineage of a query's output columns: each output → the base-table columns it derives from. */
-export function lineage(tree: ScopeTree, schema: Schema): ColumnLineage[] {
+export function lineage(tree: ScopeTree, schema: SchemaSource): ColumnLineage[] {
 	return bodyLineage(tree.root, schema, new Set());
 }
 
 /** The base-table origins of a single expression (e.g. a projection or a column reference). */
-export function originsOf(expr: Expr, scope: Scope, schema: Schema): Origin[] {
+export function originsOf(expr: Expr, scope: Scope, schema: SchemaSource): Origin[] {
 	return dedup(exprOrigins(expr, scope, schema, new Set()), scope.dialect);
 }
 
-function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+function bodyLineage(scope: Scope, schema: SchemaSource, seen: Set<Scope>): ColumnLineage[] {
 	if (scope.pipeStage) return pipeStageLineage(scope, schema, seen);
 	const body = scope.body;
 	if (body.kind === "pipe") {
@@ -62,7 +62,7 @@ function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLine
 function projectionLineage(
 	scope: Scope,
 	projections: import("../ir/ir.js").Projection[],
-	schema: Schema,
+	schema: SchemaSource,
 	seen: Set<Scope>,
 ): ColumnLineage[] {
 	const out: ColumnLineage[] = [];
@@ -79,7 +79,7 @@ function projectionLineage(
 }
 
 /** Lineage of a pipe stage's output columns, flowing the incoming relation through the stage. */
-function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+function pipeStageLineage(scope: Scope, schema: SchemaSource, seen: Set<Scope>): ColumnLineage[] {
 	const stage = scope.pipeStage!;
 	// The incoming relation, each column traced to its origins (the "relation" source under key "").
 	const passthrough = (): ColumnLineage[] => starLineage(scope, undefined, schema, seen);
@@ -141,7 +141,12 @@ function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): Colum
 }
 
 /** Expand `*` / `t.*`: each source column becomes an output, traced to its origins. */
-function starLineage(scope: Scope, qualifier: string[] | undefined, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+function starLineage(
+	scope: Scope,
+	qualifier: string[] | undefined,
+	schema: SchemaSource,
+	seen: Set<Scope>,
+): ColumnLineage[] {
 	const want = qualifier ? (qualifier[qualifier.length - 1] ?? "") : undefined;
 	const out: ColumnLineage[] = [];
 	for (const [key, src] of scope.sources) {
@@ -154,7 +159,7 @@ function starLineage(scope: Scope, qualifier: string[] | undefined, schema: Sche
 }
 
 /** The base-table columns an expression derives from — the union over every contributing column. */
-function exprOrigins(expr: Expr, scope: Scope, schema: Schema, seen: Set<Scope>): Origin[] {
+function exprOrigins(expr: Expr, scope: Scope, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	switch (expr.kind) {
 		case "column":
 			return columnRefOrigins(expr.parts, scope, schema, seen);
@@ -195,14 +200,14 @@ function exprOrigins(expr: Expr, scope: Scope, schema: Schema, seen: Set<Scope>)
 	}
 }
 
-function columnRefOrigins(parts: string[], scope: Scope, schema: Schema, seen: Set<Scope>): Origin[] {
+function columnRefOrigins(parts: string[], scope: Scope, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	const found = resolveColumnSource(scope, parts, schema);
 	return found ? columnOrigins(found.source, found.column, schema, seen) : [];
 }
 
 /** The origins of `column` exposed by a source — a base table is a leaf; a derived relation
  *  recurses into the projection (or source) that produces the column. */
-function columnOrigins(src: ResolvedSource, column: string, schema: Schema, seen: Set<Scope>): Origin[] {
+function columnOrigins(src: ResolvedSource, column: string, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	if (src.kind === "table") return [{ table: src.name, column }];
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
@@ -215,7 +220,7 @@ function derivedOrigins(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: Schema,
+	schema: SchemaSource,
 	seen: Set<Scope>,
 ): Origin[] {
 	if (seen.has(child)) return []; // recursive CTE — stop
@@ -247,7 +252,7 @@ function derivedOrigins(
 	}
 }
 
-function subqueryOrigins(query: QueryExpr, schema: Schema, seen: Set<Scope>, dialect: string): Origin[] {
+function subqueryOrigins(query: QueryExpr, schema: SchemaSource, seen: Set<Scope>, dialect: string): Origin[] {
 	// A scalar/EXISTS subquery contributes its output column's origins. Its scope is built fresh;
 	// correlated refs in the body bind to nothing here, which is fine — we trace the value column.
 	const root = resolveScopes(query, dialect).root;

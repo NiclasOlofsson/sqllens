@@ -14,6 +14,7 @@
 // ---------------------------------------------------------------------------
 
 import { foldIdentifier } from "../ident/fold.js";
+import type { SchemaSource } from "./schema-source.js";
 
 export interface Column {
 	name: string;
@@ -29,7 +30,10 @@ interface DialectIndex {
 	byTable: Map<string, Column[]>;
 }
 
-export class Schema {
+export class Schema implements SchemaSource {
+	/** A full upfront mapping's answers never change, so its invalidation signal is constant 0 — a
+	 *  memo keyed on a Schema never has to invalidate (contrast CallbackSchema, which bumps). */
+	readonly version = 0;
 	private readonly mapping: SchemaMapping;
 	/** Per-dialect lazy index cache — one Schema instance serves files of different dialects (the
 	 *  LSP reality: one workspace schema, many open documents each with their own dialect). Keyed

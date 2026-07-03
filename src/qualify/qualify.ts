@@ -15,7 +15,7 @@ import {
 } from "../scope/scope.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
-import { type Schema } from "./schema.js";
+import { type SchemaSource } from "./schema-source.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -42,7 +42,7 @@ export interface Qualification {
 	columnsOf(scope: Scope): string[] | "unknown";
 }
 
-export function qualify(tree: ScopeTree, schema: Schema): Qualification {
+export function qualify(tree: ScopeTree, schema: SchemaSource): Qualification {
 	const diagnostics: Diagnostic[] = [];
 	const resolved = new Map<Scope, string[] | "unknown">();
 
@@ -71,7 +71,7 @@ function bodyColumns(scope: Scope): ColumnRef[] {
 
 function resolveColumns(
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -106,7 +106,7 @@ function resolveColumns(
 function projectionColumns(
 	scope: Scope,
 	projections: import("../ir/ir.js").Projection[],
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -131,7 +131,7 @@ function projectionColumns(
  *  flow in scope.ts, but resolves stars / a JOINed table's columns against the catalog. */
 function resolvePipeStage(
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -198,7 +198,7 @@ function resolvePipeStage(
 
 function expandStar(
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 	qualifier?: string[],
@@ -228,7 +228,7 @@ function expandStar(
  *  lateral view. Types are not threaded here; type inference (src/infer) owns types. */
 function columnsOfSource(
 	src: ResolvedSource,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 	dialect?: string,
@@ -266,7 +266,7 @@ function known(r: string[] | "unknown" | undefined): string[] | undefined {
 function checkColumn(
 	scope: Scope,
 	ref: ColumnRef,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): void {
@@ -331,7 +331,7 @@ function checkColumn(
 function checkFieldPath(
 	fields: string[],
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	ref: ColumnRef,
 	diagnostics: Diagnostic[],
 ): void {
@@ -354,7 +354,7 @@ function checkFieldPath(
 /** Schema-resolved column names of a source, or undefined when unknown (needs a catalog). */
 function sourceColumns(
 	src: ResolvedSource,
-	schema: Schema,
+	schema: SchemaSource,
 	resolved: Map<Scope, string[] | "unknown">,
 	dialect?: string,
 ): string[] | undefined {

@@ -6,6 +6,7 @@ import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import {
 	resolveColumn,
 	type ColumnResolution,
@@ -80,13 +81,13 @@ export const MAIN_FRAME = "_main_";
 
 /** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
  *  without one (the default), names + spans + frames + definitions are still produced. */
-export function deriveSymbols(tree: ScopeTree, schema: Schema = new Schema({})): Sym[] {
+export function deriveSymbols(tree: ScopeTree, schema: SchemaSource = new Schema({})): Sym[] {
 	const out: Sym[] = [];
 	walk(tree.root, MAIN_FRAME, out, schema);
 	return out;
 }
 
-function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const walked = new Set<Scope>();
 
 	// CTE declarations, and each CTE body as its own frame. The map key is the FOLDED identity;
@@ -143,7 +144,7 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
 }
 
 /** Function symbols (with aggregate/window modifiers) from this frame's expression trees. */
-function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const body = scope.body;
 	if (body.kind !== "select") return;
 	const visit = (e: Expr): void => {
@@ -208,7 +209,7 @@ function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {
 }
 
 /** Column references in this frame, plus output declarations for aliased/computed projections. */
-function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function emitColumns(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const body = scope.body;
 	if (body.kind === "select") {
 		for (const p of body.projections) {

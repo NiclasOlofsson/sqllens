@@ -39,6 +39,7 @@ import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import type { Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
@@ -51,6 +52,26 @@ import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan } from ".
 // for schema-free calls (cache key = schema ?? EMPTY_SCHEMA), instead of a fresh
 // Schema per call that would defeat the cache.
 const EMPTY_SCHEMA = new Schema({});
+
+/** A memo entry stamped with the SchemaSource `version` it was computed for. */
+interface Versioned<T> {
+	version: number;
+	value: T;
+}
+
+/** Identity + version memo: one slot per SchemaSource identity, holding the value computed for the
+ *  last-seen version. A version bump (monotonic — CallbackSchema.prime() only increases it) misses
+ *  and recomputes; a plain Schema (version constant 0) always hits, memoizing exactly as an
+ *  identity-only Map did. Single-slot (not Map<version,…>) keeps memory bounded to one entry per
+ *  schema even for a CachedCell that survives many edits + primes, and is correct because a
+ *  superseded version is never queried again. */
+function memoByVersion<T>(cache: Map<SchemaSource, Versioned<T>>, schema: SchemaSource, compute: () => T): T {
+	const hit = cache.get(schema);
+	if (hit && hit.version === schema.version) return hit.value;
+	const value = compute();
+	cache.set(schema, { version: schema.version, value });
+	return value;
+}
 
 /** How many parsed cells to retain in the cross-edit cache. Bounds memory for a huge script while
  *  keeping the working set of statements around an edit resident. LRU-evicted past this. */
@@ -79,9 +100,11 @@ interface CachedCell {
 	errors: number;
 	/** cell-relative syntax diagnostics. */
 	diagnostics: readonly SyntaxDiagnostic[];
-	/** Per-schema analyze() memo for THIS cell. The Map reference is stable across edits (the
-	 *  CachedCell is reused via the CellCache), so a cell untouched by an edit keeps its analysis. */
-	readonly analysis: Map<Schema, CellAnalysis>;
+	/** Per-schema analyze() memo for THIS cell, keyed on schema IDENTITY + VERSION (a CallbackSchema
+	 *  bumps its version in prime(), which must invalidate this cell's cached analysis). The Map
+	 *  reference is stable across edits (the CachedCell is reused via the CellCache), so a cell
+	 *  untouched by an edit keeps its analysis until a schema/version change. */
+	readonly analysis: Map<SchemaSource, Versioned<CellAnalysis>>;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -177,9 +200,10 @@ export class SqlDocument {
 	/** Schema-keyed memo of the MERGED analyze() result (concat + coordinate shift). Rebuilt per doc
 	 *  version — the merge must redo when an earlier statement's line count changes and shifts later
 	 *  cells' doc coordinates — while the per-CELL analysis (the expensive qualify/deriveSymbols) is
-	 *  memoized on the CachedCell and survives edits. The Map reference is frozen with the instance,
-	 *  but its contents stay mutable, so memoization works on a frozen SqlDocument. */
-	private readonly _analysisCache = new Map<Schema, DocumentAnalysis>();
+	 *  memoized on the CachedCell and survives edits. Keyed on schema IDENTITY + VERSION (a primed
+	 *  CallbackSchema bumps its version, invalidating this memo). The Map reference is frozen with the
+	 *  instance, but its contents stay mutable, so memoization works on a frozen SqlDocument. */
+	private readonly _analysisCache = new Map<SchemaSource, Versioned<DocumentAnalysis>>();
 	/** The CachedCell backing each StatementCell, parallel to `statements`. Holds the cross-edit
 	 *  per-cell analysis memo; analyze() reads it to merge per-statement results. */
 	private readonly _cells: readonly CachedCell[];
@@ -269,7 +293,7 @@ export class SqlDocument {
 				tokens: p.tokens,
 				errors: p.errors,
 				diagnostics: p.diagnostics,
-				analysis: new Map<Schema, CellAnalysis>(),
+				analysis: new Map<SchemaSource, Versioned<CellAnalysis>>(),
 			};
 			// Cache only the FIRST product for a key (see above — duplicates stay uncached).
 			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
@@ -346,18 +370,22 @@ export class SqlDocument {
 	}
 
 	/** The schema-dependent tiers, over the cached per-cell scopes/ast (no re-parse). Memoized by
-	 *  schema identity. Every statement cell is qualified/symbol-derived INDEPENDENTLY (a broken or
+	 *  schema IDENTITY + VERSION — a plain Schema (version 0) memoizes exactly as before; a
+	 *  CallbackSchema that has been prime()d bumps its version and so re-computes with the newly
+	 *  resolved tables. Every statement cell is qualified/symbol-derived INDEPENDENTLY (a broken or
 	 *  unknown-column statement never suppresses another), then merged: symbols and semantic
 	 *  diagnostics from every cell, each shifted from cell-relative to DOCUMENT coordinates. The
 	 *  expensive per-cell work is memoized on each CachedCell, so an edit that touches only one
 	 *  statement re-qualifies only that statement; the cheap merge (concat + shift) redoes per version.
 	 *  With no schema the symbols/scopes still resolve structurally and types come back `unknown` where
 	 *  a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
-	analyze(schema?: Schema): DocumentAnalysis {
+	analyze(schema?: SchemaSource): DocumentAnalysis {
 		const s = schema ?? EMPTY_SCHEMA;
-		const memo = this._analysisCache.get(s);
-		if (memo) return memo;
+		return memoByVersion(this._analysisCache, s, () => this.buildAnalysis(s));
+	}
 
+	/** Compute (no memo) the merged document analysis for schema `s`. */
+	private buildAnalysis(s: SchemaSource): DocumentAnalysis {
 		const cells = this.statements;
 		let analysis: DocumentAnalysis;
 		if (cells.length === 1) {
@@ -397,22 +425,19 @@ export class SqlDocument {
 			};
 			analysis = { qualification, types: new TypeInfo(s), symbols, diagnostics };
 		}
-		this._analysisCache.set(s, analysis);
 		return analysis;
 	}
 
-	/** The per-cell schema-dependent analysis (cell-relative), memoized on the CachedCell so it
-	 *  survives edits that don't touch this cell. */
-	private cellAnalysis(i: number, s: Schema): CellAnalysis {
+	/** The per-cell schema-dependent analysis (cell-relative), memoized on the CachedCell (by schema
+	 *  identity + version) so it survives edits that don't touch this cell, yet re-runs when a primed
+	 *  CallbackSchema bumps its version. */
+	private cellAnalysis(i: number, s: SchemaSource): CellAnalysis {
 		const cached = this._cells[i];
-		let ca = cached.analysis.get(s);
-		if (ca === undefined) {
+		return memoByVersion(cached.analysis, s, () => {
 			const scopes = this.statements[i].scopes;
 			const qualification = qualify(scopes, s, { dialect: this.dialect });
-			ca = { qualification, symbols: deriveSymbols(scopes, s, { dialect: this.dialect }) };
-			cached.analysis.set(s, ca);
-		}
-		return ca;
+			return { qualification, symbols: deriveSymbols(scopes, s, { dialect: this.dialect }) };
+		});
 	}
 }
 
