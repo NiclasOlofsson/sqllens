@@ -106,7 +106,11 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Snowflake",
-		coverFloor: 67,
+		// 59 after the SLL-surgery wave (2026-07-03): deleting subset alternatives (round_expr, the
+		// builtin-arity call forms, predicate's expr-duplicated forms, order_item's id_/num) shrank
+		// the fuzzer's reachable-rule graph. lower() did not regress — the docs corpus gate proves
+		// 0 throws and the `other` ratchet held at 0 over all 2,976 query files.
+		coverFloor: 59,
 		cfg: {
 			Parser: SnowflakeParser as never,
 			Lexer: SnowflakeLexer as never,

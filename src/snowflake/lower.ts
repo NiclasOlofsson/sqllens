@@ -1186,6 +1186,10 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 		...exprListExprs(node).map(lowerExpr),
 		...directChildrenOfRule(node, P.RULE_expr).map(lowerExpr),
 		...directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues),
+		// the object_name(func_arg_list) alternative — positional exprs and named-arg values
+		// (STAR / stage / spread / TYPE args carry no expr payload and add nothing here).
+		// Also the SLL-surgery wave's home for plain f(args) calls (2026-07-03).
+		...directChildrenOfRule(node, P.RULE_func_arg_list).flatMap(funcArgValues),
 	];
 	return {
 		kind: "function",
@@ -1195,6 +1199,16 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 		distinct: hasTokenShallow(node, P.DISTINCT),
 		cst: node,
 	};
+}
+
+function funcArgValues(list: ParserRuleContext): Expr[] {
+	return directChildrenOfRule(list, P.RULE_func_arg).flatMap((fa) => {
+		const e = directChildrenOfRule(fa, P.RULE_expr)[0];
+		if (e) return [lowerExpr(e)];
+		const pa = directChildrenOfRule(fa, P.RULE_param_assoc)[0];
+		const pe = pa ? directChildrenOfRule(pa, P.RULE_expr)[0] : undefined;
+		return pe ? [lowerExpr(pe)] : [];
+	});
 }
 
 function paramAssocValues(list: ParserRuleContext): Expr[] {
