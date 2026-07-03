@@ -59,12 +59,19 @@ export function startServer(connection: Connection): void {
 
 	// Build (or rebuild) the SqlDocument for `uri` from the TextDocuments registry's
 	// current text + version, resolving the dialect via config, and cache it. Returns
-	// undefined only when the registry has no such open document.
+	// undefined only when the registry has no such open document. On an edit we carry the
+	// previous document's per-statement cell cache forward via withText(), so statements whose
+	// text didn't change reuse their parsed cells AND their cached per-cell analysis — an edit to
+	// one statement recomputes only that statement. A fresh open (or a dialect change) starts clean.
 	const rebuild = (uri: string): SqlDocument | undefined => {
 		const td = documents.get(uri);
 		if (!td) return undefined;
 		const dialect = config.dialectFor(uriToRel(uri));
-		const doc = SqlDocument.create(td.getText(), dialect, { uri, version: td.version });
+		const prev = docs.get(uri);
+		const doc =
+			prev && prev.dialect === dialect
+				? prev.withText(td.getText(), td.version)
+				: SqlDocument.create(td.getText(), dialect, { uri, version: td.version });
 		docs.set(uri, doc);
 		return doc;
 	};

@@ -21,8 +21,13 @@ export function computeCodeLens(doc: SqlDocument, schema?: Schema): CodeLens[] {
 		for (const s of doc.analyze(schema).symbols) {
 			if (!s.modifiers.includes("declaration")) continue;
 			if (!COUNTABLE.has(s.kind)) continue;
+			// s.span is in DOC coordinates (analyze() merges every cell's symbols there); resolve the
+			// count over the CELL owning the declaration, with a cell-relative offset.
 			const offset = doc.lines.offsetAt(s.span.line - 1, s.span.column);
-			const occ = referencesAt(doc.scopes, offset, schema, doc.ast);
+			const cell = doc.cellAt(offset);
+			const scopes = cell ? cell.scopes : doc.scopes;
+			const ast = cell ? cell.ast : doc.ast;
+			const occ = referencesAt(scopes, cell ? offset - cell.span.start : offset, schema, ast);
 			if (!occ) continue;
 			const n = occ.occurrences.filter((o) => o.role === "reference").length;
 			out.push({

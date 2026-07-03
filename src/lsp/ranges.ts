@@ -1,6 +1,6 @@
 import type { ParserRuleContext, Token } from "antlr4ng";
 import type { Position, Range } from "vscode-languageserver-types";
-import type { Span, SyntaxDiagnostic } from "../index.js";
+import type { Span, SqlDocument, StatementCell, SyntaxDiagnostic } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // The ONE place that converts library positions to LSP positions. The library
@@ -53,6 +53,45 @@ export function rangeFromSyntaxDiagnostic(d: SyntaxDiagnostic): Range {
 		start: { line, character: d.column },
 		end: { line, character: d.column + Math.max(1, d.length) },
 	};
+}
+
+// ---------------------------------------------------------------------------
+// Cell-relative → document-coordinate shifting (Task 6). A statement cell's
+// cst/scopes carry CELL-relative spans (parsed from the cell's own text slice),
+// so a feature that turns a cell-relative Range into a document Range shifts it by
+// the cell's start. `CellBase` is that start as a 0-based LSP { line, character }.
+// A first-line (relative line 0) position shares the doc line where the cell
+// begins, so its character offsets by the base column; a later line only shifts
+// its line. A zero base (the first cell) is an identity.
+// ---------------------------------------------------------------------------
+
+export interface CellBase {
+	line: number;
+	character: number;
+}
+
+/** The doc-coordinate start of the cell owning `offset`, as an LSP { line, character } (0-based). */
+export function cellBaseAt(doc: SqlDocument, offset: number): CellBase {
+	const cell = doc.cellAt(offset);
+	return cellBaseOf(doc, cell);
+}
+
+/** The doc-coordinate start of a specific cell (undefined → the zero base). */
+export function cellBaseOf(doc: SqlDocument, cell: StatementCell | undefined): CellBase {
+	if (!cell) return { line: 0, character: 0 };
+	const p = doc.lines.positionAt(cell.span.start);
+	return { line: p.line, character: p.column };
+}
+
+/** Shift a cell-relative LSP Position into document coordinates by a cell base. */
+export function shiftPosition(p: Position, base: CellBase): Position {
+	return { line: p.line + base.line, character: p.line === 0 ? p.character + base.character : p.character };
+}
+
+/** Shift a cell-relative LSP Range into document coordinates by a cell base. */
+export function shiftRange(r: Range, base: CellBase): Range {
+	if (base.line === 0 && base.character === 0) return r; // first cell: identity
+	return { start: shiftPosition(r.start, base), end: shiftPosition(r.end, base) };
 }
 
 /** LSP Position → 0-based char offset into `text` (for mapping a cursor to a node). */

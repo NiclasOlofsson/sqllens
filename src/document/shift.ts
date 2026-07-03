@@ -19,6 +19,7 @@
 // ---------------------------------------------------------------------------
 
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
+import type { PartSpan } from "../ir/part-span.js";
 import type { Token } from "../token/token.js";
 
 /** Shift a cell-relative diagnostic to document coordinates. `line` is 1-based, `column` 0-based. */
@@ -59,6 +60,34 @@ export function shiftDiagnostics(
 ): readonly SyntaxDiagnostic[] {
 	if (baseLine === 0 && baseCol === 0 && baseOffset === 0) return diags;
 	return diags.map((d) => shiftDiagnostic(d, baseLine, baseCol, baseOffset));
+}
+
+/** A span in the `{ line, column, endLine, endColumn }` shape shared by symbols `Span` and qualify
+ *  `Diagnostic` (1-based line, 0-based column). Shift both its start and end into doc coordinates,
+ *  preserving every other field (a Diagnostic's `kind`/`message`, a Sym's other members). A start/end
+ *  on the cell's FIRST line (line === 1) offsets by baseCol; a later line only shifts its line. */
+export function shiftSpanFields<T extends { line: number; column: number; endLine: number; endColumn: number }>(
+	v: T,
+	baseLine: number,
+	baseCol: number,
+): T {
+	return {
+		...v,
+		line: v.line + baseLine,
+		column: v.line === 1 ? v.column + baseCol : v.column,
+		endLine: v.endLine + baseLine,
+		endColumn: v.endLine === 1 ? v.endColumn + baseCol : v.endColumn,
+	};
+}
+
+/** Shift a per-part source span (start/end are 0-based char offsets; line 1-based, column 0-based). */
+export function shiftPartSpan(p: PartSpan, baseLine: number, baseCol: number, baseOffset: number): PartSpan {
+	return {
+		start: p.start + baseOffset,
+		end: p.end + baseOffset,
+		line: p.line + baseLine,
+		column: p.line === 1 ? p.column + baseCol : p.column,
+	};
 }
 
 /** Shift a whole token list; a zero base returns the input array unchanged (the first cell). */

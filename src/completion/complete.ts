@@ -16,8 +16,10 @@
 
 import { Token } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
+import { nodeAt } from "../document/node-at.js";
 import { displayName, foldIdentifier } from "../ident/fold.js";
 import { inferDialect } from "../infer/dialect.js";
+import type { QueryExpr } from "../ir/ir.js";
 import type { Schema } from "../qualify/schema.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
@@ -51,13 +53,23 @@ function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[
 	const dialect = doc.dialect;
 	const cfg = COMPLETION_CONFIG[dialect];
 
+	// Route to the statement CELL owning the caret: the ATN walk parses that cell's text (with a
+	// cell-relative caret) and the visible-column lookup runs over that cell's own scope tree — so a
+	// caret in statement 2 of a multi-statement document completes through its real scope, not the
+	// compound facade. Single-cell: the cell IS the document, so this is identical to a whole-doc walk.
+	const cell = doc.cellAt(offset);
+	const cellText = cell ? cell.text : doc.text;
+	const cellOffset = cell ? offset - cell.span.start : offset;
+	const cellScopes = cell ? cell.scopes : doc.scopes;
+	const cellAst = cell ? cell.ast : doc.ast;
+
 	// Completion runs its own error-tolerant parse to position the walk (expected — the walk needs
 	// a parser whose ATN we DFS, not the document's valid-parse CST).
-	const m = makeParser(doc.text, dialect);
+	const m = makeParser(cellText, dialect);
 	// runEntry() first: the CommonTokenStream fills lazily, so the full token list (needed to find
 	// the caret token) only exists after the parse drives it.
 	m.runEntry();
-	const caretIdx = caretTokenIndex(m, offset);
+	const caretIdx = caretTokenIndex(m, cellOffset);
 	const cand = collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
 
 	const out: Completion[] = [];
@@ -87,7 +99,7 @@ function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[
 	// fallback that reads FROM/JOIN relation names straight off the token stream (the document's batch
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
-		for (const c of visibleColumns(doc, offset, schema)) add(c);
+		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
 		if (schema) for (const c of fromRelationColumns(m, cfg, schema, dialect)) add(c);
 	}
 
@@ -153,31 +165,38 @@ function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schem
 	return out;
 }
 
-/** The columns visible from the scope enclosing `offset`. Derived sources / CTEs expose their own
- *  output column names; base-table sources get their columns (and types) from the schema. */
-function visibleColumns(doc: SqlDocument, offset: number, schema?: Schema): Completion[] {
-	const scope = enclosingScope(doc, offset);
+/** The columns visible from the scope enclosing `offset` (a CELL-relative offset into `scopes`).
+ *  Derived sources / CTEs expose their own output column names; base-table sources get their columns
+ *  (and types) from the schema. */
+function visibleColumns(
+	scopes: ScopeTree,
+	ast: QueryExpr,
+	dialect: string,
+	offset: number,
+	schema?: Schema,
+): Completion[] {
+	const scope = enclosingScope(scopes, ast, offset);
 	if (!scope) return [];
 	const out: Completion[] = [];
 	const seen = new Set<string>();
 	for (const src of scope.sources.values()) {
-		for (const col of columnsOf(src, doc.dialect, schema)) {
+		for (const col of columnsOf(src, dialect, schema)) {
 			// Dedup by folded IDENTITY (quoted/unquoted twins collapse); labels render via displayName.
-			const key = foldIdentifier(col.label, doc.dialect);
+			const key = foldIdentifier(col.label, dialect);
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push({ ...col, label: displayName(col.label, doc.dialect) });
+			out.push({ ...col, label: displayName(col.label, dialect) });
 		}
 	}
 	return out;
 }
 
 /** The scope owning `offset`: the IR node's scope if one covers it, else the deepest scope whose
- *  body CST span covers the offset, else the root. */
-function enclosingScope(doc: SqlDocument, offset: number): Scope | undefined {
-	const hit = doc.nodeAt(offset)?.scope;
+ *  body CST span covers the offset, else the root. `offset` is relative to `scopes`/`ast`. */
+function enclosingScope(scopes: ScopeTree, ast: QueryExpr, offset: number): Scope | undefined {
+	const hit = nodeAt(scopes, offset, ast)?.scope;
 	if (hit) return hit;
-	return deepestScopeAt(doc.scopes, offset) ?? doc.scopes.root;
+	return deepestScopeAt(scopes, offset) ?? scopes.root;
 }
 
 /** The deepest scope whose `body.cst` source span covers `offset`. */

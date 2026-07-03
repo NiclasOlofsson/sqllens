@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { SqlDocument } from "../src/document/document.js";
-import { parse, toScopes } from "../src/api.js";
+import { parse, toScopes, deriveSymbols } from "../src/api.js";
 import { shiftDiagnostic } from "../src/document/shift.js";
+import { Schema } from "../src/qualify/schema.js";
 import type { SyntaxDiagnostic } from "../src/parse-diagnostics.js";
 
 // ---------------------------------------------------------------------------
@@ -180,5 +181,57 @@ describe("SqlDocument content-addressed cell reuse across edits", () => {
 		const d1 = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
 		const fresh = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
 		expect(fresh.statements[0].cst).not.toBe(d1.statements[0].cst);
+	});
+});
+
+describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
+	const schema = new Schema({ sales: { amount: "decimal", id: "int" } });
+
+	it("merges symbols across every cell in DOC coordinates", () => {
+		const text = "SELECT amount AS a FROM sales;\nSELECT id AS b FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		const names = doc.analyze(schema).symbols.map((s) => s.name);
+		expect(names).toContain("a");
+		expect(names).toContain("b");
+		// `b` is declared in statement 2 (doc line 2, 1-based) — proves the shift to doc coordinates.
+		const b = doc.analyze(schema).symbols.find((s) => s.name === "b" && s.modifiers.includes("output"))!;
+		expect(b.span.line).toBe(2);
+	});
+
+	it("merges semantic diagnostics from every cell, positioned in doc coordinates", () => {
+		const text = "SELECT amount FROM sales;\nSELECT nope FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		const diags = doc.analyze(schema).diagnostics;
+		const bad = diags.find((d) => /nope|unknown/i.test(d.message))!;
+		expect(bad).toBeDefined();
+		expect(bad.line).toBe(2); // statement 2 → doc line 2 (1-based)
+	});
+
+	it("single-cell analyze() matches a direct qualify/deriveSymbols (fast path, no shift)", () => {
+		const text = "SELECT amount AS a FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		const a = doc.analyze(schema);
+		const directSyms = deriveSymbols(doc.statements[0].scopes, schema, { dialect: "databricks" });
+		const strip = (syms: { name: string; span: unknown }[]) => syms.map((s) => ({ name: s.name, span: s.span }));
+		expect(strip(a.symbols)).toEqual(strip(directSyms));
+		// The fast path returns qualification.diagnostics directly (same array object).
+		expect(a.diagnostics).toBe(a.qualification.diagnostics);
+	});
+
+	it("editing statement 2 reuses statement 1's cell analysis (no re-qualify of statement 1)", () => {
+		const d1 = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
+		const s1before = d1.analyze(schema).symbols.find((s) => s.name === "amount");
+		expect(s1before).toBeDefined();
+		const d2 = d1.withText("SELECT amount FROM sales;\nSELECT id AS other FROM sales", 1);
+		// Statement 1's cell (and thus its cached per-cell analysis) is reused across the edit.
+		expect(d2.statements[0].scopes).toBe(d1.statements[0].scopes);
+		// Statement 2 re-parsed → its analysis reflects the edit (the new `other` output symbol).
+		const names2 = d2.analyze(schema).symbols.map((s) => s.name);
+		expect(names2).toContain("other");
+	});
+
+	it("analyze() memoizes the merged result per schema identity", () => {
+		const doc = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
+		expect(doc.analyze(schema)).toBe(doc.analyze(schema));
 	});
 });

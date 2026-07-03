@@ -1,6 +1,6 @@
 import type { Hover, Position } from "vscode-languageserver-types";
 import { formatType, type Schema, type SqlDocument } from "../../index.js";
-import { rangeFromCst, rangeFromSpan } from "../ranges.js";
+import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.js";
 import { symbolAt } from "../sym-at.js";
 
 // ---------------------------------------------------------------------------
@@ -17,7 +17,9 @@ export function computeHover(doc: SqlDocument, position: Position, schema?: Sche
 	if (hit) {
 		const type = doc.analyze(schema).types.typeOf(hit.expr, hit.scope);
 		if (type.kind !== "unknown") {
-			return { contents: fence(formatType(type)), range: rangeFromCst(hit.expr.cst) };
+			// hit.expr.cst is CELL-relative (doc.nodeAt routes to the owning cell) — shift to doc coords.
+			const range = shiftRange(rangeFromCst(hit.expr.cst), cellBaseAt(doc, off));
+			return { contents: fence(formatType(type)), range };
 		}
 	}
 	const sym = symbolAt(doc, doc.analyze(schema).symbols, off);

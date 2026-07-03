@@ -44,7 +44,7 @@ import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
-import { shiftDiagnostics, shiftTokens } from "./shift.js";
+import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan } from "./shift.js";
 
 // A single stable empty schema, used as the analyze() default when no catalog is
 // configured. Sharing ONE instance keeps the schema-keyed analyze() memo working
@@ -55,6 +55,15 @@ const EMPTY_SCHEMA = new Schema({});
 /** How many parsed cells to retain in the cross-edit cache. Bounds memory for a huge script while
  *  keeping the working set of statements around an edit resident. LRU-evicted past this. */
 const CELL_CACHE_MAX = 256;
+
+/** The schema-dependent analysis of ONE cell, in CELL-RELATIVE coordinates. Memoized on the
+ *  CachedCell (keyed by schema identity) so an edit that only touches another statement reuses this
+ *  cell's qualify/deriveSymbols unchanged — the memo rides the content-addressed cache across edits. */
+interface CellAnalysis {
+	qualification: Qualification;
+	/** Cell-relative symbols (spans shifted to doc coordinates only at the doc-level merge). */
+	symbols: Sym[];
+}
 
 /** A parsed statement cell, in CELL-RELATIVE coordinates — the unit the content-addressed cache
  *  stores. Reused verbatim across edits; tokens/diagnostics are re-shifted to doc coordinates when
@@ -70,6 +79,9 @@ interface CachedCell {
 	errors: number;
 	/** cell-relative syntax diagnostics. */
 	diagnostics: readonly SyntaxDiagnostic[];
+	/** Per-schema analyze() memo for THIS cell. The Map reference is stable across edits (the
+	 *  CachedCell is reused via the CellCache), so a cell untouched by an edit keeps its analysis. */
+	readonly analysis: Map<Schema, CellAnalysis>;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -162,9 +174,15 @@ export class SqlDocument {
 	readonly scopes: ScopeTree;
 	readonly lines: LineIndex;
 
-	/** Schema-keyed memo of analyze(). The Map reference is frozen with the instance,
+	/** Schema-keyed memo of the MERGED analyze() result (concat + coordinate shift). Rebuilt per doc
+	 *  version — the merge must redo when an earlier statement's line count changes and shifts later
+	 *  cells' doc coordinates — while the per-CELL analysis (the expensive qualify/deriveSymbols) is
+	 *  memoized on the CachedCell and survives edits. The Map reference is frozen with the instance,
 	 *  but its contents stay mutable, so memoization works on a frozen SqlDocument. */
 	private readonly _analysisCache = new Map<Schema, DocumentAnalysis>();
+	/** The CachedCell backing each StatementCell, parallel to `statements`. Holds the cross-edit
+	 *  per-cell analysis memo; analyze() reads it to merge per-statement results. */
+	private readonly _cells: readonly CachedCell[];
 	/** The content-addressed cross-edit cell cache, carried to withText() children. Its contents stay
 	 *  mutable (a memo) even though the reference is frozen with the instance. */
 	private readonly _cellCache: CellCache;
@@ -187,8 +205,15 @@ export class SqlDocument {
 		// as a batch of one — the proven single-statement path — so no lower() changes are needed.
 		const spans = splitStatements(text, dialect);
 		const handedOut = new Set<CachedCell>(); // per-BUILD: which cache entries this doc already uses
-		const cells: StatementCell[] = spans.map((span) => this.buildCell(span, handedOut));
+		const cells: StatementCell[] = [];
+		const backing: CachedCell[] = [];
+		for (const span of spans) {
+			const built = this.buildCell(span, handedOut);
+			cells.push(built.cell);
+			backing.push(built.cached);
+		}
 		this.statements = Object.freeze(cells);
+		this._cells = backing;
 
 		// Whole-document facade. tokens/diagnostics/errors are the cheap concat/sum across cells.
 		this.tokens = cells.flatMap((c) => c.tokens as Token[]);
@@ -224,7 +249,10 @@ export class SqlDocument {
 	 *  use of the same entry in the same build, that cell is parsed fresh. The fresh product does
 	 *  NOT replace the cache entry: the first occurrence keeps its stable cross-edit identity (the
 	 *  common case), and only intra-doc duplicates — rare — pay a re-parse per build. */
-	private buildCell(span: StatementCellSpan, handedOut: Set<CachedCell>): StatementCell {
+	private buildCell(
+		span: StatementCellSpan,
+		handedOut: Set<CachedCell>,
+	): { cell: StatementCell; cached: CachedCell } {
 		const cellText = this.text.slice(span.start, span.end);
 		const key = this.dialect + " " + cellText;
 		let cached = this._cellCache.get(key);
@@ -241,6 +269,7 @@ export class SqlDocument {
 				tokens: p.tokens,
 				errors: p.errors,
 				diagnostics: p.diagnostics,
+				analysis: new Map<Schema, CellAnalysis>(),
 			};
 			// Cache only the FIRST product for a key (see above — duplicates stay uncached).
 			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
@@ -251,7 +280,7 @@ export class SqlDocument {
 		const base = this.lines.positionAt(span.start);
 		const tokens = shiftTokens(cached.tokens, base.line, base.column, span.start);
 		const diagnostics = shiftDiagnostics(cached.diagnostics, base.line, base.column, span.start);
-		return Object.freeze({
+		const cell = Object.freeze({
 			span,
 			text: cached.text,
 			category: cached.category,
@@ -262,6 +291,7 @@ export class SqlDocument {
 			errors: cached.errors,
 			diagnostics,
 		});
+		return { cell, cached };
 	}
 
 	/** Build a document for `text` in `dialect`. Total: never throws, even on broken / mid-edit input.
@@ -304,28 +334,100 @@ export class SqlDocument {
 		return preceding;
 	}
 
-	/** The smallest IR Expr whose CST range covers `offset`, with its owning Scope. */
+	/** The smallest IR Expr whose CST range covers `offset`, with its owning Scope. Cell-aware: the hit
+	 *  comes from the CELL owning `offset` (with a cell-relative offset), so a node in statement 2 of a
+	 *  multi-cell document resolves through its own scope tree — NOT the compound facade. The returned
+	 *  `expr.cst` carries CELL-relative spans; a caller turning it into a document Range shifts it by the
+	 *  owning cell's start (see `cellBaseAt` in src/lsp/ranges.ts). Single-cell: identical to today. */
 	nodeAt(offset: number): NodeHit | undefined {
-		return nodeAt(this.scopes, offset, this.ast);
+		const cell = this.cellAt(offset);
+		if (!cell) return nodeAt(this.scopes, offset, this.ast);
+		return nodeAt(cell.scopes, offset - cell.span.start, cell.ast);
 	}
 
-	/** The schema-dependent tiers, over the cached scopes/ast (no re-parse). Memoized by schema
-	 *  identity. With no schema the symbols/scopes still resolve structurally and types come back
-	 *  `unknown` where a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
+	/** The schema-dependent tiers, over the cached per-cell scopes/ast (no re-parse). Memoized by
+	 *  schema identity. Every statement cell is qualified/symbol-derived INDEPENDENTLY (a broken or
+	 *  unknown-column statement never suppresses another), then merged: symbols and semantic
+	 *  diagnostics from every cell, each shifted from cell-relative to DOCUMENT coordinates. The
+	 *  expensive per-cell work is memoized on each CachedCell, so an edit that touches only one
+	 *  statement re-qualifies only that statement; the cheap merge (concat + shift) redoes per version.
+	 *  With no schema the symbols/scopes still resolve structurally and types come back `unknown` where
+	 *  a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
 	analyze(schema?: Schema): DocumentAnalysis {
 		const s = schema ?? EMPTY_SCHEMA;
-		const cached = this._analysisCache.get(s);
-		if (cached) return cached;
-		const qualification = qualify(this.scopes, s, { dialect: this.dialect });
-		const analysis: DocumentAnalysis = {
-			qualification,
-			types: new TypeInfo(s),
-			symbols: deriveSymbols(this.scopes, s, { dialect: this.dialect }),
-			diagnostics: qualification.diagnostics,
-		};
+		const memo = this._analysisCache.get(s);
+		if (memo) return memo;
+
+		const cells = this.statements;
+		let analysis: DocumentAnalysis;
+		if (cells.length === 1) {
+			// Single-cell fast path: the cell IS the document (base 0/0), so no shifting — byte-identical
+			// to a direct qualify/deriveSymbols over the whole-doc scopes (back-compat).
+			const ca = this.cellAnalysis(0, s);
+			analysis = {
+				qualification: ca.qualification,
+				types: new TypeInfo(s),
+				symbols: ca.symbols,
+				diagnostics: ca.qualification.diagnostics,
+			};
+		} else {
+			const symbols: Sym[] = [];
+			const diagnostics: Diagnostic[] = [];
+			const cellQuals: Qualification[] = [];
+			for (let i = 0; i < cells.length; i++) {
+				const ca = this.cellAnalysis(i, s);
+				cellQuals.push(ca.qualification);
+				const base = this.lines.positionAt(cells[i].span.start);
+				const off = cells[i].span.start;
+				for (const sym of ca.symbols) symbols.push(shiftSym(sym, base.line, base.column, off));
+				for (const d of ca.qualification.diagnostics)
+					diagnostics.push(shiftSpanFields(d, base.line, base.column));
+			}
+			// The merged qualification: diagnostics in doc coordinates, and columnsOf delegating to the
+			// owning cell (scope objects are unique per cell, so only that cell answers non-"unknown").
+			const qualification: Qualification = {
+				diagnostics,
+				columnsOf: (scope) => {
+					for (const q of cellQuals) {
+						const r = q.columnsOf(scope);
+						if (r !== "unknown") return r;
+					}
+					return "unknown";
+				},
+			};
+			analysis = { qualification, types: new TypeInfo(s), symbols, diagnostics };
+		}
 		this._analysisCache.set(s, analysis);
 		return analysis;
 	}
+
+	/** The per-cell schema-dependent analysis (cell-relative), memoized on the CachedCell so it
+	 *  survives edits that don't touch this cell. */
+	private cellAnalysis(i: number, s: Schema): CellAnalysis {
+		const cached = this._cells[i];
+		let ca = cached.analysis.get(s);
+		if (ca === undefined) {
+			const scopes = this.statements[i].scopes;
+			const qualification = qualify(scopes, s, { dialect: this.dialect });
+			ca = { qualification, symbols: deriveSymbols(scopes, s, { dialect: this.dialect }) };
+			cached.analysis.set(s, ca);
+		}
+		return ca;
+	}
+}
+
+/** Shift a symbol's every span (its own span, its declaration target, its per-part spans) from
+ *  cell-relative to document coordinates. `baseLine`/`baseCol` are the cell start's 0-based line/
+ *  column; `baseOffset` its char offset (for the offset-based part spans). */
+function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: number): Sym {
+	return {
+		...sym,
+		span: shiftSpanFields(sym.span, baseLine, baseCol),
+		definition: sym.definition ? shiftSpanFields(sym.definition, baseLine, baseCol) : undefined,
+		partSpans: sym.partSpans
+			? sym.partSpans.map((p) => shiftPartSpan(p, baseLine, baseCol, baseOffset))
+			: undefined,
+	};
 }
 
 /** Build the whole-document compound facade for a multi-cell document — today's compound-flagged

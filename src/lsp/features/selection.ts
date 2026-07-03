@@ -1,7 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { Position, Range, SelectionRange } from "vscode-languageserver-types";
 import type { SqlDocument } from "../../index.js";
-import { rangeFromCst } from "../ranges.js";
+import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Selection ranges: smart-expand selection from the CST ancestry. For each
@@ -110,12 +110,39 @@ function pointRange(position: Position): SelectionRange {
 	return { range: { start: at, end: { ...at } } };
 }
 
+/** End-of-cell position (0-based LSP line/character) for a cell's own text — the clamp bound for a
+ *  statement root's trailing EOF token, computed in CELL-relative coordinates. */
+function endOfText(text: string): Position {
+	let line = 0;
+	let lastStart = 0;
+	for (let i = 0; i < text.length; i++) {
+		if (text.charCodeAt(i) === 10) {
+			line++;
+			lastStart = i + 1;
+		}
+	}
+	return { line, character: text.length - lastStart };
+}
+
+/** Shift a whole SelectionRange chain (its .range and every .parent) from cell-relative to doc
+ *  coordinates. A zero base short-circuits inside shiftRange (identity). */
+function shiftSelectionRange(sr: SelectionRange, base: CellBase): SelectionRange {
+	const shifted: SelectionRange = { range: shiftRange(sr.range, base) };
+	if (sr.parent) shifted.parent = shiftSelectionRange(sr.parent, base);
+	return shifted;
+}
+
 export function computeSelectionRanges(doc: SqlDocument, positions: Position[]): SelectionRange[] {
-	const end = doc.lines.positionAt(doc.text.length);
-	const eod: Position = { line: end.line, character: end.column };
 	return positions.map((position) => {
 		const off = doc.lines.offsetAt(position.line, position.character);
-		const node = smallestCovering(doc.cst, off);
-		return node ? chainFor(node, eod) : pointRange(position);
+		const cell = doc.cellAt(off);
+		// The cell's cst is CELL-relative: descend it with a cell-relative offset, clamp to the cell's
+		// own end, then shift the resulting chain to doc coordinates. Single-cell: base 0, cell IS the doc.
+		const cst = cell ? cell.cst : doc.cst;
+		const base = cellBaseOf(doc, cell);
+		const cellOff = cell ? off - cell.span.start : off;
+		const eod = endOfText(cell ? cell.text : doc.text);
+		const node = smallestCovering(cst, cellOff);
+		return node ? shiftSelectionRange(chainFor(node, eod), base) : pointRange(position);
 	});
 }
