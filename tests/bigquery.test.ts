@@ -16,11 +16,14 @@ describe("BigQuery dot-identifier covers every keyword (complete by construction
 		expect(keywords.length).toBeGreaterThan(200);
 	});
 
+	// ~360ms isolated, but it cold-parses 200+ files and flaked twice at the vitest 5s default under
+	// full-suite load (P2/P3 runs, 2026-07-03: 5763ms and 5000ms). Raise this one test's ceiling so a
+	// scheduler-starved run doesn't false-fail a parse-only sweep.
 	it("every keyword parses as a path component after a dot", () => {
 		// `dataset.<kw>` exercises path_expression's post-dot dot_identifier; @@ paths reuse the same rule.
 		const broken = keywords.filter((kw) => parseBigQuery(`SELECT * FROM dataset.${kw}`).errors !== 0);
 		expect(broken, `keywords not accepted as a path component:\n${broken.join(", ")}`).toEqual([]);
-	});
+	}, 20000);
 
 	it("a reserved keyword is valid as a system-variable path component (incl. the head)", () => {
 		expect(parseBigQuery("SELECT @@FROM").errors).toBe(0);
