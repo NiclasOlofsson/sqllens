@@ -26,7 +26,7 @@ const OTHER_BASELINE = 0;
 // 2026-07-03 via `node --import tsx tools/profile-sll.ts duckdb` over this same docs query bucket.
 // Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
 // re-parse. Shares its TVL-lineage decisions with postgres/redshift; may only fall.
-const FALLBACK_RATCHET = 361;
+const FALLBACK_RATCHET = 52;
 
 // Documented-broken query examples — each verified against its duckdb.org source page as
 // deliberately-invalid SQL. They fail to parse, so the organizer files them under unparsed/;

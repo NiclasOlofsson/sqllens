@@ -3885,14 +3885,24 @@ c_expr
    | /*22*/
 
    UNIQUE select_with_parens # c_expr_expr
+   // NOTE(perf): func_expr sits ABOVE columnref on purpose (ported from PostgresParser.g4's c_expr fix
+   // and re-derived for this fork — see below). Both can begin with an identifier and a bare column is a
+   // viable *prefix* of a function call, so SLL's stackless merge keeps `columnref` (the lower alt) alive
+   // on every `f(args)` and bails downstream on the argument token. For a BARE call `f(args)` the two are
+   // disjoint on a full match — columnref's indirection cannot begin with a top-level `(` (only DOT/`[`),
+   // so columnref matches just the prefix `f` while func_expr consumes `f(args)` — and ordering func_expr
+   // first makes it the minimum viable alternative there. DIVERGENCE FROM POSTGRES: this fork's
+   // indirection_el gained `.attr(args)` method-call parens (duckdb.org function-chaining), so a DOTTED
+   // call `x.f(a)` matches BOTH columnref (via `.f(a)`) and func_expr (func_name `colid indirection`).
+   // For that form func_name's own indirection greedily swallows the `(a)`, so func_expr does NOT reach a
+   // full match and columnref stays the sole full match — its method-chain reading (`x.f(a)` → `f(x,a)`)
+   // is preserved even with func_expr listed first (pinned in tests/duckdb.test.ts). No language change.
+   | func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
    | aexprconst # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
-   // opt_indirection added in this fork: subscript/slice on a call result — array_value(1,2,3)[2]
-   // (sql/data_types/array.md) and method chains on calls.
-   | func_expr opt_indirection # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
    | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr
