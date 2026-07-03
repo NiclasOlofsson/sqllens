@@ -8,6 +8,11 @@
 // later parse). A class instance or typed array is never IR data, so we neither freeze nor recurse
 // into it. A pass that needs another's output passes that result in; it never mutates the tree.
 // Idempotent: re-freezing an already-frozen tree is a no-op.
+//
+// This is fully generic, so additive IR nodes need no change here: the `SelectExpr.joins` Join[] and
+// each plain Join object are frozen via the normal array/plain-object descent; a Join's `source`/`on`
+// are the SAME objects already reached through `from`/`joinConditions` (the `seen` set skips the
+// second visit), and its `cst` is a foreign ParserRuleContext, skipped like every other cst back-ref.
 
 /** Deep-freeze the IR rooted at `node` (descending only into the IR's own plain objects/arrays). */
 export function freezeIR<T>(node: T): T {

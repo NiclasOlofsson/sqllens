@@ -70,6 +70,8 @@ export type { ParseResult } from "./databricks/parse.js";
 export type {
 	CteDef,
 	Expr,
+	Join,
+	JoinKind,
 	Projection,
 	QueryBody,
 	QueryExpr,
