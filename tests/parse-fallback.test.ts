@@ -13,10 +13,12 @@ describe("sllFallback", () => {
 	});
 
 	it("is true for a construct that forces the SLL pass to bail, and still parses clean", () => {
-		// T-SQL's `full_table_name`/dotted-name grammar is context-sensitive (see task-1-brief.md's
-		// known first targets): a bare `a.b.c` in the select list can't be resolved under SLL's local
-		// lookahead alone, so stage 1 bails and stage 2 (full LL) reparses it — same result, just slower.
-		const r = parseTSql("SELECT a.b.c FROM t");
+		// After the SLL-surgery wave (task-3-report.md) the dotted-name context-sensitivity is gone —
+		// `SELECT a.b.c FROM t` now resolves under SLL alone. The one surviving T-SQL fallback is the
+		// batch-boundary bare-procedure execute (`sp_who` with no EXEC): whether the leading token is an
+		// `execute_body_batch` proc name or the start of a `sql_clauses` statement is decidable only with
+		// caller context, so stage 1 bails and stage 2 (full LL) reparses it — same result, just slower.
+		const r = parseTSql("sp_who\nGO");
 		expect(r.sllFallback).toBe(true);
 		expect(r.errors).toBe(0);
 	});
