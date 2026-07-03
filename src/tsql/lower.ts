@@ -390,7 +390,13 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	const udt = directChildrenOfRule(elem, P.RULE_udt_elem)[0];
 	if (udt) {
 		const alias = directChildrenOfRule(udt, P.RULE_as_column_alias)[0];
-		return { name: alias ? aliasText(alias) : undefined, isStar: false, expr: lowerUdtElem(udt), cst: elem };
+		return {
+			name: alias ? aliasText(alias) : undefined,
+			isStar: false,
+			expr: lowerUdtElem(udt),
+			...(alias ? { aliasCst: aliasCstOf(alias) } : {}),
+			cst: elem,
+		};
 	}
 	// expression_elem: `column_alias '=' expression` OR `expression as_column_alias?`
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0] ?? elem;
@@ -401,7 +407,13 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	const expr = exprCtx ? lowerExpression(exprCtx) : otherExpr(elem);
 	let name = aliasCtx ? aliasText(aliasCtx) : undefined;
 	if (name === undefined && expr.kind === "column") name = expr.parts[expr.parts.length - 1];
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(aliasCtx ? { aliasCst: aliasCstOf(aliasCtx) } : {}), cst: elem };
+}
+
+/** The alias identifier's own span: as_column_alias (`AS? column_alias`) → its column_alias child
+ *  (dropping AS); a bare column_alias (the `col = expr` form) is already the identifier. */
+function aliasCstOf(alias: ParserRuleContext): ParserRuleContext {
+	return directChildrenOfRule(alias, P.RULE_column_alias)[0] ?? alias;
 }
 
 function aliasText(alias: ParserRuleContext): string {

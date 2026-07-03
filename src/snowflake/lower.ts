@@ -691,7 +691,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	if (colAdjacent) {
 		const expr = lowerColumnElem(colAdjacent);
 		const name = alias ? aliasText(alias) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
-		return { name, isStar: false, expr, cst: elem };
+		return { name, isStar: false, expr, ...(alias ? { aliasCst: aliasCstOf(alias) } : {}), cst: elem };
 	}
 
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0];
@@ -705,7 +705,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 		: otherExpr(elem);
 	let name = alias ? aliasText(alias) : undefined;
 	if (name === undefined && expr.kind === "column") name = expr.parts[expr.parts.length - 1];
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(alias ? { aliasCst: aliasCstOf(alias) } : {}), cst: elem };
 }
 
 /** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position —
@@ -744,6 +744,11 @@ function fromAliasParts(fa: ParserRuleContext | undefined): {
 function aliasText(asAlias: ParserRuleContext): string {
 	const a = firstOfRule(asAlias, P.RULE_id_);
 	return a ? a.getText() : asAlias.getText();
+}
+
+/** The alias identifier's own span: as_alias (`AS? alias`, alias `: id_`) → its id_ (dropping AS). */
+function aliasCstOf(asAlias: ParserRuleContext): ParserRuleContext {
+	return firstOfRule(asAlias, P.RULE_id_) ?? asAlias;
 }
 
 // --- sources -------------------------------------------------------------------

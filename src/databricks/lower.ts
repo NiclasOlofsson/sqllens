@@ -896,6 +896,9 @@ function buildProjection(named: ParserRuleContext): Projection {
 		name,
 		isStar: expr.kind === "star",
 		expr: exprCtx ? lowerExpression(exprCtx) : otherExpr(named),
+		// namedExpression: expression (AS? errorCapturingIdentifier | identifierList)? — the
+		// errorCapturingIdentifier is the alias identifier alone (AS is its sibling token).
+		...(alias ? { aliasCst: alias } : {}),
 		cst: named,
 	};
 }

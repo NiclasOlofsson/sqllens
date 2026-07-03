@@ -728,7 +728,8 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	if (prefixCid && hasDirectToken(elem, P.COLON)) {
 		const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
 		const expr = a ? lowerExpr(a) : otherExpr(elem);
-		return { name: textOf(prefixCid), isStar: false, expr, cst: elem };
+		// Prefix alias `x: 42` — the colid before the `:` is the explicit alias identifier.
+		return { name: textOf(prefixCid), isStar: false, expr, aliasCst: prefixCid, cst: elem };
 	}
 	const colref = directChildrenOfRule(elem, P.RULE_columnref)[0];
 	const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
@@ -741,13 +742,14 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	const expr = colref ? lowerColumnref(colref) : lowerExpr(a);
 	const aliasNode = directChildrenOfRule(elem, P.RULE_target_alias)[0];
 	const alias = aliasNode ? targetAliasText(aliasNode) : undefined;
+	const aliasCst = aliasNode ? targetAliasIdentNode(aliasNode) : undefined;
 
 	if (expr.kind === "star") {
 		applyStarModifiers(expr, elem);
 		return { isStar: true, expr, name: undefined, cst: elem };
 	}
 	const name = alias ?? (expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined);
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(aliasCst ? { aliasCst } : {}), cst: elem };
 }
 
 /** Star modifiers (star.md): EXCLUDE names ride on the star; REPLACE expressions' column refs
@@ -764,11 +766,17 @@ function applyStarModifiers(star: Expr & { kind: "star" }, elem: ParserRuleConte
 	if (excludes.length) star.exclude = excludes;
 }
 
-function targetAliasText(node: ParserRuleContext): string {
-	const cl =
+/** target_alias: AS collabel | identifier | sconst — the label/identifier/string alone is the span. */
+function targetAliasIdentNode(node: ParserRuleContext): ParserRuleContext | undefined {
+	return (
 		firstShallow(node, P.RULE_collabel) ??
 		firstShallow(node, P.RULE_identifier) ??
-		firstShallow(node, P.RULE_sconst);
+		firstShallow(node, P.RULE_sconst)
+	);
+}
+
+function targetAliasText(node: ParserRuleContext): string {
+	const cl = targetAliasIdentNode(node);
 	return cl ? stripStringQuotes(textOf(cl)) : node.getText();
 }
 
