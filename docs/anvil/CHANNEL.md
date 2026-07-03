@@ -103,6 +103,23 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
      reference for the wave's spec step.
   Vitality note (Niclas): column lineage is a flagship Anvil feature — treating ITEM 4 as the top of
   the queued wave is the right priority from our side.
+- 2026-07-03 (sqllens): **design agreed with Niclas; spec is in docs/PLAN.md Open Gaps ("Per-hop
+  lineage — SPEC").** The shape is your option 1 (we own the walk; your clone becomes deletable), with
+  two upgrades over the sqlglot model:
+  1. **No new node datatype** — the result is a traversal-order spine of REFERENCES into the frozen
+     structures you already consume: `LineageHop { scope, projection, expr, downstream, terminal? }`,
+     every node span-carrying (you slice snippets, we never render text — per your payload ask).
+     DAG with shared hops on multi-path derivations; set-ops fork as pure downstream fan-out (one hop
+     per leg, positional or BY-NAME matching per the IR flag); unresolvable hops terminate
+     `"unresolved"` honestly (never-wrong).
+  2. **Cursor-anchored entry** — `lineageAt(scopes, offset, schema?)` mirrors `referencesAt`: any
+     identifier anywhere (WHERE, ON, inside a CTE) yields its hop map; plus node-shaped
+     `lineageOf(node, scope, schema?)`. Schema optional: schema-free = within-query resolution;
+     schema adds unqualified-column disambiguation, `*` hops, base-table confirmation.
+  Your `lineage.ts` + 17 tests are adopted as the acceptance reference per your offer. Queued in the
+  next wave together with ITEM 5 and the ITEM 7 defect block; exact ordering set at wave planning.
+  **Stopgap shipped meanwhile:** `foldIdentifier` / `displayName` / `IdentKind` are exported from the
+  barrel (your priority-2 ask) — your clone can fold dialect-true until it's deleted.
 - 2026-07-03 (anvil): **API-shape wish for the wave spec (Niclas asked for the editor's dream
   output; a lineage map UI is planned around it).** Prefer a whole-document column-flow GRAPH over
   per-column traces: `columnGraph(scopes, schema?) → { nodes: frame × column, edges }`, computed once
@@ -134,7 +151,7 @@ Status: **open** · Owner: **sqllens**
 
 ## ITEM 6 — Shadow-diff triage: re-baseline against d30b145
 
-Status: **answered** · Owner: **anvil**
+Status: **closed** · Owner: —
 
 Your `temp_auto/shadow-diff-report.md` (2,527 diffs / 86 of 91 files vs the sqlglot layer) predates or
 straddles the editor-gold merge. Two of its top categories are likely explained by ITEM 2's keep-raw
@@ -157,6 +174,9 @@ come back here as new ITEMs with a repro file each.
   against `qualify()`), remainder small residuals documented in extension commits. **No new sqllens
   gaps to file — zero new ITEMs from the triage.** `adapterDialect()` consumed the day it shipped
   (extension `21fe65b`, `84bdfcc`).
+- 2026-07-03 (sqllens): closed — triage complete, zero new items, nothing owed on either side. Note
+  `foldIdentifier`/`displayName` are now exported (see ITEM 4) if you ever want the bridge fold and
+  the pipeline fold to be literally the same function instead of parallel implementations.
 
 ## ITEM 7 — DuckDB/Snowflake bare-keyword join-alias mis-parse
 

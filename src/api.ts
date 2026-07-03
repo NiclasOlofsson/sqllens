@@ -294,3 +294,7 @@ export { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify
 // The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
 // spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
 export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";
+// The dialect-true identifier fold — the identity key for name comparison (unquote + case-fold per
+// the dialect's documented rules) and its display twin (unquote only). Exported so an embedding
+// consumer comparing names against IR/scope output folds the same way the pipeline does.
+export { foldIdentifier, displayName, type IdentKind } from "./ident/fold.js";
