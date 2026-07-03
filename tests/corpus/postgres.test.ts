@@ -33,6 +33,17 @@ const QUERY_BASELINE = 330; // documented floor; the gate itself is 100%-of-quer
 // (measured 2026-07-02 over the parsed docs query bucket).
 const OTHER_BASELINE = 0;
 
+// The SLL→LL fallback ratchet (SLL-surgery wave, task-4-report.md): Postgres was grammar-sick — its
+// heaviest decisions forced the two-stage parse to bail out of the fast SLL prediction path and reparse
+// under full LL. Grammar edits cut it from 112 to 7: (1) deleting `target_el`'s `columnref` subset
+// alternative, (2) ordering c_expr's identifier-prefix alternatives most-specific-first — `aexprconst`
+// (typed literals) then `func_expr` (calls) then `explicit_row` (`ROW(…)`) then `columnref` (bare ids)
+// — so the correct reading is the minimum alternative in each conflict. Measured via
+// `node --import tsx tools/profile-sll.ts postgres` over this same docs query bucket. Counted on the
+// SAME single parse the docs ratchet makes (the `parse:` closure below), never a re-parse. This is the
+// dress rehearsal for duckdb/redshift's identical TVL-lineage decisions; may only fall.
+const FALLBACK_RATCHET = 7;
+
 // Documented-broken query examples — each verified against its postgresql.org/docs/18 source page
 // as deliberately-invalid or template SQL (not a grammar gap, not scraper noise). By construction
 // they fail to parse, so the organizer files them under unparsed/; the gate asserts they STAY there.
@@ -85,10 +96,12 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			let scoped = 0;
+			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, (sql) => parsePostgres(sql).errors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
 				parse: (sql) => {
 					const r = parsePostgres(sql);
+					if (r.sllFallback) fallbacks++;
 					return { errors: r.errors, tree: r.tree };
 				},
 				onCleanQuery: (rel, tree) => {
@@ -109,13 +122,17 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
 				.join("\n");
 			console.log(
-				`\n  postgres: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+				`\n  postgres: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE}), ${fallbacks} SLL fallbacks (ratchet ${FALLBACK_RATCHET})${top ? "\n" + top : ""}`,
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);
+			expect(
+				fallbacks,
+				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
+			).toBeLessThanOrEqual(FALLBACK_RATCHET);
 		},
 	);
 });

@@ -119,3 +119,112 @@ describe("postgres grammar — fork additions (doc-cited)", () => {
 		ok("SELECT $tag$body 'x' $$$tag$, 1::int, '1'::numeric(10,2);");
 	});
 });
+
+// SLL-surgery wave (.superpowers/sdd/task-4-report.md), iteration 1: `target_el`'s
+// `columnref # target_columnref` alternative was a strict subset of `a_expr target_alias?` (a_expr →
+// c_expr → columnref, `t.*` included via indirection `.STAR`). Deleting it removed a select-list
+// ambiguity AND fixed a latent lower bug: `buildProjection` never read the `columnref` shape, so a
+// bare column and `t.*` fell through to a phantom (unqualified) star projection. a_expr now covers the
+// whole select item and lower classifies the parsed shape.
+describe("postgres target_el — bare columns lower as columns, not phantom stars", () => {
+	it("a plain column projects as a column", () => {
+		const body = lower(parsePostgres("SELECT foo FROM t").tree).body;
+		expect(body.kind === "select" && body.projections[0]?.isStar).toBe(false);
+		expect(body.kind === "select" && body.projections[0]?.expr.kind).toBe("column");
+	});
+
+	it("a dotted column keeps all parts", () => {
+		const body = lower(parsePostgres("SELECT a, b.c FROM t").tree).body;
+		expect(body.kind === "select" && body.projections.map((p) => p.expr.kind)).toEqual(["column", "column"]);
+		expect(
+			body.kind === "select" && body.projections[1]?.expr.kind === "column" && body.projections[1]?.expr.parts,
+		).toEqual(["b", "c"]);
+	});
+
+	it("a qualified star keeps its qualifier", () => {
+		const body = lower(parsePostgres("SELECT t.* FROM t").tree).body;
+		expect(body.kind === "select" && body.projections[0]?.isStar).toBe(true);
+		expect(
+			body.kind === "select" &&
+				body.projections[0]?.expr.kind === "star" &&
+				body.projections[0]?.expr.qualifier?.join("."),
+		).toBe("t");
+	});
+});
+
+// SLL-surgery wave (.superpowers/sdd/task-4-report.md), iteration 2: c_expr's `columnref` and
+// `func_expr` alternatives both begin with an identifier, and a bare column is a viable *prefix* of a
+// function call. Because a `(` can follow an expression in some other caller's follow-set, SLL's
+// stackless merge kept `columnref` (the lower alternative) alive on every `f(args)`, reported a
+// context-sensitivity, mispredicted the column reading and bailed on the arg. They are disjoint on a
+// FULL match (columnref never carries `(`, func_expr always does), so ordering func_expr above
+// columnref/aexprconst makes it the minimum alternative in that conflict — SLL resolves the call
+// locally; bare `f` still falls to columnref. Dominant Postgres-family disease; duckdb/redshift share it.
+describe("postgres c_expr — function applications resolve under SLL (no LL fallback)", () => {
+	const noFallback = (sql: string) => {
+		const r = parsePostgres(sql);
+		expect(r.errors, sql).toBe(0);
+		expect(r.sllFallback, `${sql} — expected SLL to resolve without LL fallback`).toBe(false);
+	};
+
+	it("calls of every shape resolve without falling back to LL", () => {
+		for (const sql of [
+			"SELECT f(a)",
+			"SELECT f(1)",
+			"SELECT f(a, b) FROM t",
+			"SELECT max(x) FROM t",
+			"SELECT f(a.b) FROM t",
+			"SELECT coalesce(a, b) FROM t",
+			"SELECT sum(x) OVER (PARTITION BY y) FROM t",
+			"SELECT f(x => 1)",
+			"SELECT count(*) FROM t",
+		]) {
+			noFallback(sql);
+		}
+	});
+
+	it("a call still lowers as a function, a bare id still as a column", () => {
+		const call = lower(parsePostgres("SELECT f(a, b) FROM t").tree).body;
+		expect(call.kind === "select" && call.projections[0]?.expr.kind).toBe("function");
+		const col = lower(parsePostgres("SELECT foo FROM t").tree).body;
+		expect(col.kind === "select" && col.projections[0]?.expr.kind).toBe("column");
+	});
+
+	// Iteration 3: aexprconst ordered above func_expr/columnref. A generic typed literal (`DATE '…'`,
+	// `f(a) '5'`) requires a trailing sconst that a bare column / plain call lacks, so making it the
+	// minimum alternative resolves the conflict under SLL without re-breaking bare `f` or `f(a)`.
+	it("generic typed literals resolve under SLL and lower as literals", () => {
+		for (const sql of [
+			"SELECT DATE '2008-01-01'",
+			"SELECT f(a) '5'",
+			"SELECT int4 '5'",
+			"SELECT f(a ORDER BY b) '5'",
+		])
+			noFallback(sql);
+		const lit = lower(parsePostgres("SELECT f(a) '5'").tree).body;
+		expect(lit.kind === "select" && lit.projections[0]?.expr.kind).toBe("literal");
+	});
+
+	// Iteration 4: explicit_row (`ROW(…)`) ordered above columnref — ROW is a non-reserved keyword, so a
+	// columnref reads it as a bare column and gives SLL a context-sensitivity that bails on `ROW(…)`.
+	it("ROW constructors resolve under SLL; a bare `row` stays a column", () => {
+		for (const sql of [
+			"SELECT ROW(1, 2.5, 'x') = ROW(1, 3, 'y')",
+			"SELECT ROW(a, b) FROM t",
+			"SELECT ROW(c.*) FROM t c",
+		])
+			noFallback(sql);
+		const rowCall = lower(parsePostgres("SELECT ROW(a, b) FROM t").tree).body;
+		expect(rowCall.kind === "select" && rowCall.projections[0]?.expr.kind).toBe("function");
+		const col = lower(parsePostgres("SELECT row FROM t").tree).body;
+		expect(col.kind === "select" && col.projections[0]?.expr.kind).toBe("column");
+	});
+
+	it("the reorder does not widen: generic typed literals parse, non-arg-list typed forms reject", () => {
+		ok("SELECT f(a) '5'"); // aexprconst `func_name '(' args ')' sconst` — still valid
+		ok("SELECT DATE '2008-01-01'");
+		bad("SELECT count(*) '5'"); // STAR arg — never a typed literal
+		bad("SELECT f() '5'"); // empty arg — never a typed literal
+		bad("SELECT f(a, VARIADIC b) '5'"); // VARIADIC arg — never a typed literal
+	});
+});

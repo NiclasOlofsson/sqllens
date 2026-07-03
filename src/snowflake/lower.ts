@@ -438,9 +438,13 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 		if (num) return { kind: "literal", text: num.getText(), cst: num } satisfies Expr;
 		const ee = directChildrenOfRule(e, P.RULE_expression_elem)[0];
 		const inner = ee
-			? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate)[0])
+			? (directChildrenOfRule(ee, P.RULE_expr)[0] ?? directChildrenOfRule(ee, P.RULE_predicate_only)[0])
 			: undefined;
-		return inner ? (inner.ruleIndex === P.RULE_predicate ? lowerPredicate(inner) : lowerExpr(inner)) : otherExpr(e);
+		return inner
+			? inner.ruleIndex === P.RULE_predicate_only
+				? lowerPredicate(inner)
+				: lowerExpr(inner)
+			: otherExpr(e);
 	});
 	return items.length ? items : undefined;
 }
@@ -593,19 +597,23 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	}
 
 	const alias = directChildrenOfRule(elem, P.RULE_as_alias)[0];
-	const colElem = directChildrenOfRule(elem, P.RULE_column_elem)[0];
-	if (colElem) {
-		const expr = lowerColumnElem(colElem);
+	// Adjacent-qualifier (`CONNECT_BY_ROOT title`) and $n positional refs keep their own
+	// alternative (column_elem_adjacent — neither is an expr form); dotted-name projections now
+	// arrive as expression_elem and are classified as columns below (the SLL-surgery
+	// select_list_elem de-overlap, 2026-07-03).
+	const colAdjacent = directChildrenOfRule(elem, P.RULE_column_elem_adjacent)[0];
+	if (colAdjacent) {
+		const expr = lowerColumnElem(colAdjacent);
 		const name = alias ? aliasText(alias) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
 		return { name, isStar: false, expr, cst: elem };
 	}
 
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0];
 	const inner = exprElem
-		? (directChildrenOfRule(exprElem, P.RULE_expr)[0] ?? directChildrenOfRule(exprElem, P.RULE_predicate)[0])
+		? (directChildrenOfRule(exprElem, P.RULE_expr)[0] ?? directChildrenOfRule(exprElem, P.RULE_predicate_only)[0])
 		: undefined;
 	const expr = inner
-		? inner.ruleIndex === P.RULE_predicate
+		? inner.ruleIndex === P.RULE_predicate_only
 			? lowerPredicate(inner)
 			: lowerExpr(inner)
 		: otherExpr(elem);
@@ -614,9 +622,12 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	return { name, isStar: false, expr, cst: elem };
 }
 
-/** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position */
+/** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position —
+ *  also accepts column_elem_adjacent, whose adjacency form carries a bare object_name qualifier. */
 function lowerColumnElem(colElem: ParserRuleContext): Expr {
-	const qualifier = directChildrenOfRule(colElem, P.RULE_object_name_or_alias)[0];
+	const qualifier =
+		directChildrenOfRule(colElem, P.RULE_object_name_or_alias)[0] ??
+		directChildrenOfRule(colElem, P.RULE_object_name)[0];
 	const qParts = qualifier ? nameParts(qualifier) : [];
 	if (hasDirectToken(colElem, P.DOLLAR)) {
 		const pos = directChildrenOfRule(colElem, P.RULE_column_position)[0];
@@ -1066,7 +1077,8 @@ function lowerExprChild(node: ParserRuleContext): Expr {
 	}
 }
 
-/** primitive_expression: DEFAULT | NULL_ | id_ ('.' id_)* | id_ '.' STAR | full_column_name | literal | … */
+/** primitive_expression: DEFAULT | id_ ('.' id_)* | id_ '.' STAR | degenerate_column_ref | literal | …
+ *  (NULL arrives via literal; empty-segment refs via degenerate_column_ref — SLL surgery 2026-07-03). */
 function lowerPrimitive(node: ParserRuleContext): Expr {
 	const lit = directChildrenOfRule(node, P.RULE_literal)[0];
 	if (lit) return { kind: "literal", text: lit.getText(), cst: node };
@@ -1077,7 +1089,9 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 		const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => stripQuotes(i.getText()));
 		return { kind: "star", qualifier: ids.length ? ids : undefined, cst: node };
 	}
-	const fcn = directChildrenOfRule(node, P.RULE_full_column_name)[0];
+	const fcn =
+		directChildrenOfRule(node, P.RULE_full_column_name)[0] ??
+		directChildrenOfRule(node, P.RULE_degenerate_column_ref)[0];
 	if (fcn) return { kind: "column", parts: nameParts(fcn), cst: node };
 	const ids = directChildrenOfRule(node, P.RULE_id_);
 	if (ids.length) return { kind: "column", parts: ids.map((i) => stripQuotes(i.getText())), cst: node };
@@ -1173,6 +1187,10 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 		...exprListExprs(node).map(lowerExpr),
 		...directChildrenOfRule(node, P.RULE_expr).map(lowerExpr),
 		...directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues),
+		// the object_name(func_arg_list) alternative — positional exprs and named-arg values
+		// (STAR / stage / spread / TYPE args carry no expr payload and add nothing here).
+		// Also the SLL-surgery wave's home for plain f(args) calls (2026-07-03).
+		...directChildrenOfRule(node, P.RULE_func_arg_list).flatMap(funcArgValues),
 	];
 	return {
 		kind: "function",
@@ -1182,6 +1200,16 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 		distinct: hasTokenShallow(node, P.DISTINCT),
 		cst: node,
 	};
+}
+
+function funcArgValues(list: ParserRuleContext): Expr[] {
+	return directChildrenOfRule(list, P.RULE_func_arg).flatMap((fa) => {
+		const e = directChildrenOfRule(fa, P.RULE_expr)[0];
+		if (e) return [lowerExpr(e)];
+		const pa = directChildrenOfRule(fa, P.RULE_param_assoc)[0];
+		const pe = pa ? directChildrenOfRule(pa, P.RULE_expr)[0] : undefined;
+		return pe ? [lowerExpr(pe)] : [];
+	});
 }
 
 function paramAssocValues(list: ParserRuleContext): Expr[] {

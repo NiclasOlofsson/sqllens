@@ -50,7 +50,13 @@ import type { Token } from "./token/token.js";
 export type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino";
 
 interface DialectFns {
-	parse(sql: string): { tree: ParserRuleContext; errors: number; diagnostics: SyntaxDiagnostic[]; tokens: Token[] };
+	parse(sql: string): {
+		tree: ParserRuleContext;
+		errors: number;
+		diagnostics: SyntaxDiagnostic[];
+		tokens: Token[];
+		sllFallback: boolean;
+	};
 	lower(tree: ParserRuleContext): QueryExpr;
 }
 
@@ -82,6 +88,9 @@ export interface ParseResultIR {
 	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans —
 	 *  the always-available token stream for editor features, present even when `errors > 0`. */
 	tokens: Token[];
+	/** True when the two-stage parse fell back from fast SLL prediction to full LL. Same result
+	 *  either way — this just says which path produced it, for perf profiling (tools/profile-sll.ts). */
+	sllFallback: boolean;
 }
 
 /**
@@ -92,9 +101,9 @@ export interface ParseResultIR {
  */
 export function parse(sql: string, dialect: Dialect): ParseResultIR {
 	const fns = DIALECTS[dialect];
-	const { tree, errors, diagnostics, tokens } = fns.parse(sql);
+	const { tree, errors, diagnostics, tokens, sllFallback } = fns.parse(sql);
 	// lower() already freezes the IR — it is immutable from here on.
-	return { ast: fns.lower(tree), errors, diagnostics, cst: tree, tokens };
+	return { ast: fns.lower(tree), errors, diagnostics, cst: tree, tokens, sllFallback };
 }
 
 export interface Analysis {

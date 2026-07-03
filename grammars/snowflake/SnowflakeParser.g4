@@ -4730,15 +4730,32 @@ vector_element_type
     | FLOAT8
     ;
 
+// SLL-surgery wave (2026-07-03): the old `NULL_` alternative was a subset of `literal` (which
+// carries NULL_), and `full_column_name` overlapped `id_ ('.' id_)*` on every plain dotted
+// chain — together ambiguous on nearly every column reference. literal now owns NULL, the
+// id-chain alternative owns all plain chains, and degenerate_column_ref keeps only
+// full_column_name's empty-segment forms (`a..c`, `.b.c`), which a plain chain cannot express.
 primitive_expression
     : DEFAULT //?
-    | NULL_
     | id_ ('.' id_)* // json field access
     | id_ '.' STAR
-    | full_column_name
+    | degenerate_column_ref
     | literal
     //| json_literal
     //| arr_literal
+    ;
+
+// Exactly full_column_name's language minus plain id-chains: every alternative carries a
+// leading DOT or a doubled DOT (an omitted db/schema/table segment —
+// docs.snowflake.com/en/sql-reference/name-resolution), so it is disjoint from `id_ ('.' id_)*`.
+// full_column_name itself stays for COMMENT ON COLUMN, its only other user.
+degenerate_column_ref
+    : DOT id_? DOT id_? DOT id_ // .s?.t?.c (db omitted, 3 dots)
+    | DOT id_? DOT id_          // .t?.c    (schema omitted, 2 dots)
+    | DOT id_                   // .c       (table omitted, 1 dot)
+    | id_ DOT DOT id_? DOT id_  // d..t?.c
+    | id_ DOT id_ DOT DOT id_   // d.s..c
+    | id_ DOT DOT id_           // s..c
     ;
 
 order_by_expr
@@ -4779,13 +4796,14 @@ window_frame_bound
     | CURRENT ROW
     ;
 
+// SLL-surgery wave (2026-07-03): the round_expr and the four builtin-arity alternatives were
+// deleted — every one of their strings already parses via aggregate_function or the
+// object_name(...) alternative (their name tokens are id_ members: id_ lists the four builtin
+// rules, and ROUND's named EXPR/SCALE/ROUNDING_MODE args are param_assoc with quoted-keyword
+// round modes as ordinary literals). Together with aggregate_function's de-overlap (below),
+// this decision was ambiguous on nearly every call (amb 874/1100).
 function_call
-    : round_expr
-    | unary_or_binary_builtin_function LR_BRACKET expr (COMMA expr)* RR_BRACKET
-    | binary_builtin_function LR_BRACKET expr COMMA expr RR_BRACKET
-    | binary_or_ternary_builtin_function LR_BRACKET expr COMMA expr (COMMA expr)* RR_BRACKET
-    | ternary_builtin_function LR_BRACKET expr COMMA expr COMMA expr RR_BRACKET
-    | ranking_windowed_function
+    : ranking_windowed_function
     | aggregate_function
     //    | aggregate_windowed_function
     // positional and/or named (name => value) arguments, in any mix:
@@ -4858,10 +4876,15 @@ ranking_windowed_function
 
 // WITHIN GROUP applies to any ordered-set aggregate (PERCENTILE_CONT/DISC, MODE, …),
 // not just LISTAGG/ARRAY_AGG: docs.snowflake.com/en/sql-reference/functions/percentile_cont
+// SLL-surgery wave (2026-07-03): each alternative now REQUIRES aggregate-only surface —
+// DISTINCT, a trailing WITHIN GROUP, or the LISTAGG keyword (not an id_ member) — so none
+// overlaps the general object_name(func_arg_list) call. The old optional forms made every
+// plain f(args) call ambiguous: f(*) is func_arg's STAR, plain ARRAY_AGG(…) is an ordinary
+// call (ARRAY_AGG is an id_ member), and both keep their IR through lower()'s shared reads.
 aggregate_function
-    : id_ '(' DISTINCT? expr_list ')' (WITHIN GROUP '(' order_by_clause ')')?
-    | id_ '(' STAR ')'
-    | (LISTAGG | ARRAY_AGG) '(' DISTINCT? expr (COMMA string)? ')' (
+    : id_ '(' DISTINCT expr_list ')' (WITHIN GROUP '(' order_by_clause ')')?
+    | id_ '(' expr_list ')' WITHIN GROUP '(' order_by_clause ')'
+    | LISTAGG '(' DISTINCT? expr (COMMA string)? ')' (
         WITHIN GROUP '(' order_by_clause ')'
     )?
     ;
@@ -4962,17 +4985,31 @@ select_list_no_top
     : all_distinct? select_list
     ;
 
+// top_clause is REQUIRED here: with it optional, select_list_top subsumed select_list_no_top,
+// making select_statement's two alternatives ambiguous on every TOP-less SELECT (SLL-surgery
+// wave, 2026-07-03). A TOP-less SELECT still binds only to select_clause (alt 1), a TOP SELECT
+// only to select_top_clause (alt 2), and TOP+LIMIT stays rejected (alt 2 has no limit_clause).
 select_list_top
-    : all_distinct? top_clause? select_list
+    : all_distinct? top_clause select_list
     ;
 
 select_list
     : select_list_elem (COMMA select_list_elem)* COMMA?
     ;
 
+// The former `column_elem as_alias?` alternative overlapped `expression_elem as_alias?` on
+// every dotted-name chain (those are expr's primitive_expression), making the decision ambiguous
+// on every bare-column item (SLL-surgery wave, 2026-07-03; cf. Spark's single namedExpression).
+// Only the column_elem forms expr can NOT express survive, as column_elem_adjacent: the
+// dot-less adjacent qualifier (`CONNECT_BY_ROOT title` — object_name carries no trailing DOT)
+// and the `$n` positional reference (docs.snowflake.com/en/sql-reference/sql/select —
+// staged-file columns; DOLLAR is not an expr form). It stays ABOVE expression_elem so `id id`
+// keeps resolving as an adjacent-qualified column, exactly as the old column_elem-first
+// ordering did. lower() classifies dotted-name expressions as columns, as it always did for
+// expression_elem projections.
 select_list_elem
-    : column_elem as_alias?
-    | column_elem_star star_modifier*
+    : column_elem_star star_modifier*
+    | column_elem_adjacent as_alias?
     //    | udt_elem
     | expression_elem as_alias?
     ;
@@ -4999,6 +5036,15 @@ column_elem
     | object_name_or_alias? DOLLAR column_position
     ;
 
+// The column_elem forms outside expr, split out for select_list_elem (see the note there):
+// a dot-less adjacent qualifier (plain object_name — never `alias DOT`, which would re-create
+// the dotted chains expr already covers), and the `$n` positional reference. Shapes unchanged
+// from column_elem's alternatives.
+column_elem_adjacent
+    : object_name column_name
+    | object_name_or_alias? DOLLAR column_position
+    ;
+
 object_name_or_alias
     : object_name
     | alias DOT
@@ -5012,9 +5058,23 @@ as_alias
     : AS? alias
     ;
 
+// expr already covers the IN / [I]LIKE [ANY|ALL] / RLIKE / REGEXP / IS and bare-expr predicate
+// forms as its own alternatives, so referencing the full `predicate` here made `expr | predicate`
+// ambiguous on nearly every select item (SLL-surgery wave, 2026-07-03). Only the predicate forms
+// expr does NOT subsume remain, split out as predicate_only; parse results are unchanged —
+// first-alternative-wins already sent every overlapping form through expr.
 expression_elem
     : expr
-    | predicate
+    | predicate_only
+    ;
+
+// The predicate alternatives outside expr's operator hierarchy: EXISTS, quantified comparison
+// (docs.snowflake.com/en/sql-reference/operators-subquery), and [NOT] BETWEEN
+// (docs.snowflake.com/en/sql-reference/functions/between). Same shapes as in `predicate`.
+predicate_only
+    : EXISTS LR_BRACKET subquery RR_BRACKET
+    | expr comparison_operator (ALL | SOME | ANY) LR_BRACKET subquery RR_BRACKET
+    | expr NOT? BETWEEN expr AND expr
     ;
 
 column_position
@@ -5316,16 +5376,15 @@ subquery
     : query_statement
     ;
 
+// SLL-surgery wave (2026-07-03): the IN / [I]LIKE [ANY|ALL] / RLIKE / REGEXP / IS-null
+// alternatives were deleted — expr carries each of them verbatim as its own alternatives, so
+// they were subsets of the bare-expr alternative and SLL mispredicted on nearly every
+// WHERE … IN (…) / IS NULL followed by ORDER/GROUP/`;`. Only the forms expr cannot express
+// remain (EXISTS, quantified comparison, BETWEEN — mirroring predicate_only) plus bare expr.
 predicate
     : EXISTS LR_BRACKET subquery RR_BRACKET
     | expr comparison_operator (ALL | SOME | ANY) '(' subquery ')'
     | expr NOT? BETWEEN expr AND expr
-    | expr NOT? IN '(' (subquery | spread_or_expr_list) ')'
-    | expr NOT? (LIKE | ILIKE) expr (ESCAPE expr)?
-    | expr NOT? RLIKE expr
-    | expr NOT? REGEXP expr
-    | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
-    | expr IS null_not_null
     | expr
     ;
 
@@ -5360,8 +5419,12 @@ qualify_clause
     : QUALIFY expr
     ;
 
+// SLL-surgery wave (2026-07-03): the id_ and num alternatives were subsets of expr (a bare
+// name is expr's primitive_expression, a bare DECIMAL its literal), and SLL's min-alt pick of
+// id_ broke every dotted / subscripted / computed ORDER BY key (`ORDER BY l.user_name` bailed
+// at the dot). docs.snowflake.com/en/sql-reference/constructs/order-by
 order_item
-    : (id_ | num | expr) (ASC | DESC)? (NULLS ( FIRST | LAST))?
+    : expr (ASC | DESC)? (NULLS ( FIRST | LAST))?
     ;
 
 order_by_clause
@@ -5387,14 +5450,6 @@ limit_clause
     | (OFFSET (num | NULL_ | string))? row_rows? FETCH first_next? num row_rows? ONLY?
     ;
 
-round_mode
-    : HALF_AWAY_FROM_ZERO_Q
-    | HALF_TO_EVEN_Q
-    ;
-
-round_expr
-    : ROUND LR_BRACKET EXPR ASSOC expr COMMA SCALE ASSOC expr (
-        COMMA ROUNDING_MODE ASSOC round_mode
-    )* RR_BRACKET
-    | ROUND LR_BRACKET expr COMMA expr (COMMA round_mode)* RR_BRACKET
-    ;
+// round_mode / round_expr were deleted in the SLL-surgery wave (2026-07-03): ROUND(…) parses
+// via the general call alternatives (ROUND is an id_ member; the quoted round modes are
+// quoted_keyword_string literals; EXPR/SCALE/ROUNDING_MODE named args are param_assoc).

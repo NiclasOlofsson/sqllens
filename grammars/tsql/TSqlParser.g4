@@ -2985,10 +2985,26 @@ opendatasource
 
 // https://msdn.microsoft.com/en-us/library/ms188927.aspx
 declare_statement
-    : DECLARE LOCAL_ID AS? (data_type | table_type_definition | table_name)
+    // The scalar-`data_type` case here was a strict subset of `declare_local` below (which is
+    // `LOCAL_ID AS? data_type ('=' expression)?`, comma-listed), so SLL committed to this alternative
+    // on every `DECLARE @v <type>` and then bailed on the `= expr` / `, @v2` that only declare_local
+    // accepts. Dropped it — declare_local covers every bare/scaled scalar type, incl. bare user-defined
+    // (table-)type names, since `data_type`'s `unscaled_type = id_` and `id_` covers `keyword`. What
+    // declare_local can NOT express is a schema/database-QUALIFIED type name, so `table_name` is
+    // replaced by `declare_as_table_name` (its prefix made mandatory) — disjoint from declare_local's
+    // bare id, which is what removes the misprediction.
+    // learn.microsoft.com/en-us/sql/t-sql/language-elements/declare-local-variable-transact-sql
+    : DECLARE LOCAL_ID AS? (table_type_definition | declare_as_table_name)
     | DECLARE loc += declare_local (',' loc += declare_local)*
     | DECLARE LOCAL_ID AS? xml_type_definition
     | WITH XMLNAMESPACES '(' xml_dec += xml_declaration (',' xml_dec += xml_declaration)* ')'
+    ;
+
+// table_name with its (optional) qualifying prefix made mandatory — the DECLARE-only path for a
+// schema/database-qualified user-defined table type (`DECLARE @t dbo.MyTableType`). The bare form is
+// declare_local's job; keeping this qualified-only keeps the two alternatives disjoint.
+declare_as_table_name
+    : (database = id_ '.' schema = id_? '.' | schema = id_ '.') (table = id_ | blocking_hierarchy = BLOCKING_HIERARCHY)
     ;
 
 xml_declaration
@@ -5353,14 +5369,46 @@ ddl_object
     | LOCAL_ID
     ;
 
+// A column reference: an optional table qualifier then the column (or a SQL Graph pseudo-column).
+// The qualifier used to be `(DELETED | INSERTED | full_table_name) '.'`, but embedding full_table_name
+// — whose 1–4-part name carries an N-part-table-vs-(N-1)-part-table+column carving that only resolves
+// by scanning the trailing `. col` — made this a cross-rule context-sensitivity: SLL mispredicted the
+// qualifier length and bailed downstream on the very next token (FROM/`)`/WHERE/`,`/… — every
+// `SELECT col FROM …`). Left-factored into a self-contained, bounded dotted chain (`fcn_qualified_rest`
+// enumerates exactly the six qualified shapes full_table_name+`.`col produced — 1–5 parts, with an
+// empty segment permitted only at the 2nd position, i.e. server.<db-omitted>.schema.table.col), so the
+// decision is now a local lookahead. The id_-leaf order is identical, so lower()'s nameParts (which
+// reads full_column_name purely by its id_ leaves) yields bit-identical IR. DELETED/INSERTED stay the
+// FIRST alternative so they keep routing through the token path (they are id_ members, and nameParts
+// intentionally drops that leading pseudo-source — preserved).
+// learn.microsoft.com/en-us/sql/relational-databases/tables/... (multipart column names)
 full_column_name
-    : ((DELETED | INSERTED | full_table_name) '.')? (
-        column_name = id_
-        | ('$' (IDENTITY | ROWGUID))
-        // SQL Graph pseudo-columns, bare or alias-qualified (P.$node_id):
-        // functions/graph-id-from-node-id-transact-sql and friends
-        | (DOLLAR_NODE_ID | DOLLAR_EDGE_ID | DOLLAR_FROM_ID | DOLLAR_TO_ID)
-    )
+    : (DELETED | INSERTED) '.' fcn_column_part
+    | column_name = id_ ('.' fcn_qualified_rest)?
+    | fcn_column_pseudo
+    ;
+
+// The chain after the first identifier of a qualified column reference — exactly the token strings
+// `full_table_name '.' <col>` accepted (bounded to 5 parts; an empty segment only at index 1).
+fcn_qualified_rest
+    : fcn_column_part                                          // A . col
+    | id_ '.' fcn_column_part                                  // A . B . col
+    | id_ '.' id_ '.' fcn_column_part                          // A . B . C . col
+    | id_ '.' id_ '.' id_ '.' fcn_column_part                  // A . B . C . D . col
+    | '.' id_ '.' fcn_column_part                              // A . . C . col       (database omitted)
+    | '.' id_ '.' id_ '.' fcn_column_part                      // A . . C . D . col   (database omitted)
+    ;
+
+fcn_column_part
+    : column_name = id_
+    | fcn_column_pseudo
+    ;
+
+// SQL Graph pseudo-columns, bare or alias-qualified (P.$node_id):
+// functions/graph-id-from-node-id-transact-sql and friends
+fcn_column_pseudo
+    : ('$' (IDENTITY | ROWGUID))
+    | (DOLLAR_NODE_ID | DOLLAR_EDGE_ID | DOLLAR_FROM_ID | DOLLAR_TO_ID)
     ;
 
 column_name_list_with_order

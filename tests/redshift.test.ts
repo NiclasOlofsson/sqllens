@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseRedshift } from "../src/redshift/parse.js";
+import { lower } from "../src/redshift/lower.js";
 
 // Redshift is the fifth dialect: grammar forked from bytebase/parser redshift/ (a PostgreSQL-
 // grammar fork focused on Redshift), the Go superClass bases ported inline to antlr4ng @members.
@@ -203,5 +204,160 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 	it("GROUP BY ALL (the corrected r_GROUP_BY_clause example)", () => {
 		// r_GROUP_BY_clause.html — GROUP BY ALL; the doc's own example has a typo (missing comma).
 		expect(errorsOf("SELECT col1, col2, sum(col3) FROM testtable GROUP BY ALL")).toBe(0);
+	});
+});
+
+// SLL-surgery wave (task-6-report.md). Redshift's c_expr listed columnref above func_expr, so every
+// `f(args)` mispredicted a bare column and bailed to full LL. Ordering func_expr above columnref makes
+// SLL resolve calls locally: columnref never full-matches a call (indirection_el is DOT/`[`-led, never
+// `(` — the sole paren columnref carries is the Oracle `(+)` marker), so the two are disjoint on a full
+// match and the reorder changes no accepted string. These probes pin parse-clean + sllFallback===false,
+// and — the mandatory reading guard (Task-5 review) — the exact lowered IR of aliased dotted calls,
+// which must NOT flip (redshift has no `.attr(args)` method form, so the duckdb failure mode is absent).
+describe("Redshift SLL-surgery — c_expr func_expr above columnref", () => {
+	function parsed(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		return r;
+	}
+	function proj(sql: string) {
+		const body = lower(parsed(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body.projections[0].expr;
+	}
+
+	it("plain function calls resolve under SLL (no fallback)", () => {
+		for (const sql of [
+			"SELECT f(a) FROM t",
+			"SELECT f(1) FROM t",
+			"SELECT st_geomfromtext('POINT(1 2)')",
+			"SELECT convert_timezone('GMT', 'PST', ts) FROM t",
+			"SELECT abs(-1)",
+		]) {
+			const r = parsed(sql);
+			expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+		}
+	});
+
+	it("reading guard — aliased dotted calls keep their exact IR (receiver-as-name, not flipped)", () => {
+		// Pre-surgery baseline: a dotted call takes its LAST name part as the function name and drops the
+		// qualifier. The reorder must preserve this exactly (proven byte-identical by the corpus IR hash).
+		expect(proj("SELECT sch.f(a) AS x FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ kind: "column", parts: ["a"] }],
+		});
+		expect(proj("SELECT sch.f(a) x FROM t")).toMatchObject({ kind: "function", name: "f" });
+		expect(proj("SELECT a.b.f(x) AS y FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ kind: "column", parts: ["x"] }],
+		});
+		// bare dotted column stays a column (func_expr needs the `(`).
+		expect(proj("SELECT x.y.z FROM t")).toMatchObject({ kind: "column", parts: ["x", "y", "z"] });
+	});
+
+	it("pinned more-faithful fix — CURRENT_USER lowers to the niladic function, not a phantom column", () => {
+		// r_CURRENT_USER.html: CURRENT_USER is a special value/function returning the current user, NOT a
+		// column. Pre-surgery, columnref (above func_expr) intercepted it and produced a phantom column
+		// named "current_user"; the reorder routes it through func_expr_common_subexpr (the correct form).
+		// 3 corpus files changed IR here (datashare-views/4,5; r_CURRENT_USER/1) — a pinned bug fix.
+		expect(proj("SELECT current_user")).toMatchObject({ kind: "function", name: "current_user", args: [] });
+		expect(proj("SELECT user")).toMatchObject({ kind: "function", name: "user" });
+	});
+
+	it("the redshift-specific (+) outer-join marker still rides columnref (not a call)", () => {
+		const r = parsed("SELECT count(*) FROM a, b WHERE a.id(+) = b.id");
+		expect(r.errors).toBe(0);
+	});
+
+	it("rejects malformed calls (no widening from the reorder)", () => {
+		expect(errorsOf("SELECT f(")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT f(,)")).toBeGreaterThan(0);
+	});
+});
+
+// SLL-surgery wave, iteration 2. The identifier-led aexprconst forms (`type '…'` typed literals,
+// `func_name '(' args ')' sconst`, INTERVAL) all REQUIRE a concrete trailing sconst, so a bare call or
+// column can never full-match aexprconst — disjoint on a full match. Ordering aexprconst above
+// func_expr/columnref makes SLL resolve typed literals locally without bailing to LL. Proven
+// reading-neutral by the corpus IR hash diff (byte-identical bar the 3 already-pinned current_user files).
+describe("Redshift SLL-surgery — c_expr aexprconst above func_expr/columnref", () => {
+	function noFallback(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+		return r;
+	}
+	function proj(sql: string) {
+		const body = lower(parseRedshift(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body.projections[0].expr;
+	}
+
+	it("typed literals resolve under SLL (no fallback) and lower to literals", () => {
+		for (const sql of [
+			"SELECT DATE '2008-01-01'",
+			"SELECT TIMESTAMP '2001-02-16 20:38:40'",
+			"SELECT TIME '13:24:55 PST'",
+			"SELECT INTERVAL '1' DAY",
+		]) {
+			noFallback(sql);
+			expect(proj(sql).kind).toBe("literal");
+		}
+	});
+
+	it("a plain call and a typed literal stay distinct (trailing sconst is the discriminator)", () => {
+		expect(proj("SELECT f(1) FROM t")).toMatchObject({ kind: "function", name: "f" });
+		// `f(1) '5'` is the func_name '(' args ')' sconst aexprconst form — a literal, not a call.
+		expect(proj("SELECT f(1) '5'")).toMatchObject({ kind: "literal" });
+	});
+
+	it("rejects the typed-literal-with-STAR non-form (no widening)", () => {
+		expect(errorsOf("SELECT count(*) '5'")).toBeGreaterThan(0);
+	});
+});
+
+// SLL-surgery wave, iteration 3. simple_select_pramary's select-list was three overlapping branches
+// (`opt_all_clause? into_clause? opt_target_list?` | `opt_top_clause? distinct_clause? into_clause?
+// target_list` | `distinct_clause target_list`): branch 3 was a strict subset of branch 2, and branches
+// 1/2 overlapped on every plain `SELECT list`, so ANTLR ran a deep full-LL prediction (maxLook 66) on
+// EVERY select — the top prediction-cost sink (68.5% of profiled time). Left-factored into two disjoint
+// alternatives — one ending in a REQUIRED target_list (any quantifier), one with NO target (only ALL /
+// nothing may precede an empty list) — decided locally by whether a target follows (maxLook 66 → 1).
+// Accepts exactly the same strings (proven by the corpus gate at 1808/1808 and the IR hash diff); lower
+// reads target_list via firstShallow, so the IR is byte-identical.
+describe("Redshift SLL-surgery — simple_select_pramary select-list left-factor", () => {
+	function noFallback(sql: string) {
+		const r = parseRedshift(sql);
+		expect(r.errors, `parse errors for: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected SLL-resolved: ${sql}`).toBe(false);
+	}
+
+	it("every SELECT quantifier form parses under SLL (no fallback)", () => {
+		for (const sql of [
+			"SELECT a, b FROM t",
+			"SELECT ALL a FROM t",
+			"SELECT TOP 5 a FROM t",
+			"SELECT DISTINCT a FROM t",
+			"SELECT TOP 5 DISTINCT a FROM t",
+			"SELECT DISTINCT ON (a) a, b FROM t",
+			"SELECT * FROM t",
+		]) {
+			noFallback(sql);
+		}
+	});
+
+	it("empty-target forms (INTO / ALL INTO) still parse — no narrowing", () => {
+		expect(errorsOf("SELECT INTO foo FROM t")).toBe(0);
+		expect(errorsOf("SELECT ALL INTO foo FROM t")).toBe(0);
+		expect(errorsOf("SELECT a INTO foo FROM t")).toBe(0);
+	});
+
+	it("TOP / DISTINCT still require a target list — no widening", () => {
+		// The former grammar rejected these (branch 2 required target_list; branch 1 barred TOP/DISTINCT).
+		expect(errorsOf("SELECT TOP 5 FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT DISTINCT FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT TOP 5 DISTINCT FROM t")).toBeGreaterThan(0);
 	});
 });

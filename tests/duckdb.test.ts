@@ -166,3 +166,129 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		}
 	});
 });
+
+// SLL→LL fallback surgery — each probe pins a construct that now predicts under SLL (no LL
+// fallback) after a grammar edit, plus the IR/rejection invariants that guard the edit.
+describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
+	const noFallback = (sql: string) => expect(parseDuckdb(sql).sllFallback, sql).toBe(false);
+	const projExpr = (sql: string) => {
+		const { ast } = parse(sql, "duckdb");
+		return (ast.body as { projections?: Array<{ expr: unknown }> }).projections?.[0]?.expr as {
+			kind: string;
+			name?: string;
+			args?: Array<{ kind: string; parts?: string[] }>;
+		};
+	};
+
+	it("c_expr — plain function calls f(args) predict under SLL (plain/dotted func_expr split)", () => {
+		// Cured STRUCTURALLY, not by ordering: the old func_expr is split into plain_func_expr (undotted
+		// name + required parens — disjoint from columnref on a full match by construction, so it sits
+		// above it) and dotted_func_expr (below columnref, preserving the method-chain resolution). The
+		// earlier func_expr-above-columnref reorder was REVERTED (Task-5 review: it flipped the reading
+		// of ALIASED dotted calls — see the method-chain guard below).
+		for (const sql of [
+			"SELECT f(1)",
+			"SELECT f(1, 2)",
+			"SELECT concat('value is ', b)",
+			"SELECT getenv('HOME') AS home",
+			"SELECT a, f(1), g(x, y)",
+			"SELECT mod(x, 2) = 0 FROM t",
+			"SELECT count(*) FILTER (WHERE x > 1) FROM t",
+			"SELECT percentile_disc(0.5) WITHIN GROUP (ORDER BY x) FROM t",
+			"SELECT LEFT(x, 1), RIGHT(x, 1) FROM t",
+		]) {
+			ok(sql);
+			noFallback(sql);
+		}
+		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
+		// The name comes from the application's own direct name child, never a nested one — a typed
+		// literal argument must not hijack the call name (strftime, not date).
+		expect(projExpr("SELECT strftime(DATE '1992-03-02', '%d/%m/%Y')")).toMatchObject({
+			kind: "function",
+			name: "strftime",
+		});
+	});
+
+	it("c_expr — the method-chain reading wins in EVERY follow context (MANDATORY guard)", () => {
+		// DuckDB's `.attr(args)` method indirection means a dotted call `x.f(a)` is a GENUINE ambiguity:
+		// it full-matches both columnref (method chain) and func_expr (qualified call, func_name matching
+		// `x.f` non-greedily). The project convention is the method chain — `x.f(a)` → f(x, a), receiver
+		// first. A c_expr reorder that puts func_expr above columnref flips the reading for ALIASED
+		// dotted calls (`sch.f(a) AS score` lowered to f(a), the receiver silently dropped) while leaving
+		// unaliased follows intact — exactly how Task 5's first attempt broke (review REJECT, reverted).
+		// These probes pin the reading across every follow context and must stay green forever,
+		// regardless of any future c_expr reordering.
+		const recv = (parts: string[]) => ({ kind: "column", parts });
+
+		// AS alias — the follow context the broken reorder flipped.
+		expect(projExpr("SELECT sch.f(a) AS score")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// Bare-word alias.
+		expect(projExpr("SELECT sch.f(a) score")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// Chained method call with alias — the inner chain must survive: g(f(x, a), b).
+		expect(projExpr("SELECT x.f(a).g(b) AS r")).toMatchObject({
+			kind: "function",
+			name: "g",
+			args: [{ kind: "function", name: "f", args: [recv(["x"]), recv(["a"])] }, recv(["b"])],
+		});
+		// Zero-arg chain with alias.
+		expect(projExpr("SELECT col.lower() AS l")).toMatchObject({
+			kind: "function",
+			name: "lower",
+			args: [recv(["col"])],
+		});
+		// Comma follow.
+		expect(projExpr("SELECT sch.f(a), b")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// FROM follow.
+		expect(projExpr("SELECT sch.f(a) FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		// EOF follow.
+		expect(projExpr("SELECT sch.f(a)")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [recv(["sch"]), recv(["a"])],
+		});
+		expect(projExpr("SELECT col.lower()")).toMatchObject({
+			kind: "function",
+			name: "lower",
+			args: [recv(["col"])],
+		});
+		// A plain dotted path stays a column, not a call.
+		expect(projExpr("SELECT x.y.z")).toMatchObject({ kind: "column", parts: ["x", "y", "z"] });
+	});
+
+	it("c_expr — typed literals predict under SLL (ported postgres aexprconst reorder)", () => {
+		// aexprconst ordered above func_expr/columnref: `DATE '…'` / `f(1) '5'` used to bail on the
+		// trailing string constant. The identifier-led aexprconst forms REQUIRE that trailing sconst, so
+		// they stay disjoint from a bare call / column.
+		for (const sql of [
+			"SELECT DATE '1992-09-20'",
+			"SELECT TIMESTAMP '2001-02-16 20:38:40'",
+			"SELECT INTERVAL '1 month 1 day'",
+			"SELECT decimal '3.14'",
+			"SELECT a FROM t WHERE d > DATE '2000-01-01'",
+		]) {
+			ok(sql);
+			noFallback(sql);
+		}
+		// The trailing-sconst requirement is real: a bare call with a stray string still rejects.
+		expect(parseDuckdb("SELECT count(*) '5'").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT f() '5'").errors).toBeGreaterThan(0);
+		// A plain call and a plain column still lower unchanged (aexprconst dropped out for them).
+		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
+	});
+});

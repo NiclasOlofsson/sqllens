@@ -825,6 +825,262 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.limit?.top).toMatchObject({ kind: "literal", text: "3" });
 	});
 
+	// SLL-surgery wave (2026-07-03): select_list_top's top_clause was made REQUIRED so
+	// select_statement's two alternatives stop being ambiguous on every TOP-less SELECT.
+	// These pin the accepted language across that change and that the fast SLL path no longer bails.
+	// docs.snowflake.com/en/sql-reference/constructs/top_n and /constructs/limit
+	it("keeps TOP / LIMIT / TOP+LIMIT acceptance exact after the select_list_top fix", () => {
+		// TOP-less SELECT: still parses, and no longer forces an SLL→LL fallback.
+		const plain = parseSnowflake("SELECT x FROM t");
+		expect(plain.errors).toBe(0);
+		expect(plain.sllFallback).toBe(false);
+		// SELECT with LIMIT: parses.
+		expect(errorsOf("SELECT x FROM t LIMIT 1")).toBe(0);
+		// SELECT TOP n: parses.
+		expect(errorsOf("SELECT TOP 1 x FROM t")).toBe(0);
+		// TOP and LIMIT together remain rejected (alt 2 has no limit_clause).
+		expect(errorsOf("SELECT TOP 1 x FROM t LIMIT 1")).toBeGreaterThan(0);
+	});
+
+	// SLL-surgery wave (2026-07-03): expression_elem's `predicate` alternative was narrowed to
+	// predicate_only (EXISTS / quantified comparison / BETWEEN — the forms expr does NOT already
+	// carry as its own alternatives), removing an ambiguity on nearly every select item. The IR
+	// for every form must be what it was: the overlapping predicate forms (IN/LIKE/IS/…) already
+	// parsed via expr under first-alternative-wins.
+	// docs.snowflake.com/en/sql-reference/operators-subquery, /en/sql-reference/functions/between
+	it("keeps every predicate select-item lowering across the expression_elem fix", () => {
+		// EXISTS as a select item → exists IR.
+		const ex = selectBody("SELECT EXISTS (SELECT 1 FROM u) AS has_rows FROM t").body;
+		expect(ex.projections[0].expr).toMatchObject({ kind: "exists" });
+		// Quantified comparison → binary with a subquery right operand.
+		const qc = selectBody("SELECT x > ALL (SELECT y FROM u) FROM t").body;
+		expect(qc.projections[0].expr).toMatchObject({ kind: "binary", op: ">", right: { kind: "subquery" } });
+		// BETWEEN → between predicate IR.
+		const bw = selectBody("SELECT a BETWEEN 1 AND 2 FROM t").body;
+		expect(bw.projections[0].expr).toMatchObject({ kind: "predicate", op: "between", negated: false });
+		const nb = selectBody("SELECT a NOT BETWEEN 1 AND 2 FROM t").body;
+		expect(nb.projections[0].expr).toMatchObject({ kind: "predicate", op: "between", negated: true });
+		// The expr-subsumed forms keep their IR (they always parsed via expr).
+		const inp = selectBody("SELECT a IN (1, 2) FROM t").body;
+		expect(inp.projections[0].expr).toMatchObject({ kind: "predicate", op: "in" });
+		const lk = selectBody("SELECT a LIKE 'x%' FROM t").body;
+		expect(lk.projections[0].expr).toMatchObject({ kind: "predicate", op: "like" });
+		const isn = selectBody("SELECT a IS NOT NULL FROM t").body;
+		expect(isn.projections[0].expr).toMatchObject({ kind: "predicate", op: "null", negated: true });
+		// Function-call and EXISTS select items no longer force the SLL→LL fallback (computed
+		// items like `a + b` stay dirty until the select_list_elem fix — the next iteration).
+		const fn = parseSnowflake("SELECT SUM(x) FROM t GROUP BY a");
+		expect(fn.errors).toBe(0);
+		expect(fn.sllFallback).toBe(false);
+		const exq = parseSnowflake("SELECT EXISTS (SELECT 1 FROM u) FROM t");
+		expect(exq.errors).toBe(0);
+		expect(exq.sllFallback).toBe(false);
+		// Adjacent invalid form stays rejected: BETWEEN missing its AND arm.
+		expect(errorsOf("SELECT a BETWEEN 1 FROM t")).toBeGreaterThan(0);
+	});
+
+	// SLL-surgery wave (2026-07-03): select_list_elem's `column_elem` alternative overlapped
+	// expression_elem on every dotted-name chain (expr's primitive_expression). It was replaced
+	// by column_elem_adjacent, keeping only the forms expr cannot express: the dot-less adjacent
+	// qualifier (`CONNECT_BY_ROOT title`) and the `$n` positional reference. The IR must be
+	// identical for every form. docs.snowflake.com/en/sql-reference/sql/select
+	it("keeps column projections identical across the select_list_elem fix", () => {
+		const bare = selectBody("SELECT a, t.b AS c FROM t").body;
+		expect(bare.projections[0]).toMatchObject({ name: "a", expr: { kind: "column", parts: ["a"] } });
+		expect(bare.projections[1]).toMatchObject({ name: "c", expr: { kind: "column", parts: ["t", "b"] } });
+		// IDENTIFIER('t').c was reachable via column_elem's object_name — still parses (via expr).
+		expect(errorsOf("SELECT IDENTIFIER('t').c FROM t")).toBe(0);
+		// $n positional refs (lexed as ID2 identifiers) keep their exact IR.
+		const pos = selectBody("SELECT $1, $2 AS x FROM @my_stage").body;
+		expect(pos.projections[0]).toMatchObject({ name: "$1", expr: { kind: "column", parts: ["$1"] } });
+		expect(pos.projections[1]).toMatchObject({ name: "x", expr: { kind: "column", parts: ["$2"] } });
+		// The adjacent-qualifier forms keep parsing with their exact old IR (qualifier + column
+		// merged into one column ref — this is how the grammar supports CONNECT_BY_ROOT):
+		const adj = selectBody("SELECT CONNECT_BY_ROOT title AS root_title, a b, q b.c FROM t").body;
+		expect(adj.projections[0]).toMatchObject({
+			name: "root_title",
+			expr: { kind: "column", parts: ["CONNECT_BY_ROOT", "title"] },
+		});
+		expect(adj.projections[1]).toMatchObject({ name: "b", expr: { kind: "column", parts: ["a", "b"] } });
+		expect(adj.projections[2]).toMatchObject({ name: "c", expr: { kind: "column", parts: ["q", "b", "c"] } });
+		expect(errorsOf("SELECT IDENTIFIER('q') col FROM t")).toBe(0);
+		// Ordinary select items — bare, dotted, computed — no longer force the SLL→LL fallback.
+		const r = parseSnowflake("SELECT a, t.b, a + b AS c FROM t");
+		expect(r.errors).toBe(0);
+		expect(r.sllFallback).toBe(false);
+		// Adjacent invalid forms stay rejected: four adjacent names / a detached $ position.
+		expect(errorsOf("SELECT a b c d FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT t.$ 1 FROM t")).toBeGreaterThan(0);
+	});
+
+	// SLL-surgery wave (2026-07-03): primitive_expression dropped its NULL_ alternative (literal
+	// already carries NULL_) and swapped full_column_name for degenerate_column_ref — exactly the
+	// empty-segment forms (docs.snowflake.com/en/sql-reference/name-resolution), the one part of
+	// full_column_name a plain id-chain cannot express. IR unchanged for every form.
+	it("keeps NULL literals and empty-segment column refs across the primitive_expression fix", () => {
+		const nul = selectBody("SELECT NULL AS n FROM t").body;
+		expect(nul.projections[0]).toMatchObject({ name: "n", expr: { kind: "literal", text: "NULL" } });
+		// Plain chains keep their column IR (and stay on the SLL path end-to-end).
+		const chain = parseSnowflake("SELECT db1.sch.tbl.col FROM db1.sch.tbl");
+		expect(chain.errors).toBe(0);
+		expect(chain.sllFallback).toBe(false);
+		const ir = selectBody("SELECT db1.sch.tbl.col FROM db1.sch.tbl").body;
+		expect(ir.projections[0].expr).toMatchObject({ kind: "column", parts: ["db1", "sch", "tbl", "col"] });
+		// Empty-segment refs (omitted db/schema/table) still parse, with the same collapsed parts.
+		for (const [sql, parts] of [
+			["SELECT a..c FROM t", ["a", "c"]],
+			["SELECT ..c FROM t", ["c"]],
+			["SELECT a.b..c FROM t", ["a", "b", "c"]],
+			["SELECT a...c FROM t", ["a", "c"]],
+		] as const) {
+			const b = selectBody(sql).body;
+			expect(b.projections[0].expr, sql).toMatchObject({ kind: "column", parts: [...parts] });
+		}
+	});
+
+	// SLL-surgery wave (2026-07-03): function_call dropped round_expr and the four builtin-arity
+	// alternatives (all id_-member names — their strings parse via the aggregate/general-call
+	// alternatives), and aggregate_function now requires aggregate-only surface (DISTINCT /
+	// WITHIN GROUP / the LISTAGG keyword) so plain f(args) calls belong to object_name(...)
+	// alone. lower() gained the func_arg_list read, which also fixes the old arg-drop on
+	// dotted-name and named-argument calls. docs.snowflake.com/en/sql-reference/functions-all
+	it("keeps every call form lowering across the function_call fix", () => {
+		const proj = (sql: string) => selectBody(sql).body.projections[0].expr;
+		// Builtin-token calls keep name + args (they now ride the aggregate/general alternatives).
+		expect(proj("SELECT IFNULL(a, b) FROM t")).toMatchObject({
+			kind: "function",
+			name: "ifnull",
+			args: [{ parts: ["a"] }, { parts: ["b"] }],
+		});
+		expect(proj("SELECT DATEADD(day, 5, d) FROM t")).toMatchObject({
+			kind: "function",
+			name: "dateadd",
+			args: [{ parts: ["day"] }, {}, { parts: ["d"] }],
+		});
+		// ROUND — positional, mode-carrying, and named-argument forms all still parse.
+		expect(proj("SELECT ROUND(a, 2) FROM t")).toMatchObject({ kind: "function", name: "round" });
+		expect(errorsOf("SELECT ROUND(a, 2, 'HALF_TO_EVEN') FROM t")).toBe(0);
+		expect(errorsOf("SELECT ROUND(EXPR => a, SCALE => 2) FROM t")).toBe(0);
+		// Aggregates: star, DISTINCT, WITHIN GROUP, LISTAGG/ARRAY_AGG.
+		expect(proj("SELECT COUNT(*) FROM t")).toMatchObject({
+			kind: "function",
+			name: "count",
+			aggregate: true,
+			distinct: false,
+			args: [],
+		});
+		expect(proj("SELECT COUNT(DISTINCT x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "count",
+			aggregate: true,
+			distinct: true,
+			args: [{ parts: ["x"] }],
+		});
+		expect(proj("SELECT PERCENTILE_CONT(0.5) WITHIN GROUP (ORDER BY x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "percentile_cont",
+			aggregate: true,
+		});
+		expect(proj("SELECT LISTAGG(DISTINCT x, ',') WITHIN GROUP (ORDER BY x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "listagg",
+			aggregate: true,
+			distinct: true,
+		});
+		expect(proj("SELECT ARRAY_AGG(x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "array_agg",
+			aggregate: true,
+		});
+		expect(proj("SELECT ARRAY_AGG(DISTINCT x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "array_agg",
+			aggregate: true,
+			distinct: true,
+		});
+		// The general alternative's args are no longer dropped (dotted + named-arg calls).
+		expect(proj("SELECT sch.f(a, b) FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ parts: ["a"] }, { parts: ["b"] }],
+		});
+		expect(proj("SELECT f(name => x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "f",
+			args: [{ parts: ["x"] }],
+		});
+		// Window functions keep their windows on both routes.
+		expect(proj("SELECT RANK() OVER (ORDER BY x) FROM t")).toMatchObject({ kind: "function", name: "rank" });
+		expect(proj("SELECT DENSE_RANK() OVER (ORDER BY x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "dense_rank",
+		});
+		expect(proj("SELECT NTILE(4) OVER (ORDER BY x) FROM t")).toMatchObject({ kind: "function", name: "ntile" });
+		expect(proj("SELECT LEAD(x) IGNORE NULLS OVER (ORDER BY x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "lead",
+		});
+		expect(proj("SELECT LAST_VALUE(x) OVER (ORDER BY x) FROM t")).toMatchObject({
+			kind: "function",
+			name: "last_value",
+		});
+		// A simple aggregate-carrying SELECT no longer forces the SLL→LL fallback.
+		const r = parseSnowflake("SELECT COUNT(*), SUM(x), IFNULL(a, b) FROM t");
+		expect(r.errors).toBe(0);
+		expect(r.sllFallback).toBe(false);
+		// Adjacent invalid forms stay rejected: DISTINCT with no expr; WITHIN GROUP on a star call.
+		expect(errorsOf("SELECT SUM(DISTINCT) FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT COUNT(*) WITHIN GROUP (ORDER BY x) FROM t")).toBeGreaterThan(0);
+	});
+
+	// SLL-surgery wave (2026-07-03): predicate dropped its IN / [I]LIKE [ANY|ALL] / RLIKE /
+	// REGEXP / IS-null alternatives (each verbatim an expr alternative — subsets of the bare-expr
+	// branch that made SLL mispredict WHERE tails), and order_item dropped its id_/num subsets of
+	// expr (SLL's id_ pick broke every dotted/computed ORDER BY key). IR pinned per form; the
+	// IS-null fix also repairs a latent drop (the old predicate path lowered `b IS NOT NULL` to a
+	// bare column, losing the null test — the expr path models it).
+	it("keeps WHERE predicates and ORDER BY keys across the predicate/order_item fix", () => {
+		const where = (sql: string) => selectBody(sql).body.where;
+		expect(where("SELECT a FROM t WHERE state IN ('x','y')")).toMatchObject({ kind: "predicate", op: "in" });
+		expect(where("SELECT a FROM t WHERE n LIKE 'x%' ESCAPE '!'")).toMatchObject({ kind: "predicate", op: "like" });
+		expect(where("SELECT a FROM t WHERE n NOT RLIKE 'p'")).toMatchObject({
+			kind: "predicate",
+			op: "rlike",
+			negated: true,
+		});
+		expect(where("SELECT a FROM t WHERE n LIKE ANY ('a%', 'b%')")).toMatchObject({ kind: "predicate", op: "like" });
+		expect(where("SELECT a FROM t WHERE b IS NOT NULL")).toMatchObject({
+			kind: "predicate",
+			op: "null",
+			negated: true,
+		});
+		expect(where("SELECT a FROM t WHERE d BETWEEN '2023-01-01' AND '2023-02-01'")).toMatchObject({
+			kind: "predicate",
+			op: "between",
+		});
+		expect(where("SELECT a FROM t WHERE x > ALL (SELECT y FROM u)")).toMatchObject({ kind: "binary", op: ">" });
+		// The bail shapes from the corpus census now stay on the SLL path.
+		for (const sql of [
+			"SELECT a FROM t WHERE state IN ('FAILED','ABORTED') ORDER BY started",
+			"SELECT a FROM t WHERE deleted IS NULL;",
+			"SELECT a FROM t GROUP BY 1 ORDER BY l.user_name",
+			"SELECT a FROM t ORDER BY oc['PROVINCE']",
+			"SELECT a FROM t ORDER BY total / GREATEST(x, 1)",
+		]) {
+			const r = parseSnowflake(sql);
+			expect(r.errors, sql).toBe(0);
+			expect(r.sllFallback, sql).toBe(false);
+		}
+		// ORDER BY key IR shapes are unchanged (bare, positional, dotted).
+		const ob = (sql: string) => ir(sql).q.orderBy;
+		expect(ob("SELECT a FROM t ORDER BY b")).toMatchObject([{ kind: "column", parts: ["b"] }]);
+		expect(ob("SELECT a FROM t ORDER BY 3")).toMatchObject([{ kind: "literal", text: "3" }]);
+		expect(ob("SELECT a FROM t ORDER BY t.b DESC")).toMatchObject([{ kind: "column", parts: ["t", "b"] }]);
+		// Adjacent invalid forms stay rejected.
+		expect(errorsOf("SELECT a FROM t WHERE x IN")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT a FROM t ORDER BY")).toBeGreaterThan(0);
+	});
+
 	it("models QUALIFY as a predicate with clause-tagged column refs", () => {
 		const { body } = selectBody("SELECT a, ROW_NUMBER() OVER (ORDER BY a) rn FROM t QUALIFY rn = 1");
 		expect(body.qualify).toMatchObject({ kind: "binary", op: "=" });

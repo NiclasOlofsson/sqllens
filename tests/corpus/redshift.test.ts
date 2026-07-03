@@ -40,6 +40,15 @@ const QUERY_BASELINE = 1808; // documented floor for the scraped-docs query popu
 // SAME single parse the docs ratchet makes (onCleanQuery gets its tree), so no file is parsed twice.
 const OTHER_BASELINE = 0; // measured 2026-07-01 over the parsed Redshift docs query bucket; corpus-complete
 
+// The SLL→LL fallback ratchet (SLL-surgery wave, task-1-brief.md): Redshift is the sickest dialect on
+// the roster — its heaviest decisions (simple_select_pramary [sic — upstream typo], c_expr) force the
+// two-stage parse to bail out of the fast SLL prediction path and reparse under full LL. Measured
+// 2026-07-03 via `node --import tsx tools/profile-sll.ts redshift` over this same docs query bucket.
+// Counted on the SAME single parse the docs ratchet makes (the `parse:` closure below), never a
+// re-parse. Task 6 (blocked on the B/C/D branch merge) is expected to port the postgres/duckdb fixes
+// here first; may only fall.
+const FALLBACK_RATCHET = 4;
+
 // Documented-broken query examples — each verified against its AWS doc source as genuinely malformed
 // SQL (not a grammar gap, not scraper noise). They fail to parse, so the organizer files them under
 // unparsed/; `knownBad` asserts each STILL sits there (self-policing: if one starts parsing it leaves
@@ -143,10 +152,12 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			let scoped = 0;
+			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
 				parse: (sql) => {
 					const r = parseRedshift(sql);
+					if (r.sllFallback) fallbacks++;
 					return { errors: r.errors, tree: r.tree };
 				},
 				onCleanQuery: (rel, tree) => {
@@ -167,13 +178,17 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 				.map(([name, n]) => `  ${n}  ${name}   e.g. ${samples.get(name)}`)
 				.join("\n");
 			console.log(
-				`\n  redshift: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE})${top ? "\n" + top : ""}`,
+				`\n  redshift: ${scoped} scoped, ${total} \`other\` exprs (baseline ${OTHER_BASELINE}), ${fallbacks} SLL fallbacks (ratchet ${FALLBACK_RATCHET})${top ? "\n" + top : ""}`,
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);
+			expect(
+				fallbacks,
+				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
+			).toBeLessThanOrEqual(FALLBACK_RATCHET);
 		},
 	);
 });

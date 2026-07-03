@@ -22,6 +22,9 @@ export interface ParseResult {
 	diagnostics: SyntaxDiagnostic[];
 	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans. */
 	tokens: Token[];
+	/** True when the fast SLL prediction pass bailed and the parse re-ran under full LL. Same result
+	 *  either way — this just says which path produced it, for perf profiling (tools/profile-sll.ts). */
+	sllFallback: boolean;
 }
 
 /**
@@ -60,7 +63,12 @@ export function parsePostgres(sql: string): ParseResult {
 	sim.predictionMode = PredictionMode.SLL;
 	try {
 		const tree = parser.root();
-		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
+		return withTokens({
+			tree,
+			errors: collector.diagnostics.length,
+			diagnostics: collector.diagnostics,
+			sllFallback: false,
+		});
 	} catch {
 		tokens.seek(0);
 		parser.reset();
@@ -70,7 +78,12 @@ export function parsePostgres(sql: string): ParseResult {
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		attachErrorCounter(lexer, parser, collector.listener);
 		const tree = parser.root();
-		return withTokens({ tree, errors: collector.diagnostics.length, diagnostics: collector.diagnostics });
+		return withTokens({
+			tree,
+			errors: collector.diagnostics.length,
+			diagnostics: collector.diagnostics,
+			sllFallback: true,
+		});
 	}
 }
 

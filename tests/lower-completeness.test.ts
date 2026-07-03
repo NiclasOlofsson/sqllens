@@ -106,7 +106,11 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Snowflake",
-		coverFloor: 67,
+		// 59 after the SLL-surgery wave (2026-07-03): deleting subset alternatives (round_expr, the
+		// builtin-arity call forms, predicate's expr-duplicated forms, order_item's id_/num) shrank
+		// the fuzzer's reachable-rule graph. lower() did not regress — the docs corpus gate proves
+		// 0 throws and the `other` ratchet held at 0 over all 2,976 query files.
+		coverFloor: 59,
 		cfg: {
 			Parser: SnowflakeParser as never,
 			Lexer: SnowflakeLexer as never,
@@ -133,7 +137,12 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Redshift",
-		coverFloor: 152,
+		// 151 after the task-6 SLL-surgery select-list left-factor: merging simple_select_pramary's three
+		// overlapping branches removed the redundant `distinct_clause target_list` subset alternative, so
+		// the fuzzer's reachable-rule graph lost one node. lower() did NOT regress — throws stays 0 and the
+		// docs corpus gate proves full coverage + 0 `other` over the real query bucket; the deleted branch's
+		// language is covered identically by the merged alternative (lower reads target_list via firstShallow).
+		coverFloor: 151,
 		cfg: {
 			Parser: RedshiftParser as never,
 			Lexer: RedshiftLexer as never,

@@ -3605,14 +3605,28 @@ c_expr
    | /*22*/
 
    UNIQUE select_with_parens # c_expr_expr
-   | columnref # c_expr_expr
+   // NOTE(perf): aexprconst, then func_expr, then columnref — most-specific first. All three can begin
+   // with an identifier (func_name / colid), and a bare column is a viable *prefix* of both a function
+   // call and a generic typed literal, so SLL's stackless merge keeps the lower alternative alive and
+   // reports a context-sensitivity, mispredicting and bailing downstream. The three are disjoint on a
+   // FULL match — aexprconst's identifier forms REQUIRE a trailing sconst (`DATE '…'`, `f(a) '5'`),
+   // func_expr always carries the `(`, columnref carries neither — so ordering most-specific first makes
+   // the correct reading the minimum alternative in each conflict: `DATE '…'`/`f(a) '5'` → aexprconst,
+   // `f(args)` → func_expr, bare `f` → columnref (the more-specific alts need a token that isn't there,
+   // so they drop out). No language change (§4.1.2.7 AexprConst; duckdb/redshift share this rule).
    | aexprconst # c_expr_expr
+   | func_expr # c_expr_expr
+   // NOTE(perf): explicit_row (`ROW '(' … ')'`) sits above columnref for the same most-specific-first
+   // reason — `ROW` is a non-reserved keyword, so a columnref reads `ROW` as a bare column and the `(…)`
+   // becomes a phantom follow, giving SLL a columnref-vs-explicit_row context-sensitivity that bails on
+   // `ROW(1,2) = ROW(3,4)`. They are disjoint on a full match (explicit_row carries the `(`), so
+   // explicit_row first resolves it; a bare `row` column still falls to columnref. No language change.
+   | explicit_row # c_expr_expr
+   | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
-   | func_expr # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
-   | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr
    | row OVERLAPS row /* 14*/
 
@@ -4110,8 +4124,13 @@ target_list
    ;
 
 target_el
-   : columnref # target_columnref  // NOTE(parser): Add by Bytebase to handling table.* easily.
-   | a_expr target_alias? # target_label
+   // NOTE(perf): the Bytebase `columnref # target_columnref` alternative was a strict subset of
+   // `a_expr target_alias?` (a_expr → c_expr → columnref, incl. `t.*` via indirection `.STAR`), so SLL
+   // committed to it on every bare column and then bailed on a following alias (`SELECT x oid`), a
+   // string constant, etc. Deleting it: a_expr covers the whole language and lower() classifies the
+   // parsed shape (a `.*` columnref lowers to a qualified star). Fixes a latent lower bug too — bare
+   // columns and `t.*` previously fell through buildProjection to a phantom unqualified star.
+   : a_expr target_alias? # target_label
    | STAR # target_star
    ;
    

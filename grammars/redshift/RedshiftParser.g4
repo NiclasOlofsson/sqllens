@@ -4389,7 +4389,14 @@ simple_select_intersect
 simple_select_pramary
    // Redshift SELECT allows TOP n together with DISTINCT (docs.aws.amazon.com/redshift/latest/dg/r_SELECT_list.html):
    // SELECT TOP n DISTINCT ... — so the top alternative carries an optional distinct_clause.
-   : ( SELECT (opt_all_clause? into_clause? opt_target_list? | opt_top_clause? distinct_clause? into_clause? target_list | distinct_clause target_list)
+   // The select-list quantifier group is left-factored into two disjoint alternatives: one that ends in
+   // a REQUIRED target_list (any quantifier: ALL, or TOP n? DISTINCT?), and one with NO target_list
+   // (only ALL / nothing may precede an empty list — TOP/DISTINCT always require a target). This accepts
+   // exactly the same strings as the former three overlapping branches (ALL is mutually exclusive with
+   // TOP/DISTINCT; branch `distinct_clause target_list` was a strict subset), but removes the [1,2]/[2,3]
+   // ambiguity that forced full-LL prediction on every SELECT — the parser now decides locally by whether
+   // a target_list follows. lower() reads target_list via firstShallow, so the IR is unchanged.
+   : ( SELECT ((opt_all_clause | opt_top_clause? distinct_clause?)? into_clause? target_list | opt_all_clause? into_clause?)
            exclude_clause?
            into_clause?
            from_clause?
@@ -5176,12 +5183,12 @@ c_expr
    | /*22*/
 
    UNIQUE select_with_parens # c_expr_expr
-   | columnref # c_expr_expr
    | aexprconst # c_expr_expr
+   | func_expr # c_expr_expr
+   | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
-   | func_expr # c_expr_expr
    | select_with_parens indirection? # c_expr_expr
    | explicit_row # c_expr_expr
    | implicit_row # c_expr_expr

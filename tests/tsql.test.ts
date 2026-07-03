@@ -147,3 +147,92 @@ describe("T-SQL flows through the dialect-agnostic semantic layer", () => {
 		expect(syms.some((s) => s.name === "x")).toBe(true);
 	});
 });
+
+// SLL-surgery probes (see .superpowers/sdd/task-3-report.md). Each pins BOTH that the surviving
+// forms still parse cleanly AND that the pruned/left-factored decision no longer mispredicts
+// (sllFallback === false), plus reject probes for the nearby invalid forms.
+describe("T-SQL SLL-surgery — grammar-health probes", () => {
+	/** Parses cleanly (0 syntax errors) AND without an SLL→LL bail. */
+	function clean(sql: string): void {
+		const r = parseTSql(sql);
+		expect(r.errors, `expected a clean parse of: ${sql}`).toBe(0);
+		expect(r.sllFallback, `expected no SLL→LL fallback on: ${sql}`).toBe(false);
+	}
+	/** A syntactically invalid form: must still be rejected (errors > 0). */
+	function rejected(sql: string): void {
+		expect(parseTSql(sql).errors, `expected a syntax error for: ${sql}`).toBeGreaterThan(0);
+	}
+
+	// Iteration 1 — declare_statement: the scalar-data_type alternative was a subset of declare_local.
+	// Pruning it (and requiring a qualifier on the table-name alternative) keeps every valid DECLARE
+	// while ending the `= expr` / `, @v2` mispredict.
+	// learn.microsoft.com/en-us/sql/t-sql/language-elements/declare-local-variable-transact-sql
+	describe("declare_statement (iter 1)", () => {
+		it("declares a scalar variable, with and without an initializer, no fallback", () => {
+			clean("DECLARE @ID NVARCHAR(MAX) = N'x';");
+			clean("DECLARE @n INT;");
+			clean("DECLARE @n AS INT;");
+			clean("DECLARE @d DECIMAL(10, 2) = 1.5;");
+		});
+		it("declares multiple variables in one comma list", () => {
+			clean("DECLARE @s AS NVARCHAR(4000), @h AS hierarchyid;");
+			clean("DECLARE @a INT, @b VARCHAR(10) = 'x', @c BIT;");
+		});
+		it("declares a table variable — inline TABLE(...) and a user-defined table type", () => {
+			clean("DECLARE @t TABLE (c INT, d VARCHAR(10));");
+			clean("DECLARE @t AS dbo.MyTableType;"); // qualified UDT — the declare_as_table_name path
+			clean("DECLARE @t MyTableType;"); // bare UDT name — rides declare_local's data_type
+		});
+		it("rejects a DECLARE with no type and a bare initializer", () => {
+			rejected("DECLARE @x;");
+			rejected("DECLARE = 5;");
+		});
+	});
+
+	// Iteration 2 — full_column_name: the qualifier was `(DELETED|INSERTED|full_table_name) '.'`, whose
+	// embedded full_table_name forced a deep-lookahead table-vs-column carving (context sensitivity).
+	// Left-factored into a bounded local dotted chain; every qualified shape still parses and lowers to
+	// the same `{kind:"column", parts:[…]}` (nameParts reads only the id_ leaves).
+	// learn.microsoft.com/en-us/sql/t-sql/language-elements/transact-sql-syntax-conventions-transact-sql
+	describe("full_column_name (iter 2)", () => {
+		/** The `parts` of the single projected column reference. */
+		function colParts(sql: string): string[] {
+			const q = lower(parseTSql(sql).tree);
+			if (q.body.kind !== "select") throw new Error("expected select");
+			const e = q.body.projections[0].expr;
+			if (e.kind !== "column") throw new Error(`expected a column, got ${e.kind}`);
+			return e.parts;
+		}
+		it("parses 1- through 5-part column references with no fallback", () => {
+			clean("SELECT a FROM t");
+			clean("SELECT t.a FROM t");
+			clean("SELECT s.t.a FROM s.t");
+			clean("SELECT d.s.t.a FROM d.s.t");
+			clean("SELECT srv.d.s.t.a FROM srv.d.s.t");
+		});
+		it("preserves the id_-leaf part list for every qualifier depth (IR unchanged)", () => {
+			expect(colParts("SELECT a FROM t")).toEqual(["a"]);
+			expect(colParts("SELECT t.a FROM t")).toEqual(["t", "a"]);
+			expect(colParts("SELECT s.t.a FROM s.t")).toEqual(["s", "t", "a"]);
+			expect(colParts("SELECT d.s.t.a FROM d.s.t")).toEqual(["d", "s", "t", "a"]);
+			expect(colParts("SELECT srv.d.s.t.a FROM srv.d.s.t")).toEqual(["srv", "d", "s", "t", "a"]);
+		});
+		it("keeps the omitted-database empty-segment forms (server..schema.table.col)", () => {
+			// The only degenerate shape full_table_name produced: an empty 2nd part.
+			clean("SELECT d..t.a FROM d..t");
+			expect(colParts("SELECT d..t.a FROM d..t")).toEqual(["d", "t", "a"]);
+			clean("SELECT srv..s.t.a FROM srv..s.t");
+			expect(colParts("SELECT srv..s.t.a FROM srv..s.t")).toEqual(["srv", "s", "t", "a"]);
+		});
+		it("still parses DELETED/INSERTED-qualified and graph pseudo-columns", () => {
+			clean("SELECT DELETED.a FROM t");
+			clean("SELECT INSERTED.a FROM t");
+			clean("SELECT $IDENTITY FROM t");
+			clean("SELECT p.$node_id FROM g AS p");
+		});
+		it("rejects a dangling-dot column reference", () => {
+			rejected("SELECT a. FROM t");
+			rejected("SELECT .a FROM t");
+		});
+	});
+});
