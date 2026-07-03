@@ -47,6 +47,13 @@ need a synthetic sub-range computed from the token stream (e.g. from the previou
 FROM keyword to this join's stop). Confirm which shape the formatter actually needs before we build
 that.
 
+> **ANSWERED 2026-07-03 — cumulative spans are final; no lowering change.** The extension resolved
+> this on its own side: `dbt-studio-vscode/src/ftl/sqllens/decompose.ts` `joinLeadToken()` derives each
+> join's isolated construct start uniformly across dialects (anchor on the `JOIN` token after the prior
+> chain element, walk back over the type-prefix keywords), explicitly citing trino's cumulative
+> `join.cst`. The formatter (ninja engine) consumes tokens, not Join spans, so no isolated-span API is
+> needed there either. Any future consumer needing isolation uses the same token-anchored recipe.
+
 **Grammar-precision note — DuckDB/Snowflake bare-keyword join-alias ambiguity.** Pre-existing grammar
 gap, not introduced by this wave, surfaced while building the Join tests: DuckDB's `SEMI`/`ANTI`/`ASOF`
 and Snowflake's `LEFT`/`RIGHT`/`FULL`/`INNER` are non-reserved words, so after a bare left table
