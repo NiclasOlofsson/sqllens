@@ -11,6 +11,7 @@ import { lineage } from "../../src/lineage/lineage.js";
 import { Schema } from "../../src/qualify/schema.js";
 import { resolveScopes, resolveColumn, type Scope, type ScopeTree } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { walkIr as walkIrOther } from "../helpers/ir-walk.js";
 import { allPipeStages, stageExprs, stageSubIr } from "../helpers/pipe-walk.js";
 
@@ -396,6 +397,7 @@ describe.skipIf(!existsSync(CORPUS))("Databricks Oatly corpus — one pass, all 
 		const files = corpusFiles();
 		let scoped = 0;
 		let setOpFiles = 0;
+		const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
 		const stats: Stats = {
 			queries: 0,
 			ctes: 0,
@@ -435,6 +437,7 @@ describe.skipIf(!existsSync(CORPUS))("Databricks Oatly corpus — one pass, all 
 			scoped++;
 			walkStats(ir, stats);
 			walkScopes(scopes.root, scopeStats);
+			sweepCallDiagnostics(scopes, rel, callHits);
 		}
 		const pct = (n: number, d: number) => (d ? ((n / d) * 100).toFixed(1) : "0.0");
 		console.log(
@@ -466,6 +469,11 @@ describe.skipIf(!existsSync(CORPUS))("Databricks Oatly corpus — one pass, all 
 		expect(files.length).toBeGreaterThan(0);
 		// Gate: lower + resolveScopes must never throw on a real model.
 		expect(scoped).toBe(files.length);
+		// Task 12 honesty gate: the call-signature checker must be silent over valid production SQL.
+		expect(
+			callHits,
+			`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
+		).toEqual([]);
 	}, 180000);
 
 	// ---- 5. lineage over the corpus (was lineage, corpus part) -------------------------------

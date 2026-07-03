@@ -33,14 +33,14 @@ export interface InferDialect {
 const databricks: InferDialect = {
 	functions: FUNCTION_RETURNS,
 	literal: databricksLiteral,
-	parseType: (t) => parseType(t),
+	parseType: (t) => parseType(t, undefined, "databricks"),
 	division: "float",
 };
 
 const tsql: InferDialect = {
 	functions: TSQL_FUNCTION_RETURNS,
 	literal: tsqlLiteral,
-	parseType: (t) => parseType(t, TSQL_ALIASES),
+	parseType: (t) => parseType(t, TSQL_ALIASES, "tsql"),
 	division: "integer",
 	special: tsqlSpecial, // XML data type methods: value()/exist()/query() typed by method + sqltype
 };

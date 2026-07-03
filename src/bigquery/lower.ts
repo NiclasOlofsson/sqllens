@@ -1961,6 +1961,14 @@ function exprToNameParts(node: ParserRuleContext): string[] | undefined {
 	return id ? [identText(id)] : undefined;
 }
 
+// NOTE (editor-gold Task 2, quotedness-survives-lowering): BigQuery is the DOCUMENTED exception to
+// the keep-raw convention the other dialects follow. Backticks are not case-quoting here — the fold
+// rules (src/ident/fold.ts) treat a quoted identifier exactly like its unquoted twin for every kind
+// (tables preserve case, everything else lowers, quoted or not) — so stripping the delimiter at
+// lower time loses NO identity information. And it is structurally required: one backticked token
+// may embed a dotted path (`proj.ds.t`) that pathParts/dashedPathParts must split into name parts.
+// (Backslash-escaped backticks inside a quoted identifier are not unescaped here — pre-existing,
+// exotic; fold.ts documents the escape rule.)
 function identText(node: ParserRuleContext): string {
 	return stripBackticks(node.getText());
 }

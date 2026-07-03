@@ -1,7 +1,7 @@
 import type { Location, Position, DocumentHighlight } from "vscode-languageserver-types";
 import { DocumentHighlightKind } from "vscode-languageserver-types";
-import { referencesAt, type Occurrence, type Schema, type SqlDocument } from "../../index.js";
-import { rangeFromSpan } from "../ranges.js";
+import { referencesAt, type Occurrence, type SchemaSource, type SqlDocument } from "../../index.js";
+import { cellBaseOf, rangeFromSpan, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Find-all-references + document highlight: both are pure translations over the
@@ -21,16 +21,20 @@ export function computeReferences(
 	position: Position,
 	includeDeclaration: boolean,
 	uri: string,
-	schema?: Schema,
+	schema?: SchemaSource,
 ): Location[] {
 	const off = doc.lines.offsetAt(position.line, position.character);
-	const occ = referencesAt(doc.scopes, off, schema, doc.ast);
+	const cell = doc.cellAt(off);
+	const scopes = cell ? cell.scopes : doc.scopes;
+	const ast = cell ? cell.ast : doc.ast;
+	const base = cellBaseOf(doc, cell);
+	const occ = referencesAt(scopes, cell ? off - cell.span.start : off, schema, ast);
 	if (!occ) return [];
 	const out: Location[] = [];
 	const seen = new Set<string>();
 	for (const o of occ.occurrences) {
 		if (o.role === "declaration" && !includeDeclaration) continue;
-		const range = rangeFromSpan(o.span);
+		const range = shiftRange(rangeFromSpan(o.span), base);
 		const key = `${range.start.line}:${range.start.character}:${range.end.line}:${range.end.character}`;
 		if (seen.has(key)) continue;
 		seen.add(key);
@@ -39,12 +43,20 @@ export function computeReferences(
 	return out;
 }
 
-export function computeDocumentHighlight(doc: SqlDocument, position: Position, schema?: Schema): DocumentHighlight[] {
+export function computeDocumentHighlight(
+	doc: SqlDocument,
+	position: Position,
+	schema?: SchemaSource,
+): DocumentHighlight[] {
 	const off = doc.lines.offsetAt(position.line, position.character);
-	const occ = referencesAt(doc.scopes, off, schema, doc.ast);
+	const cell = doc.cellAt(off);
+	const scopes = cell ? cell.scopes : doc.scopes;
+	const ast = cell ? cell.ast : doc.ast;
+	const base = cellBaseOf(doc, cell);
+	const occ = referencesAt(scopes, cell ? off - cell.span.start : off, schema, ast);
 	if (!occ) return [];
 	return occ.occurrences.map((o: Occurrence) => ({
-		range: rangeFromSpan(o.span),
+		range: shiftRange(rangeFromSpan(o.span), base),
 		kind: o.role === "declaration" ? DocumentHighlightKind.Write : DocumentHighlightKind.Read,
 	}));
 }

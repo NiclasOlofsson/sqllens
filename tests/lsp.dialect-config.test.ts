@@ -32,6 +32,19 @@ describe("loadDialectConfig", () => {
 		expect(c.dialectFor("models/x.sql")).toBe("databricks");
 	});
 
+	it("accepts every wired dialect (all eight), none skipped as unknown", () => {
+		const all = mkdtempSync(join(tmpdir(), "sqllens-all-"));
+		const dialects = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+		writeFileSync(
+			join(all, ".sqllens.json"),
+			JSON.stringify({ dialects: dialects.map((d) => ({ files: `${d}/**/*.sql`, dialect: d })) }),
+		);
+		const c = loadDialectConfig(all);
+		for (const d of dialects) expect(c.dialectFor(`${d}/a.sql`)).toBe(d);
+		expect(c.warnings.some((w) => /Unknown dialect/.test(w))).toBe(false);
+		rmSync(all, { recursive: true, force: true });
+	});
+
 	it("falls back to default when no rule matches", () => {
 		const c = loadDialectConfig(dir);
 		expect(c.dialectFor("notes.txt")).toBe("databricks");

@@ -6,6 +6,7 @@ import { lower } from "../../src/trino/lower.js";
 import { parseTrino } from "../../src/trino/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { walkIr } from "../helpers/ir-walk.js";
 
@@ -93,6 +94,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 			const tally = new Map<string, number>();
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
+			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
 			let scoped = 0;
 			runDocsRatchet(DOCS_CORPUS, (sql) => parseTrino(sql).errors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
@@ -104,7 +106,9 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
-						deriveSymbols(resolveScopes(ir, "trino"));
+						const scopes = resolveScopes(ir, "trino");
+						deriveSymbols(scopes);
+						sweepCallDiagnostics(scopes, rel, callHits);
 						scoped++;
 					} catch (e) {
 						throwers.push(`${rel}: ${String(e).slice(0, 120)}`);
@@ -122,6 +126,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `lower/resolveScopes threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
+			expect(
+				callHits,
+				`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);

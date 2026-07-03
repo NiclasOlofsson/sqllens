@@ -1,6 +1,6 @@
 import type { Hover, Position } from "vscode-languageserver-types";
-import { formatType, type Schema, type SqlDocument } from "../../index.js";
-import { rangeFromCst, rangeFromSpan } from "../ranges.js";
+import { formatType, type SchemaSource, type SqlDocument } from "../../index.js";
+import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.js";
 import { symbolAt } from "../sym-at.js";
 
 // ---------------------------------------------------------------------------
@@ -11,13 +11,18 @@ import { symbolAt } from "../sym-at.js";
 // Meta: Claude Code's LSP tool speaks this method (hover).
 // ---------------------------------------------------------------------------
 
-export function computeHover(doc: SqlDocument, position: Position, schema?: Schema): Hover | null {
+export function computeHover(doc: SqlDocument, position: Position, schema?: SchemaSource): Hover | null {
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const hit = doc.nodeAt(off);
 	if (hit) {
-		const type = doc.analyze(schema).types.typeOf(hit.expr, hit.scope);
+		const types = doc.analyze(schema).types;
+		const type = types.typeOf(hit.expr, hit.scope);
 		if (type.kind !== "unknown") {
-			return { contents: fence(formatType(type)), range: rangeFromCst(hit.expr.cst) };
+			// hit.expr.cst is CELL-relative (doc.nodeAt routes to the owning cell) — shift to doc coords.
+			const range = shiftRange(rangeFromCst(hit.expr.cst), cellBaseAt(doc, off));
+			const nullability = types.nullabilityOf(hit.expr, hit.scope);
+			const suffix = nullability === "notnull" ? " — not null" : nullability === "nullable" ? " — nullable" : "";
+			return { contents: fence(formatType(type) + suffix), range };
 		}
 	}
 	const sym = symbolAt(doc, doc.analyze(schema).symbols, off);

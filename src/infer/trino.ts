@@ -33,7 +33,7 @@ export const TRINO_ALIASES: Record<string, string> = {
 };
 
 export function trinoParseType(text: string): Type {
-	return parseType(text, TRINO_ALIASES);
+	return parseType(text, TRINO_ALIASES, "trino");
 }
 
 const S = scalar("string");

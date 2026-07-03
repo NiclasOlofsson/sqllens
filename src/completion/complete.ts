@@ -16,8 +16,11 @@
 
 import { Token } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
+import { nodeAt } from "../document/node-at.js";
+import { displayName, foldIdentifier } from "../ident/fold.js";
 import { inferDialect } from "../infer/dialect.js";
-import type { Schema } from "../qualify/schema.js";
+import type { QueryExpr } from "../ir/ir.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
 import { COMPLETION_CONFIG, type CompletionConfig } from "./config.js";
@@ -37,7 +40,7 @@ export interface Completion {
  * (table names + column types). NEVER throws: on broken / mid-edit input it still returns the
  * keyword candidates the walk can reach.
  */
-export function complete(doc: SqlDocument, offset: number, schema?: Schema): Completion[] {
+export function complete(doc: SqlDocument, offset: number, schema?: SchemaSource): Completion[] {
 	try {
 		return collect(doc, offset, schema);
 	} catch {
@@ -46,17 +49,27 @@ export function complete(doc: SqlDocument, offset: number, schema?: Schema): Com
 	}
 }
 
-function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[] {
+function collect(doc: SqlDocument, offset: number, schema?: SchemaSource): Completion[] {
 	const dialect = doc.dialect;
 	const cfg = COMPLETION_CONFIG[dialect];
 
+	// Route to the statement CELL owning the caret: the ATN walk parses that cell's text (with a
+	// cell-relative caret) and the visible-column lookup runs over that cell's own scope tree — so a
+	// caret in statement 2 of a multi-statement document completes through its real scope, not the
+	// compound facade. Single-cell: the cell IS the document, so this is identical to a whole-doc walk.
+	const cell = doc.cellAt(offset);
+	const cellText = cell ? cell.text : doc.text;
+	const cellOffset = cell ? offset - cell.span.start : offset;
+	const cellScopes = cell ? cell.scopes : doc.scopes;
+	const cellAst = cell ? cell.ast : doc.ast;
+
 	// Completion runs its own error-tolerant parse to position the walk (expected — the walk needs
 	// a parser whose ATN we DFS, not the document's valid-parse CST).
-	const m = makeParser(doc.text, dialect);
+	const m = makeParser(cellText, dialect);
 	// runEntry() first: the CommonTokenStream fills lazily, so the full token list (needed to find
 	// the caret token) only exists after the parse drives it.
 	m.runEntry();
-	const caretIdx = caretTokenIndex(m, offset);
+	const caretIdx = caretTokenIndex(m, cellOffset);
 	const cand = collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
 
 	const out: Completion[] = [];
@@ -79,15 +92,15 @@ function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[
 
 	// tables — relation-name slot, and only when a schema lists them.
 	if (atTable && schema) {
-		for (const t of schema.tables()) add({ label: t, kind: "table" });
+		for (const t of schema.tables(dialect)) add({ label: t, kind: "table" });
 	}
 
 	// columns — value/column slot: the columns visible from the enclosing scope, plus a broken-input
 	// fallback that reads FROM/JOIN relation names straight off the token stream (the document's batch
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
-		for (const c of visibleColumns(doc, offset, schema)) add(c);
-		if (schema) for (const c of fromRelationColumns(m, cfg, schema)) add(c);
+		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
+		if (schema) for (const c of fromRelationColumns(m, cfg, schema, dialect)) add(c);
 	}
 
 	// functions — value/column slot: the dialect's inference-registry function names.
@@ -134,7 +147,12 @@ function intersects(a: Set<number>, b: Set<number>): boolean {
  * surface those tables' schema columns. Token-driven, so it survives the mis-parse; gated by config
  * token sets, so the core stays dialect-neutral.
  */
-function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schema): Completion[] {
+function fromRelationColumns(
+	m: MadeParser,
+	cfg: CompletionConfig,
+	schema: SchemaSource,
+	dialect?: string,
+): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
 	// Default-channel tokens only — hidden whitespace/comments sit between FROM and the name.
 	const toks = m.tokenStream.getTokens().filter((t) => t.channel === Token.DEFAULT_CHANNEL);
@@ -145,37 +163,45 @@ function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schem
 		if (!t || !n) continue;
 		if (!cfg.relationKeywordTokens.has(t.type)) continue;
 		if (!cfg.nameTokens.has(n.type)) continue;
-		const cols = schema.columnsFor([n.text ?? ""]);
+		const cols = schema.columnsFor([n.text ?? ""], dialect);
 		if (!cols) continue;
 		for (const c of cols) out.push({ label: c.name, kind: "column", detail: c.type });
 	}
 	return out;
 }
 
-/** The columns visible from the scope enclosing `offset`. Derived sources / CTEs expose their own
- *  output column names; base-table sources get their columns (and types) from the schema. */
-function visibleColumns(doc: SqlDocument, offset: number, schema?: Schema): Completion[] {
-	const scope = enclosingScope(doc, offset);
+/** The columns visible from the scope enclosing `offset` (a CELL-relative offset into `scopes`).
+ *  Derived sources / CTEs expose their own output column names; base-table sources get their columns
+ *  (and types) from the schema. */
+function visibleColumns(
+	scopes: ScopeTree,
+	ast: QueryExpr,
+	dialect: string,
+	offset: number,
+	schema?: SchemaSource,
+): Completion[] {
+	const scope = enclosingScope(scopes, ast, offset);
 	if (!scope) return [];
 	const out: Completion[] = [];
 	const seen = new Set<string>();
 	for (const src of scope.sources.values()) {
-		for (const col of columnsOf(src, schema)) {
-			const key = col.label.toLowerCase();
+		for (const col of columnsOf(src, dialect, schema)) {
+			// Dedup by folded IDENTITY (quoted/unquoted twins collapse); labels render via displayName.
+			const key = foldIdentifier(col.label, dialect);
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push(col);
+			out.push({ ...col, label: displayName(col.label, dialect) });
 		}
 	}
 	return out;
 }
 
 /** The scope owning `offset`: the IR node's scope if one covers it, else the deepest scope whose
- *  body CST span covers the offset, else the root. */
-function enclosingScope(doc: SqlDocument, offset: number): Scope | undefined {
-	const hit = doc.nodeAt(offset)?.scope;
+ *  body CST span covers the offset, else the root. `offset` is relative to `scopes`/`ast`. */
+function enclosingScope(scopes: ScopeTree, ast: QueryExpr, offset: number): Scope | undefined {
+	const hit = nodeAt(scopes, offset, ast)?.scope;
 	if (hit) return hit;
-	return deepestScopeAt(doc.scopes, offset) ?? doc.scopes.root;
+	return deepestScopeAt(scopes, offset) ?? scopes.root;
 }
 
 /** The deepest scope whose `body.cst` source span covers `offset`. */
@@ -202,12 +228,12 @@ function deepestScopeAt(tree: ScopeTree, offset: number): Scope | undefined {
 /** The completion items for one visible source's columns. Derived sources (CTE / subquery / pipe
  *  relation / lateral) carry their output column names directly; a base table's columns come from
  *  the schema (with types as `detail`). A source whose columns aren't determinable contributes none. */
-function columnsOf(src: ResolvedSource, schema?: Schema): Completion[] {
+function columnsOf(src: ResolvedSource, dialect: string, schema?: SchemaSource): Completion[] {
 	if (src.kind === "table") {
 		// Declared column aliases win; otherwise look the table up in the schema (names + types).
 		const declared = src.source.columnAliases;
 		if (declared) return declared.map((name) => ({ label: name, kind: "column" as const }));
-		const cols = schema?.columnsFor(src.name);
+		const cols = schema?.columnsFor(src.name, dialect);
 		return (cols ?? []).map((c) => ({ label: c.name, kind: "column" as const, detail: c.type }));
 	}
 	const names = derivedOutputs(src);

@@ -62,7 +62,8 @@ A document's dialect is configured, never guessed. On initialize, the server rea
 or malformed config is non-fatal: every file falls back to the `databricks` dialect
 and a warning is logged over the LSP `window/logMessage` channel.
 
-Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`.
+Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`, `postgres`,
+`duckdb`, `trino`.
 
 Example `.sqllens.json`:
 
@@ -89,6 +90,49 @@ Example `schema.json`:
   "sales": { "id": "bigint", "amount": "decimal(10,2)", "region": "string" }
 }
 ```
+
+## Embedding: handing the server a live catalog (`SchemaSource`)
+
+The stdio binary reads a **static** catalog from the `.sqllens.json` `schema` file. A
+host that **embeds** the server (calls `startServer` itself, rather than launching the
+stdio binary) can instead supply a **live** catalog — any `SchemaSource` — as the
+second argument:
+
+```ts
+import { startServer } from "sqllens/lsp/server"; // in-repo: ../lsp/server.js
+import { CallbackSchema, type TableResolver } from "sqllens";
+
+const resolver: TableResolver = {
+  // Sync read from the host's warm cache; undefined = not-yet-loaded (recorded as a miss).
+  resolve: (parts) => cache.get(parts.join(".")),
+  // Async warm for the missed tables — fetched from the warehouse's information_schema, etc.
+  fetch: async (missing) => {
+    for (const parts of missing) cache.set(parts.join("."), await loadColumns(parts));
+  },
+};
+startServer(connection, { schema: new CallbackSchema(resolver) });
+```
+
+An injected `schema` is the active catalog for **every** document and takes precedence
+over the `.sqllens.json` `schema` file (the file path is the zero-config default; the
+embedding slot is the programmatic override).
+
+This is the answer to a big warehouse where a full upfront `SchemaMapping` is
+infeasible. `CallbackSchema` resolves each table on demand:
+
+- Analysis stays **100% synchronous** — `resolve` answers from whatever the host cache
+  holds now; an unknown table degrades to an unknown type, exactly like a missing
+  mapping entry (never-wrong — no new diagnostic class).
+- Every table the resolver couldn't answer is recorded as a **miss**. After each
+  diagnostics publish, if there are fresh misses the server warms the resolver in the
+  background (`prime()`) and, when a table is revealed, **re-publishes** diagnostics for
+  that document — a cold read squiggles once and self-heals when the catalog warms.
+- `prime()` **coalesces** concurrent calls and bumps a monotonic `version` only when a
+  new table actually arrives, so the re-publish is version-guarded (a stale prime never
+  overwrites a newer edit's diagnostics).
+
+`SchemaSource`, `CallbackSchema`, and `TableResolver` are exported from the library
+barrel (`sqllens` / `src/index.ts`).
 
 ## Running
 

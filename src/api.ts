@@ -34,8 +34,11 @@ import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
 import { qualify as qualifyScopes, type Qualification } from "./qualify/qualify.js";
 import { Schema } from "./qualify/schema.js";
+import { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
 import { inferType } from "./infer/infer.js";
 import type { Type } from "./infer/types.js";
+import { inferNullability, type Nullability } from "./infer/nullability.js";
+export type { Nullability } from "./infer/nullability.js";
 import {
 	lineage as lineageScopes,
 	originsOf as exprOriginsOf,
@@ -127,7 +130,7 @@ export interface Analysis {
  * and return each tier as a first-class terminal value. With no schema the schema-fed tiers still
  * answer what they can (scopes, symbols) and stay empty/`unknown` where a catalog is required.
  */
-export function analyze(sql: string, dialect: Dialect, opts: { schema?: Schema } = {}): Analysis {
+export function analyze(sql: string, dialect: Dialect, opts: { schema?: SchemaSource } = {}): Analysis {
 	const schema = opts.schema ?? new Schema({});
 	const { ast, errors } = parse(sql, dialect);
 	const scopes = resolveScopes(ast, dialect);
@@ -180,17 +183,21 @@ function isScopeTree(x: unknown): x is ScopeTree {
 // ---------------------------------------------------------------------------
 
 /** Schema-fed resolution. Accepts a ScopeTree (no rework), an IR, or a raw string. */
-export function qualify(x: string | QueryExpr | ScopeTree, schema: Schema, opts: DialectOpts = {}): Qualification {
+export function qualify(
+	x: string | QueryExpr | ScopeTree,
+	schema: SchemaSource,
+	opts: DialectOpts = {},
+): Qualification {
 	return qualifyScopes(toScopes(x, opts), schema);
 }
 
 /** Column lineage. Accepts a ScopeTree (no rework), an IR, or a raw string. */
-export function lineage(x: string | QueryExpr | ScopeTree, schema: Schema, opts: DialectOpts = {}): Lineage {
+export function lineage(x: string | QueryExpr | ScopeTree, schema: SchemaSource, opts: DialectOpts = {}): Lineage {
 	return new Lineage(lineageScopes(toScopes(x, opts), schema));
 }
 
 /** Symbol model. Accepts a ScopeTree (no rework), an IR, or a raw string. Schema is optional. */
-export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: Schema, opts: DialectOpts = {}): Sym[] {
+export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: SchemaSource, opts: DialectOpts = {}): Sym[] {
 	return deriveSymbolsScopes(toScopes(x, opts), schema);
 }
 
@@ -202,11 +209,17 @@ export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: Schema
 /** Per-expression type access. `typeOf(expr, scope)` returns the inferred `Type` (a typed union;
  *  `unknown` when undeterminable — no schema, or no rule), never a guess. */
 export class TypeInfo {
-	constructor(private readonly schema: Schema) {}
+	constructor(private readonly schema: SchemaSource) {}
 
 	/** The inferred type of an expression evaluated in a scope. */
 	typeOf(expr: Expr, scope: Scope): Type {
 		return inferType(expr, scope, this.schema);
+	}
+
+	/** The inferred nullability of an expression evaluated in a scope — "notnull"/"nullable" only
+	 *  when provable from expression shape + schema + join shape, else "unknown" (never guessed). */
+	nullabilityOf(expr: Expr, scope: Scope): Nullability {
+		return inferNullability(expr, scope, this.schema);
 	}
 }
 
@@ -243,8 +256,9 @@ export type { Token, TokenRole } from "./token/token.js";
 // It composes the surface above (parse/toScopes/qualify/deriveSymbols/TypeInfo); the import cycle
 // (api re-exports SqlDocument, document imports from api) is safe because document.ts only calls
 // these at call time, never at module-eval time.
-export { SqlDocument, type DocumentAnalysis } from "./document/document.js";
+export { SqlDocument, type DocumentAnalysis, type StatementCell } from "./document/document.js";
 export { LineIndex } from "./document/line-index.js";
+export type { StatementCellSpan } from "./document/split.js";
 
 // Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
 // tables/columns + function names at the caret). Total: never throws.
@@ -272,6 +286,11 @@ export { referencesAt, type Occurrence, type Occurrences } from "./references/re
 // known X for this dialect?" checks. Computed once per dialect and cached.
 export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
 
+// The catalog interface the whole pipeline resolves against, plus its resolve-on-demand
+// implementation. `Schema` (a full upfront mapping) and `CallbackSchema` (a host-driven
+// lazy resolver whose prime() bumps a version to invalidate SqlDocument.analyze's memo) both
+// satisfy `SchemaSource`; every analysis entry point accepts the interface.
+export { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
 // The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
 // spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
 export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";

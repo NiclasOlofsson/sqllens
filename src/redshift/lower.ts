@@ -20,6 +20,7 @@ import type {
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { displayName } from "../ident/fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
@@ -223,8 +224,13 @@ function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
 
 // --- query statement: WITH / set ops / ORDER BY / LIMIT -----------------------
 
-/** selectstmt: select_no_parens | select_with_parens */
+/** selectstmt: select_no_parens | select_with_parens. Also accepts a bare select_no_parens node
+ *  directly — innerSelect() returns the UNWRAPPED select_no_parens, and feeding that back in here
+ *  used to fall through both child probes and yield an empty flagged body, silently emptying EVERY
+ *  parenthesized subquery (FROM/IN/EXISTS/scalar). Found by the Task-2 quoted-identifier pipeline
+ *  test; the fix routes it straight to lowerSelectNoParens. */
 function lowerSelectStmt(stmt: ParserRuleContext): QueryExpr {
+	if (stmt.ruleIndex === P.RULE_select_no_parens) return lowerSelectNoParens(stmt);
 	const noParens = directChildrenOfRule(stmt, P.RULE_select_no_parens)[0];
 	if (noParens) return lowerSelectNoParens(noParens);
 	const withParens = directChildrenOfRule(stmt, P.RULE_select_with_parens)[0];
@@ -781,7 +787,7 @@ function collectShallow(node: ParseTree, ruleIndex: number): ParserRuleContext[]
 function stripStringQuotes(text: string): string {
 	if (text.length >= 2 && text[0] === "'" && text[text.length - 1] === "'")
 		return text.slice(1, -1).replace(/''/g, "'");
-	return stripQuotes(text);
+	return text; // non-string text passes through raw (identifier delimiters survive to the IR)
 }
 
 // --- projections --------------------------------------------------------------
@@ -1343,7 +1349,7 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const app = directChildrenOfRule(node, P.RULE_func_application)[0];
 	if (!app) return otherExpr(node);
 	const fname = firstShallow(app, P.RULE_func_name);
-	const name = (fname ? lastName(fname) : (leftmostToken(app) ?? "")).toLowerCase();
+	const name = (fname ? displayName(lastName(fname), "redshift") : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
 	// WITHIN GROUP (ORDER BY …) keys feed the aggregate — include as args.
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];
@@ -1664,7 +1670,6 @@ function nameParts(node: ParserRuleContext): string[] {
 	return node
 		.getText()
 		.split(".")
-		.map(stripQuotes)
 		.filter((p) => p.length > 0);
 }
 
@@ -1674,19 +1679,14 @@ function lastName(node: ParserRuleContext): string {
 	return parts.length ? parts[parts.length - 1] : node.getText();
 }
 
-/** Identifier text with quotes stripped (handles colid/name/identifier subtrees). */
+/** Identifier text, RAW — delimiters intact (quotedness must survive into the IR; comparisons
+ *  fold via foldIdentifier, display via displayName). */
 function textOf(node: ParserRuleContext): string {
-	return stripQuotes(node.getText());
+	return node.getText();
 }
 
 function textOrEmpty(node: ParserRuleContext | undefined): string {
-	return node ? stripQuotes(node.getText()) : "";
-}
-
-function stripQuotes(text: string): string {
-	if (text.length >= 2 && text[0] === '"' && text[text.length - 1] === '"')
-		return text.slice(1, -1).replace(/""/g, '"');
-	return text;
+	return node?.getText() ?? "";
 }
 
 function otherExpr(node: ParserRuleContext): Expr {

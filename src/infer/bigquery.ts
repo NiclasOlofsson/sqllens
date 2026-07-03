@@ -29,7 +29,7 @@ export const BQ_ALIASES: Record<string, string> = {
 };
 
 export function bigqueryParseType(text: string): Type {
-	return parseType(text, BQ_ALIASES);
+	return parseType(text, BQ_ALIASES, "bigquery");
 }
 
 export function bigqueryLiteral(text: string): Type {

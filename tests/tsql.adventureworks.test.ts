@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { corpusPath } from "./helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
+import { displayName, foldIdentifier } from "../src/ident/fold.js";
 import { inferType } from "../src/infer/infer.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { qualify } from "../src/qualify/qualify.js";
@@ -77,10 +78,12 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 
 	it("traces an aliased view column back to its base table (lineage on real T-SQL)", () => {
 		// [HumanResources].[vEmployeeDepartment]: `d.[Name] AS [Department]` where d = HumanResources.Department.
+		// IR names are stored RAW (bracketed as written); look up / render via the identity fold +
+		// displayName — Task 2 keep-raw.
 		const v = view("HumanResources.vEmployeeDepartment");
 		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
-		const dept = lineage(tree, schema).find((c) => c.output === "Department");
-		expect(dept?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain(
+		const dept = lineage(tree, schema).find((c) => foldIdentifier(c.output, "tsql") === "department");
+		expect(dept?.origins.map((o) => [...o.table, o.column].map((p) => displayName(p, "tsql")).join("."))).toContain(
 			"HumanResources.Department.Name",
 		);
 	}, 30000);
@@ -91,7 +94,9 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 		const tree = resolveScopes(lower(parseTSql(v.body).tree), "tsql");
 		const body = tree.root.body;
 		if (body.kind !== "select") throw new Error("select");
-		const startDate = body.projections.find((p) => p.name === "StartDate");
+		const startDate = body.projections.find(
+			(p) => p.name !== undefined && foldIdentifier(p.name, "tsql") === "startdate",
+		);
 		expect(inferType(startDate!.expr, tree.root, schema)).toEqual({ kind: "scalar", name: "date" });
 	}, 30000);
 

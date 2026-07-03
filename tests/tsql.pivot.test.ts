@@ -19,10 +19,12 @@ describe("T-SQL PIVOT / UNPIVOT", () => {
 		"PIVOT (SUM(amt) FOR yr IN ([2002], [2003])) AS pvt";
 
 	it("models PIVOT (values, FOR column, agg column, alias)", () => {
+		// The IN-list names are stored RAW (Task 2 keep-raw — [2002] ≡ 2002 under the T-SQL fold);
+		// the resolution proof is the no-false-diagnostics assertion in the next case.
 		const body = tree(pivotSql).root.body;
 		if (body.kind !== "select") throw new Error("select");
 		expect(body.pivot).toMatchObject({
-			values: ["2002", "2003"],
+			values: ["[2002]", "[2003]"],
 			forColumns: ["yr"],
 			aggColumns: ["amt"],
 			alias: "pvt",
@@ -33,7 +35,7 @@ describe("T-SQL PIVOT / UNPIVOT", () => {
 		const t = tree(pivotSql);
 		const q = qualify(t, new Schema({}));
 		expect(q.diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);
-		expect(q.columnsOf(t.root)).toEqual(["cat", "2002", "2003"]);
+		expect(q.columnsOf(t.root)).toEqual(["cat", "[2002]", "[2003]"]);
 	});
 
 	it("models UNPIVOT (value column, name column, removed inputs, alias) and resolves u.col", () => {

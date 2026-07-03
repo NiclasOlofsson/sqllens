@@ -1,7 +1,8 @@
+import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
 import type { Expr, QueryExpr } from "../ir/ir.js";
-import type { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
-import { columnNamesOf, normalizeName, resolveColumnSource } from "../sema/resolve.js";
+import { columnNamesOf, resolveColumnSource } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Column-level lineage — for each output column of a query, the base-table
@@ -29,16 +30,16 @@ export interface ColumnLineage {
 }
 
 /** Lineage of a query's output columns: each output → the base-table columns it derives from. */
-export function lineage(tree: ScopeTree, schema: Schema): ColumnLineage[] {
+export function lineage(tree: ScopeTree, schema: SchemaSource): ColumnLineage[] {
 	return bodyLineage(tree.root, schema, new Set());
 }
 
 /** The base-table origins of a single expression (e.g. a projection or a column reference). */
-export function originsOf(expr: Expr, scope: Scope, schema: Schema): Origin[] {
-	return dedup(exprOrigins(expr, scope, schema, new Set()));
+export function originsOf(expr: Expr, scope: Scope, schema: SchemaSource): Origin[] {
+	return dedup(exprOrigins(expr, scope, schema, new Set()), scope.dialect);
 }
 
-function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+function bodyLineage(scope: Scope, schema: SchemaSource, seen: Set<Scope>): ColumnLineage[] {
 	if (scope.pipeStage) return pipeStageLineage(scope, schema, seen);
 	const body = scope.body;
 	if (body.kind === "pipe") {
@@ -51,7 +52,7 @@ function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLine
 		const right = scope.branches ? bodyLineage(scope.branches.right, schema, seen) : [];
 		return left.map((l, i) => ({
 			output: l.output,
-			origins: dedup([...l.origins, ...(right[i]?.origins ?? [])]),
+			origins: dedup([...l.origins, ...(right[i]?.origins ?? [])], scope.dialect),
 		}));
 	}
 	return projectionLineage(scope, body.projections, schema, seen);
@@ -61,7 +62,7 @@ function bodyLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLine
 function projectionLineage(
 	scope: Scope,
 	projections: import("../ir/ir.js").Projection[],
-	schema: Schema,
+	schema: SchemaSource,
 	seen: Set<Scope>,
 ): ColumnLineage[] {
 	const out: ColumnLineage[] = [];
@@ -70,7 +71,7 @@ function projectionLineage(
 			const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
 			out.push(...starLineage(scope, qualifier, schema, seen));
 		} else if (p.name !== undefined) {
-			out.push({ output: p.name, origins: dedup(exprOrigins(p.expr, scope, schema, seen)) });
+			out.push({ output: p.name, origins: dedup(exprOrigins(p.expr, scope, schema, seen), scope.dialect) });
 		}
 		// anonymous projection → no nameable output, skip
 	}
@@ -78,7 +79,7 @@ function projectionLineage(
 }
 
 /** Lineage of a pipe stage's output columns, flowing the incoming relation through the stage. */
-function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
+function pipeStageLineage(scope: Scope, schema: SchemaSource, seen: Set<Scope>): ColumnLineage[] {
 	const stage = scope.pipeStage!;
 	// The incoming relation, each column traced to its origins (the "relation" source under key "").
 	const passthrough = (): ColumnLineage[] => starLineage(scope, undefined, schema, seen);
@@ -95,27 +96,30 @@ function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): Colum
 				if (g.kind === "column")
 					keys.push({
 						output: g.parts[g.parts.length - 1],
-						origins: dedup(exprOrigins(g, scope, schema, seen)),
+						origins: dedup(exprOrigins(g, scope, schema, seen), scope.dialect),
 					});
 			}
 			return [...aggs, ...keys];
 		}
 		case "drop": {
-			const dropped = new Set(stage.drop.map(normalizeName));
-			return passthrough().filter((l) => !dropped.has(normalizeName(l.output)));
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const dropped = new Set(stage.drop.map(fold));
+			return passthrough().filter((l) => !dropped.has(fold(l.output)));
 		}
 		case "rename": {
-			const map = new Map(stage.renames.map((r) => [normalizeName(r.from), r.to]));
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const map = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
 			return passthrough().map((l) => ({
-				output: map.get(normalizeName(l.output)) ?? l.output,
+				output: map.get(fold(l.output)) ?? l.output,
 				origins: l.origins,
 			}));
 		}
 		case "set": {
-			const set = new Map(stage.assignments.map((a) => [normalizeName(a.column), a.expr]));
+			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const set = new Map(stage.assignments.map((a) => [fold(a.column), a.expr]));
 			return passthrough().map((l) => {
-				const e = set.get(normalizeName(l.output));
-				return e ? { output: l.output, origins: dedup(exprOrigins(e, scope, schema, seen)) } : l;
+				const e = set.get(fold(l.output));
+				return e ? { output: l.output, origins: dedup(exprOrigins(e, scope, schema, seen), scope.dialect) } : l;
 			});
 		}
 		case "join":
@@ -137,20 +141,25 @@ function pipeStageLineage(scope: Scope, schema: Schema, seen: Set<Scope>): Colum
 }
 
 /** Expand `*` / `t.*`: each source column becomes an output, traced to its origins. */
-function starLineage(scope: Scope, qualifier: string[] | undefined, schema: Schema, seen: Set<Scope>): ColumnLineage[] {
-	const want = qualifier ? normalizeName(qualifier[qualifier.length - 1] ?? "") : undefined;
+function starLineage(
+	scope: Scope,
+	qualifier: string[] | undefined,
+	schema: SchemaSource,
+	seen: Set<Scope>,
+): ColumnLineage[] {
+	const want = qualifier ? (qualifier[qualifier.length - 1] ?? "") : undefined;
 	const out: ColumnLineage[] = [];
 	for (const [key, src] of scope.sources) {
-		if (want !== undefined && key !== want) continue;
-		for (const col of columnNamesOf(src, schema) ?? []) {
-			out.push({ output: col, origins: dedup(columnOrigins(src, col, schema, seen)) });
+		if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
+		for (const col of columnNamesOf(src, schema, undefined, scope.dialect) ?? []) {
+			out.push({ output: col, origins: dedup(columnOrigins(src, col, schema, seen), scope.dialect) });
 		}
 	}
 	return out;
 }
 
 /** The base-table columns an expression derives from — the union over every contributing column. */
-function exprOrigins(expr: Expr, scope: Scope, schema: Schema, seen: Set<Scope>): Origin[] {
+function exprOrigins(expr: Expr, scope: Scope, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	switch (expr.kind) {
 		case "column":
 			return columnRefOrigins(expr.parts, scope, schema, seen);
@@ -191,14 +200,14 @@ function exprOrigins(expr: Expr, scope: Scope, schema: Schema, seen: Set<Scope>)
 	}
 }
 
-function columnRefOrigins(parts: string[], scope: Scope, schema: Schema, seen: Set<Scope>): Origin[] {
+function columnRefOrigins(parts: string[], scope: Scope, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	const found = resolveColumnSource(scope, parts, schema);
 	return found ? columnOrigins(found.source, found.column, schema, seen) : [];
 }
 
 /** The origins of `column` exposed by a source — a base table is a leaf; a derived relation
  *  recurses into the projection (or source) that produces the column. */
-function columnOrigins(src: ResolvedSource, column: string, schema: Schema, seen: Set<Scope>): Origin[] {
+function columnOrigins(src: ResolvedSource, column: string, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	if (src.kind === "table") return [{ table: src.name, column }];
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
@@ -211,26 +220,29 @@ function derivedOrigins(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: Schema,
+	schema: SchemaSource,
 	seen: Set<Scope>,
 ): Origin[] {
 	if (seen.has(child)) return []; // recursive CTE — stop
 	seen.add(child); // guard the whole subtree (incl. a set-op body that re-references this relation)
 	try {
+		const d = child.dialect;
 		// A set-op / pipe / pipe-stage relation has no plain projection list — trace via its lineage.
 		if (child.pipeStage || child.body.kind === "setop" || child.body.kind === "pipe") {
 			const lin = bodyLineage(child, schema, seen);
-			const i = aliases ? aliases.findIndex((a) => eq(a, column)) : lin.findIndex((l) => eq(l.output, column));
+			const i = aliases
+				? aliases.findIndex((a) => eq(a, column, d))
+				: lin.findIndex((l) => eq(l.output, column, d));
 			return i >= 0 ? (lin[i]?.origins ?? []) : [];
 		}
 		if (child.body.kind !== "select") return [];
 		const projs = child.body.projections;
 		let producer: Expr | undefined;
 		if (aliases) {
-			const i = aliases.findIndex((a) => eq(a, column));
+			const i = aliases.findIndex((a) => eq(a, column, d));
 			producer = i >= 0 ? projs[i]?.expr : undefined;
 		} else {
-			producer = projs.find((p) => !p.isStar && p.name !== undefined && eq(p.name, column))?.expr;
+			producer = projs.find((p) => !p.isStar && p.name !== undefined && eq(p.name, column, d))?.expr;
 		}
 		// A named projection produces it directly; otherwise it flows through a `*`/source — resolve it
 		// as a column reference inside the child scope.
@@ -240,7 +252,7 @@ function derivedOrigins(
 	}
 }
 
-function subqueryOrigins(query: QueryExpr, schema: Schema, seen: Set<Scope>, dialect: string): Origin[] {
+function subqueryOrigins(query: QueryExpr, schema: SchemaSource, seen: Set<Scope>, dialect: string): Origin[] {
 	// A scalar/EXISTS subquery contributes its output column's origins. Its scope is built fresh;
 	// correlated refs in the body bind to nothing here, which is fine — we trace the value column.
 	const root = resolveScopes(query, dialect).root;
@@ -248,12 +260,14 @@ function subqueryOrigins(query: QueryExpr, schema: Schema, seen: Set<Scope>, dia
 	return exprOrigins(root.body.projections[0].expr, root, schema, seen);
 }
 
-function dedup(origins: Origin[]): Origin[] {
+function dedup(origins: Origin[], dialect?: string): Origin[] {
 	const byKey = new Map<string, Origin>();
-	for (const o of origins) byKey.set(`${o.table.map(normalizeName).join(".")}.${normalizeName(o.column)}`, o);
+	for (const o of origins) {
+		byKey.set(`${foldTableName(o.table, dialect).join(".")}.${foldIdentifier(o.column, dialect)}`, o);
+	}
 	return [...byKey.values()];
 }
 
-function eq(a: string, b: string): boolean {
-	return normalizeName(a) === normalizeName(b);
+function eq(a: string, b: string, dialect?: string): boolean {
+	return foldIdentifier(a, dialect) === foldIdentifier(b, dialect);
 }

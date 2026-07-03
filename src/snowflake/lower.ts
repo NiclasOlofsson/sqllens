@@ -19,6 +19,7 @@ import type {
 import { keywordCategory, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { displayName } from "../ident/fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Snowflake (grammars-v4 sql/snowflake fork) CST -> the shared,
@@ -196,13 +197,13 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 	const name = directChildrenOfRule(cte, P.RULE_id_)[0]?.getText() ?? "";
 	const colList = directChildrenOfRule(cte, P.RULE_column_list_in_parentheses)[0];
 	const cols = colList
-		? collectOfRule(colList, P.RULE_column_name).map((c) => stripQuotes(c.getText()))
+		? collectOfRule(colList, P.RULE_column_name).map((c) => c.getText())
 		: directChildrenOfRule(cte, P.RULE_column_list)
 				.flatMap((l) => collectOfRule(l, P.RULE_column_name))
-				.map((c) => stripQuotes(c.getText()));
+				.map((c) => c.getText());
 	const ssip = directChildrenOfRule(cte, P.RULE_select_statement_in_parentheses)[0];
 	return {
-		name: stripQuotes(name),
+		name,
 		columnAliases: cols.length ? cols : undefined,
 		body: ssip ? ssipToQuery(ssip) : emptyQuery(cte),
 		cst: cte,
@@ -421,7 +422,7 @@ function lowerOrderItem(item: ParserRuleContext): Expr {
 	const expr = directChildrenOfRule(item, P.RULE_expr)[0];
 	if (expr) return lowerExpr(expr);
 	const id = directChildrenOfRule(item, P.RULE_id_)[0];
-	if (id) return { kind: "column", parts: [stripQuotes(id.getText())], partSpans: partSpansOf([id]), cst: id };
+	if (id) return { kind: "column", parts: [id.getText()], partSpans: partSpansOf([id]), cst: id };
 	const num = directChildrenOfRule(item, P.RULE_num)[0];
 	if (num) return { kind: "literal", text: num.getText(), cst: num };
 	return otherExpr(item);
@@ -560,7 +561,7 @@ function lowerPriorItem(item: ParserRuleContext): Expr {
 		if (c instanceof ParserRuleContext && c.ruleIndex === P.RULE_id_) {
 			const col: Expr = {
 				kind: "column",
-				parts: [stripQuotes(c.getText())],
+				parts: [c.getText()],
 				partSpans: partSpansOf([c]),
 				cst: c,
 			};
@@ -592,12 +593,10 @@ function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
 	// pivot_unpivot: PIVOT '(' aggFn '(' aggCol ')' FOR forCol IN '(' pivot_in_clause ')' … ')' (as_alias …)?
 	const node = shallowNodesOfRule(fromClause, P.RULE_pivot_unpivot)[0];
 	if (!node || !hasDirectToken(node, P.PIVOT)) return undefined;
-	const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => stripQuotes(i.getText()));
+	const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => i.getText());
 	// ids = [aggFn, aggColumn, forColumn] per the rule shape.
 	const inClause = directChildrenOfRule(node, P.RULE_pivot_in_clause)[0];
-	const values = inClause
-		? directChildrenOfRule(inClause, P.RULE_literal).map((l) => stripQuotes(stripString(l.getText())))
-		: [];
+	const values = inClause ? directChildrenOfRule(inClause, P.RULE_literal).map((l) => stripString(l.getText())) : [];
 	const alias = directChildrenOfRule(node, P.RULE_as_alias)[0];
 	return {
 		values,
@@ -614,10 +613,10 @@ function extractUnpivot(fromClause: ParserRuleContext): UnpivotInfo | undefined 
 	const valueCol = directChildrenOfRule(node, P.RULE_id_)[0];
 	const nameCol = directChildrenOfRule(node, P.RULE_column_name)[0];
 	const list = directChildrenOfRule(node, P.RULE_aliased_column_list)[0];
-	const removed = list ? collectOfRule(list, P.RULE_column_name).map((c) => stripQuotes(c.getText())) : [];
+	const removed = list ? collectOfRule(list, P.RULE_column_name).map((c) => c.getText()) : [];
 	return {
-		valueColumn: valueCol ? stripQuotes(valueCol.getText()) : "",
-		nameColumn: nameCol ? stripQuotes(nameCol.getText()) : "",
+		valueColumn: valueCol ? valueCol.getText() : "",
+		nameColumn: nameCol ? nameCol.getText() : "",
 		removed,
 	};
 }
@@ -639,7 +638,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 			if (excludeClause) {
 				expr.exclude = [
 					...(expr.exclude ?? []),
-					...collectOfRule(excludeClause, P.RULE_column_name).map((c) => stripQuotes(c.getText())),
+					...collectOfRule(excludeClause, P.RULE_column_name).map((c) => c.getText()),
 				];
 			} else if (hasDirectToken(mod, P.ILIKE)) {
 				const pat = directChildrenOfRule(mod, P.RULE_string)[0];
@@ -649,13 +648,13 @@ function buildProjection(elem: ParserRuleContext): Projection {
 				const names = directChildrenOfRule(mod, P.RULE_column_name);
 				expr.replace = [
 					...(expr.replace ?? []),
-					...exprs.map((e, i) => ({ column: stripQuotes(names[i]?.getText() ?? ""), expr: lowerExpr(e) })),
+					...exprs.map((e, i) => ({ column: names[i]?.getText() ?? "", expr: lowerExpr(e) })),
 				];
 			} else if (hasDirectToken(mod, P.RENAME)) {
 				const names = directChildrenOfRule(mod, P.RULE_column_name);
 				const pairs: { from: string; to: string }[] = [];
 				for (let i = 0; i + 1 < names.length; i += 2) {
-					pairs.push({ from: stripQuotes(names[i].getText()), to: stripQuotes(names[i + 1].getText()) });
+					pairs.push({ from: names[i].getText(), to: names[i + 1].getText() });
 				}
 				expr.rename = [...(expr.rename ?? []), ...pairs];
 			}
@@ -712,7 +711,7 @@ function lowerColumnElem(colElem: ParserRuleContext): Expr {
 
 function aliasText(asAlias: ParserRuleContext): string {
 	const a = firstOfRule(asAlias, P.RULE_id_);
-	return stripQuotes(a ? a.getText() : asAlias.getText());
+	return a ? a.getText() : asAlias.getText();
 }
 
 // --- sources -------------------------------------------------------------------
@@ -777,7 +776,7 @@ function buildSource(ref: ParserRuleContext): Source {
 			alias: innerAs ? aliasText(innerAs) : alias,
 			aliasCst: valuesAliasCst ?? aliasCst,
 			columnAliases: colAliases
-				? directChildrenOfRule(colAliases, P.RULE_id_).map((i) => stripQuotes(i.getText()))
+				? directChildrenOfRule(colAliases, P.RULE_id_).map((i) => i.getText())
 				: undefined,
 			cst: ref,
 		};
@@ -810,7 +809,7 @@ function buildSource(ref: ParserRuleContext): Source {
 	// relation is this object_name (built below); the START WITH / CONNECT BY predicates and the LEVEL
 	// pseudo-column are handled at the select level (extractConnectBy / the LEVEL pseudo-source).
 	const objectName = directChildrenOfRule(ref, P.RULE_object_name)[0];
-	const parts = objectName ? nameParts(objectName) : [stripQuotes(ref.getText())];
+	const parts = objectName ? nameParts(objectName) : [ref.getText()];
 	return {
 		kind: "table",
 		name: parts,
@@ -824,7 +823,7 @@ function buildSource(ref: ParserRuleContext): Source {
 function columnListAliases(ref: ParserRuleContext): string[] | undefined {
 	const list = directChildrenOfRule(ref, P.RULE_column_list_in_parentheses)[0];
 	if (!list) return undefined;
-	const cols = collectOfRule(list, P.RULE_column_name).map((c) => stripQuotes(c.getText()));
+	const cols = collectOfRule(list, P.RULE_column_name).map((c) => c.getText());
 	return cols.length ? cols : undefined;
 }
 
@@ -970,7 +969,7 @@ function lowerExpr(node: ParserRuleContext): Expr {
 		const base = exprs[0] ? lowerExpr(exprs[0]) : otherExpr(node);
 		return {
 			kind: "function",
-			name: method ? stripQuotes(method.getText()) : "",
+			name: method ? method.getText() : "",
 			args: [base, ...args],
 			aggregate: false,
 			distinct: false,
@@ -1034,7 +1033,7 @@ function lowerExpr(node: ParserRuleContext): Expr {
 	// lambda: lambda_params -> expr
 	const lambdaParams = directChildrenOfRule(node, P.RULE_lambda_params)[0];
 	if (lambdaParams && exprs.length === 1) {
-		const params = directChildrenOfRule(lambdaParams, P.RULE_id_).map((i) => stripQuotes(i.getText()));
+		const params = directChildrenOfRule(lambdaParams, P.RULE_id_).map((i) => i.getText());
 		return { kind: "lambda", params, body: lowerExpr(exprs[0]), cst: node };
 	}
 	// binary: AND / OR / arithmetic / concat / comparison
@@ -1160,7 +1159,7 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 		return { kind: "literal", text: node.getText(), cst: node };
 	}
 	if (hasDirectToken(node, P.STAR)) {
-		const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => stripQuotes(i.getText()));
+		const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => i.getText());
 		return { kind: "star", qualifier: ids.length ? ids : undefined, cst: node };
 	}
 	const fcn =
@@ -1171,7 +1170,7 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 	if (ids.length)
 		return {
 			kind: "column",
-			parts: ids.map((i) => stripQuotes(i.getText())),
+			parts: ids.map((i) => i.getText()),
 			partSpans: partSpansOf(ids),
 			cst: node,
 		};
@@ -1245,7 +1244,7 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 	const agg = directChildrenOfRule(node, P.RULE_aggregate_function)[0];
 	if (agg) {
 		const id = directChildrenOfRule(agg, P.RULE_id_)[0];
-		const name = (id ? stripQuotes(id.getText()) : (leftmostToken(agg) ?? "")).toLowerCase();
+		const name = (id ? displayName(id.getText(), "snowflake") : (leftmostToken(agg) ?? "")).toLowerCase();
 		const args = [
 			...exprListExprs(agg).map(lowerExpr),
 			...directChildrenOfRule(agg, P.RULE_expr).map(lowerExpr),
@@ -1584,18 +1583,11 @@ function namePartSpans(node: ParserRuleContext) {
 
 function nameParts(node: ParserRuleContext): string[] {
 	const ids = collectOfRule(node, P.RULE_id_);
-	if (ids.length) return ids.map((i) => stripQuotes(i.getText()));
+	if (ids.length) return ids.map((i) => i.getText());
 	return node
 		.getText()
 		.split(".")
-		.map(stripQuotes)
 		.filter((p) => p.length > 0);
-}
-
-/** Strip Snowflake "quoted" identifier delimiters. */
-function stripQuotes(text: string): string {
-	if (text.length >= 2 && text[0] === '"' && text[text.length - 1] === '"') return text.slice(1, -1);
-	return text;
 }
 
 /** Strip '…' string-literal quotes (PIVOT IN-list values). */

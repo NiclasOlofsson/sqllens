@@ -20,6 +20,7 @@ export {
 	lineage,
 	deriveSymbols,
 	TypeInfo,
+	type Nullability,
 	Lineage,
 	originsOfExpr,
 	tokenize,
@@ -37,6 +38,9 @@ export {
 	type Occurrences,
 	dialectSymbols,
 	type DialectSymbols,
+	CallbackSchema,
+	type SchemaSource,
+	type TableResolver,
 	ADAPTER_DIALECTS,
 	adapterDialect,
 	type SignatureInfo,
@@ -49,6 +53,8 @@ export {
 	type Token,
 	type TokenRole,
 	type DocumentAnalysis,
+	type StatementCell,
+	type StatementCellSpan,
 } from "./api.js";
 
 // --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---
@@ -99,7 +105,7 @@ export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type Scope
 
 export { type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
-export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
+export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";
 
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 

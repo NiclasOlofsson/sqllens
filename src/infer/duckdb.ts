@@ -52,7 +52,7 @@ export const DUCKDB_ALIASES: Record<string, string> = {
 };
 
 export function duckdbParseType(text: string): Type {
-	return parseType(text, DUCKDB_ALIASES);
+	return parseType(text, DUCKDB_ALIASES, "duckdb");
 }
 
 const S = scalar("string");

@@ -1,0 +1,146 @@
+import { describe, expect, it } from "vitest";
+import { displayName, foldIdentifier } from "../src/ident/fold.js";
+
+// Case-folding is the identity key for name comparison across the pipeline (scope/qualify/
+// references/…). Each dialect's rule is doc-cited in src/ident/fold.ts; this suite pins the
+// exact fold direction + quoted-identifier behavior per dialect against those citations.
+
+describe("databricks", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "databricks")).toBe("mytable");
+	});
+	it("folds backtick-quoted to lower too (backticks are not case-quoting)", () => {
+		expect(foldIdentifier("`MyTable`", "databricks")).toBe("mytable");
+	});
+	it("unescapes a doubled backtick inside a quoted identifier", () => {
+		expect(foldIdentifier("`a``b`", "databricks")).toBe("a`b");
+	});
+});
+
+describe("tsql", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "tsql")).toBe("mytable");
+	});
+	it("folds bracket-quoted identifiers to lower", () => {
+		expect(foldIdentifier("[MyTable]", "tsql")).toBe("mytable");
+	});
+	it("unescapes a doubled close-bracket inside a bracket-quoted identifier", () => {
+		expect(foldIdentifier("[a]]b]", "tsql")).toBe("a]b");
+	});
+	it("folds double-quoted identifiers to lower (default CI collation)", () => {
+		expect(foldIdentifier('"MyTable"', "tsql")).toBe("mytable");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "tsql")).toBe('a"b');
+	});
+});
+
+describe("snowflake", () => {
+	it("folds unquoted mixed case to UPPER", () => {
+		expect(foldIdentifier("foo", "snowflake")).toBe("FOO");
+	});
+	it("preserves case inside quotes (case-sensitive)", () => {
+		expect(foldIdentifier('"foo"', "snowflake")).toBe("foo");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "snowflake")).toBe('a"b');
+	});
+	it('unquoted foo equals quoted "FOO" but not quoted "foo"', () => {
+		const unquoted = foldIdentifier("foo", "snowflake");
+		expect(unquoted).toBe(foldIdentifier('"FOO"', "snowflake"));
+		expect(unquoted).not.toBe(foldIdentifier('"foo"', "snowflake"));
+	});
+});
+
+describe("bigquery", () => {
+	it("folds an unquoted 'other'-kind identifier (column/alias) to lower", () => {
+		expect(foldIdentifier("MyCol", "bigquery", "other")).toBe("mycol");
+	});
+	it("preserves case for an unquoted table identifier", () => {
+		expect(foldIdentifier("MyTable", "bigquery", "table")).toBe("MyTable");
+	});
+	it("preserves case for a backtick-quoted table identifier too (backticks are not case-quoting)", () => {
+		expect(foldIdentifier("`MyTable`", "bigquery", "table")).toBe("MyTable");
+	});
+	it("folds a backtick-quoted 'other'-kind identifier to lower", () => {
+		expect(foldIdentifier("`MyCol`", "bigquery", "other")).toBe("mycol");
+	});
+	it("unescapes a backslash-escaped backtick inside a quoted identifier (string-literal escape rules)", () => {
+		expect(foldIdentifier("`a\\`b`", "bigquery", "other")).toBe("a`b");
+	});
+	it("defaults kind to 'other' (folds) when not given", () => {
+		expect(foldIdentifier("MyTable", "bigquery")).toBe("mytable");
+	});
+});
+
+describe("redshift", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "redshift")).toBe("mytable");
+	});
+	it("folds quoted identifiers to lower too (case-sensitive-identifier param defaults off)", () => {
+		expect(foldIdentifier('"MyTable"', "redshift")).toBe("mytable");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "redshift")).toBe('a"b');
+	});
+});
+
+describe("postgres", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "postgres")).toBe("mytable");
+	});
+	it("preserves case inside quotes (case-sensitive)", () => {
+		expect(foldIdentifier('"MyTable"', "postgres")).toBe("MyTable");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "postgres")).toBe('a"b');
+	});
+	it('unquoted foo equals quoted "foo" but not quoted "Foo"', () => {
+		const unquoted = foldIdentifier("foo", "postgres");
+		expect(unquoted).toBe(foldIdentifier('"foo"', "postgres"));
+		expect(unquoted).not.toBe(foldIdentifier('"Foo"', "postgres"));
+	});
+});
+
+describe("duckdb", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "duckdb")).toBe("mytable");
+	});
+	it("folds quoted identifiers to lower too (quoting is display-preserving only, not identity)", () => {
+		expect(foldIdentifier('"MyTable"', "duckdb")).toBe("mytable");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "duckdb")).toBe('a"b');
+	});
+});
+
+describe("trino", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", "trino")).toBe("mytable");
+	});
+	it("folds quoted identifiers to lower too (docs state identifiers are uniformly not case sensitive)", () => {
+		expect(foldIdentifier('"MyTable"', "trino")).toBe("mytable");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "trino")).toBe('a"b');
+	});
+});
+
+describe("undefined/unknown dialect", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("MyTable", undefined)).toBe("mytable");
+	});
+	it("strips backticks and folds to lower", () => {
+		expect(foldIdentifier("`MyTable`", undefined)).toBe("mytable");
+	});
+	it("behaves the same for an unrecognized dialect string", () => {
+		expect(foldIdentifier("`MyTable`", "not-a-real-dialect")).toBe("mytable");
+	});
+	it("does not read Object.prototype keys off the rule table", () => {
+		expect(foldIdentifier("x", "constructor")).toBe("x");
+		expect(foldIdentifier("`MyTable`", "constructor")).toBe("mytable");
+	});
+	it("displayName does not read Object.prototype keys off the rule table", () => {
+		expect(displayName("`MyTable`", "constructor")).toBe("MyTable");
+	});
+});

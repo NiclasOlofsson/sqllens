@@ -1,10 +1,12 @@
 import type { ParserRuleContext } from "antlr4ng";
+import { displayName, foldIdentifier } from "../ident/fold.js";
 import type { Expr, PartSpan, Projection } from "../ir/ir.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import {
 	resolveColumn,
 	type ColumnResolution,
@@ -79,17 +81,19 @@ export const MAIN_FRAME = "_main_";
 
 /** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
  *  without one (the default), names + spans + frames + definitions are still produced. */
-export function deriveSymbols(tree: ScopeTree, schema: Schema = new Schema({})): Sym[] {
+export function deriveSymbols(tree: ScopeTree, schema: SchemaSource = new Schema({})): Sym[] {
 	const out: Sym[] = [];
 	walk(tree.root, MAIN_FRAME, out, schema);
 	return out;
 }
 
-function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const walked = new Set<Scope>();
 
-	// CTE declarations, and each CTE body as its own frame.
-	for (const [name, cteRef] of scope.ctes) {
+	// CTE declarations, and each CTE body as its own frame. The map key is the FOLDED identity;
+	// the symbol (and frame label) shows the display form of the declared name.
+	for (const [, cteRef] of scope.ctes) {
+		const name = displayName(cteRef.def.name, scope.dialect);
 		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.cst), frame });
 		walk(cteRef.scope, name, out, schema);
 		walked.add(cteRef.scope);
@@ -114,11 +118,16 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
 	// implicit "relation" source of a pipe stage (the incoming relation) has no name — skip it.
 	for (const src of scope.sources.values()) {
 		if (src.kind === "relation") continue;
-		out.push(relationSymbol(src, frame));
-		const alias = aliasSymbol(src, frame);
+		out.push(relationSymbol(src, frame, scope.dialect));
+		const alias = aliasSymbol(src, frame, scope.dialect);
 		if (alias) out.push(alias);
 		if (src.kind === "subquery") {
-			walk(src.scope, src.source.alias ?? "_subquery_", out, schema);
+			walk(
+				src.scope,
+				src.source.alias ? displayName(src.source.alias, scope.dialect) : "_subquery_",
+				out,
+				schema,
+			);
 			walked.add(src.scope);
 		} else if (src.kind === "graphtable") {
 			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema);
@@ -135,7 +144,7 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
 }
 
 /** Function symbols (with aggregate/window modifiers) from this frame's expression trees. */
-function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const body = scope.body;
 	if (body.kind !== "select") return;
 	const visit = (e: Expr): void => {
@@ -200,7 +209,7 @@ function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {
 }
 
 /** Column references in this frame, plus output declarations for aliased/computed projections. */
-function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): void {
+function emitColumns(scope: Scope, frame: string, out: Sym[], schema: SchemaSource): void {
 	const body = scope.body;
 	if (body.kind === "select") {
 		for (const p of body.projections) {
@@ -219,12 +228,13 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
 			// so don't double-emit a declaration. An explicit alias or a computed expr does declare.
 			if (p.name === undefined) continue;
 			const last = p.expr.kind === "column" ? p.expr.parts[p.expr.parts.length - 1] : undefined;
-			const echo = last !== undefined && last.toLowerCase() === p.name.toLowerCase();
+			const echo =
+				last !== undefined && foldIdentifier(last, scope.dialect) === foldIdentifier(p.name, scope.dialect);
 			if (!echo) {
 				out.push({
 					kind: "column",
 					modifiers: ["declaration", "output"],
-					name: p.name,
+					name: displayName(p.name, scope.dialect),
 					span: spanOf(p.cst),
 					frame,
 					type: typeOrUndefined(inferType(p.expr, scope, schema)),
@@ -243,7 +253,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: Schema): v
 		out.push({
 			kind: "column",
 			modifiers,
-			name: ref.parts.join("."),
+			name: ref.parts.map((p) => displayName(p, scope.dialect)).join("."),
 			span: spanOf(ref.cst),
 			frame,
 			definition: columnDefinition(res),
@@ -268,7 +278,7 @@ function isLocalSource(scope: Scope, source: ResolvedSource): boolean {
 }
 
 /** An alias declaration symbol for a source written `… AS x`, or undefined when unaliased. */
-function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
+function aliasSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym | undefined {
 	if (src.kind === "relation") return undefined; // the implicit pipe-stage relation has no alias
 	if (src.kind === "pivot") return undefined; // PivotInfo carries no alias span; the relation symbol names it
 	if (src.kind === "graphtable") {
@@ -276,7 +286,7 @@ function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
 			? {
 					kind: "alias",
 					modifiers: ["declaration"],
-					name: src.source.alias,
+					name: displayName(src.source.alias, dialect),
 					span: spanOf(src.source.aliasCst ?? src.source.cst),
 					frame,
 				}
@@ -284,7 +294,13 @@ function aliasSymbol(src: ResolvedSource, frame: string): Sym | undefined {
 	}
 	const s = src.source;
 	if (!s.alias) return undefined;
-	return { kind: "alias", modifiers: ["declaration"], name: s.alias, span: spanOf(s.aliasCst ?? s.cst), frame };
+	return {
+		kind: "alias",
+		modifiers: ["declaration"],
+		name: displayName(s.alias, dialect),
+		span: spanOf(s.aliasCst ?? s.cst),
+		frame,
+	};
 }
 
 /** The in-query declaration span a bound column resolves to: the projection in the CTE /
@@ -302,50 +318,69 @@ function columnDefinition(res: ColumnResolution): Span | undefined {
 function projectionSpan(scope: Scope, column: string, aliases: string[] | undefined): Span | undefined {
 	if (scope.body.kind !== "select") return undefined;
 	const projs = scope.body.projections;
-	const c = column.toLowerCase();
+	const c = foldIdentifier(column, scope.dialect);
 	let p: Projection | undefined;
 	if (aliases) {
-		const i = aliases.findIndex((a) => a.toLowerCase() === c);
+		const i = aliases.findIndex((a) => foldIdentifier(a, scope.dialect) === c);
 		p = i >= 0 ? projs[i] : undefined;
 	} else {
-		p = projs.find((pp) => pp.name !== undefined && pp.name.toLowerCase() === c);
+		p = projs.find((pp) => pp.name !== undefined && foldIdentifier(pp.name, scope.dialect) === c);
 	}
 	return p ? spanOf(p.cst) : undefined;
 }
 
-function relationSymbol(src: ResolvedSource, frame: string): Sym {
+function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym {
 	const ref = ["reference"] as SymbolModifier[];
+	const show = (n: string) => displayName(n, dialect);
 	// The implicit pipe-stage relation is skipped by the caller; handled here only for exhaustiveness.
 	if (src.kind === "relation") {
 		return { kind: "subquery", modifiers: ref, name: "", span: spanOf(src.scope.body.cst), frame };
 	}
 	if (src.kind === "graphtable") {
-		return { kind: "table", modifiers: ref, name: src.source.graph.join("."), span: spanOf(src.source.cst), frame };
+		return {
+			kind: "table",
+			modifiers: ref,
+			name: src.source.graph.map(show).join("."),
+			span: spanOf(src.source.cst),
+			frame,
+		};
 	}
 	if (src.kind === "table") {
-		return { kind: "table", modifiers: ref, name: src.name.join("."), span: spanOf(src.source.cst), frame };
+		return {
+			kind: "table",
+			modifiers: ref,
+			name: src.name.map(show).join("."),
+			span: spanOf(src.source.cst),
+			frame,
+		};
 	}
 	if (src.kind === "cte") {
 		return {
 			kind: "cte",
 			modifiers: ref,
-			name: src.ref.def.name,
+			name: show(src.ref.def.name),
 			span: spanOf(src.source.cst),
 			frame,
 			definition: spanOf(src.ref.def.cst),
 		};
 	}
 	if (src.kind === "lateral") {
-		return { kind: "lateral", modifiers: ref, name: src.source.alias ?? "", span: spanOf(src.source.cst), frame };
+		return {
+			kind: "lateral",
+			modifiers: ref,
+			name: src.source.alias ? show(src.source.alias) : "",
+			span: spanOf(src.source.cst),
+			frame,
+		};
 	}
 	if (src.kind === "pivot") {
 		const cst = src.base[0] ? resolvedSourceCst(src.base[0]) : undefined;
-		return { kind: "subquery", modifiers: ref, name: src.alias, span: cst ? spanOf(cst) : ZERO_SPAN, frame };
+		return { kind: "subquery", modifiers: ref, name: show(src.alias), span: cst ? spanOf(cst) : ZERO_SPAN, frame };
 	}
 	return {
 		kind: "subquery",
 		modifiers: ref,
-		name: src.source.alias ?? "_subquery_",
+		name: src.source.alias ? show(src.source.alias) : "_subquery_",
 		span: spanOf(src.source.cst),
 		frame,
 	};

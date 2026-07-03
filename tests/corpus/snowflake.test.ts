@@ -9,6 +9,7 @@ import { lower } from "../../src/snowflake/lower.js";
 import { parseSnowflake } from "../../src/snowflake/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
@@ -126,6 +127,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 			const tally = new Map<string, number>();
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
+			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
@@ -139,7 +141,9 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
-						deriveSymbols(resolveScopes(ir, "snowflake"));
+						const scopes = resolveScopes(ir, "snowflake");
+						deriveSymbols(scopes);
+						sweepCallDiagnostics(scopes, rel, callHits);
 						scoped++;
 					} catch (e) {
 						throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
@@ -157,6 +161,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 			);
 			expect(scoped).toBeGreaterThan(0);
 			expect(throwers, `pipeline threw on:\n${throwers.slice(0, 20).join("\n")}`).toEqual([]);
+			expect(
+				callHits,
+				`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);

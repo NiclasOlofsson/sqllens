@@ -1,7 +1,8 @@
+import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
-import type { Schema } from "../qualify/schema.js";
+import type { SchemaSource } from "../qualify/schema-source.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
-import { normalizeName, resolveColumnSource } from "../sema/resolve.js";
+import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
 import { inferDialect, type InferDialect } from "./dialect.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
@@ -28,7 +29,7 @@ const INT = scalar("int");
 
 const freshCtx = (): Ctx => ({ seen: new Set(), env: new Map() });
 
-export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = freshCtx()): Type {
+export function inferType(expr: Expr, scope: Scope, schema: SchemaSource, ctx: Ctx = freshCtx()): Type {
 	const d = inferDialect(scope.dialect);
 	switch (expr.kind) {
 		case "literal":
@@ -81,24 +82,31 @@ export function inferType(expr: Expr, scope: Scope, schema: Schema, ctx: Ctx = f
 
 // --- columns ---------------------------------------------------------------
 
-function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
+function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
 	if (col.parts.length === 1) {
-		const param = ctx.env.get(normalizeName(col.parts[0])); // a lambda parameter shadows columns
+		const param = ctx.env.get(foldIdentifier(col.parts[0], scope.dialect)); // a lambda parameter shadows columns
 		if (param) return param;
 	}
 	const found = resolveColumnSource(scope, col.parts, schema);
 	if (!found) return UNKNOWN;
-	const base = sourceColumnType(found.source, found.column, schema, ctx, inferDialect(scope.dialect));
-	return found.fields.length ? fieldType(base, found.fields) : base;
+	const base = sourceColumnType(found.source, found.column, schema, ctx, inferDialect(scope.dialect), scope.dialect);
+	return found.fields.length ? fieldType(base, found.fields, scope.dialect) : base;
 }
 
-function sourceColumnType(src: ResolvedSource, column: string, schema: Schema, ctx: Ctx, d: InferDialect): Type {
+function sourceColumnType(
+	src: ResolvedSource,
+	column: string,
+	schema: SchemaSource,
+	ctx: Ctx,
+	d: InferDialect,
+	dialect: string,
+): Type {
 	if (src.kind === "table") {
 		// Declared columns carrying a type (T-SQL OPENJSON/OPENXML `WITH (col type …)`) type directly.
-		const declared = src.source.declaredColumns?.find((c) => eq(c.name, column));
+		const declared = src.source.declaredColumns?.find((c) => eq(c.name, column, dialect));
 		if (declared) return declared.type ? d.parseType(declared.type) : UNKNOWN;
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
-		const t = schema.columnsFor(src.name)?.find((c) => eq(c.name, column))?.type;
+		const t = schema.columnsFor(src.name, dialect)?.find((c) => eq(c.name, column, dialect))?.type;
 		return t ? d.parseType(t) : UNKNOWN;
 	}
 	if (src.kind === "cte") return derivedColumnType(src.ref.scope, column, src.ref.def.columnAliases, schema, ctx);
@@ -111,17 +119,17 @@ function derivedColumnType(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: Schema,
+	schema: SchemaSource,
 	ctx: Ctx,
 ): Type {
 	if (ctx.seen.has(child) || child.body.kind !== "select") return UNKNOWN;
 	const projs = child.body.projections;
 	let p: Projection | undefined;
 	if (aliases) {
-		const i = aliases.findIndex((a) => eq(a, column));
+		const i = aliases.findIndex((a) => eq(a, column, child.dialect));
 		p = i >= 0 ? projs[i] : undefined;
 	} else {
-		p = projs.find((pp) => pp.name !== undefined && eq(pp.name, column));
+		p = projs.find((pp) => pp.name !== undefined && eq(pp.name, column, child.dialect));
 	}
 	if (!p) return starPassthroughType(child, column, schema, ctx);
 	ctx.seen.add(child);
@@ -134,19 +142,20 @@ function derivedColumnType(
  *  resolve it inside the producing scope, honouring EXCLUDE/ILIKE (removed → unknown),
  *  RENAME (the output name maps back to the source column) and REPLACE (the column's type
  *  is the replacing expression's). */
-function starPassthroughType(child: Scope, column: string, schema: Schema, ctx: Ctx): Type {
+function starPassthroughType(child: Scope, column: string, schema: SchemaSource, ctx: Ctx): Type {
 	for (const p of child.body.kind === "select" ? child.body.projections : []) {
 		if (!p.isStar || p.expr.kind !== "star") continue;
 		const star = p.expr;
+		const d = child.dialect;
 		// Map the requested output name back to the underlying column (RENAME a AS b → b comes from a).
-		const renamedTo = star.rename?.find((r) => eq(r.to, column));
+		const renamedTo = star.rename?.find((r) => eq(r.to, column, d));
 		const under = renamedTo ? renamedTo.from : column;
-		if (!renamedTo && star.rename?.some((r) => eq(r.from, column))) continue; // renamed away
-		if (star.exclude?.some((e) => eq(e, under))) continue;
-		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(normalizeName(under))) continue;
+		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
+		if (star.exclude?.some((e) => eq(e, under, d))) continue;
+		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(foldIdentifier(under, d))) continue;
 
 		ctx.seen.add(child);
-		const replaced = star.replace?.find((r) => eq(r.column, under));
+		const replaced = star.replace?.find((r) => eq(r.column, under, d));
 		const parts = star.qualifier ? [star.qualifier[star.qualifier.length - 1], under] : [under];
 		const t = replaced
 			? inferType(replaced.expr, child, schema, { seen: ctx.seen, env: new Map() })
@@ -157,11 +166,12 @@ function starPassthroughType(child: Scope, column: string, schema: Schema, ctx: 
 	return UNKNOWN;
 }
 
-function fieldType(type: Type, fields: string[]): Type {
+function fieldType(type: Type, fields: string[], dialect: string): Type {
 	let t = type;
 	for (const f of fields) {
 		if (t.kind !== "struct") return UNKNOWN;
-		const hit = t.fields.find((ff) => eq(ff.name, f));
+		// Struct-field names on a Type are stored FOLDED — fold only the reference side.
+		const hit = t.fields.find((ff) => ff.name === foldIdentifier(f, dialect));
 		if (!hit) return UNKNOWN;
 		t = hit.type;
 	}
@@ -170,7 +180,7 @@ function fieldType(type: Type, fields: string[]): Type {
 
 // --- functions, higher-order functions, constructors -----------------------
 
-function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: Schema, ctx: Ctx): Type {
+function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
 	const name = fn.name.toLowerCase();
 	const args = fn.args;
 	const d = inferDialect(scope.dialect);
@@ -210,7 +220,7 @@ export const HOF_LAMBDA_ARG: Record<string, number> = {
 
 /** Higher-order functions: bind the lambda parameters to the right element/value types, type the
  *  lambda body, and build the result. Returns undefined when `name` isn't a higher-order function. */
-function higherOrder(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type | undefined {
+function higherOrder(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
 	const lambdaArg = HOF_LAMBDA_ARG[name];
 	if (lambdaArg !== undefined && args[lambdaArg]?.kind !== "lambda") return undefined;
 	switch (name) {
@@ -254,12 +264,12 @@ function lambdaResult(
 	lambda: Expr | undefined,
 	paramTypes: Type[],
 	scope: Scope,
-	schema: Schema,
+	schema: SchemaSource,
 	ctx: Ctx,
 ): Type | undefined {
 	if (lambda?.kind !== "lambda") return undefined;
 	const env = new Map(ctx.env);
-	lambda.params.forEach((p, i) => env.set(normalizeName(p), paramTypes[i] ?? UNKNOWN));
+	lambda.params.forEach((p, i) => env.set(foldIdentifier(p, scope.dialect), paramTypes[i] ?? UNKNOWN));
 	return inferType(lambda.body, scope, schema, { seen: ctx.seen, env });
 }
 
@@ -268,7 +278,7 @@ function arrayElem(t: Type): Type {
 }
 
 /** map(), struct()/named_struct(), from_json() — types built from the arguments. */
-function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, ctx: Ctx): Type | undefined {
+function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
 	if (name === "map") {
 		const keys: Type[] = [];
 		const values: Type[] = [];
@@ -280,7 +290,10 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
 		for (let i = 0; i + 1 < args.length; i += 2) {
 			const key = args[i];
 			const fname = key.kind === "literal" ? stringValue(key.text) : `col${i / 2 + 1}`;
-			fields.push({ name: normalizeName(fname), type: inferType(args[i + 1], scope, schema, ctx) });
+			fields.push({
+				name: foldIdentifier(fname, scope.dialect),
+				type: inferType(args[i + 1], scope, schema, ctx),
+			});
 		}
 		return { kind: "struct", fields };
 	}
@@ -288,21 +301,21 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: Schema, c
 		return {
 			kind: "struct",
 			fields: args.map((a, i) => ({
-				name: a.kind === "column" ? normalizeName(a.parts[a.parts.length - 1]) : `col${i + 1}`,
+				name: a.kind === "column" ? foldIdentifier(a.parts[a.parts.length - 1], scope.dialect) : `col${i + 1}`,
 				type: inferType(a, scope, schema, ctx),
 			})),
 		};
 	}
 	if (name === "from_json") {
 		const s = args[1];
-		return s?.kind === "literal" ? parseType(stringValue(s.text)) : UNKNOWN;
+		return s?.kind === "literal" ? parseType(stringValue(s.text), undefined, scope.dialect) : UNKNOWN;
 	}
 	return undefined;
 }
 
 // --- subqueries ------------------------------------------------------------
 
-function subqueryType(query: QueryExpr, schema: Schema, ctx: Ctx, dialect: string): Type {
+function subqueryType(query: QueryExpr, schema: SchemaSource, ctx: Ctx, dialect: string): Type {
 	const root = resolveScopes(query, dialect).root;
 	if (root.body.kind !== "select" || root.body.projections.length === 0) return UNKNOWN;
 	return inferType(root.body.projections[0].expr, root, schema, { seen: ctx.seen, env: ctx.env });
@@ -357,6 +370,6 @@ function stringValue(text: string): string {
 	return quoted ? t.slice(1, -1) : t;
 }
 
-function eq(a: string, b: string): boolean {
-	return normalizeName(a) === normalizeName(b);
+function eq(a: string, b: string, dialect?: string): boolean {
+	return foldIdentifier(a, dialect) === foldIdentifier(b, dialect);
 }

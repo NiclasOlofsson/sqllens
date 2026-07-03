@@ -48,7 +48,7 @@ export const POSTGRES_ALIASES: Record<string, string> = {
 };
 
 export function postgresParseType(text: string): Type {
-	return parseType(text, POSTGRES_ALIASES);
+	return parseType(text, POSTGRES_ALIASES, "postgres");
 }
 
 const S = scalar("string");

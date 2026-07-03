@@ -1,6 +1,6 @@
 import { type FoldingRange, FoldingRangeKind } from "vscode-languageserver-types";
 import type { CteDef, Expr, QueryBody, QueryExpr, SelectExpr, SetOpExpr, Source, SqlDocument } from "../../index.js";
-import { rangeFromCst } from "../ranges.js";
+import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Folding ranges: foldable regions derived from the IR (doc.ast). Each node that
@@ -17,11 +17,15 @@ type StageShape = { op: string; cst: QueryExpr["cst"] } & Record<string, unknown
 export function computeFoldingRanges(doc: SqlDocument): FoldingRange[] {
 	const ranges: FoldingRange[] = [];
 	const seen = new Set<string>();
+	// The current cell's base — cst spans are CELL-relative, so each fold shifts to doc coordinates.
+	// Stays {0,0} on the single-cell path (identity), so that path is byte-identical.
+	let base: CellBase = { line: 0, character: 0 };
 
-	// Emit a multi-line fold for a node's CST span, de-duped by (startLine,endLine).
+	// Emit a multi-line fold for a node's CST span, de-duped by (startLine,endLine) in doc coordinates.
 	const emit = (cst: QueryExpr["cst"]): void => {
-		const r = rangeFromCst(cst);
-		if (r.end.line <= r.start.line) return; // single-line: not foldable
+		const raw = rangeFromCst(cst);
+		if (raw.end.line <= raw.start.line) return; // single-line: not foldable
+		const r = shiftRange(raw, base);
 		const key = `${r.start.line}:${r.end.line}`;
 		if (seen.has(key)) return;
 		seen.add(key);
@@ -120,8 +124,18 @@ export function computeFoldingRanges(doc: SqlDocument): FoldingRange[] {
 	};
 
 	try {
-		visitQuery(doc.ast);
-		foldMultiStatement(doc, ranges, seen);
+		if (doc.statements.length <= 1) {
+			// Single-cell: EXACTLY today's path (base stays 0 → emit is an identity shift).
+			visitQuery(doc.ast);
+			foldMultiStatement(doc, ranges, seen);
+		} else {
+			// Multi-cell: fold each statement through its OWN real per-statement IR (doc.ast is the empty
+			// compound facade), shifting every range to doc coordinates by the owning cell's start.
+			for (const cell of doc.statements) {
+				base = cellBaseOf(doc, cell);
+				visitQuery(cell.ast);
+			}
+		}
 	} catch {
 		// Total: never throw on broken / mid-edit input.
 	}

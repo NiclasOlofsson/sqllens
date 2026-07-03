@@ -8,6 +8,7 @@ import { parseBigQuery } from "../../src/bigquery/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { isDetectOnly, sqlFiles } from "../helpers/googlesql-scope.js";
+import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { walkIr } from "../helpers/ir-walk.js";
 import { allPipeStages, stageSubIr } from "../helpers/pipe-walk.js";
 
@@ -92,6 +93,7 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			const samples = new Map<string, string>();
 			const throws: string[] = [];
 			const stages: PipeStage[] = [];
+			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
 
 			for (const f of positives()) {
 				const sql = readFileSync(f, "utf8");
@@ -118,7 +120,11 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 					const ir = lower(res.tree);
 					if (!detectOnly) walkIr(ir, tally, samples); // `other` expr-count (baseline 234), in-scope only
 					collectPipeStages(ir, stages); // pipe-stage drift guard (0 `other` op) — full domain
-					deriveSymbols(resolveScopes(ir, "bigquery")); // scope+symbols must not throw — full domain
+					const scopes = resolveScopes(ir, "bigquery");
+					deriveSymbols(scopes); // scope+symbols must not throw — full domain
+					// Task 12 honesty gate — over the IN-SCOPE analyzer positives only (detect-only DDL/macro
+					// and the parser-corpus keyword-torture files are not valid-semantics SQL, so excluded).
+					if (!detectOnly) sweepCallDiagnostics(scopes, f, callHits);
 				} catch (e) {
 					throws.push(`${f}: ${(e as Error).message}`);
 				}
@@ -156,6 +162,10 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			// the `other` stage never fires (ported from bigquery.pipe.test.ts's corpus gate).
 			expect(stages.length).toBeGreaterThan(0);
 			expect(other).toEqual([]);
+			expect(
+				callHits,
+				`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 

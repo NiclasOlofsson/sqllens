@@ -41,12 +41,13 @@ import {
 	SelectionRangeRequest,
 	InlayHintRequest,
 	DocumentDiagnosticRequest,
+	DiagnosticSeverity,
 	PublishDiagnosticsNotification,
 	type PublishDiagnosticsParams,
 } from "vscode-languageserver-protocol/node";
 import { SEMANTIC_LEGEND } from "../src/lsp/features/semantic-tokens.js";
 import { startServer } from "../src/lsp/server.js";
-import { SqlDocument } from "../src/index.js";
+import { SqlDocument, CallbackSchema, type TableResolver } from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
 const msg = (m: string | { value: string }): string => (typeof m === "string" ? m : m.value);
@@ -73,7 +74,14 @@ beforeAll(async () => {
 			schema: "schema.json",
 		}),
 	);
-	writeFileSync(join(root, "schema.json"), JSON.stringify({ sales: { amount: "decimal", id: "int" } }));
+	writeFileSync(
+		join(root, "schema.json"),
+		JSON.stringify({
+			sales: { amount: "decimal", id: "int" },
+			orders: { id: { type: "int", nullable: false }, cust_id: "int" },
+			customers: { id: "int" },
+		}),
+	);
 
 	const up = new TestStream();
 	const down = new TestStream();
@@ -137,6 +145,17 @@ async function waitForDiagnostics(uri: string): Promise<PublishDiagnosticsParams
 	throw new Error("no diagnostics published for " + uri);
 }
 
+/** Poll `fn` until it returns a defined value (used by the lazy-catalog suite, which collects every
+ *  publish rather than only the latest-per-uri). */
+async function waitFor<T>(fn: () => T | undefined): Promise<T> {
+	for (let i = 0; i < 50; i++) {
+		const v = fn();
+		if (v !== undefined) return v;
+		await new Promise((r) => setTimeout(r, 10));
+	}
+	throw new Error("waitFor: predicate never satisfied");
+}
+
 describe("LSP acceptance", () => {
 	it("syntax diagnostic lands on the expected line", async () => {
 		// NOTE: the plan's "SELECT FROM" parses cleanly in the Databricks grammar
@@ -161,6 +180,18 @@ describe("LSP acceptance", () => {
 		expect(d.diagnostics).toEqual([]);
 	});
 
+	it("a call-arity diagnostic squiggles the RIGHT statement (per-cell, statement 2)", async () => {
+		// Statement 1 is clean; nullif takes exactly 2 args, so nullif(amount) in statement 2 is a
+		// wrong-arity WARNING — and it must land on statement 2's line (line 1), proving the per-cell
+		// qualification merge carries the diagnostic to the right document position.
+		const uri = open("calls.sql", "SELECT amount FROM sales;\nSELECT nullif(amount) FROM sales;");
+		const d = await waitForDiagnosticsWhere(uri, (x) => x.diagnostics.some((y) => /nullif/i.test(msg(y.message))));
+		const arity = d.diagnostics.find((y) => /nullif/i.test(msg(y.message)));
+		expect(arity).toBeDefined();
+		expect(arity!.range.start.line).toBe(1);
+		expect(arity!.severity).toBe(DiagnosticSeverity.Warning);
+	});
+
 	it("hover returns the inferred type of a column", async () => {
 		const text = "SELECT amount FROM sales";
 		const uri = open("hover.sql", text);
@@ -171,6 +202,47 @@ describe("LSP acceptance", () => {
 		expect(hover).not.toBeNull();
 		const value = (hover as any).contents.value as string;
 		expect(value).toMatch(/decimal/);
+	});
+
+	it("hover over a NOT-NULL schema column shows the type and 'not null'", async () => {
+		const text = "SELECT id FROM orders";
+		const uri = open("hover-notnull.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("id") },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).toMatch(/not null/);
+	});
+
+	it("hover over the same NOT-NULL column behind a LEFT JOIN shows 'nullable'", async () => {
+		const text = "SELECT o.id FROM customers c LEFT JOIN orders o ON c.id = o.cust_id";
+		const uri = open("hover-leftjoin.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("o.id") + 2 },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).toMatch(/nullable/);
+		expect(value).not.toMatch(/not null/);
+	});
+
+	it("hover over an un-schema'd (nullability-unstated) column shows the type only — no noise", async () => {
+		const text = "SELECT cust_id FROM orders";
+		const uri = open("hover-unstated.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("cust_id") },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).not.toMatch(/not null/);
+		expect(value).not.toMatch(/nullable/);
 	});
 
 	it("go-to-definition jumps from a CTE reference to its declaration", async () => {
@@ -221,16 +293,19 @@ describe("LSP acceptance", () => {
 	});
 
 	it("reuses the cached document across requests on an unchanged version, rebuilds once per edit", async () => {
-		// SqlDocument.create runs on open/change — NOT per request. Assert on DELTAS: once the
-		// document is built and settled, request handlers add zero builds, and one edit adds one.
-		const spy = vi.spyOn(SqlDocument, "create");
+		// A document is (re)built on open/change — NOT per request. Since Task 6 an EDIT rebuilds via
+		// prev.withText() (carrying the cell cache), while a fresh open uses SqlDocument.create — so
+		// "builds" counts both paths. Assert on DELTAS: request handlers add zero builds, one edit adds one.
+		const createSpy = vi.spyOn(SqlDocument, "create");
+		const withTextSpy = vi.spyOn(SqlDocument.prototype, "withText");
+		const builds = (): number => createSpy.mock.calls.length + withTextSpy.mock.calls.length;
 		try {
 			const text = "SELECT amount FROM sales";
 			const uri = open("cache.sql", text);
 			await waitForDiagnostics(uri);
 			// Let any open-time build(s) settle, then snapshot the count.
 			await new Promise((r) => setTimeout(r, 20));
-			const settled = spy.mock.calls.length;
+			const settled = builds();
 			expect(settled).toBeGreaterThanOrEqual(1);
 
 			const pos = { line: 0, character: text.indexOf("amount") };
@@ -238,16 +313,17 @@ describe("LSP acceptance", () => {
 			await client.sendRequest(HoverRequest.type, { textDocument: { uri }, position: pos });
 			await client.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } });
 			// Three requests on the unchanged doc: served from cache, zero new builds.
-			expect(spy.mock.calls.length).toBe(settled);
+			expect(builds()).toBe(settled);
 
-			// One edit rebuilds exactly once. Edit to text whose diagnostics DIFFER from the open-time
-			// state (an unknown column), so the wait can only succeed after the change's rebuild lands —
-			// not on stale open-time diagnostics.
+			// One edit rebuilds exactly once (via withText). Edit to text whose diagnostics DIFFER from
+			// the open-time state (an unknown column), so the wait can only succeed after the change's
+			// rebuild lands — not on stale open-time diagnostics.
 			change(uri, 2, "SELECT nope FROM sales");
 			await waitForDiagnosticsWhere(uri, (d) => d.diagnostics.some((x) => /nope|unknown/i.test(msg(x.message))));
-			expect(spy.mock.calls.length).toBe(settled + 1);
+			expect(builds()).toBe(settled + 1);
 		} finally {
-			spy.mockRestore();
+			createSpy.mockRestore();
+			withTextSpy.mockRestore();
 		}
 	});
 
@@ -706,5 +782,234 @@ describe("LSP acceptance", () => {
 		expect(Array.isArray(result)).toBe(true);
 		expect(result.length).toBe(1);
 		expect(result[0].range).toBeDefined();
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 6 — per-statement semantics. A multi-statement file used to be
+// semantically dead (the compound-flagged facade collapsed every statement past
+// the first). Each statement is now its own scoped cell: features route through
+// the cell owning the caret, and whole-doc features merge across every cell.
+// The matrix below is positioned on STATEMENT 2 (doc line 1) so every assertion
+// proves the cell routing + the cell-relative→doc coordinate shift.
+// ---------------------------------------------------------------------------
+describe("LSP multi-statement semantics (Task 6)", () => {
+	it("hover on statement 2's column answers from its own scope", async () => {
+		const text = "SELECT amount FROM sales;\nSELECT id FROM sales";
+		const uri = open("multi-hover.sql", text);
+		await waitForDiagnostics(uri);
+		const line1 = "SELECT id FROM sales";
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 1, character: line1.indexOf("id") },
+		});
+		expect(hover).not.toBeNull();
+		expect((hover as any).contents.value as string).toMatch(/int/);
+	});
+
+	it("completion at a caret in statement 2 offers that statement's columns", async () => {
+		const text = "SELECT id FROM sales;\nSELECT  FROM sales";
+		const uri = open("multi-complete.sql", text);
+		await waitForDiagnostics(uri);
+		const items = await client.sendRequest(CompletionRequest.type, {
+			textDocument: { uri },
+			position: { line: 1, character: "SELECT ".length },
+		});
+		const list = Array.isArray(items) ? items : ((items as any)?.items ?? []);
+		const labels = (list as { label: string }[]).map((c) => c.label);
+		expect(labels).toContain("amount");
+		expect(labels).toContain("id");
+	});
+
+	it("an unknown-column error in statement 1 does not suppress statement 2's hover", async () => {
+		const text = "SELECT nope FROM sales;\nSELECT amount FROM sales";
+		const uri = open("multi-mixed.sql", text);
+		const d = await waitForDiagnosticsWhere(uri, (x) =>
+			x.diagnostics.some((y) => /nope|unknown/i.test(msg(y.message))),
+		);
+		// statement 1's semantic error is present (proves per-cell analyze runs on cell 1)...
+		expect(d.diagnostics.some((y) => /nope|unknown/i.test(msg(y.message)))).toBe(true);
+		// ...and statement 2's hover still resolves — not dark from the earlier statement's error.
+		const line1 = "SELECT amount FROM sales";
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 1, character: line1.indexOf("amount") },
+		});
+		expect(hover).not.toBeNull();
+		expect((hover as any).contents.value as string).toMatch(/decimal/);
+	});
+
+	it("document symbols list output columns of BOTH statements", async () => {
+		const text = "SELECT amount AS a FROM sales;\nSELECT id AS b FROM sales";
+		const uri = open("multi-sym.sql", text);
+		await waitForDiagnostics(uri);
+		const syms = (await client.sendRequest(DocumentSymbolRequest.type, { textDocument: { uri } })) as any[];
+		const names = syms.map((s) => s.name);
+		expect(names).toContain("a");
+		expect(names).toContain("b");
+		// the second statement's symbol carries its real doc-coordinate line (line 1), not the facade's line 0.
+		const b = syms.find((s) => s.name === "b");
+		expect(b.range.start.line).toBe(1);
+	});
+
+	it("a semantic diagnostic in statement 2 is positioned on statement 2's line", async () => {
+		const text = "SELECT amount FROM sales;\nSELECT nope FROM sales";
+		const uri = open("multi-diag2.sql", text);
+		const d = await waitForDiagnosticsWhere(uri, (x) =>
+			x.diagnostics.some((y) => /nope|unknown/i.test(msg(y.message))),
+		);
+		const bad = d.diagnostics.find((y) => /nope|unknown/i.test(msg(y.message)))!;
+		expect(bad.range.start.line).toBe(1);
+		expect("SELECT nope FROM sales".slice(bad.range.start.character, bad.range.end.character)).toBe("nope");
+	});
+
+	it("go-to-definition resolves a CTE declared in statement 2 (doc-coordinate range)", async () => {
+		const text = "SELECT amount FROM sales;\nWITH c AS (SELECT id FROM sales) SELECT id FROM c";
+		const uri = open("multi-def.sql", text);
+		await waitForDiagnostics(uri);
+		const line1 = "WITH c AS (SELECT id FROM sales) SELECT id FROM c";
+		const loc = await client.sendRequest(DefinitionRequest.type, {
+			textDocument: { uri },
+			position: { line: 1, character: line1.lastIndexOf("c") },
+		});
+		expect(loc).not.toBeNull();
+		const range = Array.isArray(loc) ? (loc[0] as any).range : (loc as any).range;
+		expect(range.start.line).toBe(1);
+		expect(range.start.character).toBe(line1.indexOf("c"));
+	});
+
+	it("references of a statement-2 CTE column are all on statement 2's line", async () => {
+		const text = "SELECT amount FROM sales;\nWITH c AS (SELECT id FROM sales) SELECT id FROM c";
+		const uri = open("multi-refs.sql", text);
+		await waitForDiagnostics(uri);
+		const line1 = "WITH c AS (SELECT id FROM sales) SELECT id FROM c";
+		const locs = (await client.sendRequest(ReferencesRequest.type, {
+			textDocument: { uri },
+			position: { line: 1, character: line1.lastIndexOf("id") },
+			context: { includeDeclaration: true },
+		})) as any[];
+		expect(locs.length).toBeGreaterThanOrEqual(2);
+		for (const l of locs) {
+			expect(l.range.start.line).toBe(1);
+			expect(line1.slice(l.range.start.character, l.range.end.character)).toBe("id");
+		}
+	});
+
+	it("inlay hints annotate output columns of BOTH statements", async () => {
+		const text = "SELECT amount FROM sales;\nSELECT id FROM sales";
+		const uri = open("multi-inlay.sql", text);
+		await waitForDiagnostics(uri);
+		const hints = (await client.sendRequest(InlayHintRequest.type, {
+			textDocument: { uri },
+			range: { start: { line: 0, character: 0 }, end: { line: 1, character: 100 } },
+		})) as any[];
+		const label = (h: any): string =>
+			typeof h.label === "string" ? h.label : h.label.map((p: any) => p.value).join("");
+		const line0 = hints.filter((h) => h.position.line === 0);
+		const line1 = hints.filter((h) => h.position.line === 1);
+		expect(line0.some((h) => /decimal/.test(label(h)))).toBe(true);
+		expect(line1.some((h) => /int/.test(label(h)))).toBe(true);
+	});
+
+	it("selectionRange in statement 2 widens through doc-coordinate ranges", async () => {
+		const text = "SELECT amount FROM sales;\nSELECT id FROM sales";
+		const uri = open("multi-sel.sql", text);
+		const line1 = "SELECT id FROM sales";
+		const idStart = line1.indexOf("id");
+		const result = (await client.sendRequest(SelectionRangeRequest.type, {
+			textDocument: { uri },
+			positions: [{ line: 1, character: idStart + 1 }],
+		})) as any[];
+		expect(result.length).toBe(1);
+		// The innermost range covers `id` on doc line 1 (proves the CST-node range shifted to doc coords).
+		expect(result[0].range.start.line).toBe(1);
+		expect(result[0].range.start.character).toBeLessThanOrEqual(idStart);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Task 8 — lazy catalog. A host embeds the server with a CallbackSchema (the
+// resolve-on-demand catalog) instead of a static file schema. The FIRST publish
+// resolves against a cold host cache, so an unknown table squiggles. The server's
+// publish loop then warms the resolver in the background (prime()) and — when a
+// table is revealed — RE-publishes; the second publish drops the diagnostic. This
+// is the whole lazy-catalog contract: never-wrong on the cold read, self-healing
+// when the resolver warms.
+// ---------------------------------------------------------------------------
+describe("LSP lazy catalog (Task 8)", () => {
+	let lazyRoot: string;
+	let lazyClient: ReturnType<typeof createProtocolConnection>;
+	const publishes: PublishDiagnosticsParams[] = [];
+	let fetchCalls = 0;
+
+	beforeAll(async () => {
+		lazyRoot = mkdtempSync(join(tmpdir(), "sqllens-lazy-"));
+		writeFileSync(
+			join(lazyRoot, ".sqllens.json"),
+			JSON.stringify({ dialects: [{ files: "**/*.sql", dialect: "databricks" }], default: "databricks" }),
+		);
+
+		// The host's warm cache — empty at first. `resolve` is a sync read of it (a cold miss returns
+		// undefined → the CallbackSchema records the miss); `fetch` is the background warm that reveals
+		// `orders` on the first prime.
+		const cache = new Map<string, { name: string; type?: string }[]>();
+		const resolver: TableResolver = {
+			resolve: (parts) => cache.get(parts.join(".")),
+			fetch: async (missing) => {
+				fetchCalls++;
+				for (const parts of missing) {
+					if (parts.join(".") === "orders") cache.set("orders", [{ name: "id", type: "int" }]);
+				}
+			},
+		};
+		const schema = new CallbackSchema(resolver);
+
+		const up = new TestStream();
+		const down = new TestStream();
+		const serverConnection = createConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
+		// The embedding entry point: the host hands the server a SchemaSource.
+		startServer(serverConnection, { schema });
+
+		lazyClient = createProtocolConnection(new StreamMessageReader(down), new StreamMessageWriter(up));
+		lazyClient.onNotification(PublishDiagnosticsNotification.type, (p) => {
+			publishes.push(p);
+		});
+		lazyClient.listen();
+
+		await lazyClient.sendRequest(InitializeRequest.type, {
+			processId: null,
+			rootUri: pathToFileURL(lazyRoot).toString(),
+			capabilities: {},
+			workspaceFolders: null,
+		});
+	});
+
+	afterAll(() => {
+		lazyClient.dispose();
+		rmSync(lazyRoot, { recursive: true, force: true });
+	});
+
+	it("first publish flags the unknown table; a later publish drops it once the resolver warms", async () => {
+		const uri = pathToFileURL(join(lazyRoot, "lazy.sql")).toString();
+		// `SELECT *` forces star-expansion, which needs the table's columns — so a cold `orders`
+		// yields an unknown-table diagnostic that a warm one (columns revealed) clears.
+		void lazyClient.sendNotification(DidOpenTextDocumentNotification.type, {
+			textDocument: { uri, languageId: "sql", version: 1, text: "SELECT * FROM orders" },
+		});
+
+		// First publish: the host cache is cold, so `orders` is unknown and squiggles.
+		const dirty = await waitFor(() =>
+			publishes.find((p) => p.uri === uri && p.diagnostics.some((d) => /orders/i.test(msg(d.message)))),
+		);
+		expect(dirty.diagnostics.some((d) => /orders/i.test(msg(d.message)))).toBe(true);
+
+		// The prime microtask warms the resolver, then a SECOND publish arrives — diagnostic-clean.
+		const clean = await waitFor(() => publishes.find((p) => p.uri === uri && p.diagnostics.length === 0));
+		expect(clean.diagnostics).toEqual([]);
+
+		// It is a RE-publish (came after the dirty one), and the resolver was fetched exactly once
+		// (in-flight coalescing — no double fetch on the single open).
+		expect(publishes.indexOf(clean)).toBeGreaterThan(publishes.indexOf(dirty));
+		expect(fetchCalls).toBe(1);
 	});
 });
