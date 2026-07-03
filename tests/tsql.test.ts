@@ -188,4 +188,51 @@ describe("T-SQL SLL-surgery — grammar-health probes", () => {
 			rejected("DECLARE = 5;");
 		});
 	});
+
+	// Iteration 2 — full_column_name: the qualifier was `(DELETED|INSERTED|full_table_name) '.'`, whose
+	// embedded full_table_name forced a deep-lookahead table-vs-column carving (context sensitivity).
+	// Left-factored into a bounded local dotted chain; every qualified shape still parses and lowers to
+	// the same `{kind:"column", parts:[…]}` (nameParts reads only the id_ leaves).
+	// learn.microsoft.com/en-us/sql/t-sql/language-elements/transact-sql-syntax-conventions-transact-sql
+	describe("full_column_name (iter 2)", () => {
+		/** The `parts` of the single projected column reference. */
+		function colParts(sql: string): string[] {
+			const q = lower(parseTSql(sql).tree);
+			if (q.body.kind !== "select") throw new Error("expected select");
+			const e = q.body.projections[0].expr;
+			if (e.kind !== "column") throw new Error(`expected a column, got ${e.kind}`);
+			return e.parts;
+		}
+		it("parses 1- through 5-part column references with no fallback", () => {
+			clean("SELECT a FROM t");
+			clean("SELECT t.a FROM t");
+			clean("SELECT s.t.a FROM s.t");
+			clean("SELECT d.s.t.a FROM d.s.t");
+			clean("SELECT srv.d.s.t.a FROM srv.d.s.t");
+		});
+		it("preserves the id_-leaf part list for every qualifier depth (IR unchanged)", () => {
+			expect(colParts("SELECT a FROM t")).toEqual(["a"]);
+			expect(colParts("SELECT t.a FROM t")).toEqual(["t", "a"]);
+			expect(colParts("SELECT s.t.a FROM s.t")).toEqual(["s", "t", "a"]);
+			expect(colParts("SELECT d.s.t.a FROM d.s.t")).toEqual(["d", "s", "t", "a"]);
+			expect(colParts("SELECT srv.d.s.t.a FROM srv.d.s.t")).toEqual(["srv", "d", "s", "t", "a"]);
+		});
+		it("keeps the omitted-database empty-segment forms (server..schema.table.col)", () => {
+			// The only degenerate shape full_table_name produced: an empty 2nd part.
+			clean("SELECT d..t.a FROM d..t");
+			expect(colParts("SELECT d..t.a FROM d..t")).toEqual(["d", "t", "a"]);
+			clean("SELECT srv..s.t.a FROM srv..s.t");
+			expect(colParts("SELECT srv..s.t.a FROM srv..s.t")).toEqual(["srv", "s", "t", "a"]);
+		});
+		it("still parses DELETED/INSERTED-qualified and graph pseudo-columns", () => {
+			clean("SELECT DELETED.a FROM t");
+			clean("SELECT INSERTED.a FROM t");
+			clean("SELECT $IDENTITY FROM t");
+			clean("SELECT p.$node_id FROM g AS p");
+		});
+		it("rejects a dangling-dot column reference", () => {
+			rejected("SELECT a. FROM t");
+			rejected("SELECT .a FROM t");
+		});
+	});
 });

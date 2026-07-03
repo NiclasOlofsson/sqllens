@@ -46,7 +46,7 @@ const OTHER_BASELINE = 0; // driven to 0 (2026-07-02): XML data type methods, RE
 // under full LL. Measured 2026-07-03 via `node --import tsx tools/profile-sll.ts tsql` over this same
 // docs query bucket. Counted on the SAME single parse the docs ratchet makes (the `parse:` closure
 // below), never a re-parse. May only fall as the surgery wave's per-dialect tasks land.
-const FALLBACK_RATCHET = 186;
+const FALLBACK_RATCHET = 1;
 
 /** Production parse (tsql_file, two-stage SLL→LL); returns the syntax-error count. */
 function parseErrors(sql: string): number {
