@@ -216,4 +216,25 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 		// A plain dotted path stays a column, not a call.
 		expect(projExpr("SELECT x.y.z")).toMatchObject({ kind: "column", parts: ["x", "y", "z"] });
 	});
+
+	it("c_expr — typed literals predict under SLL (ported postgres aexprconst reorder)", () => {
+		// aexprconst ordered above func_expr/columnref: `DATE '…'` / `f(1) '5'` used to bail on the
+		// trailing string constant. The identifier-led aexprconst forms REQUIRE that trailing sconst, so
+		// they stay disjoint from a bare call / column.
+		for (const sql of [
+			"SELECT DATE '1992-09-20'",
+			"SELECT TIMESTAMP '2001-02-16 20:38:40'",
+			"SELECT INTERVAL '1 month 1 day'",
+			"SELECT decimal '3.14'",
+			"SELECT a FROM t WHERE d > DATE '2000-01-01'",
+		]) {
+			ok(sql);
+			noFallback(sql);
+		}
+		// The trailing-sconst requirement is real: a bare call with a stray string still rejects.
+		expect(parseDuckdb("SELECT count(*) '5'").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT f() '5'").errors).toBeGreaterThan(0);
+		// A plain call and a plain column still lower unchanged (aexprconst dropped out for them).
+		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
+	});
 });

@@ -3897,9 +3897,16 @@ c_expr
    // For that form func_name's own indirection greedily swallows the `(a)`, so func_expr does NOT reach a
    // full match and columnref stays the sole full match — its method-chain reading (`x.f(a)` → `f(x,a)`)
    // is preserved even with func_expr listed first (pinned in tests/duckdb.test.ts). No language change.
+   // NOTE(perf): aexprconst sits ABOVE func_expr/columnref, most-specific-first (ported from postgres
+   // c_expr iter 3). Its identifier-led forms — `func_name sconst`, `func_name '(' args ')' sconst`,
+   // `consttypename sconst` — all REQUIRE a trailing sconst, so they are disjoint on a FULL match from a
+   // bare `f(args)` (func_expr) or a bare column (columnref): for `DATE '…'` / `f(1) '5'` aexprconst is
+   // the minimum viable alt, while for `f(1)` / a bare `f` the required trailing sconst is absent and
+   // aexprconst drops out. The constinterval forms are INTERVAL-keyword-led (no identifier overlap). No
+   // language change; lower() still routes aexprconst → literal (dispatch is by child rule, not order).
+   | aexprconst # c_expr_expr
    | func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
-   | aexprconst # c_expr_expr
    | plsqlvariablename # c_expr_expr
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
