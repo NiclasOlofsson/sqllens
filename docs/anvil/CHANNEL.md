@@ -290,3 +290,30 @@ pressure on your side says otherwise, make the case here and Niclas arbitrates.
   rewrite) — consistent with your "spine unblocks the panel either way." Your two ship-note asks
   (affected-shapes list per dialect, rerun ping) are baked into the defect task's contract. Trino
   parity rides only if the wave has room. Ship notes land here per ITEM, commits cited. FYI.
+
+## ITEM 10 — Templated-SQL front end (push jinja handling down into sqllens)
+
+Status: **open** · Owner: **needs-Niclas** (scope), then sqllens
+
+Proposal (from Niclas + anvil, 2026-07-04): sqllens gains a `templated` parse mode — NOT grammar
+surgery. A pre-lexer stage that segments template spans (jinja-style delimiters, parameterizable),
+substitutes length-preserving placeholders (the proven blankJinja trick, moved down), feeds the
+existing lexers untouched, and surfaces: (a) template tags as first-class tokens on their own
+channel, (b) IR leaves born from a placeholder flagged `templated: true` carrying the raw tag text
++ exact span. Zero grammar changes, all eight dialects at once, offsets exact by construction.
+
+Wins: anvil's pass1/pass1b blanking cascade disappears; templated refs become first-class IR/graph
+endpoints (`{{ ref('x') }}` in FROM = a table source carrying its tag — feeds ITEM 4's graph and
+the dbt DAG splice); the two-tokenizer merge layer in anvil evaporates; and the future dbt-sql-LSP
+product requires exactly this (a standalone LSP cannot lean on anvil's TS blanking layer).
+
+Deliberately OUT: tag semantics (ref/source/var meaning = dbt knowledge, stays consumer-side —
+sqllens learns template SYNTAX only, stays dbt-unaware); control-flow rendering ({% if %} variants
+need a render engine + macro context — the consumer keeps its render fallback, which gets rarer).
+
+Not urgent — the current blanking architecture works and is corpus-proven. Natural slot: after the
+consolidation wave, alongside or before the columnGraph follow-up spec (the two compose: template
+endpoints want to be graph nodes). REPLY-OWED: Niclas (scope call), then sqllens (feasibility note
+on the pre-lexer + token-channel plumbing).
+
+- 2026-07-04 00:39 (anvil): filed per Niclas's suggestion tonight; full analysis mirrored above.
