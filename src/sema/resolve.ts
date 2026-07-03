@@ -1,4 +1,5 @@
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
+import type { Projection } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
 import {
 	applyPivotCols,
@@ -51,6 +52,28 @@ export function resolveColumnSource(scope: Scope, parts: string[], schema: Schem
 		if (unknown.length === 1) return { source: unknown[0], column: split.column, fields: split.fields };
 	}
 	return undefined;
+}
+
+/**
+ * The projection producing `column` in a derived relation's projection list — the ONE shared
+ * "which projection is this column?" step used by BOTH lineage walks (the flat `derivedOrigins`
+ * origin walk and the per-hop `hops.ts` spine), so they can never drift on producer selection.
+ * With declared column aliases (`WITH c (x, y) AS …`), the alias position picks the projection
+ * (even a `*`, matching the origin walk's `projs[i]` read); otherwise a non-star projection whose
+ * name folds equal. Returns undefined when no projection produces the column (a bare `*`/source).
+ */
+export function findProducerProjection(
+	projections: Projection[],
+	column: string,
+	aliases: string[] | undefined,
+	dialect: string,
+): Projection | undefined {
+	const want = foldIdentifier(column, dialect);
+	if (aliases) {
+		const i = aliases.findIndex((a) => foldIdentifier(a, dialect) === want);
+		return i >= 0 ? projections[i] : undefined;
+	}
+	return projections.find((p) => !p.isStar && p.name !== undefined && foldIdentifier(p.name, dialect) === want);
 }
 
 /** The output column names a source exposes — schema for a table, the (schema-expanded) output

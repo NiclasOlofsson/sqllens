@@ -8,6 +8,7 @@ import { parseDatabricks, type ParseResult } from "../../src/databricks/parse.js
 import { DatabricksParser as P } from "../../src/generated/databricks/DatabricksParser.js";
 import type { Expr, QueryBody, QueryExpr } from "../../src/ir/ir.js";
 import { lineage } from "../../src/lineage/lineage.js";
+import { lineageAt, lineageOf } from "../../src/lineage/hops.js";
 import { Schema } from "../../src/qualify/schema.js";
 import { resolveScopes, resolveColumn, type Scope, type ScopeTree } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
@@ -498,4 +499,53 @@ describe.skipIf(!existsSync(CORPUS))("Databricks Oatly corpus — one pass, all 
 		expect(total).toBeGreaterThan(0);
 		console.log(`\nderiveSymbols: ${total} symbols across ${files.length} models`);
 	}, 120000);
+
+	// ---- 7. per-hop lineage totality (Task 6) -----------------------------------------------
+	// For every model, sample lineageAt at up to 3 offsets — the first projection's expr start + mid,
+	// and a WHERE-clause column ref when present — and lineageOf on that projection (UNWRAPPED, so a
+	// real internal throw surfaces; lineageAt itself is total). No extra parse: reuses cached scopes.
+	it("per-hop lineage (lineageAt/lineageOf) runs over every model without throwing", () => {
+		const files = corpusFiles();
+		let probed = 0;
+		for (const rel of files) {
+			const { scopes } = analyze(rel);
+			const probe = firstSelectProbe(scopes.root);
+			if (!probe) continue;
+			const { scope, projection, offsets } = probe;
+			// Unwrapped: exercises the real walk; a throw here fails the model, not silently swallowed.
+			lineageOf(projection, scope);
+			for (const off of offsets) lineageAt(scopes, off); // total (undefined off-symbol is fine)
+			probed++;
+		}
+		expect(probed).toBeGreaterThan(0);
+		console.log(`\nper-hop lineage: probed ${probed}/${files.length} models`);
+	}, 120000);
 });
+
+/** The first select scope carrying a projection, with sampled offsets (projection expr start + mid,
+ *  and its first WHERE column ref when present) — the totality-rider probe. */
+function firstSelectProbe(
+	root: Scope,
+): { scope: Scope; projection: import("../../src/ir/ir.js").Projection; offsets: number[] } | undefined {
+	const visit = (scope: Scope): ReturnType<typeof firstSelectProbe> => {
+		const body = scope.body;
+		if (body.kind === "select" && body.projections.length > 0) {
+			const p = body.projections[0];
+			const offsets: number[] = [];
+			const s = p.expr.cst?.start?.start;
+			const e = p.expr.cst?.stop?.stop;
+			if (typeof s === "number") offsets.push(s);
+			if (typeof s === "number" && typeof e === "number") offsets.push(Math.floor((s + e) / 2));
+			const wref = body.where && body.columns.find((c) => c.clause === "where");
+			const w = wref?.cst?.start?.start;
+			if (typeof w === "number") offsets.push(w);
+			if (offsets.length > 0) return { scope, projection: p, offsets };
+		}
+		for (const child of scope.children) {
+			const hit = visit(child);
+			if (hit) return hit;
+		}
+		return undefined;
+	};
+	return visit(root);
+}

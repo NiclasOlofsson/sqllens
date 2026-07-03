@@ -2,7 +2,7 @@ import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.j
 import type { Expr, QueryExpr } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
-import { columnNamesOf, resolveColumnSource } from "../sema/resolve.js";
+import { columnNamesOf, findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Column-level lineage — for each output column of a query, the base-table
@@ -206,8 +206,10 @@ function columnRefOrigins(parts: string[], scope: Scope, schema: SchemaSource, s
 }
 
 /** The origins of `column` exposed by a source — a base table is a leaf; a derived relation
- *  recurses into the projection (or source) that produces the column. */
-function columnOrigins(src: ResolvedSource, column: string, schema: SchemaSource, seen: Set<Scope>): Origin[] {
+ *  recurses into the projection (or source) that produces the column. Exported so the per-hop
+ *  lineage walk (src/lineage/hops.ts) can defer pipe/lateral/graphtable/pivot sources — the ones
+ *  it has no hop model for — to this exact shared origin walk, so the two walks can't drift. */
+export function columnOrigins(src: ResolvedSource, column: string, schema: SchemaSource, seen: Set<Scope>): Origin[] {
 	if (src.kind === "table") return [{ table: src.name, column }];
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
@@ -236,14 +238,7 @@ function derivedOrigins(
 			return i >= 0 ? (lin[i]?.origins ?? []) : [];
 		}
 		if (child.body.kind !== "select") return [];
-		const projs = child.body.projections;
-		let producer: Expr | undefined;
-		if (aliases) {
-			const i = aliases.findIndex((a) => eq(a, column, d));
-			producer = i >= 0 ? projs[i]?.expr : undefined;
-		} else {
-			producer = projs.find((p) => !p.isStar && p.name !== undefined && eq(p.name, column, d))?.expr;
-		}
+		const producer = findProducerProjection(child.body.projections, column, aliases, d)?.expr;
 		// A named projection produces it directly; otherwise it flows through a `*`/source — resolve it
 		// as a column reference inside the child scope.
 		return producer ? exprOrigins(producer, child, schema, seen) : columnRefOrigins([column], child, schema, seen);

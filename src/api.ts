@@ -246,6 +246,13 @@ export class Lineage {
 // Lineage wrapper) so consumers can trace one expression without a full query lineage.
 export { exprOriginsOf as originsOfExpr };
 
+// Per-hop lineage — the cursor-anchored reference-spine DAG (one hop per qualifiable column, each a
+// reference into the frozen IR/scope tree). `lineageAt(scopes, offset, schema?)` anchors on the node
+// under a cursor; `lineageOf(node, scope, schema?)` traces any column-ref/projection programmatically.
+// Rides the same shared binder as the flat lineage() so the two cannot drift. Total: lineageAt never
+// throws (returns undefined off-symbol).
+export { lineageAt, lineageOf, type LineageHop } from "./lineage/hops.js";
+
 // The token-stream front end: the always-available lexer-only token list (tokenize) plus the
 // neutral token types. parse() now carries the same tokens on its result; tokenize() serves the
 // broken-input case where no parse is wanted.
