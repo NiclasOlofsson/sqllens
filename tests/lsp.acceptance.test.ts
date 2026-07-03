@@ -73,7 +73,14 @@ beforeAll(async () => {
 			schema: "schema.json",
 		}),
 	);
-	writeFileSync(join(root, "schema.json"), JSON.stringify({ sales: { amount: "decimal", id: "int" } }));
+	writeFileSync(
+		join(root, "schema.json"),
+		JSON.stringify({
+			sales: { amount: "decimal", id: "int" },
+			orders: { id: { type: "int", nullable: false }, cust_id: "int" },
+			customers: { id: "int" },
+		}),
+	);
 
 	const up = new TestStream();
 	const down = new TestStream();
@@ -182,6 +189,47 @@ describe("LSP acceptance", () => {
 		expect(hover).not.toBeNull();
 		const value = (hover as any).contents.value as string;
 		expect(value).toMatch(/decimal/);
+	});
+
+	it("hover over a NOT-NULL schema column shows the type and 'not null'", async () => {
+		const text = "SELECT id FROM orders";
+		const uri = open("hover-notnull.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("id") },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).toMatch(/not null/);
+	});
+
+	it("hover over the same NOT-NULL column behind a LEFT JOIN shows 'nullable'", async () => {
+		const text = "SELECT o.id FROM customers c LEFT JOIN orders o ON c.id = o.cust_id";
+		const uri = open("hover-leftjoin.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("o.id") + 2 },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).toMatch(/nullable/);
+		expect(value).not.toMatch(/not null/);
+	});
+
+	it("hover over an un-schema'd (nullability-unstated) column shows the type only — no noise", async () => {
+		const text = "SELECT cust_id FROM orders";
+		const uri = open("hover-unstated.sql", text);
+		const hover = await client.sendRequest(HoverRequest.type, {
+			textDocument: { uri },
+			position: { line: 0, character: text.indexOf("cust_id") },
+		});
+		expect(hover).not.toBeNull();
+		const value = (hover as any).contents.value as string;
+		expect(value).toMatch(/int/);
+		expect(value).not.toMatch(/not null/);
+		expect(value).not.toMatch(/nullable/);
 	});
 
 	it("go-to-definition jumps from a CTE reference to its declaration", async () => {

@@ -20,6 +20,7 @@ export {
 	lineage,
 	deriveSymbols,
 	TypeInfo,
+	type Nullability,
 	Lineage,
 	originsOfExpr,
 	tokenize,

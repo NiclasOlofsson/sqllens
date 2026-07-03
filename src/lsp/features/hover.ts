@@ -15,11 +15,14 @@ export function computeHover(doc: SqlDocument, position: Position, schema?: Sche
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const hit = doc.nodeAt(off);
 	if (hit) {
-		const type = doc.analyze(schema).types.typeOf(hit.expr, hit.scope);
+		const types = doc.analyze(schema).types;
+		const type = types.typeOf(hit.expr, hit.scope);
 		if (type.kind !== "unknown") {
 			// hit.expr.cst is CELL-relative (doc.nodeAt routes to the owning cell) — shift to doc coords.
 			const range = shiftRange(rangeFromCst(hit.expr.cst), cellBaseAt(doc, off));
-			return { contents: fence(formatType(type)), range };
+			const nullability = types.nullabilityOf(hit.expr, hit.scope);
+			const suffix = nullability === "notnull" ? " — not null" : nullability === "nullable" ? " — nullable" : "";
+			return { contents: fence(formatType(type) + suffix), range };
 		}
 	}
 	const sym = symbolAt(doc, doc.analyze(schema).symbols, off);

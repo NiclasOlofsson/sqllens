@@ -37,6 +37,8 @@ import { Schema } from "./qualify/schema.js";
 import { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
 import { inferType } from "./infer/infer.js";
 import type { Type } from "./infer/types.js";
+import { inferNullability, type Nullability } from "./infer/nullability.js";
+export type { Nullability } from "./infer/nullability.js";
 import {
 	lineage as lineageScopes,
 	originsOf as exprOriginsOf,
@@ -212,6 +214,12 @@ export class TypeInfo {
 	/** The inferred type of an expression evaluated in a scope. */
 	typeOf(expr: Expr, scope: Scope): Type {
 		return inferType(expr, scope, this.schema);
+	}
+
+	/** The inferred nullability of an expression evaluated in a scope — "notnull"/"nullable" only
+	 *  when provable from expression shape + schema + join shape, else "unknown" (never guessed). */
+	nullabilityOf(expr: Expr, scope: Scope): Nullability {
+		return inferNullability(expr, scope, this.schema);
 	}
 }
 
