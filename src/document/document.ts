@@ -65,7 +65,7 @@ interface Versioned<T> {
  *  identity-only Map did. Single-slot (not Map<version,…>) keeps memory bounded to one entry per
  *  schema even for a CachedCell that survives many edits + primes, and is correct because a
  *  superseded version is never queried again. */
-function memoByVersion<T>(cache: Map<SchemaSource, Versioned<T>>, schema: SchemaSource, compute: () => T): T {
+function memoByVersion<T>(cache: WeakMap<SchemaSource, Versioned<T>>, schema: SchemaSource, compute: () => T): T {
 	const hit = cache.get(schema);
 	if (hit && hit.version === schema.version) return hit.value;
 	const value = compute();
@@ -104,7 +104,7 @@ interface CachedCell {
 	 *  bumps its version in prime(), which must invalidate this cell's cached analysis). The Map
 	 *  reference is stable across edits (the CachedCell is reused via the CellCache), so a cell
 	 *  untouched by an edit keeps its analysis until a schema/version change. */
-	readonly analysis: Map<SchemaSource, Versioned<CellAnalysis>>;
+	readonly analysis: WeakMap<SchemaSource, Versioned<CellAnalysis>>;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -203,7 +203,7 @@ export class SqlDocument {
 	 *  memoized on the CachedCell and survives edits. Keyed on schema IDENTITY + VERSION (a primed
 	 *  CallbackSchema bumps its version, invalidating this memo). The Map reference is frozen with the
 	 *  instance, but its contents stay mutable, so memoization works on a frozen SqlDocument. */
-	private readonly _analysisCache = new Map<SchemaSource, Versioned<DocumentAnalysis>>();
+	private readonly _analysisCache = new WeakMap<SchemaSource, Versioned<DocumentAnalysis>>();
 	/** The CachedCell backing each StatementCell, parallel to `statements`. Holds the cross-edit
 	 *  per-cell analysis memo; analyze() reads it to merge per-statement results. */
 	private readonly _cells: readonly CachedCell[];
@@ -293,7 +293,7 @@ export class SqlDocument {
 				tokens: p.tokens,
 				errors: p.errors,
 				diagnostics: p.diagnostics,
-				analysis: new Map<SchemaSource, Versioned<CellAnalysis>>(),
+				analysis: new WeakMap<SchemaSource, Versioned<CellAnalysis>>(),
 			};
 			// Cache only the FIRST product for a key (see above — duplicates stay uncached).
 			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);

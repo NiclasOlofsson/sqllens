@@ -184,7 +184,7 @@ function unwrap(raw: string, rule: FoldRule): [string, boolean] {
  *  documented identifier rules. The result is the IDENTITY KEY for name comparison — display
  *  text always comes from the raw source, never from this. */
 export function foldIdentifier(raw: string, dialect: string | undefined, kind: IdentKind = "other"): string {
-	const rule = (dialect && RULES[dialect]) || DEFAULT_RULE;
+	const rule = (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
 	const [body, wasQuoted] = unwrap(raw, rule);
 	if (kind === "table" && rule.tableCase) return applyCase(body, rule.tableCase);
 	return applyCase(body, wasQuoted ? rule.quoted : rule.unquoted);

@@ -103,7 +103,7 @@ export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type Scope
 
 export { type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
-export { Schema, type Column, type SchemaMapping } from "./qualify/schema.js";
+export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";
 
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 

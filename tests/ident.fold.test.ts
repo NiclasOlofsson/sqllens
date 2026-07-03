@@ -136,4 +136,8 @@ describe("undefined/unknown dialect", () => {
 	it("behaves the same for an unrecognized dialect string", () => {
 		expect(foldIdentifier("`MyTable`", "not-a-real-dialect")).toBe("mytable");
 	});
+	it("does not read Object.prototype keys off the rule table", () => {
+		expect(foldIdentifier("x", "constructor")).toBe("x");
+		expect(foldIdentifier("`MyTable`", "constructor")).toBe("mytable");
+	});
 });
