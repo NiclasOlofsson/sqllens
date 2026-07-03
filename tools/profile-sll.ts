@@ -33,14 +33,18 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import { performance } from "node:perf_hooks";
 import {
+	BailErrorStrategy,
 	CharStream,
 	CommonTokenStream,
 	type BitSet,
 	type Lexer,
 	type Parser,
 	type ParserATNSimulator,
+	type ParserRuleContext,
 	PredictionMode,
 	ProfilingATNSimulator,
+	type RecognitionException,
+	type Token as AntlrToken,
 } from "antlr4ng";
 import { corpusPath } from "./corpus-paths.mjs";
 
@@ -353,8 +357,74 @@ async function drilldown(cfg: DialectCfg, decisionNo: number, fallbackFiles: Cor
 	}
 }
 
+/** --bails: the production bail-site census. Re-runs the two-stage front (SLL + BailErrorStrategy)
+ *  per corpus file exactly as `parse.ts` does, and on each bail reads the wrapped
+ *  RecognitionException's `ctx` (the grammar rule the parser was in at the mispredict) and
+ *  `offendingToken` (what tripped it), aggregating `rule @ TOKEN` → count + sample files. This is the
+ *  view that actually predicts which files fall back — SLL mispredicts, then a spurious syntax error
+ *  surfaces downstream; the profiler's LL-mode ambiguity table (Pass B) says where *time* goes, which
+ *  need not be where the *bails* happen (see .superpowers/sdd/task-2-report.md "Method note"). */
+async function bailCensus(cfg: DialectCfg): Promise<void> {
+	const dirAbs = corpusPath(cfg.dir);
+	const texts = loadCorpus(dirAbs, PASS_A_CAP);
+	const { L, P } = await cfg.loadRaw();
+	const ruleNames = (P as unknown as { ruleNames: string[] }).ruleNames;
+
+	interface BailSite {
+		key: string;
+		count: number;
+		samples: string[];
+		tokenTexts: Set<string>;
+	}
+	const sites = new Map<string, BailSite>();
+	let bails = 0;
+	let vocab: { getSymbolicName(t: number): string | null; getDisplayName(t: number): string | null } | undefined;
+
+	const tBail = performance.now();
+	for (const c of texts) {
+		const lexer = new L(CharStream.fromString(c.text));
+		const tokens = new CommonTokenStream(lexer);
+		const parser = new P(tokens);
+		lexer.removeErrorListeners();
+		parser.removeErrorListeners();
+		parser.errorHandler = new BailErrorStrategy();
+		(parser.interpreter as ParserATNSimulator).predictionMode = PredictionMode.SLL;
+		vocab ??= (parser as unknown as { vocabulary: typeof vocab }).vocabulary;
+		try {
+			// eslint-disable-next-line @typescript-eslint/no-explicit-any
+			(parser as any)[cfg.entry]();
+		} catch (e) {
+			bails++;
+			// BailErrorStrategy throws ParseCancellationException{ cause: RecognitionException }.
+			const cause = (e as { cause?: RecognitionException }).cause;
+			const ctx = cause?.ctx as (ParserRuleContext & { ruleIndex: number }) | null | undefined;
+			const tok = cause?.offendingToken as AntlrToken | null | undefined;
+			const rule = ctx && ctx.ruleIndex >= 0 ? (ruleNames[ctx.ruleIndex] ?? `#${ctx.ruleIndex}`) : "?";
+			const ttype = tok?.type ?? -1;
+			const tname =
+				ttype < 0 ? "?" : (vocab?.getSymbolicName(ttype) ?? vocab?.getDisplayName(ttype) ?? `T${ttype}`);
+			const key = `${rule} @ ${tname}`;
+			const s = sites.get(key) ?? { key, count: 0, samples: [], tokenTexts: new Set() };
+			s.count++;
+			if (s.samples.length < 3) s.samples.push(c.rel);
+			if (tok?.text) s.tokenTexts.add(tok.text.length > 24 ? tok.text.slice(0, 24) + "…" : tok.text);
+			sites.set(key, s);
+		}
+	}
+	const wall = performance.now() - tBail;
+
+	console.log(`\n### ${cfg.name} — bail-site census over ${texts.length} files (SLL+Bail), ${wall.toFixed(0)} ms`);
+	console.log(`SLL bails: ${bails}/${texts.length} (${((bails / texts.length) * 100).toFixed(1)}%)`);
+	console.log(`bail sites (count | rule @ offending-token | sample texts | e.g. file):`);
+	for (const s of [...sites.values()].sort((a, b) => b.count - a.count)) {
+		const texts3 = [...s.tokenTexts].slice(0, 4).join(" ");
+		console.log(`  ${String(s.count).padStart(4)} | ${s.key.padEnd(44)} | ${texts3.padEnd(28)} | ${s.samples[0]}`);
+	}
+}
+
 async function main(): Promise<void> {
 	const dialectArg = process.argv[2];
+	const bailsMode = process.argv.includes("--bails");
 	const decisionFlagIdx = process.argv.indexOf("--decision");
 	const decisionNo = decisionFlagIdx >= 0 ? Number(process.argv[decisionFlagIdx + 1]) : undefined;
 
@@ -389,6 +459,10 @@ async function main(): Promise<void> {
 			continue;
 		}
 
+		if (bailsMode) {
+			await bailCensus(cfg);
+			continue;
+		}
 		const fallbackFiles = await census(cfg);
 		if (decisionNo !== undefined) await drilldown(cfg, decisionNo, fallbackFiles);
 	}
