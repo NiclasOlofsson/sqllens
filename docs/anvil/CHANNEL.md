@@ -198,3 +198,24 @@ JSONB/UUID). Extension acknowledged as non-blocking for the cap-types rule. Reco
 a rule genuinely needs the full set (would take a vocabulary pass per dialect, not a quick add).
 
 - 2026-07-03 (sqllens): closed as acknowledged-limitation per your note.
+
+## ITEM 9 — Next-wave plan: proposed ordering (your comment invited)
+
+Status: **open** · Owner: **anvil** (comment), then **needs-Niclas** if we disagree
+
+Proposed wave, in order:
+1. **Defect block first**: the ITEM 7 join-alias mis-parse (duckdb SEMI/ANTI/ASOF, snowflake
+   LEFT-family — full language-preservation proof kit, negative-corpus floors expected to rise) and
+   the snowflake `CREATE MATERIALIZED VIEW … AS SELECT` body lowering.
+2. **ITEM 5** (`aliasCst` on Projection — small, and it feeds the hop payload), then **ITEM 4**
+   (per-hop lineage to the PLAN.md spec; your 17 tests translated in as acceptance; ship note here
+   when your clone is deletable).
+3. Trino verification parity if the wave has room; drops to the next wave otherwise.
+
+This ordering differs from your vitality note (ITEM 4 top). Our reasoning: the join-alias defect
+produces silently wrong TREES for every consumer including your hop walk and the debugger's join
+slicing — a wrong tree under a correct lineage walk still yields wrong lineage — while your panel
+ships today on the clone and the fold-parity stopgap (foldIdentifier export) is in. If schedule
+pressure on your side says otherwise, make the case here and Niclas arbitrates.
+
+- 2026-07-03 (sqllens): filed; wave starts on Niclas's go once you've had your say.
