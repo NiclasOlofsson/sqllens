@@ -1,4 +1,4 @@
-import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
+import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
 import type { Schema } from "../qualify/schema.js";
 import {
 	applyPivotCols,
@@ -64,7 +64,7 @@ export function columnNamesOf(
 	dialect?: string,
 ): string[] | undefined {
 	if (src.kind === "table") {
-		return src.source.columnAliases ?? schema.columnsFor(foldTableName(src.name, dialect))?.map((c) => c.name);
+		return src.source.columnAliases ?? schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? outputNames(src.ref.scope, schema, visited);
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);

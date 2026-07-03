@@ -6,7 +6,14 @@
 //   { db:    { table: { col: type } } }
 //   { catalog: { schema: { table: { col: type } } } }
 // Types are opaque strings for now (reserved for lineage/diagnostics later).
+//
+// Keys carry no quotedness signal (a JS object key can't say "I was quoted"), so a schema
+// mapping key gets the forgiving UNQUOTED fold for its dialect — foldIdentifier(seg, dialect,
+// "table") — same as an unquoted table reference in the query. Quoted-key support (a mapping key
+// meant to represent a quoted/case-exact identifier) is out of scope.
 // ---------------------------------------------------------------------------
+
+import { foldIdentifier } from "../ident/fold.js";
 
 export interface Column {
 	name: string;
@@ -15,41 +22,63 @@ export interface Column {
 
 export type SchemaMapping = { [key: string]: SchemaMapping | string };
 
+interface DialectIndex {
+	/** Folded full dotted path (e.g. "cat.sch.t") -> columns. */
+	byPath: Map<string, Column[]>;
+	/** Folded bare table name -> columns, as a fallback for partially-qualified references. */
+	byTable: Map<string, Column[]>;
+}
+
 export class Schema {
-	/** Normalized full dotted path (e.g. "cat.sch.t") -> columns. */
-	private readonly byPath = new Map<string, Column[]>();
-	/** Bare table name -> columns, as a fallback for partially-qualified references. */
-	private readonly byTable = new Map<string, Column[]>();
+	private readonly mapping: SchemaMapping;
+	/** Per-dialect lazy index cache — one Schema instance serves files of different dialects (the
+	 *  LSP reality: one workspace schema, many open documents each with their own dialect). Keyed
+	 *  by the dialect tag itself; `undefined` (no dialect) gets its own row — today's legacy fold. */
+	private readonly indexes = new Map<string | undefined, DialectIndex>();
 
 	constructor(mapping: SchemaMapping) {
-		this.ingest(mapping, []);
+		this.mapping = mapping;
 	}
 
-	/** Columns for a table identified by its name parts, or undefined if unknown. */
-	columnsFor(parts: string[]): Column[] | undefined {
-		const full = parts.map(normalizeName).join(".");
-		return this.byPath.get(full) ?? this.byTable.get(normalizeName(parts[parts.length - 1] ?? ""));
+	/** Columns for a table identified by its name parts, or undefined if unknown. `parts` are RAW
+	 *  (unfolded) — the fold for `dialect` happens here, once. */
+	columnsFor(parts: string[], dialect?: string): Column[] | undefined {
+		const idx = this.indexFor(dialect);
+		const fold = (p: string) => foldIdentifier(p, dialect, "table");
+		const full = parts.map(fold).join(".");
+		return idx.byPath.get(full) ?? idx.byTable.get(fold(parts[parts.length - 1] ?? ""));
 	}
 
 	/** The bare names of every table in the catalog — the table-name candidate list for completion.
-	 *  (Names are the normalized last path part; a fully-qualified path resolves via columnsFor.) */
-	tables(): string[] {
-		return [...this.byTable.keys()];
+	 *  (Names are the folded last path part; a fully-qualified path resolves via columnsFor.) */
+	tables(dialect?: string): string[] {
+		return [...this.indexFor(dialect).byTable.keys()];
 	}
 
-	private ingest(node: SchemaMapping, path: string[]): void {
+	private indexFor(dialect: string | undefined): DialectIndex {
+		let idx = this.indexes.get(dialect);
+		if (!idx) {
+			idx = { byPath: new Map(), byTable: new Map() };
+			this.ingest(this.mapping, [], idx, dialect);
+			this.indexes.set(dialect, idx);
+		}
+		return idx;
+	}
+
+	private ingest(node: SchemaMapping, path: string[], idx: DialectIndex, dialect: string | undefined): void {
 		const entries = Object.entries(node);
 		// A table node: every value is a column type (string).
 		const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string");
 		if (isTable) {
 			const cols: Column[] = entries.map(([name, type]) => ({ name, type: type as string }));
-			this.byPath.set(path.map(normalizeName).join("."), cols);
-			const bare = normalizeName(path[path.length - 1] ?? "");
-			if (!this.byTable.has(bare)) this.byTable.set(bare, cols);
+			const fold = (p: string) => foldIdentifier(p, dialect, "table");
+			idx.byPath.set(path.map(fold).join("."), cols);
+			const bare = fold(path[path.length - 1] ?? "");
+			if (!idx.byTable.has(bare)) idx.byTable.set(bare, cols);
 			return;
 		}
 		for (const [name, child] of entries) {
-			if (typeof child === "object") this.ingest(child, [...path, name]);
+			if (typeof child === "object") this.ingest(child, [...path, name], idx, dialect);
 		}
 	}
 }

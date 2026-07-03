@@ -1,4 +1,4 @@
-import { foldIdentifier, foldTableName } from "../ident/fold.js";
+import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { Schema } from "../qualify/schema.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
@@ -106,7 +106,7 @@ function sourceColumnType(
 		const declared = src.source.declaredColumns?.find((c) => eq(c.name, column, dialect));
 		if (declared) return declared.type ? d.parseType(declared.type) : UNKNOWN;
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
-		const t = schema.columnsFor(foldTableName(src.name, dialect))?.find((c) => eq(c.name, column, dialect))?.type;
+		const t = schema.columnsFor(src.name, dialect)?.find((c) => eq(c.name, column, dialect))?.type;
 		return t ? d.parseType(t) : UNKNOWN;
 	}
 	if (src.kind === "cte") return derivedColumnType(src.ref.scope, column, src.ref.def.columnAliases, schema, ctx);

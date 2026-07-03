@@ -16,7 +16,7 @@
 
 import { Token } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
-import { displayName, foldIdentifier, foldTableName } from "../ident/fold.js";
+import { displayName, foldIdentifier } from "../ident/fold.js";
 import { inferDialect } from "../infer/dialect.js";
 import type { Schema } from "../qualify/schema.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
@@ -80,7 +80,7 @@ function collect(doc: SqlDocument, offset: number, schema?: Schema): Completion[
 
 	// tables — relation-name slot, and only when a schema lists them.
 	if (atTable && schema) {
-		for (const t of schema.tables()) add({ label: t, kind: "table" });
+		for (const t of schema.tables(dialect)) add({ label: t, kind: "table" });
 	}
 
 	// columns — value/column slot: the columns visible from the enclosing scope, plus a broken-input
@@ -146,7 +146,7 @@ function fromRelationColumns(m: MadeParser, cfg: CompletionConfig, schema: Schem
 		if (!t || !n) continue;
 		if (!cfg.relationKeywordTokens.has(t.type)) continue;
 		if (!cfg.nameTokens.has(n.type)) continue;
-		const cols = schema.columnsFor(foldTableName([n.text ?? ""], dialect));
+		const cols = schema.columnsFor([n.text ?? ""], dialect);
 		if (!cols) continue;
 		for (const c of cols) out.push({ label: c.name, kind: "column", detail: c.type });
 	}
@@ -209,7 +209,7 @@ function columnsOf(src: ResolvedSource, dialect: string, schema?: Schema): Compl
 		// Declared column aliases win; otherwise look the table up in the schema (names + types).
 		const declared = src.source.columnAliases;
 		if (declared) return declared.map((name) => ({ label: name, kind: "column" as const }));
-		const cols = schema?.columnsFor(foldTableName(src.name, dialect));
+		const cols = schema?.columnsFor(src.name, dialect);
 		return (cols ?? []).map((c) => ({ label: c.name, kind: "column" as const, detail: c.type }));
 	}
 	const names = derivedOutputs(src);

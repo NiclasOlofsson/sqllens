@@ -1,5 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
-import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
+import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
 import type { ColumnRef } from "../ir/ir.js";
 import {
 	applyPivotCols,
@@ -235,7 +235,7 @@ function columnsOfSource(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		const cols = schema.columnsFor(foldTableName(src.name, dialect));
+		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
 			diagnostics.push(unknownTable(src.name, src.source.cst));
 			return undefined;
@@ -360,7 +360,7 @@ function sourceColumns(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		return schema.columnsFor(foldTableName(src.name, dialect))?.map((c) => c.name);
+		return schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
 	if (src.kind === "lateral") return src.source.columns;
