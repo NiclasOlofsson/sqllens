@@ -5,6 +5,8 @@ import { inferNullability, type Nullability } from "../src/infer/nullability.js"
 import { Schema } from "../src/qualify/schema.js";
 import type { SchemaSource } from "../src/qualify/schema-source.js";
 import { resolveScopes } from "../src/scope/scope.js";
+import { lower as lowerTSql } from "../src/tsql/lower.js";
+import { parseTSql } from "../src/tsql/parse.js";
 
 // ---------------------------------------------------------------------------
 // Nullability inference (Task 10) — a parallel walk beside type inference that
@@ -31,6 +33,14 @@ function proj(sql: string, schema: SchemaSource = SCHEMA): Nullability[] {
 }
 
 const one = (sql: string, schema: SchemaSource = SCHEMA): Nullability => proj(sql, schema)[0];
+
+/** Same as `one` but through the T-SQL pipeline — for the dialect-polymorphic cases (2-arg ISNULL). */
+function oneTSql(sql: string, schema: SchemaSource = SCHEMA): Nullability {
+	const tree = resolveScopes(lowerTSql(parseTSql(sql).tree), "tsql");
+	const body = tree.root.body;
+	if (body.kind !== "select") throw new Error("expected a select");
+	return inferNullability(body.projections[0].expr, tree.root, schema);
+}
 
 describe("nullability — literals", () => {
 	it("NULL literal is nullable; every other literal is notnull", () => {
@@ -87,6 +97,18 @@ describe("nullability — arithmetic & comparison fold (SQL null propagation)", 
 		expect(one("SELECT nn = plain FROM t")).toBe("unknown");
 	});
 
+	it("null-safe equality <=> never returns NULL — notnull regardless of operands", () => {
+		expect(one("SELECT nl <=> 1 FROM t")).toBe("notnull");
+		expect(one("SELECT nl <=> plain FROM t")).toBe("notnull");
+	});
+
+	it("boolean AND/OR: notnull only when BOTH sides are notnull (three-valued otherwise)", () => {
+		expect(one("SELECT (nn = 1) AND (nn = 2) FROM t")).toBe("notnull");
+		expect(one("SELECT (nn = 1) OR (nn = 2) FROM t")).toBe("notnull");
+		// A nullable side does NOT make the result nullable (NULL AND FALSE → FALSE) — unknown.
+		expect(one("SELECT (nl = 1) AND (nn = 2) FROM t")).toBe("unknown");
+	});
+
 	it("unary passes through the operand", () => {
 		expect(one("SELECT -nn FROM t")).toBe("notnull");
 		expect(one("SELECT -nl FROM t")).toBe("nullable");
@@ -113,6 +135,20 @@ describe("nullability — the function table (doc-cited)", () => {
 		expect(one("SELECT coalesce(nl, plain) FROM t")).toBe("unknown"); // an unknown arg might be notnull
 		expect(one("SELECT ifnull(nl, nn) FROM t")).toBe("notnull");
 		expect(one("SELECT nvl(nl, nn) FROM t")).toBe("notnull");
+	});
+
+	it("isnull is arity-gated: the 1-arg predicate form (Spark isnull(expr)) is NEVER NULL", () => {
+		// spark.apache.org/docs/latest/api/sql/#isnull — returns true/false, even for a NULL input.
+		expect(one("SELECT isnull(nl) FROM t")).toBe("notnull");
+		expect(one("SELECT isnull(plain) FROM t")).toBe("notnull"); // input nullability is irrelevant
+	});
+
+	it("isnull 2-arg (T-SQL replacement form) folds coalesce-like", () => {
+		// learn.microsoft.com/sql/t-sql/functions/isnull-transact-sql — ISNULL(check, replacement).
+		// The T-SQL IR delivers it as a plain 2-arg function node (pinned by the probe: name ISNULL,
+		// args.length 2), so the table's arity gate routes it to coalesceLike.
+		expect(oneTSql("SELECT ISNULL(nl, 0) FROM t")).toBe("notnull"); // replacement literal is notnull
+		expect(oneTSql("SELECT ISNULL(nl, NULL) FROM t")).toBe("nullable"); // both args nullable
 	});
 
 	it("nullif is always nullable", () => {

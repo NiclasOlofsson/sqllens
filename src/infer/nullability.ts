@@ -222,15 +222,22 @@ function nullExtended(scope: Scope, source: Source): boolean {
 // --- operators -------------------------------------------------------------
 
 // Standard comparison operators propagate NULL (NULL = 5 → NULL). Spark's null-safe `<=>` is
-// DELIBERATELY excluded — it never returns NULL, so folding it would wrongly claim nullable.
+// NOT in this set — it never returns NULL (spark.apache.org/docs/latest/api/sql/#_2), so it gets
+// its own always-notnull rule below rather than the operand fold.
 const COMPARISON = new Set(["=", "==", "!=", "<>", "<", "<=", ">", ">="]);
 const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "div"]);
 
 function binaryNullability(op: string, l: Nullability, r: Nullability): Nullability {
 	const o = op.toLowerCase().trim();
-	// Only arithmetic and comparison propagate NULL by the simple operand fold. Boolean AND/OR
-	// (three-valued: NULL AND FALSE → FALSE), concat, and everything else → unknown (never-wrong).
+	// Arithmetic and comparison propagate NULL by the simple operand fold.
 	if (ARITHMETIC.has(o) || COMPARISON.has(o)) return fold([l, r]);
+	// The null-safe equality operator returns TRUE/FALSE for every input, NULLs included — never NULL.
+	if (o === "<=>") return "notnull";
+	// Boolean AND/OR are three-valued: two non-NULL booleans give a non-NULL result, but a nullable
+	// operand does NOT make the result nullable (NULL AND FALSE → FALSE, NULL OR TRUE → TRUE) — so
+	// only the all-notnull case is provable; anything else is unknown.
+	if (o === "and" || o === "or") return l === "notnull" && r === "notnull" ? "notnull" : "unknown";
+	// Concat and everything else → unknown (never-wrong).
 	return "unknown";
 }
 
@@ -268,9 +275,9 @@ function caseNullability(
 // nullable over empty / all-NULL groups. Only BARE-name calls consult the table (a dotted UDF such as
 // `pkg.fn(...)` must not borrow a builtin's rule).
 
-/** COALESCE / IFNULL / NVL / ISNULL — returns the first non-NULL argument, or NULL if all are NULL.
- *  So: notnull if ANY arg is provably notnull; nullable only if EVERY arg is nullable; else unknown
- *  (an unknown arg might secretly be notnull, so we can't claim nullable). */
+/** COALESCE / IFNULL / NVL / 2-arg ISNULL — returns the first non-NULL argument, or NULL if all are
+ *  NULL. So: notnull if ANY arg is provably notnull; nullable only if EVERY arg is nullable; else
+ *  unknown (an unknown arg might secretly be notnull, so we can't claim nullable). */
 function coalesceLike(args: Nullability[]): Nullability {
 	if (args.some((a) => a === "notnull")) return "notnull";
 	if (args.length > 0 && args.every((a) => a === "nullable")) return "nullable";
@@ -281,8 +288,14 @@ const NULLABLE = (): Nullability => "nullable";
 const NOTNULL = (): Nullability => "notnull";
 
 // Doc citations:
-//   coalesce/ifnull/nvl/isnull → returns first non-NULL / NULL if all NULL (Spark, T-SQL ISNULL,
-//     Snowflake NVL). NULLIF(a,b) → a or NULL when a=b, so always nullable.
+//   coalesce/ifnull/nvl → returns first non-NULL / NULL if all NULL (Spark, Snowflake NVL).
+//   isnull is DIALECT-POLYMORPHIC, arity-gated: the 1-arg form (Spark/Databricks isnull(expr),
+//     spark.apache.org/docs/latest/api/sql/#isnull; also Postgres-family boolean tests) is a
+//     predicate returning true/false — NEVER NULL → notnull. The 2-arg form is T-SQL's
+//     replacement function ISNULL(check, replacement) (learn.microsoft.com/sql/t-sql/functions/
+//     isnull-transact-sql), coalesce-like. T-SQL's ISNULL requires exactly 2 args and the
+//     predicate dialects have no 2-arg isnull, so arity separates the readings exactly.
+//   NULLIF(a,b) → a or NULL when a=b, so always nullable.
 //   count / count_if → an aggregate count is never NULL (0 for empty groups).
 //   sum/avg/min/max & other aggregates → NULL over an empty or all-NULL group.
 //   current_date / current_timestamp / now → the session clock is always a value, never NULL.
@@ -290,7 +303,7 @@ const FN: Record<string, (args: Nullability[]) => Nullability> = {
 	coalesce: coalesceLike,
 	ifnull: coalesceLike,
 	nvl: coalesceLike,
-	isnull: coalesceLike,
+	isnull: (args) => (args.length === 1 ? "notnull" : coalesceLike(args)),
 	nullif: NULLABLE,
 	count: NOTNULL,
 	count_if: NOTNULL,
