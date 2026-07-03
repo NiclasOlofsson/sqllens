@@ -23,8 +23,13 @@ describe("sllFallback", () => {
 		expect(r.errors).toBe(0);
 	});
 
-	it("also fires for Postgres's function-call grammar (a second dialect, same two-stage shape)", () => {
-		const r = parsePostgres("SELECT f(a, b) FROM t");
+	it("also fires for Postgres, a second dialect with the same two-stage shape", () => {
+		// The old demo `SELECT f(a, b) FROM t` no longer bails — the SLL-surgery wave (task-4-report.md)
+		// reordered c_expr so a function application resolves under SLL alone. A surviving Postgres
+		// fallback is the generic typed-literal `type '…'` (here `DATE '2008-01-01'`): `aexprconst`'s
+		// `func_name '(' args ')' sconst` still shares a prefix with an ordinary call, so stage 1 bails
+		// and stage 2 (full LL) reparses it — same result, just slower.
+		const r = parsePostgres("SELECT count(*) FROM measurement WHERE logdate >= DATE '2008-01-01'");
 		expect(r.sllFallback).toBe(true);
 		expect(r.errors).toBe(0);
 	});

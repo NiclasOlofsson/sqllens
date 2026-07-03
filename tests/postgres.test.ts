@@ -151,3 +151,49 @@ describe("postgres target_el — bare columns lower as columns, not phantom star
 		).toBe("t");
 	});
 });
+
+// SLL-surgery wave (.superpowers/sdd/task-4-report.md), iteration 2: c_expr's `columnref` and
+// `func_expr` alternatives both begin with an identifier, and a bare column is a viable *prefix* of a
+// function call. Because a `(` can follow an expression in some other caller's follow-set, SLL's
+// stackless merge kept `columnref` (the lower alternative) alive on every `f(args)`, reported a
+// context-sensitivity, mispredicted the column reading and bailed on the arg. They are disjoint on a
+// FULL match (columnref never carries `(`, func_expr always does), so ordering func_expr above
+// columnref/aexprconst makes it the minimum alternative in that conflict — SLL resolves the call
+// locally; bare `f` still falls to columnref. Dominant Postgres-family disease; duckdb/redshift share it.
+describe("postgres c_expr — function applications resolve under SLL (no LL fallback)", () => {
+	const noFallback = (sql: string) => {
+		const r = parsePostgres(sql);
+		expect(r.errors, sql).toBe(0);
+		expect(r.sllFallback, `${sql} — expected SLL to resolve without LL fallback`).toBe(false);
+	};
+
+	it("calls of every shape resolve without falling back to LL", () => {
+		for (const sql of [
+			"SELECT f(a)",
+			"SELECT f(1)",
+			"SELECT f(a, b) FROM t",
+			"SELECT max(x) FROM t",
+			"SELECT f(a.b) FROM t",
+			"SELECT coalesce(a, b) FROM t",
+			"SELECT sum(x) OVER (PARTITION BY y) FROM t",
+			"SELECT f(x => 1)",
+			"SELECT count(*) FROM t",
+		]) {
+			noFallback(sql);
+		}
+	});
+
+	it("a call still lowers as a function, a bare id still as a column", () => {
+		const call = lower(parsePostgres("SELECT f(a, b) FROM t").tree).body;
+		expect(call.kind === "select" && call.projections[0]?.expr.kind).toBe("function");
+		const col = lower(parsePostgres("SELECT foo FROM t").tree).body;
+		expect(col.kind === "select" && col.projections[0]?.expr.kind).toBe("column");
+	});
+
+	it("the reorder does not widen: generic typed literals parse, non-arg-list typed forms reject", () => {
+		ok("SELECT f(a) '5'"); // aexprconst `func_name '(' args ')' sconst` — still valid
+		ok("SELECT DATE '2008-01-01'");
+		bad("SELECT count(*) '5'"); // STAR arg — never a typed literal
+		bad("SELECT f() '5'"); // empty arg — never a typed literal
+	});
+});

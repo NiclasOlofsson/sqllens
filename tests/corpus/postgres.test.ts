@@ -28,13 +28,15 @@ const QUERY_BASELINE = 330; // documented floor; the gate itself is 100%-of-quer
 // (measured 2026-07-02 over the parsed docs query bucket).
 const OTHER_BASELINE = 0;
 
-// The SLL→LL fallback ratchet (SLL-surgery wave, task-1-brief.md): Postgres is grammar-sick — its
-// heaviest decisions (target_el, c_expr, target_list) force the two-stage parse to bail out of the
-// fast SLL prediction path and reparse under full LL. Measured 2026-07-03 via
+// The SLL→LL fallback ratchet (SLL-surgery wave, task-4-report.md): Postgres was grammar-sick — its
+// heaviest decisions forced the two-stage parse to bail out of the fast SLL prediction path and reparse
+// under full LL. Two grammar edits cut it from 112 to 20: (1) deleting `target_el`'s `columnref` subset
+// alternative, (2) ordering c_expr's `func_expr` above `columnref`/`aexprconst` so a function
+// application is the minimum alternative in the columnref-vs-call conflict. Measured via
 // `node --import tsx tools/profile-sll.ts postgres` over this same docs query bucket. Counted on the
 // SAME single parse the docs ratchet makes (the `parse:` closure below), never a re-parse. This is the
 // dress rehearsal for duckdb/redshift's identical TVL-lineage decisions; may only fall.
-const FALLBACK_RATCHET = 112;
+const FALLBACK_RATCHET = 20;
 
 // Documented-broken query examples — each verified against its postgresql.org/docs/18 source page
 // as deliberately-invalid or template SQL (not a grammar gap, not scraper noise). By construction
