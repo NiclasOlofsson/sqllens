@@ -5,7 +5,8 @@
 //   { table: { col: type } }
 //   { db:    { table: { col: type } } }
 //   { catalog: { schema: { table: { col: type } } } }
-// Types are opaque strings for now (reserved for lineage/diagnostics later).
+// Types are opaque strings for now (reserved for lineage/diagnostics later). A leaf may instead be
+// `{ type?, nullable? }` to also carry NOT NULL-ness — absent `nullable` means unknown, never guessed.
 //
 // Keys carry no quotedness signal (a JS object key can't say "I was quoted"), so a schema
 // mapping key gets the forgiving UNQUOTED fold for its dialect — foldIdentifier(seg, dialect,
@@ -19,9 +20,14 @@ import type { SchemaSource } from "./schema-source.js";
 export interface Column {
 	name: string;
 	type?: string;
+	/** NOT NULL-ness, when the mapping states it. Absent = unknown — never guessed. */
+	nullable?: boolean;
 }
 
-export type SchemaMapping = { [key: string]: SchemaMapping | string };
+/** A leaf is either a bare type string, or an object carrying type/nullable (either optional). */
+export type SchemaLeaf = string | { type?: string; nullable?: boolean };
+
+export type SchemaMapping = { [key: string]: SchemaMapping | SchemaLeaf };
 
 interface DialectIndex {
 	/** Folded full dotted path (e.g. "cat.sch.t") -> columns. */
@@ -71,10 +77,10 @@ export class Schema implements SchemaSource {
 
 	private ingest(node: SchemaMapping, path: string[], idx: DialectIndex, dialect: string | undefined): void {
 		const entries = Object.entries(node);
-		// A table node: every value is a column type (string).
-		const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string");
+		// A table node: every value is a column type (string) or a leaf object ({ type?, nullable? }).
+		const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string" || isLeaf(v));
 		if (isTable) {
-			const cols: Column[] = entries.map(([name, type]) => ({ name, type: type as string }));
+			const cols: Column[] = entries.map(([name, leaf]) => toColumn(name, leaf as SchemaLeaf));
 			const fold = (p: string) => foldIdentifier(p, dialect, "table");
 			idx.byPath.set(path.map(fold).join("."), cols);
 			const bare = fold(path[path.length - 1] ?? "");
@@ -82,9 +88,29 @@ export class Schema implements SchemaSource {
 			return;
 		}
 		for (const [name, child] of entries) {
-			if (typeof child === "object") this.ingest(child, [...path, name], idx, dialect);
+			if (typeof child === "object" && !isLeaf(child)) this.ingest(child, [...path, name], idx, dialect);
 		}
 	}
+}
+
+/** True for a leaf-object mapping value: only `type`/`nullable` keys, primitive-typed values —
+ *  distinct from a nested SchemaMapping node (whose values are further column/table nesting). */
+function isLeaf(v: unknown): v is { type?: string; nullable?: boolean } {
+	if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+	const rec = v as Record<string, unknown>;
+	return (
+		Object.keys(rec).every((k) => k === "type" || k === "nullable") &&
+		(rec.type === undefined || typeof rec.type === "string") &&
+		(rec.nullable === undefined || typeof rec.nullable === "boolean")
+	);
+}
+
+function toColumn(name: string, leaf: SchemaLeaf): Column {
+	if (typeof leaf === "string") return { name, type: leaf };
+	const col: Column = { name };
+	if (leaf.type !== undefined) col.type = leaf.type;
+	if (leaf.nullable !== undefined) col.nullable = leaf.nullable;
+	return col;
 }
 
 /**

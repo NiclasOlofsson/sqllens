@@ -146,3 +146,29 @@ describe("CallbackSchema — analyze over a resolve-on-demand catalog", () => {
 		expect(cb.misses).toEqual([["t2"], ["t3"]]);
 	});
 });
+
+describe("Schema — optional per-column nullability in the mapping (Task 9)", () => {
+	it("a leaf object carries type/nullable; a bare-string leaf leaves nullable undefined", () => {
+		const schema = new Schema({ t: { a: "int", b: { type: "int", nullable: false } } });
+		const cols = schema.columnsFor(["t"]);
+		expect(cols).toBeDefined();
+		const a = cols!.find((c) => c.name === "a");
+		const b = cols!.find((c) => c.name === "b");
+		expect(a).toEqual({ name: "a", type: "int" });
+		expect(a!.nullable).toBeUndefined();
+		expect(b).toEqual({ name: "b", type: "int", nullable: false });
+	});
+
+	it("nesting detection still classifies db -> table -> columns with mixed leaf forms", () => {
+		const schema = new Schema({
+			db: { t: { a: "int", b: { type: "int", nullable: false }, c: { nullable: true } } },
+		});
+		const cols = schema.columnsFor(["db", "t"]);
+		expect(cols).toBeDefined();
+		expect(cols).toEqual([
+			{ name: "a", type: "int" },
+			{ name: "b", type: "int", nullable: false },
+			{ name: "c", nullable: true },
+		]);
+	});
+});
