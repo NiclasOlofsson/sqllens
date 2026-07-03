@@ -613,7 +613,8 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 			? textOf(directChildrenOfRule(tr, P.RULE_colid)[0])
 			: undefined;
 	const alias = (aliasNode ? aliasName(aliasNode) : undefined) ?? prefixAlias;
-	const aliasCst = aliasNode ? firstShallow(aliasNode, P.RULE_table_alias) : undefined;
+	// The alias identifier sits under table_alias (AS slot) or bare_table_alias (AS-less slot).
+	const aliasCst = aliasNode ? aliasIdentNode(aliasNode) : undefined;
 	const columnAliases = aliasNode ? aliasColumnList(aliasNode) : undefined;
 
 	const rel = directChildrenOfRule(tr, P.RULE_relation_expr)[0];
@@ -689,8 +690,13 @@ function buildTableFromRelation(
 	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
 }
 
+/** The alias identifier node — under table_alias (AS slot) or bare_table_alias (AS-less slot). */
+function aliasIdentNode(aliasClause: ParserRuleContext): ParserRuleContext | undefined {
+	return firstShallow(aliasClause, P.RULE_table_alias) ?? firstShallow(aliasClause, P.RULE_bare_table_alias);
+}
+
 function aliasName(aliasClause: ParserRuleContext): string | undefined {
-	const ta = firstShallow(aliasClause, P.RULE_table_alias);
+	const ta = aliasIdentNode(aliasClause);
 	return ta ? textOf(ta) : undefined;
 }
 
@@ -704,7 +710,9 @@ function aliasColumnList(aliasClause: ParserRuleContext): string[] | undefined {
 function funcAliasName(funcAlias: ParserRuleContext): string | undefined {
 	const ac = directChildrenOfRule(funcAlias, P.RULE_alias_clause)[0];
 	if (ac) {
-		const cid = firstShallow(ac, P.RULE_colid);
+		// The alias name is the DIRECT colid (AS slot) or bare_colid (AS-less slot) child of
+		// alias_clause — never a colid buried in the column-alias name_list (`f() tbl(col)`).
+		const cid = directChildrenOfRule(ac, P.RULE_colid)[0] ?? directChildrenOfRule(ac, P.RULE_bare_colid)[0];
 		return cid ? textOf(cid) : undefined;
 	}
 	const cid = firstShallow(funcAlias, P.RULE_colid);

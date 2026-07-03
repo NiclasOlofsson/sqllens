@@ -3371,7 +3371,12 @@ joined_table
     ;
 
 alias_clause
-   : AS? colid (OPEN_PAREN name_list CLOSE_PAREN)?
+   // Same bare-alias rule as table_alias_clause, for function-table and MERGE-target aliases:
+   // an AS-less alias must not consume a join opener (`FROM range(3) SEMI JOIN b` is a SEMI join).
+   // The bare slot uses `bare_colid` (the four join-opener keywords removed); explicit AS keeps
+   // the full colid set. (duckdb/duckdb third_party/libpg_query grammar/statements/common.y ColId.)
+   : AS colid (OPEN_PAREN name_list CLOSE_PAREN)?
+   | bare_colid (OPEN_PAREN name_list CLOSE_PAREN)?
    ;
 
 opt_alias_clause
@@ -3379,7 +3384,15 @@ opt_alias_clause
    ;
 
 table_alias_clause
-   : AS? table_alias (OPEN_PAREN name_list CLOSE_PAREN)?
+   // A bare (AS-less) alias must NOT swallow a following join opener: `FROM a SEMI JOIN b` is a
+   // SEMI join, not `a AS semi JOIN b`. In DuckDB ASOF/POSITIONAL/SEMI/ANTI are type_func_name
+   // keywords (duckdb/duckdb third_party/libpg_query grammar/keywords/type_name_keywords.list),
+   // which ColId excludes (common.y `ColId: IDENT | unreserved_keyword | col_name_keyword`), so
+   // they are never valid bare aliases — the join productions (select.y `joined_table`) win. The
+   // bare slot therefore uses `bare_table_alias` (the four removed); with explicit AS the
+   // ambiguity is gone, so that slot keeps the full keyword set.
+   : AS table_alias (OPEN_PAREN name_list CLOSE_PAREN)?
+   | bare_table_alias (OPEN_PAREN name_list CLOSE_PAREN)?
    ;
 
 func_alias_clause
@@ -4649,9 +4662,30 @@ colid
    | RIGHT
    ;
 
+bare_colid
+   // `colid` minus the four join-opener keywords (see alias_clause) — used only in the AS-less
+   // alias slot so a function-table/MERGE-target alias cannot swallow ASOF/POSITIONAL/SEMI/ANTI
+   // standing ahead of JOIN.
+   : identifier
+   | non_join_unreserved_keyword
+   | col_name_keyword
+   | plsql_unreserved_keyword
+   | LEFT
+   | RIGHT
+   ;
+
 table_alias
    : identifier
    | unreserved_keyword
+   | col_name_keyword
+   | plsql_unreserved_keyword
+   ;
+
+bare_table_alias
+   // `table_alias` minus the four join-opener keywords (see table_alias_clause). Kept a distinct
+   // rule so an AS-less alias cannot consume ASOF/POSITIONAL/SEMI/ANTI standing ahead of JOIN.
+   : identifier
+   | non_join_unreserved_keyword
    | col_name_keyword
    | plsql_unreserved_keyword
    ;
@@ -5502,14 +5536,31 @@ reserved_keyword
 // Examples: ABORT, ACCESS, ACTION, ADMIN, AFTER
 // ============================================================================
 
+// The full unreserved-keyword category (identifier-usable everywhere) = the non-join set plus the
+// four join openers. Factored so the bare table-alias slot can reference `non_join_unreserved_keyword`
+// alone (see table_alias_clause). Every other reference keeps `unreserved_keyword` and its language
+// is unchanged (the two sub-rules cover disjoint tokens whose union is the original set).
 unreserved_keyword
-   // DuckDB-only keywords (this fork) — all identifier-usable, duckdb.org keyword rules keep
-   // most new keywords unreserved.
-   : QUALIFY
-   | ASOF
+   : non_join_unreserved_keyword
+   | join_opener_keyword
+   ;
+
+join_opener_keyword
+   // ASOF/POSITIONAL joins and the SEMI/ANTI join_type openers. In DuckDB these are type_func_name
+   // keywords (third_party/libpg_query grammar/keywords/type_name_keywords.list) — kept inside
+   // unreserved_keyword here so AS-aliases, quoting and column position still accept them, but
+   // excluded from the bare (AS-less) alias slot so `FROM a SEMI JOIN b` is not mis-read as an
+   // alias followed by a plain JOIN.
+   : ASOF
    | POSITIONAL
    | ANTI_P
    | SEMI_P
+   ;
+
+non_join_unreserved_keyword
+   // DuckDB-only keywords (this fork) — all identifier-usable, duckdb.org keyword rules keep
+   // most new keywords unreserved.
+   : QUALIFY
    | LAMBDA
    | MACRO
    | SECRET
