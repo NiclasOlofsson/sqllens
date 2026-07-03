@@ -149,6 +149,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | --- | --- |
 | Completion (+ resolve) | ✅ |
 | Hover | ✅ |
+| Hover — nullability | ✅ (` — not null` / ` — nullable` suffix when provable) |
 | Signature help | ✅ |
 | Go to definition | ✅ |
 | Find references | ✅ |
@@ -178,6 +179,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | Feature | Status |
 | --- | --- |
 | Diagnostics — push (`publishDiagnostics`) | ✅ |
+| Diagnostics — call signature (arity / argument type) | ✅ (curated tables; never-wrong, per-dialect coercion) |
 | Diagnostics — pull (document) | ✅ |
 | Diagnostics — pull (workspace) | ◻️ not yet |
 | Text sync — open / change / close | ✅ (full-document) |
