@@ -1277,3 +1277,88 @@ describe("Snowflake lower -> IR", () => {
 		expect(body.projections[0].expr).toMatchObject({ kind: "cast", typeText: "my_db.my_udt" });
 	});
 });
+
+// LEFT/RIGHT are reserved keywords that "cannot be used as table name or alias in a FROM clause"
+// (docs.snowflake.com/en/sql-reference/reserved-keywords). Before the fix, a bare (AS-less) LEFT/RIGHT
+// immediately before JOIN was greedily consumed as the left source's alias — `object_ref`'s `as_alias?`
+// slot reaches `id_ → binary_builtin_function → LEFT|RIGHT` — silently degrading the join to plain INNER.
+describe("Snowflake bare LEFT/RIGHT before JOIN are join keywords, not aliases", () => {
+	function firstJoin(sql: string) {
+		const { body } = selectBody(sql);
+		expect(body.joins?.length ?? 0).toBeGreaterThan(0);
+		return { body, join0: body.joins![0], from0: body.from![0] };
+	}
+
+	it("bare LEFT JOIN on a base table is a LEFT join, no spurious alias", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM t LEFT JOIN u ON t.a = u.a");
+		expect(join0.kind).toBe("left");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("bare RIGHT JOIN on a base table is a RIGHT join, no spurious alias", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM t RIGHT JOIN u ON t.a = u.a");
+		expect(join0.kind).toBe("right");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("bare LEFT JOIN with USING is a LEFT join", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM t LEFT JOIN u USING (a)");
+		expect(join0.kind).toBe("left");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("LEFT JOIN after a parenthesized source is a LEFT join", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM (t) LEFT JOIN u ON t.a = u.a");
+		expect(join0.kind).toBe("left");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("LEFT JOIN after an unaliased subquery is a LEFT join", () => {
+		const { join0 } = firstJoin("SELECT * FROM (SELECT 1 x) LEFT JOIN u ON u.x = 1");
+		expect(join0.kind).toBe("left");
+	});
+
+	it("LEFT JOIN after a parenthesized join operand is a LEFT join", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM (a JOIN b ON a.x = b.x) LEFT JOIN c ON a.y = c.y");
+		expect(join0.kind).toBe("left");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("LEFT JOIN after a TABLE(fn) source is a LEFT join", () => {
+		const { join0, from0 } = firstJoin("SELECT * FROM TABLE(myfn(1)) LEFT JOIN u ON u.a = 1");
+		expect(join0.kind).toBe("left");
+		expect(from0.alias).toBeUndefined();
+	});
+
+	it("the leading LEFT in a LEFT..RIGHT chain is a LEFT join, not an alias", () => {
+		const { body, from0 } = firstJoin("SELECT * FROM a LEFT JOIN b ON a.x = b.x RIGHT JOIN c ON a.y = c.y");
+		expect(body.joins?.map((j) => j.kind)).toEqual(["left", "right"]);
+		expect(from0.alias).toBeUndefined();
+	});
+
+	// --- controls: the fix must NOT narrow these ---
+
+	it("CONTROL: explicit AS left still binds LEFT as an alias (fork superset)", () => {
+		const { body } = selectBody("SELECT * FROM t AS left");
+		expect(body.from[0].alias).toBe("left");
+		expect(body.joins?.length ?? 0).toBe(0);
+	});
+
+	it("CONTROL: explicit AS right still binds RIGHT as an alias", () => {
+		const { body } = selectBody("SELECT * FROM t AS right");
+		expect(body.from[0].alias).toBe("right");
+	});
+
+	it("CONTROL: a bare non-keyword alias is still an alias", () => {
+		const { body } = selectBody("SELECT * FROM t u JOIN v ON u.a = v.a");
+		expect(body.from[0].alias).toBe("u");
+		expect(body.joins?.[0].kind).toBe("inner");
+	});
+
+	it("CONTROL: LEFT(x,1) / RIGHT(x,1) function calls are untouched", () => {
+		expect(errorsOf("SELECT LEFT(x, 1), RIGHT(x, 1) FROM t")).toBe(0);
+		const { body } = selectBody("SELECT LEFT(x, 1) AS l FROM t");
+		expect(body.projections[0].name).toBe("l");
+		expect(body.from[0].alias).toBeUndefined();
+	});
+});

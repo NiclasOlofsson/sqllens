@@ -709,6 +709,18 @@ function lowerColumnElem(colElem: ParserRuleContext): Expr {
 	return { kind: "column", parts: [...qParts, ...cParts], partSpans, cst: colElem };
 }
 
+// A FROM-source alias node is `from_alias : AS alias | bare_from_alias` (grammar). Read its text and
+// the identifier CST node (for the alias's precise span) from whichever branch matched: the `AS alias`
+// branch nests an `id_`; the bare branch is a `bare_from_alias` (id_ minus the reserved LEFT/RIGHT).
+function fromAliasParts(fa: ParserRuleContext | undefined): {
+	text?: string;
+	cst?: ParserRuleContext;
+} {
+	if (!fa) return {};
+	const node = firstOfRule(fa, P.RULE_id_) ?? directChildrenOfRule(fa, P.RULE_bare_from_alias)[0];
+	return { text: node ? node.getText() : fa.getText(), cst: node };
+}
+
 function aliasText(asAlias: ParserRuleContext): string {
 	const a = firstOfRule(asAlias, P.RULE_id_);
 	return a ? a.getText() : asAlias.getText();
@@ -717,9 +729,8 @@ function aliasText(asAlias: ParserRuleContext): string {
 // --- sources -------------------------------------------------------------------
 
 function buildSource(ref: ParserRuleContext): Source {
-	const asAlias = directChildrenOfRule(ref, P.RULE_as_alias)[0];
-	const alias = asAlias ? aliasText(asAlias) : undefined;
-	const aliasCst = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
+	const asAlias = directChildrenOfRule(ref, P.RULE_from_alias)[0];
+	const { text: alias, cst: aliasCst } = fromAliasParts(asAlias);
 
 	// LATERAL FLATTEN(…) f / LATERAL SPLIT_TO_TABLE(…) s — fixed output columns.
 	const flatten = directChildrenOfRule(ref, P.RULE_flatten_table)[0];
@@ -762,8 +773,8 @@ function buildSource(ref: ParserRuleContext): Source {
 			expr: lowerExpr(e),
 			cst: e,
 		}));
-		const innerAs = directChildrenOfRule(values, P.RULE_as_alias)[0];
-		const valuesAliasCst = innerAs ? firstOfRule(innerAs, P.RULE_id_) : undefined;
+		const innerAs = directChildrenOfRule(values, P.RULE_from_alias)[0];
+		const { text: valuesAliasText, cst: valuesAliasCst } = fromAliasParts(innerAs);
 		const colAliases = firstOfRule(values, P.RULE_column_alias_list_in_brackets);
 		return {
 			kind: "subquery",
@@ -773,7 +784,7 @@ function buildSource(ref: ParserRuleContext): Source {
 				body: { kind: "select", projections, from: [], columns: [], aggregated: false, cst: values },
 				cst: values,
 			},
-			alias: innerAs ? aliasText(innerAs) : alias,
+			alias: innerAs ? valuesAliasText : alias,
 			aliasCst: valuesAliasCst ?? aliasCst,
 			columnAliases: colAliases
 				? directChildrenOfRule(colAliases, P.RULE_id_).map((i) => i.getText())

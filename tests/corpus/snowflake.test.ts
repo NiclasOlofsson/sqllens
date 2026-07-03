@@ -53,7 +53,9 @@ const OTHER_BASELINE = 0; // sequence refs (<seq>.NEXTVAL) now lower to typed fu
 // re-parse. May only fall as the surgery wave's per-dialect tasks land; 0 is healthy (untracked again).
 // 525 → 315 → 220 → 115 across the 2026-07-03 surgery wave: select_list_top, expression_elem,
 // select_list_elem, primitive_expression, function_call/aggregate_function, predicate/order_item.
-const FALLBACK_RATCHET = 115;
+// 115 → 110 (2026-07-04): the LEFT/RIGHT-alias fix (from_alias excludes the reserved join openers)
+// removed the object_ref alias/join ambiguity, dropping five fallbacks.
+const FALLBACK_RATCHET = 110;
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
