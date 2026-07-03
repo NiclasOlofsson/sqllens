@@ -171,4 +171,43 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 			{ name: "c", nullable: true },
 		]);
 	});
+
+	// A leaf object REQUIRES a boolean `nullable` — otherwise a table whose single column is
+	// named `type` would classify as a leaf descriptor and the table would silently VANISH
+	// (never-wrong violated: a wrong answer, not an unknown). A type-only object also says
+	// nothing the bare string doesn't, so requiring the boolean costs no expressiveness.
+	it("a table whose only column is named `type` stays a TABLE — it does not vanish", () => {
+		const schema = new Schema({ t: { type: "varchar" } });
+		expect(schema.columnsFor(["t"])).toEqual([{ name: "type", type: "varchar" }]);
+		expect(schema.tables()).toEqual(["t"]);
+	});
+
+	it("same two levels deep: { db: { t: { type: 'varchar' } } } reads db -> table -> column", () => {
+		const schema = new Schema({ db: { t: { type: "varchar" } } });
+		expect(schema.columnsFor(["db", "t"])).toEqual([{ name: "type", type: "varchar" }]);
+		expect(schema.tables()).toEqual(["t"]);
+	});
+
+	it("columns named `type` AND `nullable` with string values — an all-string dict is always a table", () => {
+		const schema = new Schema({ t: { type: "varchar", nullable: "varchar" } });
+		expect(schema.columnsFor(["t"])).toEqual([
+			{ name: "type", type: "varchar" },
+			{ name: "nullable", type: "varchar" },
+		]);
+	});
+
+	it("a nullable-only leaf ({ nullable: false }) is a leaf — type absent stays unknown", () => {
+		const schema = new Schema({ t: { b: { nullable: false } } });
+		const cols = schema.columnsFor(["t"]);
+		expect(cols).toEqual([{ name: "b", nullable: false }]);
+		expect(cols![0].type).toBeUndefined();
+	});
+
+	it("an empty dict is not leaf-eligible — keeps today's reading (unregistered, unknown)", () => {
+		// Pre-Task-9 behavior preserved: {} never classifies as a table (entries.length > 0)
+		// and now never as a leaf either (no boolean nullable) — the table is simply unknown.
+		const schema = new Schema({ t: {} });
+		expect(schema.columnsFor(["t"])).toBeUndefined();
+		expect(schema.tables()).toEqual([]);
+	});
 });

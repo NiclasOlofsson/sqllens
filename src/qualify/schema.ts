@@ -6,7 +6,10 @@
 //   { db:    { table: { col: type } } }
 //   { catalog: { schema: { table: { col: type } } } }
 // Types are opaque strings for now (reserved for lineage/diagnostics later). A leaf may instead be
-// `{ type?, nullable? }` to also carry NOT NULL-ness — absent `nullable` means unknown, never guessed.
+// `{ type?, nullable }` — the object form exists to declare nullability; for type-only use the bare
+// string. `nullable` is REQUIRED on the object form: without it the object is structurally
+// indistinguishable from a nested mapping (a table whose column is named `type` would vanish),
+// and a type-only object says nothing the bare string doesn't.
 //
 // Keys carry no quotedness signal (a JS object key can't say "I was quoted"), so a schema
 // mapping key gets the forgiving UNQUOTED fold for its dialect — foldIdentifier(seg, dialect,
@@ -24,8 +27,9 @@ export interface Column {
 	nullable?: boolean;
 }
 
-/** A leaf is either a bare type string, or an object carrying type/nullable (either optional). */
-export type SchemaLeaf = string | { type?: string; nullable?: boolean };
+/** A leaf is either a bare type string, or the object form for declaring nullability (for
+ *  type-only, use the bare string). `nullable` is required — see the header note. */
+export type SchemaLeaf = string | { type?: string; nullable: boolean };
 
 export type SchemaMapping = { [key: string]: SchemaMapping | SchemaLeaf };
 
@@ -77,7 +81,7 @@ export class Schema implements SchemaSource {
 
 	private ingest(node: SchemaMapping, path: string[], idx: DialectIndex, dialect: string | undefined): void {
 		const entries = Object.entries(node);
-		// A table node: every value is a column type (string) or a leaf object ({ type?, nullable? }).
+		// A table node: every value is a column type (string) or a leaf object ({ type?, nullable }).
 		const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string" || isLeaf(v));
 		if (isTable) {
 			const cols: Column[] = entries.map(([name, leaf]) => toColumn(name, leaf as SchemaLeaf));
@@ -93,23 +97,25 @@ export class Schema implements SchemaSource {
 	}
 }
 
-/** True for a leaf-object mapping value: only `type`/`nullable` keys, primitive-typed values —
- *  distinct from a nested SchemaMapping node (whose values are further column/table nesting). */
-function isLeaf(v: unknown): v is { type?: string; nullable?: boolean } {
+/** True for a leaf-object mapping value: a plain object with `nullable: boolean` PRESENT,
+ *  optional `type: string`, and no other keys. Requiring the boolean is what keeps a table
+ *  whose column happens to be named `type` (`{ t: { type: "varchar" } }`) classified as a
+ *  table — a type-only object would be structurally ambiguous with that nesting, and says
+ *  nothing a bare string doesn't. */
+function isLeaf(v: unknown): v is { type?: string; nullable: boolean } {
 	if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
 	const rec = v as Record<string, unknown>;
 	return (
+		typeof rec.nullable === "boolean" &&
 		Object.keys(rec).every((k) => k === "type" || k === "nullable") &&
-		(rec.type === undefined || typeof rec.type === "string") &&
-		(rec.nullable === undefined || typeof rec.nullable === "boolean")
+		(rec.type === undefined || typeof rec.type === "string")
 	);
 }
 
 function toColumn(name: string, leaf: SchemaLeaf): Column {
 	if (typeof leaf === "string") return { name, type: leaf };
-	const col: Column = { name };
+	const col: Column = { name, nullable: leaf.nullable };
 	if (leaf.type !== undefined) col.type = leaf.type;
-	if (leaf.nullable !== undefined) col.nullable = leaf.nullable;
 	return col;
 }
 
