@@ -186,7 +186,8 @@ export class SqlDocument {
 		// the (carried) content-addressed cache. Each cell re-enters the dialect's batch entry rule
 		// as a batch of one — the proven single-statement path — so no lower() changes are needed.
 		const spans = splitStatements(text, dialect);
-		const cells: StatementCell[] = spans.map((span) => this.buildCell(span));
+		const handedOut = new Set<CachedCell>(); // per-BUILD: which cache entries this doc already uses
+		const cells: StatementCell[] = spans.map((span) => this.buildCell(span, handedOut));
 		this.statements = Object.freeze(cells);
 
 		// Whole-document facade. tokens/diagnostics/errors are the cheap concat/sum across cells.
@@ -213,11 +214,21 @@ export class SqlDocument {
 
 	/** Build one statement cell for `span`: reuse the cached cell-relative parse if its text is
 	 *  already known (content addressing), else parse+scope it and cache it; then shift tokens /
-	 *  diagnostics into document coordinates by the cell's start position. */
-	private buildCell(span: StatementCellSpan): StatementCell {
+	 *  diagnostics into document coordinates by the cell's start position.
+	 *
+	 *  `handedOut` dedupes WITHIN one document build: two cells with byte-identical text (e.g.
+	 *  `SELECT 1;SELECT 1;`) must NOT share one CachedCell — their StatementCells would carry
+	 *  reference-identical cst/ast/scopes under different spans, and the per-cell semantic passes
+	 *  (Task 6: references/documentHighlight) walk scope trees by OBJECT IDENTITY, so two positions
+	 *  resolving through one shared scopes object would cross-contaminate occurrences. On a second
+	 *  use of the same entry in the same build, that cell is parsed fresh. The fresh product does
+	 *  NOT replace the cache entry: the first occurrence keeps its stable cross-edit identity (the
+	 *  common case), and only intra-doc duplicates — rare — pay a re-parse per build. */
+	private buildCell(span: StatementCellSpan, handedOut: Set<CachedCell>): StatementCell {
 		const cellText = this.text.slice(span.start, span.end);
 		const key = this.dialect + " " + cellText;
 		let cached = this._cellCache.get(key);
+		if (cached !== undefined && handedOut.has(cached)) cached = undefined; // intra-doc duplicate
 		if (cached === undefined) {
 			const p = parse(cellText, this.dialect);
 			cached = {
@@ -231,8 +242,10 @@ export class SqlDocument {
 				errors: p.errors,
 				diagnostics: p.diagnostics,
 			};
-			this._cellCache.set(key, cached);
+			// Cache only the FIRST product for a key (see above — duplicates stay uncached).
+			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
 		}
+		handedOut.add(cached);
 		// Shift cell-relative tokens/diagnostics to doc coordinates. The first cell starts at 0/0/0
 		// so the shift is an identity (byte-exact). Later cells offset by the cell's start position.
 		const base = this.lines.positionAt(span.start);
@@ -316,8 +329,9 @@ export class SqlDocument {
 }
 
 /** Build the whole-document compound facade for a multi-cell document — today's compound-flagged
- *  shape, without a whole-doc re-parse. The CST is the first cell's (a documented placeholder; the
- *  facade body is empty, so nodeAt over it finds nothing, matching a real multi-statement parse). */
+ *  IR/scopes shape, without a whole-doc re-parse. The CST is the FIRST CELL'S only — a compatibility
+ *  placeholder, NOT a real multiStatement CST (which would hold every statement); consumers wanting
+ *  real spans use `statements`/`cellAt`. The facade body is empty, so nodeAt over it finds nothing. */
 function compoundFacade(
 	cells: readonly StatementCell[],
 	dialect: Dialect,

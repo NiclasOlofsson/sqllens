@@ -154,6 +154,28 @@ describe("SqlDocument content-addressed cell reuse across edits", () => {
 		expect(d1csts.has(d2.statements[1].cst)).toBe(true);
 	});
 
+	it("duplicate-text cells in ONE doc get DISTINCT parse products (no intra-doc aliasing)", () => {
+		// NOTE: `SELECT 1;\nSELECT 1;` does NOT alias — tiling gives cell 2 the leading `\n`, a
+		// different content address. The tight form below yields two byte-identical cell slices.
+		const text = "SELECT 1;SELECT 1;";
+		const doc = SqlDocument.create(text, "databricks");
+		expect(doc.statements.length).toBe(2);
+		expect(doc.statements[0].text).toBe(doc.statements[1].text);
+		// Task 6 walks per-cell scopes by object identity — shared cst/ast/scopes across two
+		// spans would cross-contaminate occurrences between the duplicate statements.
+		expect(doc.statements[0].cst).not.toBe(doc.statements[1].cst);
+		expect(doc.statements[0].scopes).not.toBe(doc.statements[1].scopes);
+		// spans + tokens still correct for both
+		expect(doc.statements[0].span).toEqual({ start: 0, end: 9 });
+		expect(doc.statements[1].span).toEqual({ start: 9, end: text.length });
+		const ones = doc.tokens.filter((t) => t.text === "1");
+		expect(ones.map((t) => t.start)).toEqual([7, 16]);
+		// cross-edit reuse is untouched: editing only statement 2 still cache-hits statement 1
+		const d2 = doc.withText("SELECT 1;SELECT 2;", 1);
+		expect(d2.statements[0].cst).toBe(doc.statements[0].cst);
+		expect(d2.statements[1].cst).not.toBe(doc.statements[1].cst);
+	});
+
 	it("a fresh create() does NOT reuse a prior document's cache", () => {
 		const d1 = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
 		const fresh = SqlDocument.create("SELECT a FROM x;\nSELECT b FROM y", "databricks");
