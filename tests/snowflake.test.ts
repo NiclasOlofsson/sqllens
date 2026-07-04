@@ -1362,3 +1362,71 @@ describe("Snowflake bare LEFT/RIGHT before JOIN are join keywords, not aliases",
 		expect(body.from[0].alias).toBeUndefined();
 	});
 });
+
+// The fork lexes SHOW-object plural words + statement/option keyword tokens (SHOW REGIONS,
+// COPY options, session parameters, DDL option words, …) as dedicated tokens that were absent
+// from id_, so any table/column named after one was rejected — `SELECT a FROM regions` failed.
+// Snowflake reserves very few words (docs.snowflake.com/en/sql-reference/reserved-keywords); every
+// non-reserved one is a legal identifier, so these were an acceptance bug. Enumerated by
+// temp_auto/audit-id-holes.mjs (539 tokens recovered).
+describe("Snowflake keyword-token identifier holes (SHOW-object / option words as names)", () => {
+	// A doc-cited spread across the recovered categories: SHOW-object plural (regions), COPY/format
+	// options (auto_compress, avro, csv, json, encoding, compression), object words (warehouse,
+	// volume, iceberg, listing, application), option/param words (format, header, access, masking,
+	// handler), and clause-adjacent non-reserved words (before, changes, limit, fetch, within).
+	const RECOVERED = [
+		"regions",
+		"auto_compress",
+		"avro",
+		"csv",
+		"json",
+		"warehouse",
+		"volume",
+		"iceberg",
+		"format",
+		"header",
+		"access",
+		"application",
+		"listing",
+		"encoding",
+		"compression",
+		"masking",
+		"handler",
+		"before",
+		"changes",
+		"limit",
+		"fetch",
+		"within",
+	];
+
+	it.each(RECOVERED)("`%s` is usable as a table name in FROM", (word) => {
+		const { body } = selectBody(`SELECT a FROM ${word}`);
+		expect(body.from[0]).toMatchObject({ kind: "table", name: [word] });
+	});
+
+	it.each(RECOVERED)("`%s` is usable as a projected column name", (word) => {
+		expect(errorsOf(`SELECT ${word} FROM t`)).toBe(0);
+	});
+
+	// --- reject-controls ---
+
+	// Eight non-reserved tokens with a dedicated grammar role stay OUT of id_: reaching them from
+	// id_ would re-read existing SQL. asc/desc = sort direction (ORDER BY x DESC); nextval =
+	// object_name DOT NEXTVAL; listagg = its WITHIN GROUP aggregate; pivot/unpivot = the pivot
+	// clause a trailing PIVOT after a source must resolve to; default = the USE SECONDARY ROLES /
+	// column DEFAULT sentinel; do = the ON n PERCENT DO trigger-action keyword. Not a bare table name.
+	it.each(["asc", "desc", "nextval", "listagg", "pivot", "unpivot", "default", "do"])(
+		"dedicated-role word `%s` is NOT usable as a bare table name",
+		(word) => {
+			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
+		},
+	);
+
+	// Engine-reserved words (docs.snowflake.com/en/sql-reference/reserved-keywords) stay rejected.
+	it.each(["select", "from", "where", "table", "sample"])(
+		"engine-reserved word `%s` is NOT usable as a bare table name",
+		(word) => {
+			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
+		},
+	);
+});
