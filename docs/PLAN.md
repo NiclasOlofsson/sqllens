@@ -125,6 +125,17 @@ These are real, unfinished parts of the job. They stay here, answering "what's l
   - **Corpus gates can't see an empty lowered body.** The totality and `other`-ratchet gates prove no throw and no undermodelled node, but neither one asserts a lowered subquery body is actually non-empty — the class of bug Task 2's drive-by fix repaired slipped past both ratchets undetected. A conservation-style body-non-emptiness probe (any lowered `SelectExpr`/subquery has at least one column or a documented reason it doesn't) would close this; it's its own small follow-up, not part of either existing ratchet.
 - **Snowflake `pivot`/`unpivot` as bare identifiers — noparse (over-excluded from `id_`).** The keyword-token identifier-hole fix (parser-gaps wave, 2026-07-04) made 538 non-reserved SHOW-object/option words usable as table/column names, but PIVOT/UNPIVOT are held out of `id_` even though they are NOT reserved — so `SELECT pivot FROM t` / `FROM unpivot` are rejected. The real ambiguity is only the post-source `pivot_unpivot*` slot: a trailing PIVOT after a source is the pivot clause, and with PIVOT in `id_` that slot competes with an `id_` alias (it raised the fallback ratchet on `constructs/pivot/19.sql`, two PIVOTs after a subquery). Full `id_` exclusion is a pragmatic over-exclusion, not a reserved-word boundary. The language-exact cure is a post-source-slot split (a `bare_from_alias`-style class that `id_` reaches but the post-source alias slot does not), deferred — the alias-only exclusion was tried and did not clear the loop ambiguity. Until then these two words stay noparse as identifiers. **The opposite-direction seam — `EXCEPT` over-INCLUSION — FIXED same wave.** The same identifier-hole fix added the set-op word `EXCEPT` to `non_reserved_words` (the other three set-op words UNION/INTERSECT/MINUS_ were already out). That made `EXCEPT` a bare FROM-alias candidate, and the alias reading *won*: `SELECT * FROM t EXCEPT SELECT * FROM u` mis-parsed as `t AS except` with the second select folded in as a bare operator-less branch (lowering to `op: union`) — NOT the "never-wrong SLL fallback" first assumed; a real EXCEPT set-op mis-parse (found by the reviewer's curated seam assertion, `tests/snowflake.test.ts`). Cured by holding `EXCEPT` out of `non_reserved_words` with the other three set-op words (same class as PIVOT/UNPIVOT — a non-reserved word held out of the bare FROM-alias slot); `EXCEPT` as a bare identifier is now noparse, the set-op reading wins, pinned by the seam test. Snowflake corpus floors held (mutated 331, fallback 110, query 2,976, `other` 0).
 
+## Jinja-SQL front end (ITEM 10/11/14) — SPEC
+
+Parsing raw jinja-SQL (dbt templates) natively — a pre-lexer that segments jinja tags, substitutes
+length/newline-preserving placeholders into the untouched per-dialect SQL lexers, and merges a jinja
+token channel + ref/source/macro tag-AST onto the result; a standalone `grammars/jinja/` island grammar
+never woven into the eight SQL grammars. Realizes the locked two-path / one-seam / one-razor stance
+(`docs/anvil/CHANNEL.md` ITEM 14). Full design, R2 span contract, and the inc1/inc2/inc3 plan:
+**[docs/jinja-front-end.md](jinja-front-end.md)** (the sqllens-side counterpart to the extension's
+`JINJA-CONSUMPTION-PLAN.md`). minijinja is the grammar oracle. Not yet built — inc1 (raw-jinja-parse +
+R1 unified stream + R2 spans, positional-default holes) is the current jinja work.
+
 ## Repo layout (target)
 
 ```
