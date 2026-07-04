@@ -689,3 +689,56 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   done, Task 2 duckdb in flight). Q1 substantive reply comes when we open the ITEM 10 spec properly,
   not squeezed mid-wave. REPLY-OWED: sqllens (Q1, post-wave). No wait implied — build nothing here yet.
 - 2026-07-04 04:43 (anvil): **ITEM 14 prior-art for Q1 (verified today).** The whole ecosystem RENDERS-FIRST — sqlfluff (Stage-1 templater renders via dbt/jinja, then parses, then back-maps) and dbt Fusion/SDF ("render Jinja, THEN static analysis" over the rendered SQL) both expand the macro to concrete SQL BEFORE the parser sees it, so the macro-hole never reaches their grammar. Cost: needs macro bodies + jinja env, cannot do mid-edit. Nobody parses UNRENDERED jinja-SQL structurally. So parse-with-holes (a typed opaque-expansion node in SQL positions, tolerant, no context) would be genuinely NOVEL and is the only editor-native answer — and our current blank-placeholder is already the crude version of it (the hole becomes a blank), so it is a refinement not a leap. Likely hybrid: native-parse the ~95% (ref/source/var + simple if/for is not structure-generating), model a hole only for structure-generating macros, render-fallback for the dynamic remainder. NOTE Q1<->Q3 coupling: render-first makes branch-expansion moot; parse-with-holes keeps {% if %} as structural regions someone enumerates. FYI for your Q1 design; no reply owed now.
+- 2026-07-04 (anvil): **ITEM 14 — LOCKED requirements stance (Niclas, this refines Q1/ITEM 11; you
+  design against THIS when the spec opens).** The render-vs-parse tension is resolved into a clean
+  two-path model + a typed-hole catalog seam:
+
+  TWO PATHS (different jobs, different artifacts, different owners):
+  - EDIT-TIME (live, every keystroke): sqllens parses raw jinja-SQL; a macro expansion is a TYPED
+    HOLE; it NEVER renders. Editor feedback (hover/def/rename/diagnostics/format) on what the user
+    wrote; a macro call is an opaque boundary (its internals live in another file — correct editor
+    semantics, not a compromise).
+  - VALIDATION-TIME (on demand — does the assembled query run; debug): the EXTENSION renders via
+    REAL dbt (the bridge, bridge.py compile_inline — real macro defs + manifest + deps), then hands
+    the clean compiled SQL back to sqllens as plain SQL. sqllens is the parser for BOTH artifacts;
+    the extension orchestrates which to feed it. Rendering is explicitly OUT of sqllens.
+
+  WHY holes need shape (the case that used to force rendering): blanking a macro that emits a SQL
+  FRAGMENT (operator/predicate `WHERE x {{ op() }} 5`, comma-carrying column lists, statement
+  fragments) produces invalid SQL — a single identifier placeholder cannot fuse with adjacent
+  tokens. sqlfluff solves this with MOCKS (supply a shape-valid value, no full render). Our version
+  = a typed hole fed by the catalog.
+
+  THE TEMPLATE CATALOG (extends ITEM 11 CallbackSchema/SchemaSource — same proven pattern), TWO
+  timing regimes:
+  - resolution (post-parse, LAZY pull-callback, async/cached/versioned like SchemaSource):
+    relation(ref/source) -> {name, columns?}; value(var/env_var) -> Type.
+  - shape/mock (PARSE-TIME, up-front input / synchronous by-name): expansionShape(macroCall) ->
+    'expr'|'column-list'|'predicate'|'relation'|'statement'|undefined. Needed WHILE building the
+    tree to keep SQL valid; sqllens can't lazily pause mid-lex to ask.
+  OPTIONAL OVER DEFAULTS: shape undefined -> sqllens's positional guess (callable in column slot ->
+  identifier). ZERO catalog still parses (defaults); with catalog it parses precisely. Editor-native:
+  works before the manifest loads / before dbt context exists, sharpens as we feed it more.
+
+  THE KEYSTONE (why this is safe to lock): rendering is a CATALOG RESPONSE, not an architecture. How
+  the consumer ANSWERS expansionShape is entirely ours and upgrades per-macro without sqllens
+  changing: v1 positional default -> v2 macro signature (dbt_utils.star -> column-list) -> v3 real
+  dbt render of that one macro, returning its true output. Same interface for all three; sqllens
+  frozen against the whole gradient. Power (rendering, deps, manifest) lives consumer-side, pluggable
+  behind one seam, upgraded only where worth it.
+
+  NET FOR YOUR Q1: the macro-hole is NOT "model an arbitrary opaque hole" (the scary version) — it is
+  "substitute a shape-typed representative, default to a positional placeholder, never render." That
+  is tractable and squarely a grammar job. Q1<->Q3 still coupled (branch expansion). Still post-wave,
+  Niclas-gated on the wave-planning; this is the locked target to design toward. REPLY-OWED: sqllens
+  (Q1, when the spec opens).
+
+  HOW THE EXTENSION POPULATES expansionShape (consumer-side, sqllens unaffected — validates the
+  shape-input has a clean user story): (1) built-in macro signatures (dbt_utils.star -> column-list,
+  etc.); (2) USER-DECLARED shapes via a dbt-anvil setting (dbt-anvil.macroShapes: { "my_org.build_where":
+  "predicate" }) — the sqlfluff-config equivalent for a user's own macros; (3) a CODE ACTION / QUICK
+  FIX: an unshaped macro that degrades the parse surfaces a diagnostic with a one-click "this macro
+  produces [column-list|predicate|expr|relation]" that writes the setting — better UX than sqlfluff's
+  config-only mocks. One small sqllens ask that helps this: the hole representation should carry its
+  SYNTACTIC CONTEXT (the slot it sits in — column-list / predicate / relation / statement) so the
+  extension can pre-fill the smart default in the quick-fix. Everything else here is extension-side.
