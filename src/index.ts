@@ -64,9 +64,10 @@ export {
 	type StatementCellSpan,
 } from "./api.js";
 
-// --- Per-dialect building blocks: parse* (CST + errors) and lower (CST → IR) ---
+// --- Per-dialect building blocks: parse* (CST + errors) and lower* (CST → IR), kept as one
+//     contiguous family. Databricks was the first dialect, so its lower is the bare `lower`
+//     (the others are `lowerTSql`…); every parse* is dialect-suffixed. ---
 export { parseDatabricks } from "./databricks/parse.js";
-export { lower } from "./databricks/lower.js";
 export { parseTSql } from "./tsql/parse.js";
 export { parseSnowflake } from "./snowflake/parse.js";
 export { parseBigQuery } from "./bigquery/parse.js";
@@ -74,11 +75,21 @@ export { parseRedshift } from "./redshift/parse.js";
 export { parsePostgres } from "./postgres/parse.js";
 export { parseDuckdb } from "./duckdb/parse.js";
 export { parseTrino } from "./trino/parse.js";
+export { lower } from "./databricks/lower.js";
+export { lower as lowerTSql } from "./tsql/lower.js";
+export { lower as lowerSnowflake } from "./snowflake/lower.js";
+export { lower as lowerBigQuery } from "./bigquery/lower.js";
+export { lower as lowerRedshift } from "./redshift/lower.js";
+export { lower as lowerPostgres } from "./postgres/lower.js";
+export { lower as lowerDuckdb } from "./duckdb/lower.js";
+export { lower as lowerTrino } from "./trino/lower.js";
+export type { ParseResult } from "./databricks/parse.js";
 
 // --- Jinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
 //     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
 //     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
-//     grammars are untouched). ---
+//     grammars are untouched). See also `TemplateSourceInfo` (IR section) and
+//     `TemplateCatalog` (qualify section) — the rest of the template surface. ---
 export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./jinja/parse.js";
 export {
 	templateRegions,
@@ -88,14 +99,6 @@ export {
 	type TemplateSymbol,
 } from "./jinja/regions.js";
 export { templateVariants, type TemplateVariant } from "./jinja/variants.js";
-export { lower as lowerTSql } from "./tsql/lower.js";
-export { lower as lowerSnowflake } from "./snowflake/lower.js";
-export { lower as lowerBigQuery } from "./bigquery/lower.js";
-export { lower as lowerRedshift } from "./redshift/lower.js";
-export { lower as lowerPostgres } from "./postgres/lower.js";
-export { lower as lowerDuckdb } from "./duckdb/lower.js";
-export { lower as lowerTrino } from "./trino/lower.js";
-export type { ParseResult } from "./databricks/parse.js";
 
 // --- The IR ---
 export type {
