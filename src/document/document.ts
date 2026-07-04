@@ -422,6 +422,15 @@ export class SqlDocument {
 					}
 					return "unknown";
 				},
+				// Scope objects are unique per cell, so only the owning cell binds a ref in `scope`;
+				// the rest return undefined and we fall through to it.
+				bindingOf: (scope, ref) => {
+					for (const q of cellQuals) {
+						const b = q.bindingOf(scope, ref);
+						if (b) return b;
+					}
+					return undefined;
+				},
 			};
 			analysis = { qualification, types: new TypeInfo(s), symbols, diagnostics };
 		}

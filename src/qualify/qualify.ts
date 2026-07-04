@@ -18,6 +18,7 @@ import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
 import { type SchemaSource } from "./schema-source.js";
 import { type TemplateCatalog } from "./template-catalog.js";
+import { resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -48,7 +49,20 @@ export interface Qualification {
 	diagnostics: Diagnostic[];
 	/** Resolved output columns of a scope (stars expanded), or "unknown". */
 	columnsOf(scope: Scope): string[] | "unknown";
+	/** The column→source binding for a reference AS IT APPEARS in `scope` — the read-only equivalent of
+	 *  a mutating qualifier rewrite (bare `city` → its `ResolvedSource`, not a rewritten `addr.city`).
+	 *  Schema-aware: a bare column binds to whichever visible source exposes it, including columns learned
+	 *  by expanding a source's `SELECT *` against the schema. `undefined` when the reference doesn't bind
+	 *  to a source (unresolved / bare projection-alias / unknown) — never a fabricated binding. `source`
+	 *  carries the source kind + base table (the `resolvedTableRef` a consumer needs); `column` is the
+	 *  resolved name; `fields` is struct navigation after it. Wraps the shared binder `resolveColumnSource`
+	 *  (src/sema/resolve.ts), so infer / lineage / references and this all agree. */
+	bindingOf(scope: Scope, ref: ColumnRef): ColumnBinding | undefined;
 }
+
+/** The result of `Qualification.bindingOf` — a column reference's resolved source binding. Structurally
+ *  the shared `ResolvedColumn` (src/sema/resolve.ts); re-exported under this public name. */
+export type ColumnBinding = ResolvedColumn;
 
 export function qualify(tree: ScopeTree, schema: SchemaSource): Qualification {
 	const diagnostics: Diagnostic[] = [];
@@ -70,6 +84,7 @@ export function qualify(tree: ScopeTree, schema: SchemaSource): Qualification {
 	return {
 		diagnostics,
 		columnsOf: (scope) => resolved.get(scope) ?? "unknown",
+		bindingOf: (scope, ref) => resolveColumnSource(scope, ref.parts, schema),
 	};
 }
 

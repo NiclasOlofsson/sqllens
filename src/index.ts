@@ -129,7 +129,7 @@ export type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 // --- Shared passes as building blocks (raw forms) + their typed result interfaces ---
 export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
-export { type Diagnostic, type Qualification } from "./qualify/qualify.js";
+export { type Diagnostic, type Qualification, type ColumnBinding } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";
 
