@@ -206,8 +206,12 @@ function lowerRoot(tree: ParserRuleContext): QueryExpr {
 	const statements = tree instanceof RootContext ? tree.statement() : [];
 	if (statements.length === 0) return flagged(tree, "other", "empty");
 	if (statements.length > 1) {
-		const q = flagged(tree, "compound", "multi-statement");
-		return q;
+		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST statement,
+		// NOT the whole `root` container (which reaches EOF): a whole-file span on a flagged body
+		// makes a downstream AST index read a bogus enclosure over statements 2..n. Bounding to
+		// statement 1 keeps the span honest — the "compound" kind + "multi-statement" flag already
+		// tell a consumer this is an unmodelled batch (issue #21).
+		return flagged(statements[0], "compound", "multi-statement");
 	}
 	return lowerStatement(statements[0]);
 }

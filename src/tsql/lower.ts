@@ -76,7 +76,14 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 			return q;
 		}
 	}
-	const q = emptyQuery(tree);
+	// A multi-statement batch is a flagged compound. Anchor its span to the FIRST top-level statement,
+	// NOT the whole `tsql_file` (which reaches EOF): a whole-file span on a flagged body makes a
+	// downstream AST index read a bogus enclosure over statements 2..n. Bounding to statement 1 keeps
+	// the span honest — the "compound" kind already tells a consumer this is an unmodelled batch
+	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical).
+	const units = topLevelUnits(tree);
+	const cst = units.length > 1 ? units[0] : tree;
+	const q = emptyQuery(cst);
 	q.statement = statement;
 	return q;
 }
@@ -98,12 +105,19 @@ function statementCategory(tree: ParserRuleContext): StatementCategory {
  *  the file-level view behind statementCategory (which folds >1 into "compound"). Lets consumers
  *  (e.g. the corpus gates) see what a multi-statement script contains. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
+	return topLevelUnits(tree).map(unitCategory);
+}
+
+/** The top-level statement nodes of a parsed `tsql_file`, in source order — each batch's
+ *  `sql_clauses` and `batch_level_statement` children. Behind both statementCategories (mapped to
+ *  categories) and lower's multi-statement span anchoring (issue #21). */
+function topLevelUnits(tree: ParserRuleContext): ParserRuleContext[] {
 	const units: ParserRuleContext[] = [];
 	for (const b of directChildrenOfRule(tree, P.RULE_batch)) {
 		units.push(...directChildrenOfRule(b, P.RULE_sql_clauses));
 		units.push(...directChildrenOfRule(b, P.RULE_batch_level_statement));
 	}
-	return units.map(unitCategory);
+	return units;
 }
 
 /** Categorise one top-level statement node (a `sql_clauses` or a `batch_level_statement`). */
