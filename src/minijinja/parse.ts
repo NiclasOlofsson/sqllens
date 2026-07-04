@@ -48,8 +48,9 @@ import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
 // Re-export the R2 tag-AST union (Task 4) so `src/index.ts` keeps re-exporting
-// TagNode from this module — the union now lives in ./tag-ast.js.
-export type { TagNode } from "./tag-ast.js";
+// TagNode from this module — the union now lives in ./tag-ast.js. MacroCall (C1)
+// is the reusable call-fields shape carried by macro nodes and control-tag `calls`.
+export type { TagNode, MacroCall } from "./tag-ast.js";
 // Re-export the R4 region / symbol shapes (Task 3) so the barrel re-exports them here.
 export type { TemplateRegion, TemplateArm, TemplateSymbol } from "./regions.js";
 export { templateRegions, templateSymbols } from "./regions.js";
