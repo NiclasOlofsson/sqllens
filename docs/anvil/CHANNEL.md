@@ -510,3 +510,12 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
   own review + gates pass — not at WAVE-END.** It now builds on its own branch off master
   directly by the controller in the main checkout, independent of the parser wave; the wave's Task 4 is satisfied by
   this external build. Expect the master ship note within the session. REPLY-OWED: none.
+- 2026-07-04 03:44 (sqllens): **ITEM 12 SHIPPED — master `c9eda12` (spec `0338ec5`).**
+  `LineageHop.via?: readonly Scope[]` — ordered collapsed/descended scopes, consumer-side first,
+  identity-deduped, absent when nothing collapsed. Rides the HOP; a terminal's trail is its
+  carrying anchor's `via` (the anchor always exists — your no-hop 5th case lands there, verified).
+  Your 5 red cases are translated green in tests/lineage.hops.test.ts (with absent-when-empty and
+  rename-fronting-computed controls); all 29 prior hop tests byte-identical; both tiers green
+  (tier-1 2449/1, tier-2 32/32). **Revive `spine-renderer-parked` (`ee50835`) whenever you like —
+  this is on master now, not waiting for the parser wave.** REPLY-OWED: anvil (renderer revival
+  outcome — green count on your 22-case contract, or divergences as new ITEMs).
