@@ -120,6 +120,52 @@ describe("templateRegions — control-flow region tree", () => {
 		expect(regions[0].arms[0].keyword).toBe("elif");
 	});
 
+	it("bodySpan line/column agree with its start offset on a multi-line body", () => {
+		// The if-tag opens on line 1; the body starts after a newline — a case the
+		// opening-tag anchor would report wrong without LineIndex.
+		const text = "{% if a %}\n    SELECT 1{% endif %}";
+		const r = regionsOf(text)[0];
+		const body = r.arms[0].bodySpan;
+		// Offsets are the contract: the body slices to exactly what follows the tag.
+		expectSlice(text, body, "\n    SELECT 1");
+		// line/column must match the ACTUAL document position of body.start (oracle).
+		const p = posOf(text, body.start);
+		expect(body.line).toBe(p.line);
+		expect(body.column).toBe(p.column);
+		expect(body.line).toBe(1); // body.start is the '\n' terminating line 1
+		expect(body.column).toBe(10);
+	});
+
+	it("bodySpan on a later line resolves that line + column (deep multi-line)", () => {
+		const text = "{% if a %}first\n\n  second{% else %}third{% endif %}";
+		const r = regionsOf(text)[0];
+		// arm[1] (else) body starts after the else tag, which sits on line 3.
+		const elseBody = r.arms[1].bodySpan;
+		expectSlice(text, elseBody, "third");
+		const p = posOf(text, elseBody.start);
+		expect(elseBody.line).toBe(p.line);
+		expect(elseBody.column).toBe(p.column);
+		expect(elseBody.line).toBe(3);
+	});
+
+	it("for…else — total, for stays ONE arm, else body reachable as a nested region", () => {
+		const text = "{% for r in rows %}A{% else %}B{% endfor %}";
+		expect(() => regionsOf(text)).not.toThrow();
+		const regions = regionsOf(text);
+		expect(regions.length).toBe(1);
+		const forRegion = regions[0];
+		expect(forRegion.kind).toBe("for");
+		expect(forRegion.arms.length).toBe(1); // for stays exactly one arm
+		// the else is modeled as an orphan single-arm if region nested in the for arm.
+		const nested = forRegion.arms[0].children;
+		expect(nested.length).toBe(1);
+		expect(nested[0].kind).toBe("if");
+		expect(nested[0].arms[0].keyword).toBe("else");
+		expectSpan(text, nested[0].arms[0].tagSpan, "{% else %}");
+		expectSlice(text, nested[0].arms[0].bodySpan, "B");
+		expectSlice(text, forRegion.span, text);
+	});
+
 	it("totality — empty tags yields no regions/symbols", () => {
 		expect(templateRegions([])).toEqual([]);
 		expect(templateSymbols([])).toEqual([]);

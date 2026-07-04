@@ -13,14 +13,18 @@
 // single-arm `if` region. Never throws on any tag sequence.
 //
 // SPAN CONTRACT: every span's OFFSETS (start/end) are exact and content-true
-// (assert by slicing the source). `tagSpan`/`nameSpan` are token-exact so their
-// line/column are exact too. `bodySpan` and a region's `span` carry a BEST-EFFORT
-// line/column anchored to the opening tag's start — regions.ts has only the tags
-// (no source text), so it cannot resolve the document position of a mid-text
-// offset (e.g. the char just past a tag's close). The offsets are the contract the
-// editor consumes; consumers with the document re-derive line/column from offsets.
+// (assert by slicing the source). `tagSpan`/`nameSpan` are token-exact, and a
+// region's `span` / a symbol's `span` anchor their line/column to their OWN start
+// offset, so those are coherent. `bodySpan.start` is the char PAST the opening tag
+// (not the tag start), so its line/column can only be resolved from the source
+// text: pass `text` to `templateRegions` and each bodySpan's line/column is the
+// exact document position of its start offset (via `LineIndex`). Without `text`
+// the function stays usable standalone, falling back to the opening tag's anchor
+// as a best-effort (offsets still exact) — the only case where line/column is
+// approximate.
 // ---------------------------------------------------------------------------
 
+import { LineIndex } from "../document/line-index.js";
 import type { PartSpan } from "../ir/part-span.js";
 import type { TagNode } from "./tag-ast.js";
 
@@ -84,9 +88,13 @@ function newArm(t: ControlTag): InProgressArm {
  * sequence (balanced, unbalanced, stray, orphan) yields a best-effort tree and
  * never throws.
  */
-export function templateRegions(tags: TagNode[]): TemplateRegion[] {
+export function templateRegions(tags: TagNode[], text?: string): TemplateRegion[] {
 	const roots: TemplateRegion[] = [];
 	const stack: InProgressRegion[] = [];
+	// When the source text is available, resolve each bodySpan's start offset to its
+	// EXACT document position (LineIndex is 0-based line/column; PartSpan is 1-based
+	// line / 0-based column). Absent → best-effort anchor to the opening tag.
+	const lineIndex = text === undefined ? undefined : new LineIndex(text);
 
 	/** Emit a finalized region into the enclosing arm's children, or the roots. */
 	const emit = (region: TemplateRegion): void => {
@@ -109,12 +117,14 @@ export function templateRegions(tags: TagNode[]): TemplateRegion[] {
 		const arms: TemplateArm[] = ip.arms.map((a) => {
 			const bodyStart = a.tagSpan.end;
 			const bodyEnd = a.bodyEnd ?? bodyEndOffset ?? bodyStart;
-			// Best-effort line/column: anchor to the opening tag (offsets are exact).
+			// bodyStart is the char PAST the opening tag: resolve its exact position
+			// from the LineIndex when text is available, else best-effort to the tag.
+			const pos = lineIndex?.positionAt(bodyStart);
 			const bodySpan: PartSpan = {
 				start: bodyStart,
 				end: Math.max(bodyStart, bodyEnd),
-				line: a.tagSpan.line,
-				column: a.tagSpan.column,
+				line: pos ? pos.line + 1 : a.tagSpan.line,
+				column: pos ? pos.column : a.tagSpan.column,
 			};
 			return { keyword: a.keyword, tagSpan: a.tagSpan, bodySpan, children: a.children };
 		});

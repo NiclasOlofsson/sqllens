@@ -251,7 +251,7 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 
 	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
 	// Both are total; they ride inside build()'s caller try/catch for totality.
-	const regions = templateRegions(tags);
+	const regions = templateRegions(tags, text);
 	const symbols = templateSymbols(tags);
 
 	return { tokens, sql, tags, regions, symbols, diagnostics };
