@@ -201,12 +201,19 @@ so the whole downstream pipeline works unchanged. Built: `TableSource.template` 
 
 ## Variant realization (inc2 design, decided 2026-07-04)
 
-**Arm-coverage enumeration, not cross-product:** variant k activates exactly one non-default arm in one
-region (all other regions take their first arm); variant 0 is all-defaults. Linear in total arm count —
-every text region is live in some variant, each variant is a coherent parse, no combinatorial explosion.
-A `{% for %}` contributes no extra variant (its default IS the representative single iteration — the body
-parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over the
-original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
+**Arm-coverage enumeration, not cross-product** (mechanism corrected 2026-07-04 to honor the guarantee —
+see below): variant 0 is all-defaults; then one variant per non-default arm. The load-bearing GUARANTEE is
+**every text region is live in exactly one variant** (the editor mandate: the user edits every arm
+regardless of which runs) — so the mechanism must be **ancestor-path activation**, NOT "all other regions
+take arm 0". A variant for (region R, arm k) activates arm k of R AND, for every ANCESTOR region on R's
+path to root, the arm that CONTAINS R; every NON-ancestor region takes its first arm. This makes an arm
+nested inside a non-default arm reachable (pinning the ancestor to its containing arm keeps that arm's body
+live), where the naive "all others take arm 0" would blank the parent and silently drop the nested arm (and
+emit a degenerate duplicate of variant 0). It stays LINEAR — one variant per non-default arm,
+`1 + Σ(arms−1)`, no combinatorial explosion — and each variant is still one coherent root-to-leaf branch
+selection. A `{% for %}` contributes no extra variant (its default IS the representative single iteration —
+the body parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over
+the original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
 (`TemplateVariant.parse()` memoized). **The primary `parseTemplated` result stays all-text-live** (inc1
 parity — anvil integrated against it mid-flight); variants are the additive coherent-arm API
 (`templateVariants(text, dialect)`), adopted by consumers when ready.
