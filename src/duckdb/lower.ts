@@ -126,7 +126,13 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const stmts = collectOfRule(tree, P.RULE_stmt);
 	const statement = statementCategory(stmts);
 	if (stmts.length !== 1) {
-		const q = nonQuery(tree, stmts.length === 0 ? "empty" : "multi-statement");
+		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST top-level
+		// statement, NOT the whole `root` container (which reaches EOF): a whole-file span on a
+		// flagged body makes a downstream AST index read a bogus enclosure over statements 2..n.
+		// Bounding to statement 1 keeps the span honest — the "compound" kind + "multi-statement"
+		// flag already tell a consumer this is an unmodelled batch (issue #21). Empty stays `tree`.
+		const cst = stmts.length > 1 ? stmts[0] : tree;
+		const q = nonQuery(cst, stmts.length === 0 ? "empty" : "multi-statement");
 		q.statement = statement;
 		return q;
 	}

@@ -106,7 +106,14 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		lowered.statement = "query";
 		return lowered;
 	}
-	const q = emptyQuery(tree, statement === "other" ? "empty" : "non-query");
+	// A multi-statement batch is a flagged compound. Anchor its span to the FIRST statement body,
+	// NOT the whole `root` container (which reaches EOF): a whole-file span on a flagged body makes a
+	// downstream AST index read a bogus enclosure over statements 2..n. Bounding to statement 1 keeps
+	// the span honest — the "compound" kind already tells a consumer this is an unmodelled batch
+	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical).
+	const bodies = sqlStatementBodies(tree);
+	const cst = bodies.length > 1 ? bodies[0] : tree;
+	const q = emptyQuery(cst, statement === "other" ? "empty" : "non-query");
 	q.statement = statement;
 	return q;
 }

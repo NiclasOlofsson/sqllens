@@ -112,7 +112,13 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
 	if (commands.length !== 1) {
-		const q = nonQuery(tree, commands.length === 0 ? "empty" : "multi-statement");
+		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST command,
+		// NOT the whole `snowflake_file` container (which reaches EOF): a whole-file span on a
+		// flagged body makes a downstream AST index read a bogus enclosure over commands 2..n.
+		// Bounding to command 1 keeps the span honest — the "compound" kind + "multi-statement"
+		// flag already tell a consumer this is an unmodelled batch (issue #21). Empty stays `tree`.
+		const cst = commands.length > 1 ? commands[0] : tree;
+		const q = nonQuery(cst, commands.length === 0 ? "empty" : "multi-statement");
 		q.statement = statement;
 		return q;
 	}
