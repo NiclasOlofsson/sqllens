@@ -778,6 +778,19 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.body.left.all).toBe(true);
 	});
 
+	it("keeps EXCEPT as a set operator, not a bare FROM alias", () => {
+		// Seam guard: EXCEPT is non-reserved, so the bare FROM-alias slot could grab the EXCEPT of
+		// `... FROM t EXCEPT SELECT ...` as `t AS except` and fold the second select in as a bare,
+		// operator-less branch (which lowers to op=union). EXCEPT is held out of non_reserved_words
+		// so the set-op reading wins. (Parser-gaps wave: the identifier-holes fix over-included EXCEPT.)
+		const { q } = ir("SELECT * FROM t EXCEPT SELECT * FROM u");
+		if (q.body.kind !== "setop") throw new Error(`expected setop, got ${q.body.kind}`);
+		expect(q.body.op).toBe("except");
+		if (q.body.left.kind !== "select") throw new Error("left branch not a select");
+		expect(q.body.left.from[0].alias).toBeUndefined();
+		expect(q.body.right.kind).toBe("select");
+	});
+
 	it("records UNION BY NAME (name-matched column alignment)", () => {
 		const { q } = ir("SELECT a, b FROM t1 UNION ALL BY NAME SELECT b, a FROM t2");
 		if (q.body.kind !== "setop") throw new Error("setop");

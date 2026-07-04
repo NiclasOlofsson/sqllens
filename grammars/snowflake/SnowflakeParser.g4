@@ -4406,6 +4406,10 @@ non_reserved_words
     // PIVOT/UNPIVOT are also held out here — not reserved, but the post-source `pivot_unpivot*` slot
     // makes a trailing PIVOT ambiguous with an id_ alias; the language-exact cure is a post-source-slot
     // split, deferred (see docs/PLAN.md Open Gaps), so `SELECT pivot FROM t` is noparse for now.
+    // EXCEPT is held out for the same reason: the bare FROM-alias slot would grab the EXCEPT of
+    // `SELECT * FROM t EXCEPT SELECT * FROM u` as an alias (t AS except), so the set-op reading loses
+    // and the second select folds in as a bare, operator-less branch. The other three set-op words
+    // (UNION/INTERSECT/MINUS_) are already out; EXCEPT stays out with them so EXCEPT set-ops parse.
     // LEFT/RIGHT stay excluded from the bare FROM slot (bare_from_alias).
     | ABORT
     | ABORT_DETACHED_QUERY
@@ -4568,7 +4572,7 @@ non_reserved_words
     | ERROR_ON_NONDETERMINISTIC_UPDATE
     | ESCAPE
     | ESCAPE_UNENCLOSED_FIELD
-    | EXCEPT
+    // EXCEPT held out — see the header note (set_operators ambiguity in the bare FROM-alias slot).
     | EXPLAIN
     | EXTERNAL
     | EXTERNAL_ACCESS_INTEGRATIONS
