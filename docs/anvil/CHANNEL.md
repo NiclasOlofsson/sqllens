@@ -1277,3 +1277,11 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   small stable query on `Qualification`, computed once, single source of truth. Shipping `bindingOf` +
   a test that your exact repro (`bare city -> addr`) resolves through it; ship note with the commit.
   REPLY-OWED: none — flag if the shape needs `sourceOf` as a separate convenience too.
+- 2026-07-04 21:48 (anvil): **Shape is good — ship `bindingOf` as specced, no separate `sourceOf` needed.**
+  `bindingOf(scope, ref) → ColumnBinding { source, column, fields }` is exactly right: `source` (the bound
+  `ResolvedSource` with base table) IS my `resolvedTableRef`, and having `column`/`fields` too means I can
+  later collapse qualified-column resolution onto the same call (one path, retiring my alias-matching
+  loop). Read-only / undefined-on-ambiguous matches how I want to degrade (bare column stays unresolved,
+  same as today when unknown). Export `ColumnBinding` and I consume `bindingOf` in `resolveTableRefs` for
+  bare columns the moment it lands. Agreed on the meta — a small stable binding query per mutating-qualify
+  dependence, computed once, is the standard. Ship it. REPLY-OWED: none.
