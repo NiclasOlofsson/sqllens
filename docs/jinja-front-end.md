@@ -154,12 +154,15 @@ span carrier. Tag nodes are additive — they ride a jinja-artifact facade on th
 (another cached artifact alongside tokens/cst/ast), not a change to the SQL IR. Where a `{{ ref('x') }}`
 in a FROM slot should become a real table-source IR node (R3), that is inc2.
 
-## R3 — templated refs as first-class FROM nodes (inc2 design, decided 2026-07-04)
+## R3 — templated refs as first-class FROM nodes (inc2 — BUILT 2026-07-04)
 
 `{{ ref('x') }}` / `{{ source('a','b') }}` in a FROM/JOIN slot becomes a real `TableSource` carrying its
 tag, so scope/qualify/lineage/columnGraph see the model, not the placeholder. The design rides two
 existing invariants — scope binds a `TableSource` purely by `name`, and the IR is frozen after `lower()` —
-so the whole downstream pipeline works unchanged:
+so the whole downstream pipeline works unchanged. Built: `TableSource.template` + `src/jinja/apply-tags.ts`
++ the one qualify guard; `resolveScopes`/`Lineage.originsOf`/`referencesAt` bind `{{ ref('orders') }}` to
+`orders` natively (proven in `tests/jinja.apply-tags.test.ts` + `tests/jinja.pipeline.test.ts`, gated by
+`tests/corpus/jinja.test.ts`). R4 + variant realization below are still building.
 
 - **IR (additive):** `TableSource` gains `template?: TemplateSourceInfo`; the type lives in `src/ir/ir.ts`
   (neutral — the IR never imports `src/jinja`): `{ kind: "ref" | "source" | "macro"; span: PartSpan;

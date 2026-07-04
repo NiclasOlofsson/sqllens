@@ -1,10 +1,11 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseTemplated, type TagNode } from "../../src/index.js";
+import { parseTemplated, qualify, Schema, type TagNode } from "../../src/index.js";
 import type { Dialect } from "../../src/api.js";
 import type { Token } from "../../src/token/token.js";
 import type { PartSpan } from "../../src/ir/part-span.js";
+import type { QueryExpr, QueryBody, Source, TableSource } from "../../src/ir/ir.js";
 
 // ---------------------------------------------------------------------------
 // inc1 jinja corpus gate (docs/jinja-front-end.md §inc1 gates). A focused,
@@ -167,6 +168,98 @@ describe("jinja corpus gate — inc1 (R1 unified stream + R2 tag spans)", () => 
 			expect(seenKinds.has(kind), `no ${kind} node in the corpus`).toBe(true);
 		}
 	});
+});
+
+// ---------------------------------------------------------------------------
+// R3 (inc2): the tag-applied IR + the qualify exemption. For every fixture that
+// writes a `{{ ref('x') }}` / `{{ source('a','b') }}` FROM/JOIN source, the
+// lowered IR (`parseTemplated().sql.ast`) must carry a `template`-marked
+// TableSource whose name is the real dbt-logical name (NOT the `jjj…`
+// placeholder fill), and qualify against an EMPTY schema must emit zero
+// unknown-table/-column against those templated sources — a diagnostic on the
+// dbt-logical name would be never-wrong-violating (docs/jinja-front-end.md §R3).
+// ---------------------------------------------------------------------------
+
+/** Every TableSource reachable from a query IR (CTE bodies, FROM/JOIN, subqueries). Best-effort +
+ *  total — a shape it doesn't recognise is simply not descended (the gate only needs table sources). */
+function collectTableSources(ast: QueryExpr): TableSource[] {
+	const out: TableSource[] = [];
+	const seenQ = new Set<QueryExpr>();
+	const query = (q: QueryExpr | undefined): void => {
+		if (!q || seenQ.has(q)) return;
+		seenQ.add(q);
+		for (const c of q.ctes ?? []) query(c.body);
+		body(q.body);
+	};
+	const body = (b: QueryBody | undefined): void => {
+		if (!b) return;
+		if (b.kind === "select") {
+			for (const s of b.from ?? []) source(s);
+			for (const j of b.joins ?? []) source(j.source);
+			for (const sq of b.subqueries ?? []) query(sq);
+		} else if (b.kind === "setop") {
+			body(b.left);
+			body(b.right);
+		} else if (b.kind === "pipe") {
+			body(b.input);
+		}
+	};
+	const source = (s: Source | undefined): void => {
+		if (!s) return;
+		if (s.kind === "table") out.push(s);
+		else if (s.kind === "subquery") query(s.query);
+	};
+	query(ast);
+	return out;
+}
+
+describe("jinja corpus gate — R3 templated-source IR + qualify exemption (inc2)", () => {
+	const REF_SOURCE = FIXTURES.filter((f) => f.text.includes("{{ ref(") || f.text.includes("{{ source("));
+
+	it(`covers the ref/source fixtures (${REF_SOURCE.length} files)`, () => {
+		expect(REF_SOURCE.length).toBeGreaterThanOrEqual(3);
+	});
+
+	for (const { name, text } of REF_SOURCE) {
+		describe(name, () => {
+			it("the IR carries a template-marked source with the real dbt-logical name (no placeholder fill)", () => {
+				const { sql, tags } = parseTemplated(text, DIALECT);
+				const tables = collectTableSources(sql.ast);
+				const templated = tables.filter((t) => t.template !== undefined);
+				// (a) at least one templated source is present — but ONLY when a ref/source tag actually
+				//     parsed to completion. A deliberately-broken totality fixture (`from {{ ref(`) yields
+				//     no complete tag, hence no templated source; that is correct, not a gate failure.
+				const hasRelationTag = tags.some((n) => n.kind === "ref" || n.kind === "source");
+				const inFrom = /\bfrom\s*(?:\()?\s*\{\{\s*(?:ref|source)\s*\(/i.test(text);
+				if (hasRelationTag && inFrom) expect(templated.length).toBeGreaterThanOrEqual(1);
+				// (b) no ref/source-tagged source's name is the `jjj…` placeholder fill (Task 2's guard
+				//     protects the honest literal name Task 1 substituted).
+				for (const t of templated) {
+					if (t.template!.kind === "ref" || t.template!.kind === "source") {
+						for (const part of t.name) expect(part, `name part ${part}`).not.toMatch(/jjjj/);
+					}
+				}
+			});
+
+			it("qualify with an EMPTY schema emits no unknown-table/-column against templated sources", () => {
+				const { sql } = parseTemplated(text, DIALECT);
+				const templatedNames = new Set(
+					collectTableSources(sql.ast)
+						.filter((t) => t.template !== undefined)
+						.map((t) => t.name.join(".")),
+				);
+				const q = qualify(sql.ast, new Schema({}));
+				// No unknown-table diagnostic names a templated source's dbt-logical name.
+				const badTable = q.diagnostics.filter(
+					(d) => d.kind === "unknown-table" && [...templatedNames].some((n) => d.message.includes(n)),
+				);
+				expect(badTable).toEqual([]);
+				// These fixtures have no non-templated base tables, so every column resolves against a
+				// templated (unknown-but-not-wrong) or CTE-over-templated source: zero unknown-column.
+				expect(q.diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);
+			});
+		});
+	}
 });
 
 describe("jinja corpus gate — multi-line span correctness (R2 parity upgrade)", () => {

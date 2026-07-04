@@ -487,6 +487,20 @@ export interface LateralViewSource {
 	cst: ParserRuleContext;
 }
 
+/** Present when a source was written as a jinja template tag ({{ ref('x') }} / {{ source('a','b') }} /
+ *  a macro call in a FROM slot). Attached post-lower by the jinja front end (src/jinja/apply-tags.ts);
+ *  plain SQL parses never carry it. `opaque: true` = the tag's output relation is undeterminable
+ *  (macro / computed ref) and `name` is the raw placeholder — qualify treats the source as an opaque
+ *  relation (no unknown-table/-column diagnostics). Without `opaque`, `name` carries the tag's literal
+ *  dbt-logical name parts (ref model, or [sourceName, tableName]). This type is IR-neutral (no import
+ *  from src/jinja); consumers needing the full TagNode correlate by `span` with parseTemplated().tags. */
+export interface TemplateSourceInfo {
+	kind: "ref" | "source" | "macro";
+	/** The whole tag's span ({{ … }} inclusive), document coordinates. */
+	span: PartSpan;
+	opaque?: true;
+}
+
 export interface TableSource {
 	kind: "table";
 	/** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
@@ -501,6 +515,9 @@ export interface TableSource {
 	 *  compatibility; `declaredColumns` adds the per-column type text so inference can type the
 	 *  source's output columns. `type` is absent when only a name is declared. */
 	declaredColumns?: { name: string; type?: string }[];
+	/** Present when this source was written as a jinja template tag in a FROM/JOIN slot; attached
+	 *  post-lower by the jinja front end (src/jinja/apply-tags.ts). See TemplateSourceInfo. */
+	template?: TemplateSourceInfo;
 	cst: ParserRuleContext;
 }
 
