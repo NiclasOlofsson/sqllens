@@ -18,6 +18,8 @@
 // Total: unterminated tag/string is treated to EOF as that tag; never throws.
 // ---------------------------------------------------------------------------
 
+import type { ExpansionShape } from "../qualify/template-catalog.js";
+
 export type Segment =
 	| { kind: "sql"; start: number; end: number }
 	| {
@@ -27,6 +29,15 @@ export type Segment =
 			end: number;
 			text: string;
 	  };
+
+/**
+ * A synchronous, by-name syntactic-slot lookup for a MACRO call (inc3.2). The catalog's
+ * `expansionShape` bound into a bare callback, so `segment` stays decoupled from the catalog type — it
+ * only knows the shape vocabulary, never the `TemplateCatalog` interface. `undefined` = no shape known
+ * (fall back to the positional fill). Only macro-call expr tags consult it (ref/source/var/no-output
+ * builtins keep their existing fill — they already parse).
+ */
+export type ShapeOf = (call: { name: string; parts?: string[] }) => ExpansionShape | undefined;
 
 export interface SegmentResult {
 	/** Source order, tiling (contiguous, cover [0, text.length)). */
@@ -156,11 +167,106 @@ function fillChar(seg: Extract<Segment, { kind: "tag" }>): string {
 	return NO_OUTPUT_BUILTINS.has(leadingWord(seg.text)) ? " " : "j";
 }
 
+// ---------------------------------------------------------------------------
+// inc3.2 — shaped placeholders. When a catalog answers `expansionShape` for a
+// macro-call tag, the single-char identifier fill (`"j"`) generalizes to a
+// length-matched, shape-VALID fragment placed at the tag start, padded with
+// spaces, newlines preserved — so an unknown callable at statement/CTE/predicate
+// position parses instead of failing. Everything here is a no-op without a
+// `shapeOf` (the zero-catalog keystone: byte-identical to the char fill above).
+// ---------------------------------------------------------------------------
+
+/** Shape → the minimal shape-valid SQL fragment. `SELECT 1` is valid across all eight dialects both as a
+ *  standalone statement AND as a `(…)` CTE/subquery body (verified), so `statement`/`relation` share it;
+ *  `expr` is absent — it keeps the identifier fill (handled before this table is consulted). */
+const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr">, string> = {
+	statement: "SELECT 1",
+	relation: "SELECT 1",
+	predicate: "1=1",
+	"column-list": "1",
+};
+
+/** dbt builtins that already parse with the identifier fill and must NOT be shaped — a buggy catalog
+ *  returning a shape for `ref` must never break `from {{ ref('x') }}` (spec §only macro-call tags). The
+ *  no-output builtins are already excluded via `fillChar`'s whitespace path; this set covers the
+ *  value/relation builtins that get the identifier fill today. */
+const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "env_var"]);
+
+/**
+ * The leading CALL of an expr tag: the dotted callee path + whether a `(` follows.
+ * `macro_a(` → { name: "macro_a", isCall: true }; `dbt_utils.star(` →
+ * { name: "star", parts: ["dbt_utils", "star"], isCall: true }; a bare non-call
+ * expr (`{{ x }}`, `{{ a + b }}`) → isCall false. undefined when no identifier leads.
+ */
+function leadingCall(tagText: string): { name: string; parts?: string[]; isCall: boolean } | undefined {
+	let i = 2; // past `{{`
+	if (tagText[i] === "-") i += 1;
+	const skipWs = (): void => {
+		while (i < tagText.length && /\s/.test(tagText[i])) i += 1;
+	};
+	skipWs();
+	const parts: string[] = [];
+	for (;;) {
+		let word = "";
+		while (i < tagText.length && /[A-Za-z0-9_]/.test(tagText[i])) {
+			word += tagText[i];
+			i += 1;
+		}
+		if (word === "") break;
+		parts.push(word);
+		skipWs();
+		if (tagText[i] === ".") {
+			i += 1;
+			skipWs();
+			continue; // read the next path segment (`pkg . macro`)
+		}
+		break;
+	}
+	if (parts.length === 0) return undefined;
+	skipWs();
+	const isCall = tagText[i] === "(";
+	const name = parts[parts.length - 1];
+	return { name, ...(parts.length > 1 ? { parts } : {}), isCall };
+}
+
+/**
+ * The shaped fill fragment for a tag, or undefined to fall back to the positional
+ * char fill. Returns a fragment ONLY for a macro-call expr tag whose `shapeOf`
+ * answers a non-`expr` shape AND for which the fragment FITS: it must be no longer
+ * than the tag and must contain no `\n` in its placement window (the fit guard —
+ * the shaped fill is strictly an improvement, never a regression on a tag it can't
+ * shape). The caller places the fragment at the tag start and pads the rest with
+ * spaces, preserving every original `\n`.
+ */
+function shapedFill(seg: Extract<Segment, { kind: "tag" }>, shapeOf: ShapeOf): string | undefined {
+	if (seg.tagKind !== "expr") return undefined;
+	const lead = leadingWord(seg.text);
+	if (NO_OUTPUT_BUILTINS.has(lead) || SHAPE_EXCLUDED.has(lead)) return undefined;
+	const call = leadingCall(seg.text);
+	if (!call || !call.isCall) return undefined; // only a real macro CALL is shaped
+	const shape = shapeOf({ name: call.name, ...(call.parts ? { parts: call.parts } : {}) });
+	if (!shape || shape === "expr") return undefined; // expr / unknown → identifier fill (today's default)
+	const fragment = SHAPE_FRAGMENT[shape];
+	// Fit guard: the fragment must fit within the tag AND before its first `\n`. seg.text[k] is the
+	// document char at seg.start + k, so a `\n` at any k < fragment.length would land inside the fragment.
+	if (fragment.length > seg.end - seg.start) return undefined;
+	for (let k = 0; k < fragment.length; k++) {
+		if (seg.text[k] === "\n") return undefined;
+	}
+	return fragment;
+}
+
 /**
  * Segment raw jinja-SQL over the outer jinja language and build the length- and
  * newline-preserving placeholder. Total: never throws on any input.
+ *
+ * `shapeOf` (inc3.2, optional) supplies a syntactic slot per macro-call tag; when
+ * given, a shape-valid fragment (`SELECT 1`, …) replaces the identifier fill for
+ * the tags it fits (fit-guarded, newline-safe). With no `shapeOf` — or when it
+ * returns undefined / a tag doesn't fit — the placeholder is BYTE-IDENTICAL to the
+ * positional char fill (the zero-catalog keystone).
  */
-export function segment(text: string): SegmentResult {
+export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 	const len = text.length;
 	const segments: Segment[] = [];
 	let i = 0;
@@ -213,9 +319,20 @@ export function segment(text: string): SegmentResult {
 	const chars = text.split(""); // UTF-16 units — indices align with tag offsets
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
-		const fill = fillChar(seg);
-		for (let k = seg.start; k < seg.end; k++) {
-			if (chars[k] !== "\n") chars[k] = fill;
+		const shaped = shapeOf ? shapedFill(seg, shapeOf) : undefined;
+		if (shaped !== undefined) {
+			// Shaped fill: fragment at the tag start, spaces for the rest, `\n` preserved. The fit guard
+			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.
+			for (let k = seg.start; k < seg.end; k++) {
+				if (chars[k] === "\n") continue;
+				const rel = k - seg.start;
+				chars[k] = rel < shaped.length ? shaped[rel] : " ";
+			}
+		} else {
+			const fill = fillChar(seg);
+			for (let k = seg.start; k < seg.end; k++) {
+				if (chars[k] !== "\n") chars[k] = fill;
+			}
 		}
 	}
 
