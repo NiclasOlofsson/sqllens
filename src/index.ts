@@ -129,6 +129,19 @@ export { type Diagnostic, type Qualification } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";
 
+// The template-layer catalog (inc3.1 `relation` slice): a TemplateCatalog extends SchemaSource with a
+// `relation` lookup that resolves a dbt-logical `{{ ref('orders') }}` to its physical relation + columns,
+// so qualify can fire real unknown-column diagnostics against a templated source. CallbackTemplateCatalog
+// is the resolve-on-demand implementation (mirrors CallbackSchema; one shared version + one prime()). A
+// plain SchemaSource has no `relation` and is the zero-catalog fallback.
+export {
+	CallbackTemplateCatalog,
+	type TemplateCatalog,
+	type TemplateRef,
+	type ResolvedRelation,
+	type RelationResolver,
+} from "./qualify/template-catalog.js";
+
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 
 export { inferType } from "./infer/infer.js";

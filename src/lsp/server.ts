@@ -9,7 +9,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
-import { SqlDocument, CallbackSchema, type SchemaSource } from "../index.js";
+import { SqlDocument, type SchemaSource } from "../index.js";
 import { loadDialectConfig, type DialectConfig } from "./dialect-config.js";
 import { computeDiagnostics } from "./features/diagnostics.js";
 import { computeDocumentDiagnostics } from "./features/pull-diagnostics.js";
@@ -44,17 +44,35 @@ import { computeInlayHints } from "./features/inlay-hints.js";
 // EMBEDDING (Task 8): the stdio binary reads a static catalog from .sqllens.json.
 // A host that embeds the server can instead hand it a live catalog via
 // startServer(connection, { schema }) — any SchemaSource, typically a
-// CallbackSchema whose tables are fetched lazily from a big warehouse. An injected
-// schema is the active catalog for every document (it wins over the file schema).
-// When it is a CallbackSchema, publish() drives the lazy-catalog re-publish loop.
+// CallbackSchema whose tables are fetched lazily from a big warehouse, or a
+// CallbackTemplateCatalog that ALSO resolves dbt-logical refs. An injected schema
+// is the active catalog for every document (it wins over the file schema). When it
+// is a resolve-on-demand catalog (either one), publish() drives the lazy-catalog
+// re-publish loop.
 // ---------------------------------------------------------------------------
+
+/** A resolve-on-demand catalog that records misses and warms them via prime() — the shape shared by
+ *  CallbackSchema (physical tables) and CallbackTemplateCatalog (templated refs). The lazy-catalog
+ *  re-publish loop duck-types on this so BOTH drive prime()/republish identically: a resolved templated
+ *  ref republishes diagnostics on warm exactly like a resolved physical table. */
+interface LazyCatalog {
+	readonly misses: ReadonlyArray<string[]>;
+	prime(): Promise<boolean>;
+}
+
+/** True when `s` is a resolve-on-demand catalog (has prime() + misses) — CallbackSchema OR
+ *  CallbackTemplateCatalog. Duck-typed so the loop stays catalog-implementation-agnostic. */
+function isLazyCatalog(s: SchemaSource | undefined): s is SchemaSource & LazyCatalog {
+	const c = s as Partial<LazyCatalog> | undefined;
+	return !!c && typeof c.prime === "function" && Array.isArray(c.misses);
+}
 
 /** Options a host passes when embedding the server (the non-stdio path). */
 export interface ServerOptions {
 	/** A live catalog the host supplies (the embedding entry point). When present it is the active
 	 *  schema for every document, taking precedence over the file-configured `.sqllens.json` schema.
-	 *  A CallbackSchema here enables the lazy-catalog re-publish loop (fetch on miss, re-publish when
-	 *  the resolver warms). */
+	 *  A CallbackSchema or CallbackTemplateCatalog here enables the lazy-catalog re-publish loop (fetch
+	 *  on miss, re-publish when the resolver warms). */
 	schema?: SchemaSource;
 }
 
@@ -145,19 +163,22 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 		const diagnostics = computeDiagnostics(doc, schema);
 		connection.sendDiagnostics({ uri, diagnostics });
 
-		// Lazy catalog: computeDiagnostics just resolved against `schema`; a CallbackSchema records the
-		// tables it could not answer from the host's warm cache as misses. If any are outstanding, warm
-		// the resolver in the background and re-publish when it reveals something new — so a cold read
-		// squiggles once (never-wrong) and self-heals. Fire-and-forget: the current publish already
-		// went out with the best-known (possibly incomplete) diagnostics.
-		if (schema instanceof CallbackSchema && schema.misses.length > 0) {
+		// Lazy catalog: computeDiagnostics just resolved against `schema`; a resolve-on-demand catalog
+		// (CallbackSchema for physical tables, CallbackTemplateCatalog for templated refs) records what it
+		// could not answer from the host's warm cache as misses. If any are outstanding, warm the resolver
+		// in the background and re-publish when it reveals something new — so a cold read squiggles once
+		// (never-wrong) and self-heals. Fire-and-forget: the current publish already went out with the
+		// best-known (possibly incomplete) diagnostics. Duck-typed (isLazyCatalog) so a resolved templated
+		// ref republishes on warm exactly like a resolved physical table.
+		if (isLazyCatalog(schema) && schema.misses.length > 0) {
 			// Version guard, keyed on the DOCUMENT version — the axis a slow prime threatens. If the file
 			// is edited before prime() settles, that edit's OWN publish+prime chain owns the re-publish,
 			// so this stale callback stands down (docs.get holds the latest rebuilt doc). The SCHEMA axis
 			// needs no guard here: prime() resolves true only when its version actually bumped (new tables
 			// arrived), and publish() re-reads the current doc + schema, so a re-publish is never stale
 			// data — only a redundant one, which the doc-version check suppresses. prime() itself coalesces
-			// concurrent calls (see CallbackSchema.prime), so rapid edits can't double-fetch.
+			// concurrent calls (both CallbackSchema.prime and CallbackTemplateCatalog.prime), so rapid edits
+			// can't double-fetch.
 			const version = doc.version;
 			void schema.prime().then((changed) => {
 				if (changed && docs.get(uri)?.version === version) publish(uri);

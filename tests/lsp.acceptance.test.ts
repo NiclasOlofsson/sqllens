@@ -47,7 +47,13 @@ import {
 } from "vscode-languageserver-protocol/node";
 import { SEMANTIC_LEGEND } from "../src/lsp/features/semantic-tokens.js";
 import { startServer } from "../src/lsp/server.js";
-import { SqlDocument, CallbackSchema, type TableResolver } from "../src/index.js";
+import {
+	SqlDocument,
+	CallbackSchema,
+	CallbackTemplateCatalog,
+	type TableResolver,
+	type RelationResolver,
+} from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
 const msg = (m: string | { value: string }): string => (typeof m === "string" ? m : m.value);
@@ -1009,6 +1015,91 @@ describe("LSP lazy catalog (Task 8)", () => {
 
 		// It is a RE-publish (came after the dirty one), and the resolver was fetched exactly once
 		// (in-flight coalescing — no double fetch on the single open).
+		expect(publishes.indexOf(clean)).toBeGreaterThan(publishes.indexOf(dirty));
+		expect(fetchCalls).toBe(1);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// inc3.1 — the lazy-catalog re-publish loop is generalized (duck-typed on
+// prime()/misses), so a CallbackTemplateCatalog ALSO drives prime()/republish,
+// exactly like a CallbackSchema. A CallbackTemplateCatalog accumulates physical-
+// table misses through its inherited columnsFor (its TableResolver side), so the
+// server must warm it and re-publish when a table is revealed — proving the
+// generalization fires for the template catalog, not just CallbackSchema.
+// (Templated-ref IR does not reach the LSP yet — the LSP builds documents from the
+// plain parse path, not parseTemplated — so the relation-side warm/republish is
+// unit-tested in tests/jinja.relation.test.ts; here we prove the LOOP drives this
+// catalog type at all.)
+// ---------------------------------------------------------------------------
+describe("LSP lazy catalog drives CallbackTemplateCatalog.prime() (inc3.1)", () => {
+	let root: string;
+	let client: ReturnType<typeof createProtocolConnection>;
+	const publishes: PublishDiagnosticsParams[] = [];
+	let fetchCalls = 0;
+
+	beforeAll(async () => {
+		root = mkdtempSync(join(tmpdir(), "sqllens-tmplcat-"));
+		writeFileSync(
+			join(root, ".sqllens.json"),
+			JSON.stringify({ dialects: [{ files: "**/*.sql", dialect: "databricks" }], default: "databricks" }),
+		);
+
+		const cache = new Map<string, { name: string; type?: string }[]>();
+		const tableResolver: TableResolver = {
+			resolve: (parts) => cache.get(parts.join(".")),
+			fetch: async (missing) => {
+				fetchCalls++;
+				for (const parts of missing) {
+					if (parts.join(".") === "orders") cache.set("orders", [{ name: "id", type: "int" }]);
+				}
+			},
+		};
+		// No templated refs reach the LSP yet, so the relation side just never resolves; the catalog is
+		// exercised through its inherited physical-table columnsFor (the TableResolver side).
+		const relationResolver: RelationResolver = { resolveRelation: () => undefined };
+		const schema = new CallbackTemplateCatalog(relationResolver, tableResolver);
+
+		const up = new TestStream();
+		const down = new TestStream();
+		const serverConnection = createConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
+		startServer(serverConnection, { schema });
+
+		client = createProtocolConnection(new StreamMessageReader(down), new StreamMessageWriter(up));
+		client.onNotification(PublishDiagnosticsNotification.type, (p) => {
+			publishes.push(p);
+		});
+		client.listen();
+
+		await client.sendRequest(InitializeRequest.type, {
+			processId: null,
+			rootUri: pathToFileURL(root).toString(),
+			capabilities: {},
+			workspaceFolders: null,
+		});
+	});
+
+	afterAll(() => {
+		client.dispose();
+		rmSync(root, { recursive: true, force: true });
+	});
+
+	it("first publish flags the unknown table; a later publish drops it once the catalog warms", async () => {
+		const uri = pathToFileURL(join(root, "tmplcat.sql")).toString();
+		void client.sendNotification(DidOpenTextDocumentNotification.type, {
+			textDocument: { uri, languageId: "sql", version: 1, text: "SELECT * FROM orders" },
+		});
+
+		const dirty = await waitFor(() =>
+			publishes.find((p) => p.uri === uri && p.diagnostics.some((d) => /orders/i.test(msg(d.message)))),
+		);
+		expect(dirty.diagnostics.some((d) => /orders/i.test(msg(d.message)))).toBe(true);
+
+		const clean = await waitFor(() => publishes.find((p) => p.uri === uri && p.diagnostics.length === 0));
+		expect(clean.diagnostics).toEqual([]);
+
+		// The generalized (duck-typed) loop drove THIS catalog's prime(): a RE-publish after the dirty
+		// one, fetched exactly once (coalescing holds for CallbackTemplateCatalog too).
 		expect(publishes.indexOf(clean)).toBeGreaterThan(publishes.indexOf(dirty));
 		expect(fetchCalls).toBe(1);
 	});

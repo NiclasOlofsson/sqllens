@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated, qualify, toScopes, Schema } from "../src/index.js";
+import { parseTemplated, qualify, toScopes, Schema, type Column, type TableResolver } from "../src/index.js";
 import {
 	CallbackTemplateCatalog,
 	type RelationResolver,
@@ -131,5 +131,44 @@ describe("inc3.1 — qualify resolves templated columns via TemplateCatalog.rela
 		const r = parseTemplated("SELECT * FROM real_missing_table", "databricks");
 		const q = qualify(r.sql.ast, warmCatalog());
 		expect(q.diagnostics.some((d) => d.kind === "unknown-table")).toBe(true);
+	});
+
+	// --- The physical-resolver branch: `relation` returns nameParts only (columns undefined), so
+	//     qualify resolves those PHYSICAL parts through the catalog's own columnsFor (logical → physical
+	//     → columns). This branch was uncovered by the Task-2 tests (Task-2 follow-up). ---
+
+	/** A test table resolver: `cache` answers columnsFor synchronously by folded dotted path. */
+	class TestTableResolver implements TableResolver {
+		readonly cache = new Map<string, Column[]>();
+		resolve(parts: string[]): Column[] | undefined {
+			return this.cache.get(parts.join("."));
+		}
+	}
+
+	/** A catalog whose `relation` returns a PHYSICAL name with `columns: undefined`, backed by a table
+	 *  resolver that (optionally) knows that physical relation's columns. */
+	function physicalCatalog(physical: string[], physicalCols: Column[] | undefined): CallbackTemplateCatalog {
+		const rel = new TestRelationResolver();
+		// `orders` (a ref) resolves to a physical relation but WITHOUT columns (columns undefined).
+		rel.cache.set(relKey({ kind: "ref", nameParts: ["orders"] }), { nameParts: physical });
+		const tab = new TestTableResolver();
+		if (physicalCols) tab.cache.set(physical.join("."), physicalCols);
+		return new CallbackTemplateCatalog(rel, tab);
+	}
+
+	it("relation nameParts only (columns undefined) → resolves through columnsFor (physical resolver)", () => {
+		const catalog = physicalCatalog(["analytics", "orders"], [{ name: "id" }, { name: "total" }]);
+		// A good physical column resolves (no unknown-column).
+		const good = parseTemplated("SELECT o.total FROM {{ ref('orders') }} o", "databricks");
+		expect(unknownCols(qualify(good.sql.ast, catalog))).toEqual([]);
+		// A bad one FIRES — the physical resolver's columns are the real resolution.
+		const bad = parseTemplated("SELECT o.nope FROM {{ ref('orders') }} o", "databricks");
+		expect(unknownCols(qualify(bad.sql.ast, catalog)).length).toBe(1);
+	});
+
+	it("relation nameParts only, but the physical name MISSES in columnsFor → R3 exemption", () => {
+		const catalog = physicalCatalog(["analytics", "orders"], undefined); // physical relation unknown
+		const bad = parseTemplated("SELECT o.nope FROM {{ ref('orders') }} o", "databricks");
+		expect(unknownCols(qualify(bad.sql.ast, catalog))).toEqual([]); // exempt: physical columns unknown
 	});
 });
