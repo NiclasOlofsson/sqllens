@@ -44,7 +44,7 @@ import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
 import { lexMinijinjaTag, parseMinijinjaTag } from "./parse-tag.js";
 import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
-import { segment, type Segment } from "./segment.js";
+import { segment, type Segment, type ShapeOf } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
 // Re-export the R2 tag-AST union (Task 4) so `src/index.ts` keeps re-exporting
@@ -54,6 +54,18 @@ export type { TagNode, MacroCall } from "./tag-ast.js";
 // Re-export the R4 region / symbol shapes (Task 3) so the barrel re-exports them here.
 export type { TemplateRegion, TemplateArm, TemplateSymbol } from "./regions.js";
 export { templateRegions, templateSymbols } from "./regions.js";
+// Re-export the inc3.2 shaped-placeholder callback type so the barrel carries it (the LSP/caller binds
+// `catalog.expansionShape` into it).
+export type { ShapeOf } from "./segment.js";
+
+/**
+ * Options for `parseTemplated` (inc3.2, all optional — the 2-arg call is unchanged and byte-identical).
+ * `shapeOf` supplies a per-macro-call syntactic slot so an unknown callable at statement/CTE/predicate
+ * position gets a shape-valid (length-/newline-preserving) placeholder instead of the identifier fill.
+ */
+export interface TemplatedParseOptions {
+	shapeOf?: ShapeOf;
+}
 
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
 export interface TemplatedParseResult {
@@ -196,8 +208,8 @@ function clipToTagBoundaries(tok: Token, tagRanges: readonly Segment[], text: st
 }
 
 /** The core build — total by construction (every composed piece is total). */
-function build(text: string, dialect: Dialect): TemplatedParseResult {
-	const { segments, placeholder } = segment(text);
+function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedParseResult {
+	const { segments, placeholder } = segment(text, shapeOf);
 
 	// Step 3: lex the placeholder with the UNTOUCHED per-dialect SQL entry. Its
 	// tokens are already in original document coordinates (length preservation).
@@ -264,9 +276,9 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
  * merge one source-ordered token stream (SQL channel 0 + jinja channel 2). Total —
  * never throws on any input, including broken mid-edit jinja (R5).
  */
-export function parseTemplated(text: string, dialect: Dialect): TemplatedParseResult {
+export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult {
 	try {
-		return build(text, dialect);
+		return build(text, dialect, opts?.shapeOf);
 	} catch {
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.
@@ -279,6 +291,6 @@ export function parseTemplated(text: string, dialect: Dialect): TemplatedParseRe
  * The unified source-ordered token stream for raw jinja-SQL — the token-only view
  * of parseTemplated. Total — never throws.
  */
-export function tokenizeTemplated(text: string, dialect: Dialect): Token[] {
-	return parseTemplated(text, dialect).tokens;
+export function tokenizeTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): Token[] {
+	return parseTemplated(text, dialect, opts).tokens;
 }

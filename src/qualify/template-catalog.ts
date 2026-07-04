@@ -50,12 +50,32 @@ export interface ResolvedRelation {
 	columns?: Column[];
 }
 
+/**
+ * The syntactic SLOT a macro's rendered output occupies — the up-front, parse-time answer the
+ * placeholder mechanism needs (inc3.2). It is SYNCHRONOUS + by-name (sqllens can't pause mid-lex to
+ * await), so it is a plain shape vocabulary, not a lazy resolution like `relation`/`value`:
+ *   - `statement`  — a whole statement / query body (also fits a `(…)` CTE/subquery body).
+ *   - `relation`   — a relation in FROM (rendered as a query body — same `SELECT 1` fill as `statement`).
+ *   - `predicate`  — a boolean expression (a WHERE/ON/HAVING slot).
+ *   - `column-list`— one or more select items (the slot parses; the real column COUNT differs).
+ *   - `expr`       — a scalar expression (today's identifier fill — the zero-catalog default).
+ */
+export type ExpansionShape = "expr" | "column-list" | "predicate" | "relation" | "statement";
+
 /** Extends SchemaSource: a catalog that ALSO resolves dbt template refs to physical relations+columns.
  *  qualify duck-types this (`"relation" in schema`); a plain SchemaSource is the zero-catalog fallback. */
 export interface TemplateCatalog extends SchemaSource {
 	/** Resolve a logical template ref to its physical relation (+columns), or undefined if unknown
 	 *  (recorded as a miss). `ref.nameParts` are RAW — folding for `dialect` happens inside. */
 	relation(ref: TemplateRef, dialect?: string): ResolvedRelation | undefined;
+	/**
+	 * The syntactic slot a MACRO call's rendered output occupies (inc3.2) — SYNCHRONOUS, by macro
+	 * name (+ package `parts`). Consulted at PARSE time to pick a shape-valid placeholder fragment
+	 * (`SELECT 1`, `1=1`, …) so an unknown callable at statement/CTE/predicate position still parses.
+	 * OPTIONAL — a relation-only / plain SchemaSource catalog omits it, and then the placeholder is the
+	 * zero-catalog positional fill (byte-identical to today). `undefined` also falls back to that fill.
+	 */
+	expansionShape?(call: { name: string; parts?: string[] }, dialect?: string): ExpansionShape | undefined;
 }
 
 /** The host-side resolver a CallbackTemplateCatalog drives for template refs — the template-ref twin

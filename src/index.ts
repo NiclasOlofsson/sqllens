@@ -95,6 +95,8 @@ export {
 	parseTemplated,
 	tokenizeTemplated,
 	type TemplatedParseResult,
+	type TemplatedParseOptions,
+	type ShapeOf,
 	type TagNode,
 	type MacroCall,
 } from "./minijinja/parse.js";
@@ -150,6 +152,7 @@ export {
 	type TemplateRef,
 	type ResolvedRelation,
 	type RelationResolver,
+	type ExpansionShape,
 } from "./qualify/template-catalog.js";
 
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
