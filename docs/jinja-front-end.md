@@ -46,11 +46,20 @@ The pipeline for `parseTemplated(text, dialect)`:
    UNTOUCHED per-dialect SQL lexer. Because every placeholder occupies the exact character range (and
    preserves `\n` count and position) of the tag it replaces, every antlr `start/stop/line/column` the SQL
    lexer produces is already in ORIGINAL document coordinates — no span remap for SQL tokens outside tags.
-   The inc1 placeholder shape is the POSITIONAL DEFAULT (§ the hole):
-   - `{{ expr }}` → a single **identifier-shaped** placeholder (keeps the SQL parse valid where an
-     identifier/value can appear — the common case: `FROM {{ ref('x') }}`, `SELECT {{ var('c') }}`).
-   - `{% stmt %}` and `{# comment #}` → **newline-preserving whitespace** (no SQL output — parity with the
-     extension's `STATEMENT_MACROS` blanking).
+   The inc1 placeholder shape is the POSITIONAL DEFAULT, and it is NO-OUTPUT-AWARE (§ the hole — anvil
+   flagged, 2026-07-04: an identifier placeholder for `{{ config(...) }}` at statement position is a
+   syntax error, and config-topped models are the majority):
+   - `{{ call }}` where the leading call name ∈ **`NO_OUTPUT_BUILTINS`** (`config`, `docs`, `print`,
+     `log`, `return`, `exceptions` — the dbt builtins that emit no SQL text) → **newline-preserving
+     whitespace** (vanishes cleanly, whatever the slot). Same set the extension's blanker special-cases.
+   - `{{ expr }}` otherwise → a single **identifier-shaped** placeholder (keeps the SQL parse valid where
+     an identifier/value can appear — the common case: `FROM {{ ref('x') }}`, `SELECT {{ var('c') }}`).
+   - `{% stmt %}` and `{# comment #}` → **newline-preserving whitespace** (no SQL output).
+   The `NO_OUTPUT_BUILTINS` set is a small built-in DEFAULT (dbt-syntax-level: "these builtins produce no
+   text"), the pre-catalog stand-in for inc3's `expansionShape → undefined`/no-output answer — optional
+   over defaults: the catalog overrides it per-macro later. An unknown callable at statement position
+   (a bare custom macro call) still gets the identifier default and may not parse — the residual
+   fragment/statement class, a known inc1 limit the extension covers with its fallback until inc3.
 3. **Lex** the placeholder string with the existing `fns.parse` / `tokenize` (grammars untouched).
 4. **Merge** into ONE source-ordered `Token[]`: the SQL tokens (default channel 0, original coords) plus
    the jinja tokens (new **channel 2**, role `"jinja"`) from the jinja lexer, interleaved by offset. The
@@ -84,8 +93,11 @@ The pipeline for `parseTemplated(text, dialect)`:
 
 A macro can expand to arbitrary SQL — a column list, a whole predicate, a join, a CTE. That is Q1, and
 Niclas decided it: **parse-with-holes + typed shape, never render.** For inc1 (placeholder-parity), the
-hole is the POSITIONAL DEFAULT — a callable in a value/identifier slot → one identifier placeholder. This
-matches the extension's current pass-1 blanking exactly: the same cases parse, the same cases fail. The
+hole is the POSITIONAL DEFAULT — a **no-output builtin** (`config`/`docs`/`print`/`log`/`return`/
+`exceptions`) → whitespace (it emits no SQL, whatever the slot); any other callable in a value/identifier
+slot → one identifier placeholder. This matches the extension's current pass-1 blanking exactly (its
+`STATEMENT_MACROS` blank-to-space set + identifier placeholder for the rest): the same cases parse, the
+same cases fail. The
 known-failing class at inc1 (parity, not regression): a macro emitting a SQL FRAGMENT — an operator
 (`WHERE x {{ op() }} 5`), a comma-carrying column list (`SELECT {{ dbt_utils.star(…) }}` in strict count
 contexts), a statement fragment — where a single identifier placeholder can't fuse with adjacent tokens.
