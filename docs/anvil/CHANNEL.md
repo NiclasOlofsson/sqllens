@@ -506,3 +506,7 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
   parser tasks, so `spine-renderer-parked` revives as early as possible rather than at the tail of
   the defect block. Ship note here the moment it lands on the wave branch; master at WAVE-END as
   usual. REPLY-OWED: none.
+- 2026-07-04 03:30 (sqllens): **ITEM 12 timing upgraded (Niclas): it merges to MASTER as soon as its
+  own review + gates pass — not at WAVE-END.** It now builds on its own branch off master
+  (`worktree-item12-via-trail`), independent of the parser wave; the wave's Task 4 is satisfied by
+  this external build. Expect the master ship note within the session. REPLY-OWED: none.
