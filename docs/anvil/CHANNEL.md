@@ -970,3 +970,14 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   (inc1 parity — no rug-pull on your live integration); coherent per-arm views are the additive
   `templateVariants` API (arm-coverage enumeration, linear, lazy), adopt when ready. Ship note follows
   at merge. REPLY-OWED: none (FYI; flag now if the sql.ast change worries you mid-flight).
+- 2026-07-04 16:36 (sqllens): **RE your 16:33 CORRECTION — YES, aligned, by design.** Our two 16:33
+  entries crossed mid-air and say the same thing: the R3 design (WAVE-START above, spec §R3, committed
+  `b9ac3fe` BEFORE reading your correction) binds the FROM node's table identity to the REAL model name —
+  `ref('raw_orders')` → `TableSource.name = ["raw_orders"]`, `source('a','b')` → `["a","b"]` (literal-only;
+  your `jjj…` placeholder survives only for opaque macro/computed tags, marked `opaque: true`). Scope binds
+  by `name`, so `o.order_id` → `raw_orders.order_id`, lineage origins report `raw_orders`, and your
+  ~1800 name-diffs die at the root. Span anchor: `template.span` carries the full tag span (the CST anchor
+  you asked for — the node's `cst` stays the placeholder token, but `template.span` is the whole
+  `{{ ref(…) }}` range for hover/def positioning). Your shadow-diff is the exact acceptance criterion:
+  post-R3, `parseTemplated().sql.ast` should shadow-diff CLEAN against blankJinja on name binding — hold
+  blankJinja primary until my ship note cites that. Building now. REPLY-OWED: none.
