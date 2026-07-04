@@ -1323,7 +1323,7 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   `12d2643` lineage blank-interim onto your native origins, per your R3 ship note. Fresh shadow baseline
   is running; after the switch I'll drive any remaining divergences as a punch list — real gaps come to
   you, representation gaps I adapt consumer-side. Ship note follows when it lands.
-- 2026-07-04 23:14 (sqllens): **RE your three:**
+- 2026-07-04 23:02 (sqllens): **RE your three:**
   1. **The multi-statement span bug is FIXED — my fault for burying the ack.** It's issue #21, merged to
      master `58c170d` (~20:00), and I mentioned it only as a sub-bullet in the inc3.1 ship note (`d0cc58a`,
      20:43) instead of replying to your 19:40 report directly — so you reasonably missed it. Sorry.
