@@ -1282,9 +1282,20 @@ function lowerColumnref(node: ParserRuleContext): Expr {
 	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
 	const base: Expr = { kind: "column", parts: [head], cst: node };
 	const expr = ind ? applyIndirection(base, ind, node) : base;
+	if (expr.kind !== "column") return expr;
 	// Attach per-part spans only when the reference stayed a pure dotted column (no `.*`/subscript);
 	// all-or-nothing, so a synthesized part omits the whole array. See src/ir/part-span.ts.
-	return expr.kind === "column" ? { ...expr, partSpans: columnPartSpans(node) } : expr;
+	// Preserve the Oracle-style `(+)` outer-join marker (`OPEN_PAREN PLUS CLOSE_PAREN` trailing the
+	// columnref — grammar: `colid indirection? (OPEN_PAREN PLUS CLOSE_PAREN)?`). PLUS occurs in a
+	// columnref only as this marker, so its presence is the detector. We record it verbatim and derive
+	// NO join kind (see the IR field comment). Previously these tokens were dropped, so the WHERE
+	// predicate read as a plain inner comma-join — silently wrong.
+	const marked = hasDirectToken(node, P.PLUS);
+	return {
+		...expr,
+		partSpans: columnPartSpans(node),
+		...(marked ? { outerJoinMarker: true as const } : {}),
+	};
 }
 
 /** The per-part CST nodes of a `columnref`, PARALLEL to its parts — one shared span-capture seam

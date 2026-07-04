@@ -317,3 +317,43 @@ describe("Redshift lower — non-query", () => {
 		expect(q.statement).toBe("ddl");
 	});
 });
+
+// Oracle-style `(+)` outer-join marker (docs.aws.amazon.com/redshift/latest/dg/r_WHERE_oracle_outer.html).
+// The marker rides the columnref it annotates (`a.id = b.id (+)`), meaning b's table is the
+// null-extended side. sqllens PRESERVES it verbatim on the column Expr (`outerJoinMarker: true`) and
+// derives NO join kind — which LEFT/RIGHT join it implies across a multi-predicate WHERE is
+// Oracle-semantics a consumer (or a future dedicated pass) resolves. Before this, the marker was
+// dropped in lowering, so the predicate read as a plain inner comma-join — silently wrong.
+describe("Redshift lower — the `(+)` outer-join marker", () => {
+	function binaryWhere(sql: string): { left: Expr; right: Expr } {
+		const w = selectBody(sql).where;
+		if (!w || w.kind !== "binary") throw new Error("expected a binary WHERE");
+		return { left: w.left, right: w.right };
+	}
+
+	it("preserves `(+)` on the marked column and leaves the unmarked side clean", () => {
+		const { left, right } = binaryWhere("SELECT * FROM a, b WHERE a.id = b.id (+)");
+		// b.id carries the raw marker; a.id (no `(+)`) does not.
+		expect(right).toMatchObject({ kind: "column", parts: ["b", "id"], outerJoinMarker: true });
+		expect(left).toMatchObject({ kind: "column", parts: ["a", "id"] });
+		expect((left as { outerJoinMarker?: true }).outerJoinMarker).toBeUndefined();
+	});
+
+	it("a plain predicate with no `(+)` carries no marker (absent field)", () => {
+		const { left, right } = binaryWhere("SELECT * FROM a, b WHERE a.id = b.id");
+		expect((left as { outerJoinMarker?: true }).outerJoinMarker).toBeUndefined();
+		expect((right as { outerJoinMarker?: true }).outerJoinMarker).toBeUndefined();
+	});
+
+	it("each marked column in a multi-`(+)` WHERE carries the marker independently", () => {
+		// a.id = b.id (+) AND b.x = c.x (+): the two right-hand columns are marked, the two
+		// left-hand columns are not — no join kind is claimed for either predicate.
+		const w = selectBody("SELECT * FROM a, b, c WHERE a.id = b.id (+) AND b.x = c.x (+)").where;
+		if (!w || w.kind !== "binary" || w.op !== "and") throw new Error("expected AND of two predicates");
+		for (const side of [w.left, w.right]) {
+			if (side.kind !== "binary") throw new Error("expected a comparison");
+			expect((side.left as { outerJoinMarker?: true }).outerJoinMarker).toBeUndefined();
+			expect(side.right).toMatchObject({ kind: "column", outerJoinMarker: true });
+		}
+	});
+});

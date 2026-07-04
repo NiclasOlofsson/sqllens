@@ -182,8 +182,19 @@ export interface ColumnRef {
 export type Expr =
 	/** A column reference. `partSpans` (when present) is PARALLEL to `parts` — one span per part,
 	 *  covering that part's own token(s) incl. quotes, excluding dots; absent (all-or-nothing) when any
-	 *  part is synthesized rather than read from a token. See src/ir/part-span.ts. */
-	| { kind: "column"; parts: string[]; partSpans?: PartSpan[]; cst: ParserRuleContext }
+	 *  part is synthesized rather than read from a token. See src/ir/part-span.ts.
+	 *  `outerJoinMarker` is the Oracle-style `(+)` outer-join marker as-written on this column ref
+	 *  (`a.id = b.id (+)`); sqllens preserves it verbatim and derives NO join kind — the marker means
+	 *  b's table is the null-extended side, but which LEFT/RIGHT join that implies across a
+	 *  multi-predicate WHERE is Oracle-semantics the consumer (or a future dedicated pass) resolves.
+	 *  Redshift only; absent on every other dialect's columns. */
+	| {
+			kind: "column";
+			parts: string[];
+			partSpans?: PartSpan[];
+			outerJoinMarker?: true;
+			cst: ParserRuleContext;
+	  }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
 	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. The optional
 	 *  modifiers transform the expansion (Snowflake `* EXCLUDE/ILIKE/RENAME/REPLACE …`,
