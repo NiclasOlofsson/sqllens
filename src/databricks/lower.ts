@@ -164,7 +164,14 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// (the issue is parse-entry parity only). 0 elements is an empty file — also flagged,
 	// never a throw (an editor opens empty documents).
 	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
-	if (elements.length > 1) return flagged(tree, "multi-statement", "compound");
+	// A `;`-separated batch of >1 statements is a compound script — flagged, not modelled.
+	// Anchor the flagged body's CST span to the FIRST statement element, NOT the whole
+	// `multiStatement` container: the container reaches EOF, and a whole-file span on a
+	// `kind: "select"` body makes a downstream AST index read a bogus Select enclosure over
+	// statements 2..n (which carry none of their inner structure). Bounding to statement 1
+	// keeps the span honest — the "compound" statement kind + "multi-statement" flag already
+	// tell a consumer this is an unmodelled batch (issue #21).
+	if (elements.length > 1) return flagged(elements[0], "multi-statement", "compound");
 	if (elements.length === 0 && tree.ruleIndex === P.RULE_multiStatement) return flagged(tree, "empty", "other");
 	const stmt = elements[0] ?? tree; // the single element, or a legacy single-statement root
 	const statement = statementCategory(stmt);
