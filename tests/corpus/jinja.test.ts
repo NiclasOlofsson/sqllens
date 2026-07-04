@@ -1,7 +1,15 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseTemplated, qualify, Schema, type TagNode } from "../../src/index.js";
+import {
+	parseTemplated,
+	qualify,
+	Schema,
+	templateRegions,
+	templateSymbols,
+	templateVariants,
+	type TagNode,
+} from "../../src/index.js";
 import type { Dialect } from "../../src/api.js";
 import type { Token } from "../../src/token/token.js";
 import type { PartSpan } from "../../src/ir/part-span.js";
@@ -286,5 +294,110 @@ describe("jinja corpus gate — dialect-agnostic jinja channel", () => {
 				.map((t) => `${t.name}:${t.text}:${t.start}-${t.stop}`),
 		);
 		for (let i = 1; i < perDialect.length; i++) expect(perDialect[i]).toEqual(perDialect[0]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// R4 (inc2): control-flow regions + set/macro symbols. Over EVERY fixture the
+// two passes must be total (never throw on any tag sequence, balanced or not),
+// their spans in-bounds, and their names honest (a symbol name always slices
+// back to its own source — no fabricated names, docs/jinja-front-end.md §R4).
+// ---------------------------------------------------------------------------
+describe("jinja corpus gate — R4 regions + symbols totality (inc2)", () => {
+	for (const { name, text } of FIXTURES) {
+		describe(name, () => {
+			it("templateRegions / templateSymbols are total (never throw)", () => {
+				const { tags } = parseTemplated(text, DIALECT);
+				expect(() => templateRegions(tags, text)).not.toThrow();
+				expect(() => templateSymbols(tags)).not.toThrow();
+			});
+
+			it("region arm/body spans are in-bounds and every symbol name is content-true", () => {
+				const { tags } = parseTemplated(text, DIALECT);
+				const walk = (regions: ReturnType<typeof templateRegions>): void => {
+					for (const r of regions) {
+						assertSpanInBounds(r.span, text, `${r.kind}.span`);
+						expect(r.arms.length, `${r.kind} has arms`).toBeGreaterThanOrEqual(1);
+						for (const arm of r.arms) {
+							assertSpanInBounds(arm.tagSpan, text, `${arm.keyword}.tagSpan`);
+							assertSpanInBounds(arm.bodySpan, text, `${arm.keyword}.bodySpan`);
+							walk(arm.children);
+						}
+					}
+				};
+				walk(templateRegions(tags, text));
+				// A set/macro symbol name always slices back to its own nameSpan (never fabricated).
+				for (const s of templateSymbols(tags)) {
+					assertSpanContent(s.nameSpan, text, s.name, `${s.kind}.nameSpan`);
+					assertSpanInBounds(s.span, text, `${s.kind}.span`);
+				}
+			});
+		});
+	}
+
+	it("the set/macro fixture surfaces both a `set` target and a `macro` name", () => {
+		const text = readFileSync(FIXTURES_DIR + "20_set_and_macro_block.sql", "utf8");
+		const kinds = new Set(templateSymbols(parseTemplated(text, DIALECT).tags).map((s) => s.kind));
+		expect(kinds.has("set")).toBe(true);
+		expect(kinds.has("macro")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Variant realization (inc2): `templateVariants` enumerates the branch variants
+// of a template (arm-coverage, linear). Over EVERY fixture: at least one variant;
+// each variant's `parse()` is total; its token stream tiles the (length-preserving,
+// blanked) realized text — start 0, contiguous, ends at len-1, total length equal
+// to the original (blanking preserves length + newline positions). The two-WHERE
+// if/else fixture must yield exactly two coherent variants.
+// ---------------------------------------------------------------------------
+describe("jinja corpus gate — variant coherence (inc2)", () => {
+	/** A merged stream is contiguous and covers [0, len): start 0, each token abuts the
+	 *  previous, last ends at len-1. (No exact string match — a variant blanks arm bodies,
+	 *  so the realized text differs from the original while keeping its length.) */
+	function assertContiguous(tokens: Token[], len: number): void {
+		if (len === 0) {
+			expect(tokens).toEqual([]);
+			return;
+		}
+		expect(tokens.length).toBeGreaterThan(0);
+		expect(tokens[0].start).toBe(0);
+		for (let i = 1; i < tokens.length; i++) expect(tokens[i].start).toBe(tokens[i - 1].stop + 1);
+		expect(tokens[tokens.length - 1].stop).toBe(len - 1);
+		// Length preserved end-to-end (the blanking invariant): the joined texts have the
+		// same length as the source even though the content of blanked arms is whitespace.
+		expect(tokens.reduce((n, t) => n + t.text.length, 0)).toBe(len);
+	}
+
+	for (const { name, text } of FIXTURES) {
+		describe(name, () => {
+			it("templateVariants is total and yields at least one variant", () => {
+				let variants: ReturnType<typeof templateVariants> = [];
+				expect(() => {
+					variants = templateVariants(text, DIALECT);
+				}).not.toThrow();
+				expect(variants.length).toBeGreaterThanOrEqual(1);
+			});
+
+			it("every variant parses (total) and its token stream tiles the realized text", () => {
+				for (const v of templateVariants(text, DIALECT)) {
+					let result: ReturnType<typeof v.parse> | undefined;
+					expect(() => {
+						result = v.parse();
+					}).not.toThrow();
+					if (!result) continue;
+					assertContiguous(result.tokens, text.length);
+				}
+			});
+		});
+	}
+
+	it("the two-WHERE if/else fixture yields exactly two coherent variants", () => {
+		const text = readFileSync(FIXTURES_DIR + "16_if_else_where.sql", "utf8");
+		const variants = templateVariants(text, DIALECT);
+		expect(variants.length).toBe(2);
+		// One variant activates all defaults (the `if` arm); the other activates the `else` arm.
+		const actives = variants.map((v) => v.active?.armIndex ?? 0);
+		expect(new Set(actives)).toEqual(new Set([0, 1]));
 	});
 });

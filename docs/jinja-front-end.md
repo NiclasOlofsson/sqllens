@@ -9,10 +9,12 @@ stream, first-class jinja tag nodes, macro expansions as typed holes — replaci
 Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; they differ on division
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.
 
-**Status: inc1 is built.** Raw jinja-SQL parses natively — `parseTemplated` / `tokenizeTemplated`, the
-unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2 ref/source/macro tag-AST, all
-additive over the eight untouched SQL grammars (jinja reachable only through the barrel), gated by
-`tests/corpus/jinja.test.ts`. inc2 and inc3 below stay spec.
+**Status: inc1 and inc2 are built.** Raw jinja-SQL parses natively — `parseTemplated` / `tokenizeTemplated`,
+the unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2 ref/source/macro tag-AST, all
+additive over the eight untouched SQL grammars (jinja reachable only through the barrel). inc2 adds R3
+(`{{ ref }}`/`{{ source }}` in a FROM slot → a real template-tagged `TableSource`), R4 (`templateRegions` /
+`templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage `templateVariants`. Gated
+by `tests/corpus/jinja.test.ts` + `tests/corpus/jinja.consumer-contract.test.ts`. inc3 below stays spec.
 
 ## The locked architecture (three lines — CHANNEL ITEM 14)
 
@@ -162,7 +164,7 @@ existing invariants — scope binds a `TableSource` purely by `name`, and the IR
 so the whole downstream pipeline works unchanged. Built: `TableSource.template` + `src/jinja/apply-tags.ts`
 + the one qualify guard; `resolveScopes`/`Lineage.originsOf`/`referencesAt` bind `{{ ref('orders') }}` to
 `orders` natively (proven in `tests/jinja.apply-tags.test.ts` + `tests/jinja.pipeline.test.ts`, gated by
-`tests/corpus/jinja.test.ts`). R4 + variant realization below are still building.
+`tests/corpus/jinja.test.ts`). R4 + variant realization below are built.
 
 - **IR (additive):** `TableSource` gains `template?: TemplateSourceInfo`; the type lives in `src/ir/ir.ts`
   (neutral — the IR never imports `src/jinja`): `{ kind: "ref" | "source" | "macro"; span: PartSpan;
@@ -186,12 +188,12 @@ so the whole downstream pipeline works unchanged. Built: `TableSource.template` 
   it to real resolution. Scope still binds the substituted name, so `orders.col` qualifies, lineage
   origins report `orders`, and references/documentHighlight work — all with zero changes to those passes.
 
-## R4 — control-flow regions + template symbols (inc2 design, decided 2026-07-04)
+## R4 — control-flow regions + template symbols (inc2 — BUILT 2026-07-04)
 
 - **Control-tag enrichment (additive on the `TagNode` union):** the `control` variant gains `keyword?`
   (`if`/`elif`/`else`/`endif`/`for`/`endfor`/`set`/`macro`/`endmacro`/…), `name?` + `nameSpan?` (the `set`
   target / `macro` name / `for` loop variable), extracted from the existing tolerant stmt parse tree.
-- **Regions (`src/jinja/regions.ts`):** `templateRegions(tags)` stack-pairs control tags into a tree —
+- **Regions (`src/jinja/regions.ts`):** `templateRegions(tags, text?)` stack-pairs control tags into a tree —
   `TemplateRegion { kind: "if" | "for" | "macro"; arms: TemplateArm[]; span }`, `TemplateArm { keyword;
   tagSpan; bodySpan; children: TemplateRegion[] }` (an arm's body runs from its tag's end to the next
   arm/close tag's start). Tolerant: unbalanced/broken input yields best-effort regions, never a throw.
@@ -199,14 +201,21 @@ so the whole downstream pipeline works unchanged. Built: `TableSource.template` 
   (go-to-def on `{% set %}` / `{% macro %}`). Both ride `TemplatedParseResult` as additive `regions` /
   `symbols` fields.
 
-## Variant realization (inc2 design, decided 2026-07-04)
+## Variant realization (inc2 — BUILT 2026-07-04)
 
-**Arm-coverage enumeration, not cross-product:** variant k activates exactly one non-default arm in one
-region (all other regions take their first arm); variant 0 is all-defaults. Linear in total arm count —
-every text region is live in some variant, each variant is a coherent parse, no combinatorial explosion.
-A `{% for %}` contributes no extra variant (its default IS the representative single iteration — the body
-parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over the
-original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
+**Arm-coverage enumeration, not cross-product** (mechanism corrected 2026-07-04 to honor the guarantee —
+see below): variant 0 is all-defaults; then one variant per non-default arm. The load-bearing GUARANTEE is
+**every text region is live in exactly one variant** (the editor mandate: the user edits every arm
+regardless of which runs) — so the mechanism must be **ancestor-path activation**, NOT "all other regions
+take arm 0". A variant for (region R, arm k) activates arm k of R AND, for every ANCESTOR region on R's
+path to root, the arm that CONTAINS R; every NON-ancestor region takes its first arm. This makes an arm
+nested inside a non-default arm reachable (pinning the ancestor to its containing arm keeps that arm's body
+live), where the naive "all others take arm 0" would blank the parent and silently drop the nested arm (and
+emit a degenerate duplicate of variant 0). It stays LINEAR — one variant per non-default arm,
+`1 + Σ(arms−1)`, no combinatorial explosion — and each variant is still one coherent root-to-leaf branch
+selection. A `{% for %}` contributes no extra variant (its default IS the representative single iteration —
+the body parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over
+the original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
 (`TemplateVariant.parse()` memoized). **The primary `parseTemplated` result stays all-text-live** (inc1
 parity — anvil integrated against it mid-flight); variants are the additive coherent-arm API
 (`templateVariants(text, dialect)`), adopted by consumers when ready.
@@ -244,8 +253,8 @@ Each enumerated variant is a coherent valid parse. `{% for %}`: a literal collec
 directly; an external collection (`{% for col in columns %}`) pulls from `TemplateCatalog.loopCollection`,
 defaulting to a representative single iteration (body once, placeholder items). This relocates the
 extension's `generateVariants`/`branch-enumerator`/coarse-tokenizer trio into sqllens. Internal
-representation is sqllens's call; the point is it is the parser's job. (inc2 — needs R4 control-flow
-regions first.)
+representation is sqllens's call; the point is it is the parser's job. (inc2 — BUILT: `templateVariants`,
+on the R4 control-flow regions.)
 
 ## Increment plan
 
@@ -260,11 +269,13 @@ regions first.)
   blanking cascade (`parse-with-jinja-fallback`, `jinja-blanker`, the fine tokenizer, the two-stream
   merge). No SQL-grammar change; no IR change beyond the additive jinja facade + `TokenRole "jinja"` /
   channel 2.
-- **inc2 — tag-AST (R3 + R4) + variant expansion.** `{{ ref('x') }}` in a FROM/JOIN slot lowers to a
-  first-class table-source IR node carrying its tag (R3 — feeds scope/qualify/lineage/columnGraph); control
-  flow + `set`/`macro` become structured regions/symbols (R4 — completion inside `{{ }}`, go-to-def on
-  `{% set %}`); variant expansion relocates in. Design decided 2026-07-04 — §R3 / §R4 / §Variant
-  realization above are the binding shapes.
+- **inc2 — tag-AST (R3 + R4) + variant expansion — BUILT.** `{{ ref('x') }}` in a FROM/JOIN slot lowers to
+  a first-class table-source IR node carrying its tag (R3 — feeds scope/qualify/lineage/columnGraph); control
+  flow + `set`/`macro` become structured regions/symbols (R4 — `templateRegions`/`templateSymbols`, with
+  `regions`/`symbols` on `TemplatedParseResult`); arm-coverage `templateVariants` relocates variant expansion
+  in. §R3 / §R4 / §Variant realization above are the shipped shapes; gated by
+  `tests/corpus/jinja.consumer-contract.test.ts` (plus `jinja.test.ts`). M1/M2 (§ Boundaries) are the two
+  tracked broken/rare-input limits.
 - **inc3 — TemplateCatalog wiring (ITEM 11).** The pull-callback seam: lazy relation/value resolution,
   synchronous `expansionShape` (shaped holes retire the fragment-macro limitation), `loopCollection`. Turns
   "parses with defaults" into "resolves `{{ ref }}` with real columns pre-compile."
@@ -300,5 +311,12 @@ increment (its `JINJA-CONSUMPTION-PLAN.md` maps each of its ~2,538 dying/relocat
   accurate for the node returned. A tracked inc1 boundary, retired when inc2 needs multi-node tags.
 - **Debugger native Source Map (I2)** depends on sqllens owning the jinja→SQL transform (inc2+), the one
   extension piece with no shipped sqllens surface until then.
+- **M1 — unclosed region, empty last-arm bodySpan (broken-input-only).** An UNCLOSED region (a missing
+  `{% endif %}`/`{% endfor %}`) closes at the last known tag, so its final arm gets an empty `bodySpan` —
+  variant blanking then can't isolate that arm on broken input. Totality holds and the primary
+  (all-text-live) result is unchanged; this bites only variant enumeration over unbalanced input.
+- **M2 — `{% for %}…{% else %}…{% endfor %}` for-else both-live (rare).** The for-else form models as a
+  nested single-arm region, so both the loop body and the `else` body are live in the default variant (the
+  editor still sees and edits both). Rare in real dbt.
 - **minijinja vs Jinja2 divergences** (division, import caching, silent undefined) are accept-syntax edges;
   encode minijinja, cite it, flag any surprise like the dialect fold-policy citations.

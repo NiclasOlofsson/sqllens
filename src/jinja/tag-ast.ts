@@ -39,6 +39,7 @@ import {
 	CallExprContext,
 	MemberExprContext,
 	NameExprContext,
+	StmtContext,
 } from "../generated/jinja/JinjaParser.js";
 import type { PartSpan } from "../ir/part-span.js";
 import { NO_OUTPUT_BUILTINS, type Segment } from "./segment.js";
@@ -78,7 +79,17 @@ export type TagNode =
 			argsSpan?: PartSpan;
 			args: { span: PartSpan }[];
 	  }
-	| { kind: "var" | "env_var" | "config" | "control" | "other"; tagSpan: PartSpan };
+	| {
+			kind: "control";
+			tagSpan: PartSpan;
+			/** The statement lead, lowercased (`if`/`elif`/`else`/`endif`/`for`/`endfor`/`set`/`macro`/`endmacro`/… or an unknown dbt-custom lead). Absent on a lead-less/degenerate tag. */
+			keyword?: string;
+			/** The declared name — `set` target / `macro` name / `for` loop variable. LITERAL identifier only (never-wrong); absent for the other keywords. */
+			name?: string;
+			/** Token-exact span of `name` (excludes nothing — it is the bare identifier). */
+			nameSpan?: PartSpan;
+	  }
+	| { kind: "var" | "env_var" | "config" | "other"; tagSpan: PartSpan };
 
 // ---------------------------------------------------------------------------
 // Span helpers — the doc-offset math. A token's tag-relative start/stop offsets
@@ -143,6 +154,37 @@ function findTopCall(node: ParseTree | null | undefined): CallExprContext | unde
 	if (node instanceof ParserRuleContext) {
 		for (let i = 0; i < node.getChildCount(); i++) {
 			const found = findTopCall(node.getChild(i));
+			if (found) return found;
+		}
+	}
+	return undefined;
+}
+
+/** The `stmt` context of a statement tag's parse tree (DFS, leftmost). */
+function findStmt(node: ParseTree | null | undefined): StmtContext | undefined {
+	if (!node) return undefined;
+	if (node instanceof StmtContext) return node;
+	if (node instanceof ParserRuleContext) {
+		for (let i = 0; i < node.getChildCount(); i++) {
+			const found = findStmt(node.getChild(i));
+			if (found) return found;
+		}
+	}
+	return undefined;
+}
+
+/**
+ * The first `NameExprContext` in pre-order (leftmost identifier reference). For a
+ * `stmt` body the keyword lead is a KeywordContext (not a NameExpr), so this
+ * returns the FIRST real name after the keyword: `set x = …` → `x`, `for row in …`
+ * → `row`, `macro build(a,b) %}` → `build` (the callee, visited before its args).
+ */
+function firstNameExpr(node: ParseTree | null | undefined): NameExprContext | undefined {
+	if (!node) return undefined;
+	if (node instanceof NameExprContext) return node;
+	if (node instanceof ParserRuleContext) {
+		for (let i = 0; i < node.getChildCount(); i++) {
+			const found = firstNameExpr(node.getChild(i));
 			if (found) return found;
 		}
 	}
@@ -257,6 +299,35 @@ function macroNode(call: CallExprContext, callee: Callee, docOffset: number, bas
 	};
 }
 
+/** Keywords whose stmt declares a name we surface (set target / macro name / for loop var). */
+const NAME_DECLARING = new Set(["set", "macro", "for"]);
+
+/**
+ * Build the enriched `control` node for a `{% … %}` statement tag (R4). The lead
+ * `keyword` is the statement's leading word, lowercased (a known jinja keyword or
+ * an unknown dbt-custom lead like `snapshot`); `name`/`nameSpan` are extracted for
+ * the name-declaring keywords only (`set`/`macro`/`for`) from the FIRST identifier
+ * after the keyword — never fabricated (absent when the tolerant tree has no name).
+ */
+function controlNode(tree: ParserRuleContext, docOffset: number, base: DocPos, tagSpan: PartSpan): TagNode {
+	const stmt = findStmt(tree);
+	if (!stmt) return { kind: "control", tagSpan };
+
+	const lead = stmt.keyword() ?? stmt.id();
+	const keyword = lead?.getText().toLowerCase();
+	if (keyword === undefined) return { kind: "control", tagSpan };
+
+	if (NAME_DECLARING.has(keyword)) {
+		const ne = firstNameExpr(stmt);
+		const idNode = ne?.id();
+		const nameSpan = idNode ? spanOfNode(idNode, docOffset, base) : undefined;
+		if (idNode && nameSpan) {
+			return { kind: "control", tagSpan, keyword, name: idNode.getText(), nameSpan };
+		}
+	}
+	return { kind: "control", tagSpan, keyword };
+}
+
 /**
  * Build the R2 tag-AST node for ONE tag. `seg` carries the tag's document range
  * (`seg.start` = docOffset, `seg.end`); `tree` is the per-tag jinja parse tree;
@@ -269,8 +340,9 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 	// (they cover `{{ … }}` / `{% … %}` / `{# … #}` and any `-` whitespace control).
 	const tagSpan: PartSpan = { start: seg.start, end: seg.end, line: base.line, column: base.column };
 
-	// Statement / comment tags: inc1 classifies structurally by tag kind.
-	if (seg.tagKind === "stmt") return { kind: "control", tagSpan };
+	// Statement tags: classify as "control" and enrich with the lead keyword and,
+	// for the name-declaring keywords, the declared name + its span (R4).
+	if (seg.tagKind === "stmt") return controlNode(tree, docOffset, base, tagSpan);
 	if (seg.tagKind === "comment") return { kind: "other", tagSpan };
 
 	// Expr tag: classify by the leading call.

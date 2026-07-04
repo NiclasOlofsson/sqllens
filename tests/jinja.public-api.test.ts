@@ -1,8 +1,21 @@
 import { describe, expect, it } from "vitest";
 // Import ONLY through the public barrel (src/index.ts) — NOT the internal
-// src/jinja path — to prove the inc1 surface is exported: parseTemplated,
-// tokenizeTemplated, and the TemplatedParseResult / TagNode types.
-import { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "../src/index.js";
+// src/jinja path — to prove the inc1 + inc2 surface is exported: parseTemplated,
+// tokenizeTemplated, the region/symbol/variant functions, and every public type.
+import {
+	parseTemplated,
+	tokenizeTemplated,
+	templateRegions,
+	templateSymbols,
+	templateVariants,
+	type TemplatedParseResult,
+	type TagNode,
+	type TemplateRegion,
+	type TemplateArm,
+	type TemplateSymbol,
+	type TemplateVariant,
+	type TemplateSourceInfo,
+} from "../src/index.js";
 
 describe("jinja public surface (barrel export)", () => {
 	it("parseTemplated / tokenizeTemplated are reachable through src/index.ts", () => {
@@ -24,5 +37,29 @@ describe("jinja public surface (barrel export)", () => {
 
 	it("is total through the barrel on broken input", () => {
 		expect(() => parseTemplated("select {{ ref(", "databricks")).not.toThrow();
+	});
+
+	it("the inc2 surface (regions / symbols / variants + types) is reachable through src/index.ts", () => {
+		const text =
+			"select order_id\nfrom {{ ref('stg_orders') }}\n{% if is_incremental() %}where x > 0{% else %}where x < 0{% endif %}";
+		const { tags, sql } = parseTemplated(text, "databricks");
+
+		// templateRegions / templateSymbols flow through the barrel and produce the R4 shapes.
+		const regions: TemplateRegion[] = templateRegions(tags, text);
+		expect(regions.length).toBeGreaterThanOrEqual(1);
+		const arms: TemplateArm[] = regions[0].arms;
+		expect(arms.length).toBeGreaterThanOrEqual(2); // if + else
+		const symbols: TemplateSymbol[] = templateSymbols(tags);
+		expect(Array.isArray(symbols)).toBe(true);
+
+		// templateVariants + the TemplateVariant type flow through the barrel; each variant parses.
+		const variants: TemplateVariant[] = templateVariants(text, "databricks");
+		expect(variants.length).toBe(2); // all-defaults + the else arm
+		for (const v of variants) expect(() => v.parse()).not.toThrow();
+
+		// TemplateSourceInfo is a public IR type: the templated FROM source carries it.
+		const from = sql.ast.body.kind === "select" ? sql.ast.body.from[0] : undefined;
+		const template: TemplateSourceInfo | undefined = from?.kind === "table" ? from.template : undefined;
+		expect(template?.kind).toBe("ref");
 	});
 });
