@@ -1029,7 +1029,7 @@ describe("LSP lazy catalog (Task 8)", () => {
 // generalization fires for the template catalog, not just CallbackSchema.
 // (Templated-ref IR does not reach the LSP yet — the LSP builds documents from the
 // plain parse path, not parseTemplated — so the relation-side warm/republish is
-// unit-tested in tests/jinja.relation.test.ts; here we prove the LOOP drives this
+// unit-tested in tests/minijinja.relation.test.ts; here we prove the LOOP drives this
 // catalog type at all.)
 // ---------------------------------------------------------------------------
 describe("LSP lazy catalog drives CallbackTemplateCatalog.prime() (inc3.1)", () => {

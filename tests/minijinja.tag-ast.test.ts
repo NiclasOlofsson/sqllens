@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Dialect } from "../src/api.js";
-import { parseTemplated } from "../src/jinja/parse.js";
-import type { TagNode } from "../src/jinja/tag-ast.js";
+import { parseTemplated } from "../src/minijinja/parse.js";
+import type { TagNode } from "../src/minijinja/tag-ast.js";
 import type { PartSpan } from "../src/ir/part-span.js";
 
 // ---------------------------------------------------------------------------
-// Task 4 — R2 tag-AST span contract (docs/jinja-front-end.md §R2). Every span is
+// Task 4 — R2 tag-AST span contract (docs/minijinja-front-end.md §R2). Every span is
 // offset-asserted against the SOURCE TEXT: the slice a span points at must be
 // exactly the token it claims, and its 1-based line / 0-based column must match a
 // fresh scan of the text (the sqllens convention). This is the HARD contract the

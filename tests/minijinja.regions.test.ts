@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated } from "../src/jinja/parse.js";
-import { templateRegions, templateSymbols } from "../src/jinja/regions.js";
+import { parseTemplated } from "../src/minijinja/parse.js";
+import { templateRegions, templateSymbols } from "../src/minijinja/regions.js";
 import type { PartSpan } from "../src/ir/part-span.js";
 
 // ---------------------------------------------------------------------------
 // Task 3 — R4: control-flow regions + set/macro template symbols
-// (docs/jinja-front-end.md §R4). Every span is offset-asserted by SLICING the
+// (docs/minijinja-front-end.md §R4). Every span is offset-asserted by SLICING the
 // source text (the inc1 convention). nameSpan / tagSpan are token-exact so their
 // 1-based line / 0-based column are also checked; bodySpan / region span carry a
 // best-effort line/column anchor (regions.ts has no text), so those assert the

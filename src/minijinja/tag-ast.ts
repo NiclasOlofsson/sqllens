@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
 // Task 4 — R2 tag-AST: ref / source / macro-call nodes with the EXACT span
-// contract (docs/jinja-front-end.md §R2). This is the HARD deliverable: the
+// contract (docs/minijinja-front-end.md §R2). This is the HARD deliverable: the
 // dbt-anvil extension positions hover / rename / signature-help exactly on the
 // spans emitted here, so every offset must be document-true.
 //
 // The walk is a small tree-navigation over the per-tag jinja parse tree (Task 1
-// grammar, parsed by parse-tag.ts's parseJinjaTag). The tree is TAG-RELATIVE
+// grammar, parsed by parse-tag.ts's parseMinijinjaTag). The tree is TAG-RELATIVE
 // (offset 0 = the tag's opening `{`); every span is shifted into DOCUMENT
 // coordinates by the tag's document start (`seg.start`), and line/column are
 // composed with the tag's document anchor (`base`) so a MULTI-LINE tag carries a
@@ -33,14 +33,14 @@
 // ---------------------------------------------------------------------------
 
 import { ParserRuleContext, TerminalNode, type ParseTree, type Token as AntlrToken } from "antlr4ng";
-import { JinjaParser } from "../generated/jinja/JinjaParser.js";
+import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import {
 	Arg_listContext,
 	CallExprContext,
 	MemberExprContext,
 	NameExprContext,
 	StmtContext,
-} from "../generated/jinja/JinjaParser.js";
+} from "../generated/minijinja/MinijinjaParser.js";
 import type { PartSpan } from "../ir/part-span.js";
 import { NO_OUTPUT_BUILTINS, type Segment } from "./segment.js";
 
@@ -96,7 +96,7 @@ export type TagNode =
 // are shifted by `docOffset`; its line/column composed with `base`: a token on
 // the tag's FIRST line adds the anchor column, a token on a LATER line already
 // sits at its own absolute column (line starts reset the column). Mirrors
-// parse.ts's mapJinjaToken exactly.
+// parse.ts's mapMinijinjaToken exactly.
 // ---------------------------------------------------------------------------
 
 function docLineCol(tok: AntlrToken, base: DocPos): { line: number; column: number } {
@@ -211,7 +211,7 @@ function leftmostName(p: ParseTree | null | undefined): string | undefined {
 function directStringToken(arg: ParserRuleContext): AntlrToken | undefined {
 	const s = arg.start;
 	const e = arg.stop;
-	if (s && s === e && s.type === JinjaParser.STRING) return s;
+	if (s && s === e && s.type === MinijinjaParser.STRING) return s;
 	return undefined;
 }
 
@@ -227,7 +227,7 @@ function positionalArgs(argList: Arg_listContext | null): ParserRuleContext[] {
 function isKwarg(arg: ParserRuleContext): boolean {
 	for (let i = 0; i < arg.getChildCount(); i++) {
 		const c = arg.getChild(i);
-		if (c instanceof TerminalNode && c.symbol.type === JinjaParser.ASSIGN) return true;
+		if (c instanceof TerminalNode && c.symbol.type === MinijinjaParser.ASSIGN) return true;
 	}
 	return false;
 }

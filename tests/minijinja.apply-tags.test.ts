@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseTemplated, resolveScopes } from "../src/index.js";
-import { applyTemplateTags } from "../src/jinja/apply-tags.js";
+import { applyTemplateTags } from "../src/minijinja/apply-tags.js";
 
 /** Navigate QueryExpr → select body → from[0] (the IR's real field is `from`, not `sources`). */
 function firstSource(ast: any): any {

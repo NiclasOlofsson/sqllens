@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 // Import ONLY through the public barrel (src/index.ts) — NOT the internal
-// src/jinja path — to prove the inc1 + inc2 surface is exported: parseTemplated,
+// src/minijinja path — to prove the inc1 + inc2 surface is exported: parseTemplated,
 // tokenizeTemplated, the region/symbol/variant functions, and every public type.
 import {
 	parseTemplated,
@@ -30,7 +30,7 @@ describe("jinja public surface (barrel export)", () => {
 
 		expect(result.tokens.length).toBeGreaterThan(0);
 		expect(result.sql.ast.kind).toBe("query");
-		expect(result.tokens.some((t) => t.channel === 2 && t.role === "jinja")).toBe(true);
+		expect(result.tokens.some((t) => t.channel === 2 && t.role === "minijinja")).toBe(true);
 
 		// tokenizeTemplated yields the same token stream.
 		const tokens = tokenizeTemplated(text, "databricks");

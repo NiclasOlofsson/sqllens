@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated, tokenizeTemplated } from "../src/jinja/parse.js";
+import { parseTemplated, tokenizeTemplated } from "../src/minijinja/parse.js";
 import type { Dialect } from "../src/api.js";
 import type { Token } from "../src/token/token.js";
 
 // ---------------------------------------------------------------------------
-// Task 3 — the unified SQL+jinja token stream (docs/jinja-front-end.md §R1).
-// Proves: the jinja tokens land on channel 2 / role "jinja" in document coords,
+// Task 3 — the unified SQL+jinja token stream (docs/minijinja-front-end.md §R1).
+// Proves: the jinja tokens land on channel 2 / role "minijinja" in document coords,
 // the placeholder's filler tokens inside a tag are dropped, the merged stream
 // tiles the source, the SQL parse over the placeholder is valid, and the whole
 // thing is total on broken input — across THREE dialects (dialect-agnostic).
@@ -42,10 +42,10 @@ describe("parseTemplated — unified token stream", () => {
 				expect(select?.channel).toBe(0);
 				expect(select?.role).toBe("keyword");
 
-				// The jinja tokens are on channel 2 with role "jinja", in document
+				// The jinja tokens are on channel 2 with role "minijinja", in document
 				// coordinates — {{ ref ( 'x' ) }} all present.
 				const jinja = tokens.filter((t) => t.channel === 2);
-				expect(jinja.every((t) => t.role === "jinja")).toBe(true);
+				expect(jinja.every((t) => t.role === "minijinja")).toBe(true);
 				const jinjaTexts = jinja.map((t) => t.text);
 				expect(jinjaTexts).toContain("{{");
 				expect(jinjaTexts).toContain("ref");
@@ -70,7 +70,7 @@ describe("parseTemplated — unified token stream", () => {
 			it("tokenizeTemplated returns the same tiling stream", () => {
 				const tokens = tokenizeTemplated(REF_CASE, dialect);
 				assertTiles(tokens, REF_CASE);
-				expect(tokens.some((t) => t.channel === 2 && t.role === "jinja")).toBe(true);
+				expect(tokens.some((t) => t.channel === 2 && t.role === "minijinja")).toBe(true);
 			});
 		});
 	}
@@ -100,7 +100,7 @@ describe("parseTemplated — unified token stream", () => {
 		// The config jinja tokens are present on channel 2.
 		const jinja = tokens.filter((t) => t.channel === 2);
 		expect(jinja.map((t) => t.text)).toContain("config");
-		expect(jinja.every((t) => t.role === "jinja")).toBe(true);
+		expect(jinja.every((t) => t.role === "minijinja")).toBe(true);
 
 		// SELECT 1 survives as SQL tokens on channel 0.
 		expect(tokens.some((t) => t.text.toUpperCase() === "SELECT" && t.channel === 0)).toBe(true);

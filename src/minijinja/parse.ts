@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Task 3 — parseTemplated / tokenizeTemplated: the unified SQL+jinja token stream
-// (docs/jinja-front-end.md §mechanism steps 3-6, §R1 — the inc1 deliverable).
+// (docs/minijinja-front-end.md §mechanism steps 3-6, §R1 — the inc1 deliverable).
 //
 // This is the INTEGRATION stage. It composes three pieces that each stay in their
 // lane:
@@ -12,9 +12,9 @@
 //                     each tag's EXACT char range and preserves every `\n`, every
 //                     antlr start/stop/line/column it returns is already in ORIGINAL
 //                     document coordinates — no span remap for SQL tokens.
-//   3. lexJinjaTag()  (Task 1 / parse-tag.ts) — lex each tag's text with the jinja
+//   3. lexMinijinjaTag()  (Task 1 / parse-tag.ts) — lex each tag's text with the jinja
 //                     island lexer; parse.ts offsets those tag-relative tokens into
-//                     document coordinates and stamps channel 2 / role "jinja".
+//                     document coordinates and stamps channel 2 / role "minijinja".
 //
 // The merge (step 4): one source-ordered Token[] = SQL tokens (channel 0) + jinja
 // tokens (channel 2), sorted by start. The placeholder's FILLER tokens inside a
@@ -39,10 +39,10 @@
 import { Token as AntlrToken } from "antlr4ng";
 import { parse, type Dialect, type ParseResultIR } from "../api.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
-import { classifyJinjaToken } from "../token/classify.js";
+import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
-import { lexJinjaTag, parseJinjaTag } from "./parse-tag.js";
+import { lexMinijinjaTag, parseMinijinjaTag } from "./parse-tag.js";
 import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
@@ -56,7 +56,7 @@ export { templateRegions, templateSymbols } from "./regions.js";
 
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
 export interface TemplatedParseResult {
-	/** ONE source-ordered stream: SQL tokens (channel 0) + jinja tokens (channel 2, role "jinja"). */
+	/** ONE source-ordered stream: SQL tokens (channel 0) + jinja tokens (channel 2, role "minijinja"). */
 	tokens: Token[];
 	/** The underlying SQL parse over the placeholder (ast / cst / errors / diagnostics). */
 	sql: ParseResultIR;
@@ -101,7 +101,7 @@ function docPosAt(text: string, offset: number): DocPos {
  * Shift a tag-relative jinja parse diagnostic into document coordinates: offset
  * by the tag's document start, line/column composed with the tag's anchor (a
  * first-line diagnostic adds the anchor column; a later-line one keeps its own).
- * Mirrors mapJinjaToken's line/column composition so squiggles land correctly on
+ * Mirrors mapMinijinjaToken's line/column composition so squiggles land correctly on
  * multi-line tags.
  */
 function offsetDiagnostic(d: SyntaxDiagnostic, tagStart: number, base: DocPos): SyntaxDiagnostic {
@@ -117,12 +117,12 @@ function offsetDiagnostic(d: SyntaxDiagnostic, tagStart: number, base: DocPos): 
 /**
  * Map one jinja lexer token (tag-relative coordinates) to a neutral document
  * Token: offsets shifted by the tag's document start, line/column composed with
- * the tag's document anchor, channel 2, role "jinja". `base` is the tag start's
+ * the tag's document anchor, channel 2, role "minijinja". `base` is the tag start's
  * document line/column; a token on the tag's first line adds the anchor column, a
  * token on a later line already sits at its own absolute column.
  */
-function mapJinjaToken(
-	lexer: ReturnType<typeof lexJinjaTag>["lexer"],
+function mapMinijinjaToken(
+	lexer: ReturnType<typeof lexMinijinjaTag>["lexer"],
 	tok: AntlrToken,
 	tagStart: number,
 	base: DocPos,
@@ -139,7 +139,7 @@ function mapJinjaToken(
 		line: base.line + (tok.line - 1),
 		column: onFirstLine ? base.column + tok.column : tok.column,
 		channel: 2,
-		role: classifyJinjaToken(lexer, tok.type),
+		role: classifyMinijinjaToken(lexer, tok.type),
 	};
 }
 
@@ -221,13 +221,13 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 	for (const seg of tagRanges) {
 		const base = docPosAt(text, seg.start);
 
-		const { lexer, tokens } = lexJinjaTag(seg.text);
+		const { lexer, tokens } = lexMinijinjaTag(seg.text);
 		for (const tok of tokens) {
 			if (tok.type === AntlrToken.EOF) continue;
-			jinjaTokens.push(mapJinjaToken(lexer, tok, seg.start, base));
+			jinjaTokens.push(mapMinijinjaToken(lexer, tok, seg.start, base));
 		}
 
-		const { tree, diagnostics } = parseJinjaTag(seg.text);
+		const { tree, diagnostics } = parseMinijinjaTag(seg.text);
 		const node = tagNodesOf(seg, tree, base);
 		if (node) tags.push(node);
 		for (const d of diagnostics) jinjaDiagnostics.push(offsetDiagnostic(d, seg.start, base));

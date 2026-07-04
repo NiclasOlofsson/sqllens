@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Task 3 — R4: control-flow regions + set/macro template symbols
-// (docs/jinja-front-end.md §R4).
+// (docs/minijinja-front-end.md §R4).
 //
 // `templateRegions(tags)` stack-pairs the enriched `control` TagNodes into a
 // source-ordered region tree — `{% if %}/{% elif %}/{% else %}/{% endif %}`,

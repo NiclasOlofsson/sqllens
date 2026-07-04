@@ -3,7 +3,7 @@ import { parseTemplated, toScopes, qualify, lineage, Schema } from "../src/index
 import type { ResolvedSource } from "../src/scope/scope.js";
 
 // ---------------------------------------------------------------------------
-// R3 pipeline proof (docs/jinja-front-end.md §R3). Task 1 attached `template` +
+// R3 pipeline proof (docs/minijinja-front-end.md §R3). Task 1 attached `template` +
 // the real dbt-logical name onto a templated FROM/JOIN source; Task 2 makes the
 // downstream pipeline correct over it: scope binds the model name, lineage
 // reports the model (not the `jjj…` placeholder), and qualify EXEMPTS a
