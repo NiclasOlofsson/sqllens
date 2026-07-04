@@ -149,6 +149,14 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		ok("SELECT a, b FROM x UNION ALL BY NAME SELECT b, a FROM y;");
 	});
 
+	it("UNION BY NAME sets byName on the setop IR node; plain UNION does not", () => {
+		const byName = lower(parseDuckdb("SELECT a, b FROM t UNION ALL BY NAME SELECT b, a FROM u;").tree);
+		expect(byName.body.kind === "setop" && byName.body.byName).toBe(true);
+
+		const plain = lower(parseDuckdb("SELECT a, b FROM t UNION ALL SELECT b, a FROM u;").tree);
+		expect(plain.body.kind === "setop" && plain.body.byName).toBeUndefined();
+	});
+
 	it("PIVOT/UNPIVOT statements are queries with a visible flag (pivot.md, unpivot.md)", () => {
 		const { ast } = parse("PIVOT cities ON year USING sum(population) GROUP BY country;", "duckdb");
 		expect(ast.statement).toBe("query");

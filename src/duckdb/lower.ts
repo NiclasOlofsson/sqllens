@@ -369,6 +369,7 @@ function foldSetOps(
 	let body: QueryBody | undefined;
 	let pendingTok: number | undefined;
 	let pendingAll = false;
+	let pendingByName = false;
 	let opCst: ParserRuleContext = node;
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const c = node.getChild(i);
@@ -376,6 +377,10 @@ function foldSetOps(
 			if (opTokens.includes(c.symbol.type)) {
 				pendingTok = c.symbol.type;
 				opCst = node;
+			} else if (c.symbol.type === P.NAME_P) {
+				// UNION [ALL] BY NAME — grammars/duckdb/DuckdbParser.g4 select_clause: `(BY NAME_P)?`
+				// (bare inline tokens, not a sub-rule). duckdb.org/docs/current/sql/query_syntax/setops#union-all-by-name
+				pendingByName = true;
 			}
 			continue;
 		}
@@ -390,12 +395,19 @@ function foldSetOps(
 			body = branch;
 		} else {
 			const op = pendingTok === P.INTERSECT ? "intersect" : pendingTok === P.EXCEPT ? "except" : "union";
-			// UNION [ALL] BY NAME matches columns by name — the set-op node is the same; byName rides
-			// as a modelled fact only if the IR grows it (it does not today; name-matching is a
-			// binder concern the scope layer approximates by position, like Snowflake's BY NAME).
-			body = { kind: "setop", op, all: pendingAll, left: body, right: branch, columns: [], cst: opCst };
+			body = {
+				kind: "setop",
+				op,
+				all: pendingAll,
+				byName: pendingByName || undefined,
+				left: body,
+				right: branch,
+				columns: [],
+				cst: opCst,
+			};
 			pendingTok = undefined;
 			pendingAll = false;
+			pendingByName = false;
 		}
 	}
 	return body ?? emptyBody(node);

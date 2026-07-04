@@ -3,6 +3,8 @@ import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { lower as lowerSnowflake } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
+import { lower as lowerDuckdb } from "../src/duckdb/lower.js";
+import { parseDuckdb } from "../src/duckdb/parse.js";
 import type { Expr, Projection } from "../src/ir/ir.js";
 import { lineageAt, lineageOf, type LineageHop } from "../src/lineage/hops.js";
 import type { Origin } from "../src/lineage/lineage.js";
@@ -26,6 +28,9 @@ function scopesOf(sql: string): ScopeTree {
 }
 function snowScopes(sql: string): ScopeTree {
 	return resolveScopes(lowerSnowflake(parseSnowflake(sql).tree));
+}
+function duckScopes(sql: string): ScopeTree {
+	return resolveScopes(lowerDuckdb(parseDuckdb(sql).tree));
 }
 
 /** The 0-based offset of the nth occurrence (1-based n) of `needle` in `sql`. */
@@ -95,12 +100,25 @@ describe("per-hop lineage — spec acceptance", () => {
 	});
 
 	// (c) UNION BY NAME — legs matched by name, not position. Uses Snowflake: it models the `byName`
-	// flag on the set-op IR (DuckDB parses `BY NAME` but drops the flag — a pre-existing IR gap noted
-	// as design feedback, so it can't exercise by-name matching).
+	// flag on the set-op IR.
 	it("(c) matches union-BY-NAME legs by column name", () => {
 		const sql =
 			"WITH u AS (SELECT a AS k, z FROM t1 UNION ALL BY NAME SELECT b AS z, c AS k FROM t2) SELECT k FROM u";
 		const scopes = snowScopes(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "k", 3)); // outer `k`
+		expect(head).toBeDefined();
+		expect(head!.downstream).toHaveLength(2);
+		// k binds to `a AS k` in leg1 (pos 0) and `c AS k` in leg2 (pos 1) — by name, not position.
+		expect(head!.downstream.flatMap(terminals).sort()).toEqual(["t1.a", "t2.c"]);
+	});
+
+	// (c-duckdb) same UNION BY NAME shape, native DuckDB syntax — proves the fix (`byName` now rides
+	// on the duckdb-lowered set-op IR too, not just Snowflake's).
+	// duckdb.org/docs/current/sql/query_syntax/setops#union-all-by-name
+	it("(c-duckdb) matches DuckDB union-BY-NAME legs by column name", () => {
+		const sql =
+			"WITH u AS (SELECT a AS k, z FROM t1 UNION ALL BY NAME SELECT b AS z, c AS k FROM t2) SELECT k FROM u";
+		const scopes = duckScopes(sql);
 		const head = lineageAt(scopes, offsetOf(sql, "k", 3)); // outer `k`
 		expect(head).toBeDefined();
 		expect(head!.downstream).toHaveLength(2);
@@ -141,7 +159,7 @@ describe("per-hop lineage — spec acceptance", () => {
 			"SELECT l.lk + r.rk AS s FROM l JOIN r ON l.lk = r.rk",
 		].join("\n");
 		const scopes = scopesOf(sql);
-		const head = lineageAt(scopes, offsetOf(sql, "s", 1) === -1 ? 0 : sql.indexOf("AS s") + 3);
+		const head = lineageAt(scopes, sql.indexOf("AS s") + 3);
 		// head is the `s` projection hop (l.lk + r.rk), fanning to the l and r hops.
 		expect(head).toBeDefined();
 		expect(head!.downstream).toHaveLength(2);
