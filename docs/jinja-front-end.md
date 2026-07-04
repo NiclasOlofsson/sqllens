@@ -154,6 +154,60 @@ span carrier. Tag nodes are additive — they ride a jinja-artifact facade on th
 (another cached artifact alongside tokens/cst/ast), not a change to the SQL IR. Where a `{{ ref('x') }}`
 in a FROM slot should become a real table-source IR node (R3), that is inc2.
 
+## R3 — templated refs as first-class FROM nodes (inc2 design, decided 2026-07-04)
+
+`{{ ref('x') }}` / `{{ source('a','b') }}` in a FROM/JOIN slot becomes a real `TableSource` carrying its
+tag, so scope/qualify/lineage/columnGraph see the model, not the placeholder. The design rides two
+existing invariants — scope binds a `TableSource` purely by `name`, and the IR is frozen after `lower()` —
+so the whole downstream pipeline works unchanged:
+
+- **IR (additive):** `TableSource` gains `template?: TemplateSourceInfo`; the type lives in `src/ir/ir.ts`
+  (neutral — the IR never imports `src/jinja`): `{ kind: "ref" | "source" | "macro"; span: PartSpan;
+  opaque?: true }` — the tag's kind, the whole-tag span (document coordinates), and the opacity verdict.
+  Consumers needing the full `TagNode` correlate by span with `parseTemplated().tags`.
+- **Name substitution (literal-only, never-wrong):** `ref('x')` → `name: ["x"]`; `source('a','b')` →
+  `name: ["a","b"]` — the dbt-logical names as written in-text (the razor: in-text structural). A macro or
+  computed tag in a FROM slot keeps the placeholder name and gets `opaque: true` — its output relation is
+  undeterminable without the catalog. (inc1's `directStringToken` guard already guarantees a `ref`/`source`
+  TagNode carries only literal names.)
+- **The transform (`src/jinja/apply-tags.ts`):** post-lower, `applyTemplateTags(ast, tags)` walks the IR
+  (bodies, CTEs, sources, joins, subqueries, pipe stages), correlates by CONTAINMENT — a `TableSource`
+  whose first name token's offset lies inside a tag's `tagSpan` (containment, not equality: a multi-line
+  expr tag fills as one placeholder identifier per line) — and rebuilds with structural sharing (new
+  objects only on changed paths; frozen subtrees are safely shared), re-freezing the result.
+  `parseTemplated().sql.ast` IS the transformed IR (one canonical ast; the raw placeholder parse is
+  derivable via `parse(placeholder)`).
+- **Qualify (one guard):** a source with `template` present is exempt from unknown-table AND
+  unknown-column diagnostics — its physical relation is dbt knowledge (out-of-text), so a diagnostic
+  against the dbt-logical name would be never-wrong-violating; inc3's `TemplateCatalog.relation` upgrades
+  it to real resolution. Scope still binds the substituted name, so `orders.col` qualifies, lineage
+  origins report `orders`, and references/documentHighlight work — all with zero changes to those passes.
+
+## R4 — control-flow regions + template symbols (inc2 design, decided 2026-07-04)
+
+- **Control-tag enrichment (additive on the `TagNode` union):** the `control` variant gains `keyword?`
+  (`if`/`elif`/`else`/`endif`/`for`/`endfor`/`set`/`macro`/`endmacro`/…), `name?` + `nameSpan?` (the `set`
+  target / `macro` name / `for` loop variable), extracted from the existing tolerant stmt parse tree.
+- **Regions (`src/jinja/regions.ts`):** `templateRegions(tags)` stack-pairs control tags into a tree —
+  `TemplateRegion { kind: "if" | "for" | "macro"; arms: TemplateArm[]; span }`, `TemplateArm { keyword;
+  tagSpan; bodySpan; children: TemplateRegion[] }` (an arm's body runs from its tag's end to the next
+  arm/close tag's start). Tolerant: unbalanced/broken input yields best-effort regions, never a throw.
+- **Symbols:** `templateSymbols(tags)` → `TemplateSymbol { kind: "set" | "macro"; name; nameSpan; span }`
+  (go-to-def on `{% set %}` / `{% macro %}`). Both ride `TemplatedParseResult` as additive `regions` /
+  `symbols` fields.
+
+## Variant realization (inc2 design, decided 2026-07-04)
+
+**Arm-coverage enumeration, not cross-product:** variant k activates exactly one non-default arm in one
+region (all other regions take their first arm); variant 0 is all-defaults. Linear in total arm count —
+every text region is live in some variant, each variant is a coherent parse, no combinatorial explosion.
+A `{% for %}` contributes no extra variant (its default IS the representative single iteration — the body
+parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over the
+original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
+(`TemplateVariant.parse()` memoized). **The primary `parseTemplated` result stays all-text-live** (inc1
+parity — anvil integrated against it mid-flight); variants are the additive coherent-arm API
+(`templateVariants(text, dialect)`), adopted by consumers when ready.
+
 ## The seam — TemplateCatalog (inc3, ITEM 11)
 
 Generalizes `SchemaSource`: ref/source/var/macros are to the template layer what the schema is to SQL —
@@ -206,7 +260,8 @@ regions first.)
 - **inc2 — tag-AST (R3 + R4) + variant expansion.** `{{ ref('x') }}` in a FROM/JOIN slot lowers to a
   first-class table-source IR node carrying its tag (R3 — feeds scope/qualify/lineage/columnGraph); control
   flow + `set`/`macro` become structured regions/symbols (R4 — completion inside `{{ }}`, go-to-def on
-  `{% set %}`); variant expansion relocates in.
+  `{% set %}`); variant expansion relocates in. Design decided 2026-07-04 — §R3 / §R4 / §Variant
+  realization above are the binding shapes.
 - **inc3 — TemplateCatalog wiring (ITEM 11).** The pull-callback seam: lazy relation/value resolution,
   synchronous `expansionShape` (shaped holes retire the fragment-macro limitation), `loopCollection`. Turns
   "parses with defaults" into "resolves `{{ ref }}` with real columns pre-compile."
