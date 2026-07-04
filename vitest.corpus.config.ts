@@ -10,10 +10,13 @@ export default defineConfig({
 		// A sibling git worktree under .claude/worktrees/ carries its own tests/corpus/ — don't run it.
 		exclude: [...configDefaults.exclude, ".claude/worktrees/**"],
 		// Same threads pool as tier 1 — the forks pool intermittently dies importing the large generated
-		// parser modules on this toolchain (see vitest.config.ts). Don't flatten the machine: half the
-		// cores. Per-it timeouts in the suites carry over; give the pool a generous default too.
+		// parser modules on this toolchain (see vitest.config.ts). Each thread imports the big generated
+		// ANTLR modules, so worker count is a RAM multiplier — this tier parses thousands of files and is
+		// the heavy one. Capped to 4 (was 50% = 8 of 16): RAM is the constraint, and this tier must NEVER
+		// run concurrently with another corpus run (controller serializes it — one corpus run at a time,
+		// at merge, never per-implementer). Slower per run, but it doesn't flatten the machine.
 		pool: "threads",
-		maxWorkers: "50%",
+		maxWorkers: 4,
 		testTimeout: 1_800_000,
 	},
 });

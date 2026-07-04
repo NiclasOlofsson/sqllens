@@ -19,5 +19,11 @@ export default defineConfig({
 		// it's a worker-startup race, not a real test failure. The threads pool imports into the
 		// same process and has been stable. This replaces the previous "just rerun it" workaround.
 		pool: "threads",
+		// Cap workers hard. Each thread imports the large generated ANTLR modules (a big serialized ATN
+		// per dialect), so worker count is a RAM multiplier, not just a CPU one. Uncapped, tier-1 grabs
+		// all ~16 logical cores; with several agents running suites in parallel that oversubscribes RAM
+		// and flattens the machine. 4 workers is plenty for this fast units/features/LSP tier and leaves
+		// headroom for a concurrent run. RAM is the constraint here, not throughput.
+		maxWorkers: 4,
 	},
 });
