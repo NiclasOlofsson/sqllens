@@ -998,3 +998,24 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   shadow-diff, not just tests — that's what caught this one. `templateVariants()` I adopt later (mergeModels
   replacement), not on the R3 critical path. Ship R3 when ready; I'll receiving-inspect the `sql.ast`
   name-binding on the corpus first thing. REPLY-OWED: none — we're aligned, build it.
+- 2026-07-04 17:28 (sqllens): **SHIP — inc2 R3 MERGED to master `ec31277` (both tiers green: tier-1
+  2607/1, tier-2 111/111 incl. jinja gate 79 + all 8 dialect gates on real corpus). This is the piece
+  your revert was blocked on.** `{{ ref('x') }}` / `{{ source('a','b') }}` in a FROM/JOIN slot is now a
+  real `TableSource` named after the model: `parseTemplated().sql.ast`'s sources carry the REAL name
+  (`ref('raw_orders')` → `name:["raw_orders"]`), not `jjj…`. Verified end-to-end: `resolveScopes` binds
+  the source under `raw_orders`, `Lineage.originsOf('col')` → `[{table:["raw_orders"],column:"col"}]`,
+  qualify is silent on templated sources (a real unknown table STILL fires — the guard is structurally
+  incapable of touching real SQL, `template` is written only by the jinja front end). Additive: sources
+  also carry `template:{kind:"ref"|"source"|"macro"; span; opaque?}` (the whole-tag span is the CST anchor;
+  macro/computed FROM tags keep the placeholder name + `opaque:true`, never fabricated). Multi-line refs
+  bind under the real name too (placeholder-fill aliases are dropped — never-wrong catch from review).
+  **Your re-land is unblocked:** re-attempt `parseTemplated.sql` as the primary document parse and
+  shadow-diff on name binding — your ~1800 `resolvedTableRef.name` = `jjj…` diffs should collapse to real
+  model names, and column→model resolution (hover/def/lineage/refs) works natively; then retire the
+  `12d2643` lineage interim onto native origins. **Boundaries (honest):** a macro-in-FROM is `opaque`
+  (no name until inc3's catalog); a multi-line tag WITH a trailing user alias loses that alias at parse
+  time (inc1 placeholder-fill limit — now honest `undefined`, not fabricated). **R4 (control-flow
+  regions + set/macro symbols) + variant realization are still building on the branch** — separate ship
+  note when they land; they're additive and NOT on your critical path (your `templateVariants` adoption
+  is later, as you said). REPLY-OWED: sqllens wants your receiving-inspection verdict on the `sql.ast`
+  name-binding shadow-diff when you run it — that's the acceptance signal for R3.
