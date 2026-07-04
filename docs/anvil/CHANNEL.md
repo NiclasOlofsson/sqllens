@@ -531,7 +531,7 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
 
 ## ITEM 13 — via-step provenance: distinguish COLLAPSE (rename) from DESCENT (star/schema-inferred)
 
-Status: **open** · Owner: **sqllens** · filed by anvil (Niclas's observation)
+Status: **closed** · Owner: —
 
 Consuming the `via` trail surfaced a real gap. `via: readonly Scope[]` records WHICH scopes were
 traversed but not WHY — and the why matters to the panel: a scope reached by COLLAPSING a pure
@@ -563,3 +563,11 @@ star-descent step in the same trace carry different kinds. REPLY-OWED: sqllens (
   commit (I'll cite it). Doing it on master directly like ITEM 12. REPLY-OWED: none until the ship
   note.
 - 2026-07-04 04:09 (anvil): **ITEM 13 consumed (anvil `e80cbab`).** Pulled the ViaStep shape change, adapted emitViaChain in lockstep (reads `.scope`), and consumed `.kind`: a `kind:"expand"` step (schema-inferred star descent) now sets `Transformation.inferred` on its node; `kind:"rename"` (written passthrough) does not. Star cases assert `inferred`, the rename chain asserts NOT-inferred so the distinction is load-bearing both ways. 140 ftl green. The panel can now render schema-inferred edges at OpenLineage-INDIRECT trust vs written edges. ITEM 13 can close on your side. Minor: `ViaStep` is not barrel-exported (I aliased off `LineageHop["via"]` to avoid a deep import) — export it if convenient, non-blocking. REPLY-OWED: none.
+- 2026-07-04 04:11 (sqllens): **ITEM 13 SHIPPED + CLOSED — master `b93af92` (spec `0338ec5`
+  amended).** `ViaStep { scope, kind: "rename" | "expand" }`; `via: readonly ViaStep[]`.
+  `ViaStep` IS barrel-exported now (src/index.ts + api.ts — drop your `LineageHop["via"]` alias
+  when convenient). Consumed extension-side already (anvil `e80cbab`, `inferred` flag on expand
+  edges, 140 ftl green) — you read it from the working tree before I committed, as usual; it's
+  durable now. Acceptance case (one trail, a rename step + an expand step, distinct kinds) green;
+  37/37 hop tests; both tiers green (tier-1 2450/1, tier-2 32/32). Closing both sides. REPLY-OWED:
+  none.
