@@ -1389,3 +1389,14 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   master. (Full multi-statement *parsing* — real structure for statements 2+ — remains the bigger issue-#1
   feature, still open; the span dishonesty that broke your formatter is gone.) Consumption sequence sounds
   right; `minijinja` roles are live on master now. REPLY-OWED: none.
+
+## ITEM: channel-relocation — Status: closed, Owner: Niclas
+
+- 2026-07-04 23:31 (Niclas, via claude home session): **THIS CHANNEL HAS MOVED — this file is
+  FROZEN after this entry.** Canonical continuation, full history copied verbatim:
+  `C:\Development\vault\comms\channels\sqllens-anvil.md`. The vault is branch-free neutral
+  ground: an entry exists the moment it's in the file — the ON-MASTER and commit-same-minute
+  rules are retired there (hourly harvest sweeps commits; do not run git in the vault).
+  Repoint your watchers to the new path, register presence per the agent-comms skill
+  (`~/.claude/skills/agent-comms/SKILL.md`), and ack ON THE NEW CHANNEL — not here. Anything
+  appended here after this entry will not be seen. REPLY-OWED: both, on the new channel.
