@@ -7,11 +7,22 @@
 //
 // ARM-COVERAGE, NOT cross-product (the decided shape):
 //   - Variant 0 = every region's arm 0 active (all-defaults).
-//   - Then ONE variant per (region, armIndex>0): that variant activates exactly that
-//     one non-default arm; ALL other regions take their arm 0.
+//   - Then ONE variant per (region, armIndex>0): that variant activates that one
+//     non-default arm plus its ANCESTOR path (below); every non-ancestor region takes
+//     arm 0.
 // LINEAR in total arm count — 1 + Σ over regions of (arms−1) — never combinatorial.
 // A `{% for %}`/`{% macro %}` region is single-arm (its default IS the representative
 // single iteration / the body parses in place), so it contributes NO extra variant.
+//
+// ANCESTOR-PATH ACTIVATION (the coverage guarantee): a variant for (region R, arm k)
+// activates arm k of R AND, for every ANCESTOR region on R's path to root, the arm that
+// CONTAINS R (not arm 0); all NON-ancestor regions take arm 0. So varying an inner else
+// nested inside an outer else pins the outer region to its else arm (the one containing
+// the inner region) → the outer else is live, the inner arm is live, and every arm —
+// including one nested inside a NON-default arm — is live in EXACTLY one variant. This
+// keeps each variant ONE coherent root-to-leaf branch selection and does NOT change the
+// count (it changes WHICH arms activate inside an already-enumerated variant): when R
+// sits in its parent's arm 0 the pinned ancestor arm IS arm 0, identical to no pinning.
 //
 // REALIZATION: for a given variant, whitespace-blank (newline-preserving, coordinates
 // intact — the exact technique the segmenter uses for its placeholder fill) the
@@ -41,17 +52,30 @@ export interface TemplateVariant {
 	parse(): TemplatedParseResult;
 }
 
-/** Flatten the region tree to a source-ordered (pre-order) list — every region,
- *  nested ones included, so each contributes its own arm-coverage variants. */
-function flattenRegions(regions: readonly TemplateRegion[]): TemplateRegion[] {
-	const out: TemplateRegion[] = [];
-	const walk = (rs: readonly TemplateRegion[]): void => {
+/** One ancestor hop on a region's path to root: which arm of `region` contains the descendant. */
+interface Ancestor {
+	region: TemplateRegion;
+	armIndex: number;
+}
+
+/** A flattened region plus its ancestor path (root-to-parent) — the arm of each ancestor
+ *  that CONTAINS this region, so a variant can pin the whole containing branch. */
+interface RegionEntry {
+	region: TemplateRegion;
+	ancestors: Ancestor[];
+}
+
+/** Flatten the region tree to a source-ordered (pre-order) list — every region, nested
+ *  ones included — each tagged with its ancestor path (which parent arm it sits in). */
+function flattenRegions(regions: readonly TemplateRegion[]): RegionEntry[] {
+	const out: RegionEntry[] = [];
+	const walk = (rs: readonly TemplateRegion[], ancestors: Ancestor[]): void => {
 		for (const r of rs) {
-			out.push(r);
-			for (const arm of r.arms) walk(arm.children);
+			out.push({ region: r, ancestors });
+			r.arms.forEach((arm, i) => walk(arm.children, [...ancestors, { region: r, armIndex: i }]));
 		}
 	};
-	walk(regions);
+	walk(regions, []);
 	return out;
 }
 
@@ -75,35 +99,48 @@ function blankRanges(text: string, ranges: readonly (readonly [number, number])[
 }
 
 /**
- * Realize one variant's blanked source: for each region, the active arm is arm 0
- * (default) unless this is the region being varied, in which case it is `armIndex`;
- * every OTHER arm's body span is blanked.
+ * Realize one variant's blanked source. The active arm index per region is 0 (default)
+ * EXCEPT: the varied region takes `armIndex`, and each of its ancestors takes the arm
+ * that CONTAINS the varied region (ancestor-path activation — the coverage guarantee).
+ * Every arm that is NOT its region's active arm has its body span blanked.
  */
-function realize(text: string, flat: readonly TemplateRegion[], active: TemplateVariant["active"]): string {
+function realize(
+	text: string,
+	flat: readonly RegionEntry[],
+	varied: RegionEntry | undefined,
+	armIndex: number,
+): string {
+	const activeIdx = new Map<TemplateRegion, number>();
+	if (varied) {
+		activeIdx.set(varied.region, armIndex);
+		for (const anc of varied.ancestors) activeIdx.set(anc.region, anc.armIndex);
+	}
 	const ranges: [number, number][] = [];
-	for (const region of flat) {
-		const activeIdx = active && active.region === region ? active.armIndex : 0;
+	for (const { region } of flat) {
+		const idx = activeIdx.get(region) ?? 0;
 		region.arms.forEach((arm, i) => {
-			if (i !== activeIdx) ranges.push([arm.bodySpan.start, arm.bodySpan.end]);
+			if (i !== idx) ranges.push([arm.bodySpan.start, arm.bodySpan.end]);
 		});
 	}
 	return blankRanges(text, ranges);
 }
 
-/** Build a lazy, memoized variant over the shared flattened region list. */
+/** Build a lazy, memoized variant over the shared flattened region list. `varied` is the
+ *  region entry this variant activates (with `armIndex`); undefined for variant 0. */
 function makeVariant(
 	text: string,
 	dialect: Dialect,
-	flat: readonly TemplateRegion[],
-	active: TemplateVariant["active"],
+	flat: readonly RegionEntry[],
+	varied: RegionEntry | undefined,
+	armIndex: number,
 ): TemplateVariant {
 	let computed = false;
 	let cached: TemplatedParseResult;
 	return {
-		active,
+		active: varied ? { region: varied.region, armIndex } : undefined,
 		parse(): TemplatedParseResult {
 			if (!computed) {
-				cached = parseTemplated(realize(text, flat, active), dialect);
+				cached = parseTemplated(realize(text, flat, varied, armIndex), dialect);
 				computed = true;
 			}
 			return cached;
@@ -129,10 +166,10 @@ export function templateVariants(text: string, dialect: Dialect): TemplateVarian
 	}
 	const flat = flattenRegions(regions);
 
-	const variants: TemplateVariant[] = [makeVariant(text, dialect, flat, undefined)];
-	for (const region of flat) {
-		for (let armIndex = 1; armIndex < region.arms.length; armIndex++) {
-			variants.push(makeVariant(text, dialect, flat, { region, armIndex }));
+	const variants: TemplateVariant[] = [makeVariant(text, dialect, flat, undefined, 0)];
+	for (const entry of flat) {
+		for (let armIndex = 1; armIndex < entry.region.arms.length; armIndex++) {
+			variants.push(makeVariant(text, dialect, flat, entry, armIndex));
 		}
 	}
 	return variants;

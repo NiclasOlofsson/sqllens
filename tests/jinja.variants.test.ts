@@ -99,6 +99,43 @@ describe("templateVariants — arm-coverage enumeration (Task 4)", () => {
 		for (const v of variants) expect(() => v.parse()).not.toThrow();
 	});
 
+	it("nested-in-NON-DEFAULT arm: every arm (incl. the deep else) is live in EXACTLY one variant", () => {
+		// The gap case: the inner if/else sits inside the OUTER else. Without ancestor-path
+		// activation, `colq` would be live in NO variant and the (inner, else) variant would
+		// degenerate to a duplicate of variant 0 (colx-only).
+		const text =
+			"SELECT * FROM t {% if a %}WHERE colx > 1{% else %}{% if c %}WHERE colp > 1{% else %}WHERE colq > 1{% endif %}{% endif %}";
+		const variants = templateVariants(text, DIALECT);
+		// Two regions, 2 arms each → 1 + (2−1) + (2−1) = 3.
+		expect(variants.length).toBe(3);
+
+		const liveCount = (col: string): number =>
+			variants.filter((v) => {
+				const r = v.parse();
+				return r.sql.errors === 0 && columnParts(r.sql.ast).includes(col);
+			}).length;
+
+		// Each arm's predicate is live in EXACTLY one variant (the coverage guarantee).
+		expect(liveCount("colx")).toBe(1);
+		expect(liveCount("colp")).toBe(1);
+		expect(liveCount("colq")).toBe(1);
+	});
+
+	it("no degenerate duplicates: every variant realizes distinct blanked text", () => {
+		const text =
+			"SELECT * FROM t {% if a %}WHERE colx > 1{% else %}{% if c %}WHERE colp > 1{% else %}WHERE colq > 1{% endif %}{% endif %}";
+		const variants = templateVariants(text, DIALECT);
+		// The token stream tiles its (blanked) input, so the joined token texts reconstruct
+		// each variant's realized source — distinct realizations ⇒ distinct joins.
+		const realized = variants.map((v) =>
+			v
+				.parse()
+				.tokens.map((t) => t.text)
+				.join(""),
+		);
+		expect(new Set(realized).size).toBe(variants.length);
+	});
+
 	it("unbalanced input → total: ≥1 variant, no throw", () => {
 		const text = "SELECT * FROM t {% if a %}WHERE x > 1";
 		expect(() => templateVariants(text, DIALECT)).not.toThrow();
