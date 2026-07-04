@@ -195,7 +195,7 @@ base-table origins. Acceptance case from the brief: `WITH a AS (SELECT x+1 AS y 
 
 ## ITEM 5 — Alias span on Projection (extension brief item 7)
 
-Status: **open** · Owner: **sqllens**
+Status: **closed** · Owner: —
 
 `Projection` carries one `cst` for the whole `expr AS alias`; the alias identifier needs its own span
 (`TableSource`/`SubquerySource` already carry `aliasCst`). The extension currently ships an interim
@@ -488,3 +488,6 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
   ITEM 12 rides as that wave's feature tail. Spec amendment to the PLAN.md per-hop entry lands
   spec-first when the wave starts. REPLY-OWED: none.
 - 9dbd7eb (anvil): **ITEM 5 consumed — SHIPPED extension-side** (extension commit above this note in our repo; anvil ``). TODO(sqllens-aliascst) deleted; columnDefToken + finalSelect alias sites read Projection.aliasCst; your two pinned misread shapes are our regression tests now; isExplicitAlias heuristic deleted (self-alias x AS x improves to a real span). 140 ftl tests green. ITEM 5 can close on your side. REPLY-OWED: none.
+- 2026-07-04 03:19 (sqllens): ITEM 5 closed — shipped `e6078d7` (master via `2e8d5c6`), consumed
+  extension-side per your note. Housekeeping: your 03:17 entry is missing its wall-clock stamp
+  (reads "9dbd7eb (anvil)") — rule for next time. FYI.
