@@ -32,6 +32,7 @@
 import { freezeIR } from "../ir/freeze.js";
 import type {
 	CteDef,
+	PartSpan,
 	PipeBranch,
 	PipeExpr,
 	PipeStage,
@@ -78,10 +79,15 @@ function mapShared<T>(arr: readonly T[], fn: (x: T) => T): T[] {
 	return changed ? out : (arr as T[]);
 }
 
+/** Half-open containment: `offset` lies inside `span` ([start, end)). */
+function inSpan(offset: number, span: PartSpan): boolean {
+	return offset >= span.start && offset < span.end;
+}
+
 /** The first relation-tag whose `tagSpan` contains `offset` ([start, end)), or undefined. */
 function containingTag(tags: RelationTag[], offset: number): RelationTag | undefined {
 	for (const t of tags) {
-		if (offset >= t.tagSpan.start && offset < t.tagSpan.end) return t;
+		if (inSpan(offset, t.tagSpan)) return t;
 	}
 	return undefined;
 }
@@ -201,21 +207,42 @@ function transformSource(source: Source, tags: RelationTag[]): Source {
 	return source;
 }
 
+/** Drop `alias` + `aliasCst` from a table source (returns a copy without those fields). */
+function withoutAlias(src: TableSource): TableSource {
+	const { alias: _alias, aliasCst: _aliasCst, ...rest } = src;
+	return rest;
+}
+
 function transformTableSource(src: TableSource, tags: RelationTag[]): TableSource {
 	const startTok = src.cst?.start;
 	if (!startTok) return src;
 	const tag = containingTag(tags, startTok.start);
 	if (!tag) return src;
 
+	// A placeholder-fill alias sits INSIDE the tag span: a multi-line tag fills one
+	// identifier per line, and the second line is consumed as the alias slot at parse
+	// time. Drop it — else the fabricated `jjj…` becomes the scope BINDING KEY
+	// (src/scope/scope.ts sourceKey prefers alias over name), shadowing the real model
+	// name set below. A real user alias (`{{ ref('x') }} o`) always sits AFTER `}}`
+	// (offset >= tagSpan.end), so it is never dropped. BOUNDARY: a multi-line tag WITH
+	// a trailing user alias loses that real alias at parse time (an inc1 placeholder-
+	// fill limitation, out of apply-tags' reach); making it `undefined` here is honest,
+	// where `jjj…` was a fabrication.
+	const aliasTok = src.aliasCst?.start;
+	const base = aliasTok != null && inSpan(aliasTok.start, tag.tagSpan) ? withoutAlias(src) : src;
+
+	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR
+	// therefore also freezes the TagNode.tagSpan object returned in `.tags` — benign,
+	// since spans are read-only.
 	if (tag.kind === "ref") {
 		const template: TemplateSourceInfo = { kind: "ref", span: tag.tagSpan };
-		return { ...src, name: [tag.model], template };
+		return { ...base, name: [tag.model], template };
 	}
 	if (tag.kind === "source") {
 		const template: TemplateSourceInfo = { kind: "source", span: tag.tagSpan };
-		return { ...src, name: [tag.sourceName, tag.tableName], template };
+		return { ...base, name: [tag.sourceName, tag.tableName], template };
 	}
 	// macro in a FROM slot: keep the placeholder name (honest), mark opaque.
 	const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, opaque: true };
-	return { ...src, template };
+	return { ...base, template };
 }

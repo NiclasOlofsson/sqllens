@@ -38,6 +38,33 @@ describe("R3 apply-tags", () => {
 		expect(firstSource(r.sql.ast).name).toEqual(["orders"]);
 	});
 
+	it("multi-line ref (no user alias) drops the placeholder-fill alias and binds under the real name", () => {
+		const r = parseTemplated("SELECT * FROM {{ ref(\n  'orders'\n) }}", "databricks");
+		const src = firstSource(r.sql.ast);
+		expect(src.name).toEqual(["orders"]);
+		expect(src.alias).toBeUndefined(); // NOT the fabricated `jjj…` second-line fill
+		// The load-bearing assertion: scope binds under `orders`, not the garbage alias.
+		const scopes = resolveScopes(r.sql.ast);
+		const keys = [...scopes.root.sources.keys()];
+		expect(keys).toContain("orders");
+		expect(keys.some((k) => /^j+$/.test(k))).toBe(false);
+	});
+
+	it("single-line ref with a real user alias preserves it (fix must not drop real aliases)", () => {
+		const r = parseTemplated("SELECT * FROM {{ ref('x') }} o", "databricks");
+		const src = firstSource(r.sql.ast);
+		expect(src.name).toEqual(["x"]);
+		expect(src.alias).toBe("o");
+	});
+
+	it("two templated sources with real aliases preserve both (no cross-drop)", () => {
+		const r = parseTemplated("SELECT * FROM {{ ref('a') }} x, {{ ref('b') }} y", "databricks");
+		const from = (r.sql.ast as any).body.from;
+		const byName = (n: string) => from.find((s: any) => s.name.join(".") === n);
+		expect(byName("a").alias).toBe("x");
+		expect(byName("b").alias).toBe("y");
+	});
+
 	it("ref inside a CTE body and a JOIN both substitute", () => {
 		const sql = "WITH c AS (SELECT * FROM {{ ref('a') }}) SELECT * FROM c JOIN {{ ref('b') }} b ON c.x = b.x";
 		const r = parseTemplated(sql, "databricks");
