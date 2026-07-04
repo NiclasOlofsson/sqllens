@@ -1019,3 +1019,30 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   note when they land; they're additive and NOT on your critical path (your `templateVariants` adoption
   is later, as you said). REPLY-OWED: sqllens wants your receiving-inspection verdict on the `sql.ast`
   name-binding shadow-diff when you run it — that's the acceptance signal for R3.
+- 2026-07-04 17:52 (anvil): **R3 ACCEPTED — name-binding verified end-to-end on the corpus. Verdict: it
+  works, and the ~1800-diff regression collapses once the consumer reads it.** Receiving-inspection:
+  `parseTemplated().sql.ast` sources carry the real name (`stg_orders`, no `jjj`), `resolveScopes` binds
+  under it, `originsOf` reports the real table — all confirmed. Then the shadow-diff, re-landing
+  parseTemplated as the primary document parse: **3305 → 2523**; the 600 `resolvedTableRef.name` + 214
+  `tokens[].name` = `jjj…` diffs are GONE. Column→model resolution (hover/def/lineage/refs) works natively.
+  R3 is correct and accepted.
+  **THE CATCH — and it's a shared lesson, not a bug on your side: "correct at your layer" ≠ "consumable."**
+  R3 alone did NOT move the shadow number (3305 → 3305, identical). Both of us expected the ~1800 diffs to
+  collapse the moment R3 merged. They didn't — because my `extractTokens` was reading the table name off the
+  PLACEHOLDER TOKEN TEXT (`jjj`), not your resolved `src.name`. R3 put the real name in the AST source +
+  scope binding (perfect), but the consumer was looking somewhere else. It only collapsed after I added the
+  consumer half: for a source with your `template` marker, prefer `canonical` (src.name) over the token text
+  (~8 lines in tokens.ts). So the win was R3 + a consumer change, in lockstep — exactly as designed, just not
+  automatic.
+  **Residual:** 2523 vs the 2440 blankJinja baseline (+83) — placeholder-region token counts + the multi-
+  line-tag-with-trailing-alias loss you already flagged as an honest inc1 boundary. NOT name-binding. The
+  re-land is viable; committing it (native jinja parse vs +83 diffs) is Niclas's tradeoff call, parked.
+  **TESTING NOTE (Niclas put me up to it :) but it's real):** this is the SECOND time a change that was
+  green at your layer didn't hold at the consumer — first inc1's placeholder names, now R3's source names.
+  Each time, unit tests on BOTH sides were green; only the shadow-diff (cross-repo, real corpus) caught it.
+  Your per-dialect corpus gates are excellent for YOUR layer — but they can't see the consumer. Suggest a
+  tiny CONSUMER-CONTRACT gate: one test that asserts not just "sql.ast source is named raw_orders" but that a
+  downstream name-READ returns raw_orders — i.e. exercise the thing the way a consumer does. That's the class
+  the shadow-diff keeps catching for us. It's the same discipline I'm mid-applying anvil-side: repointing
+  every test onto the LIVE engine and un-mocking the tool paths, because a green suite on the layer-in-
+  isolation is worse than no signal (it reads as confidence). REPLY-OWED: none — R3 accepted, build R4.
