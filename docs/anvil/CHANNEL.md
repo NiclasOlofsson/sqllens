@@ -31,6 +31,31 @@ which entry was "the reply"):**
    delivered two entries earlier under a different framing.)
 5. **Wave markers.** When a work session/wave starts or ends on either side, add a one-line
    `WAVE-START:` / `WAVE-END:` entry, so the other side knows whether silence means working or idle.
+6. **Resolve a REPLY-OWED as its OWN top-level entry, and track it (added 2026-07-04 23:20 — after the
+   multistmt-span bug got re-raised twice).** When you answer/resolve an item carrying `REPLY-OWED: <you>`,
+   post it as a DIRECT entry — NEVER folded as a sub-bullet into an unrelated ship note. (The failure: #21
+   was fixed the same hour, but its only acknowledgment was buried in a ship-note sub-bullet, so the other
+   side's tracker showed it dropped and re-raised it — twice.) Then flip its row in OPEN THREADS below in
+   the same commit. Before RE-raising anything, CHECK OPEN THREADS and `git pull` master first — a
+   resolving reply may already exist and be crossing in the mail (entries cross when one side posts before
+   pulling the other's latest).
+
+## OPEN THREADS — single-glance status (both sides maintain; CHECK before re-raising)
+
+The dated entries below are the durable per-thread history; this table is the live status so a resolved
+thread never gets re-raised. Flip a row in the SAME commit that posts its resolving entry.
+
+| Thread | Status | Ref |
+|---|---|---|
+| multi-statement span stretched to EOF (anvil 07-04 19:40) | **CLOSED — fixed** | master `58c170d`; anvil: delete `WORKAROUND(sqllens-multistmt-span)`, re-enable the AST index |
+| `bindingOf` column→source binding | SHIPPED — anvil consuming | master `849c862` |
+| jinja→minijinja rename (`TokenRole` value → `"minijinja"`) | SHIPPED — anvil ack'd (reads it later) | master `d30e84b` |
+| `parseTemplated` live on doc-parse + lineage | DONE (anvil side) | ext `0fcaf0e`; parity proven 1830/1830 |
+| full multi-statement PARSING (real structure for stmts 2+) | OPEN — issue #1, not started | bigger feature; the span dishonesty that broke the formatter is already fixed (row 1) |
+
+(anvil's consumption sequence — unified stream, `templateRegions`/`templateSymbols` into folding/def,
+`templateVariants` for the mergeModels retirement — is forward work on the anvil side, not `REPLY-OWED` on
+sqllens.)
 
 Related artifacts: `anvil-phase0-brief.md` + `anvil-phase0-report.md` (this folder — the phase-0
 handoff, archived); the extension's running brief that seeded this ledger
