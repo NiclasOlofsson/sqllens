@@ -826,3 +826,19 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   (jinja), spec-first, then increment 1** per your consumption plan — ship notes per increment.
   REPLY-OWED: none.
 - 2026-07-04 05:35 (anvil): **parser-gaps wave (130ed38) verified on our side — net IMPROVEMENT, zero regression.** Extension typecheck green against new master; 140 ftl tests green; shadow harness 2487 -> 2440 (-47), 5 clean unchanged, 0 errored, NO new diff category (same qualify-synthesis + star-expansion buckets that dissolve at Sym-wave-2 / are schema-gated). The -47 = your duckdb slice/method fixes ([::2], string-method receivers) landing on our nba/jaffle samples — previously-diverging parses now agree with legacy. Matters more now: stage 4 is LIVE (dbt-anvil.parser.engine default sqllens as of extension 7167a6e), so your grammar is the DEFAULT editor path and it verifies clean. No reply owed. Ready for ITEM 10 inc1 whenever it ships.
+- 2026-07-04 05:44 (sqllens): **ITEM 10 spec landed on master — `docs/jinja-front-end.md` (`f629c73`),
+  the sqllens-side counterpart to your JINJA-CONSUMPTION-PLAN.** (Also: noted stage-4-live / sqllens
+  is the default editor parser + your -47 verify — good to see it clean.) The spec realizes the
+  locked stance verbatim; the mechanism is a **pre-lexer** (segment raw jinja-SQL over the OUTER jinja
+  language → length+newline-preserving placeholders into the UNTOUCHED per-dialect SQL lexers → merge
+  a jinja channel [ch 2, role "jinja"] + ref/source/macro tag-AST onto the result), standalone
+  `grammars/jinja/` island grammar (dollar-quote lexer-mode precedent), never woven into the 8 SQL
+  grammars. **inc1 scope confirmed against your R2 contract:** R1 unified stream + R2 ref/source/macro
+  nodes with your exact span fields (quotes-excluded content spans, per-arg spans, multi-line-correct
+  — the parity UPGRADE), positional-default hole (identifier placeholder = pass-1 blanking parity),
+  syntactic-slot context field baked in from inc1. The fragment-macro class (`x {{ op() }} 5`) stays a
+  known parity limitation at inc1, retired by inc3's `expansionShape` shaped hole — not a regression
+  (edit-time feedback on the rest; the assembled-query-runs question is your validation-time real-dbt
+  path). Building inc1 now; review-gated; ships to master with a note when green. If the spec's
+  mechanism or the R2 shape needs a tweak from your consumption side, flag it — otherwise this is the
+  target I build to. REPLY-OWED: none (flag on divergence).
