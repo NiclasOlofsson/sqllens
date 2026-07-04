@@ -47,6 +47,22 @@ import { NO_OUTPUT_BUILTINS, type Segment } from "./segment.js";
 /** A tag segment (the `kind: "tag"` arm of Segment). */
 type TagSegment = Extract<Segment, { kind: "tag" }>;
 
+/**
+ * The reusable call fields the extension consumes for signature-help / hover — the
+ * macro TagNode's fields minus `kind`/`tagSpan`. A `{{ }}` macro node IS a
+ * MacroCall + kind/tagSpan; a `{% %}` control tag carries an array of them
+ * (`calls`). Every field comes only from real identifier tokens (never-wrong): a
+ * computed / dynamic callee yields no MacroCall.
+ */
+export interface MacroCall {
+	name: string;
+	nameSpan: PartSpan;
+	packageName?: string;
+	packageSpan?: PartSpan;
+	argsSpan?: PartSpan;
+	args: { span: PartSpan }[];
+}
+
 /** Document line (1-based) / column (0-based) of the tag's start offset — the anchor. */
 export interface DocPos {
 	line: number;
@@ -67,6 +83,8 @@ export type TagNode =
 			tableName: string;
 			sourceNameSpan: PartSpan;
 			tableNameSpan: PartSpan;
+			/** Span of the whole `source(…)` call — the sibling of `ref`'s `callSpan`; the extension hit-tests the bare `source` identifier / call on it. */
+			callSpan: PartSpan;
 			tagSpan: PartSpan;
 	  }
 	| {
@@ -88,6 +106,15 @@ export type TagNode =
 			name?: string;
 			/** Token-exact span of `name` (excludes nothing — it is the bare identifier). */
 			nameSpan?: PartSpan;
+			/**
+			 * Every macro CALL embedded in the statement body, in source order, EACH as
+			 * its own MacroCall (C1). `{% set x = a() + b() %}` → two; a NESTED
+			 * `outer(inner())` yields BOTH (outer before inner). A computed / dynamic
+			 * callee is skipped, never fabricated. `[]` when the tag has no call
+			 * (`{% if x %}`, `{% endif %}`). Additive — `keyword`/`name`/`nameSpan` are
+			 * unchanged.
+			 */
+			calls: MacroCall[];
 	  }
 	| { kind: "var" | "env_var" | "config" | "other"; tagSpan: PartSpan };
 
@@ -158,6 +185,22 @@ function findTopCall(node: ParseTree | null | undefined): CallExprContext | unde
 		}
 	}
 	return undefined;
+}
+
+/**
+ * EVERY CallExprContext in a subtree, in source order (pre-order DFS). Unlike
+ * `findTopCall` this does NOT stop at the topmost call: a NESTED `outer(inner())`
+ * yields BOTH (outer visited before inner, pre-order), and sibling calls
+ * `a() + b()` yield both in textual order. The R2/C1 control-tag extraction walks
+ * the whole `stmt` body with this so every embedded call is surfaced.
+ */
+function findAllCalls(node: ParseTree | null | undefined, out: CallExprContext[] = []): CallExprContext[] {
+	if (!node) return out;
+	if (node instanceof CallExprContext) out.push(node);
+	if (node instanceof ParserRuleContext) {
+		for (let i = 0; i < node.getChildCount(); i++) findAllCalls(node.getChild(i), out);
+	}
+	return out;
 }
 
 /** The `stmt` context of a statement tag's parse tree (DFS, leftmost). */
@@ -269,7 +312,17 @@ function decomposeCallee(call: CallExprContext, docOffset: number, base: DocPos)
 // Node builders.
 // ---------------------------------------------------------------------------
 
-function macroNode(call: CallExprContext, callee: Callee, docOffset: number, base: DocPos, tagSpan: PartSpan): TagNode {
+/**
+ * Per-argument spans (source order, kwargs included) + the paren-to-paren
+ * `argsSpan`. Shared by the macro node and the control-tag call extraction.
+ * argsSpan runs from the opening paren to one char past the closing paren (or the
+ * call's last token when the close is missing on broken input).
+ */
+function argInfo(
+	call: CallExprContext,
+	docOffset: number,
+	base: DocPos,
+): { args: { span: PartSpan }[]; argsSpan?: PartSpan } {
 	const argList = call.arg_list();
 	const args: { span: PartSpan }[] = [];
 	if (argList) {
@@ -278,8 +331,6 @@ function macroNode(call: CallExprContext, callee: Callee, docOffset: number, bas
 			if (span) args.push({ span });
 		}
 	}
-	// argsSpan: opening paren → exclusive end past the closing paren (or the
-	// call's last token when the close is missing on broken input).
 	let argsSpan: PartSpan | undefined;
 	const lp = call.LPAREN();
 	if (lp) {
@@ -287,10 +338,43 @@ function macroNode(call: CallExprContext, callee: Callee, docOffset: number, bas
 		const end = rp ? rp.symbol : (call.stop ?? lp.symbol);
 		argsSpan = spanFromTokens(lp.symbol, end, docOffset, base);
 	}
+	return { args, ...(argsSpan ? { argsSpan } : {}) };
+}
+
+/**
+ * Extract a CallExprContext into the reusable MacroCall fields — name/nameSpan +
+ * optional package via `decomposeCallee`, args[] + argsSpan via `argInfo`. Returns
+ * undefined when the callee is not a real, locatable identifier (decomposeCallee
+ * undefined, or no nameSpan): a computed / dynamic callee is skipped, never
+ * fabricated (never-wrong). The `{{ }}` macro node and the `{% %}` control tag both
+ * build from this, so a call surfaces identically wherever it appears.
+ */
+export function callToMacroCall(call: CallExprContext, docOffset: number, base: DocPos): MacroCall | undefined {
+	const callee = decomposeCallee(call, docOffset, base);
+	if (!callee || !callee.nameSpan) return undefined;
+	const { args, argsSpan } = argInfo(call, docOffset, base);
+	return {
+		name: callee.name,
+		nameSpan: callee.nameSpan,
+		...(callee.packageName !== undefined ? { packageName: callee.packageName } : {}),
+		...(callee.packageSpan !== undefined ? { packageSpan: callee.packageSpan } : {}),
+		...(argsSpan ? { argsSpan } : {}),
+		args,
+	};
+}
+
+function macroNode(call: CallExprContext, callee: Callee, docOffset: number, base: DocPos, tagSpan: PartSpan): TagNode {
+	const mc = callToMacroCall(call, docOffset, base);
+	if (mc) return { kind: "macro", ...mc, tagSpan };
+	// Degenerate fallback: a callee with a name but no locatable span (a broken
+	// tree). Preserve the pre-refactor node shape — nameSpan defaults to tagSpan,
+	// args are still extracted. (Unreachable for a well-formed parsed call, where
+	// the identifier token always has a span; kept for behavioral parity.)
+	const { args, argsSpan } = argInfo(call, docOffset, base);
 	return {
 		kind: "macro",
 		name: callee.name,
-		nameSpan: callee.nameSpan ?? tagSpan,
+		nameSpan: tagSpan,
 		...(callee.packageName !== undefined ? { packageName: callee.packageName } : {}),
 		...(callee.packageSpan !== undefined ? { packageSpan: callee.packageSpan } : {}),
 		tagSpan,
@@ -311,21 +395,31 @@ const NAME_DECLARING = new Set(["set", "macro", "for"]);
  */
 function controlNode(tree: ParserRuleContext, docOffset: number, base: DocPos, tagSpan: PartSpan): TagNode {
 	const stmt = findStmt(tree);
-	if (!stmt) return { kind: "control", tagSpan };
+	if (!stmt) return { kind: "control", tagSpan, calls: [] };
+
+	// C1: surface every macro call embedded in the statement body (source order,
+	// nested calls included), each as its own MacroCall. A computed / dynamic
+	// callee is skipped by callToMacroCall (never fabricated). This is additive —
+	// the declared keyword/name/nameSpan below are unchanged.
+	const calls: MacroCall[] = [];
+	for (const call of findAllCalls(stmt)) {
+		const mc = callToMacroCall(call, docOffset, base);
+		if (mc) calls.push(mc);
+	}
 
 	const lead = stmt.keyword() ?? stmt.id();
 	const keyword = lead?.getText().toLowerCase();
-	if (keyword === undefined) return { kind: "control", tagSpan };
+	if (keyword === undefined) return { kind: "control", tagSpan, calls };
 
 	if (NAME_DECLARING.has(keyword)) {
 		const ne = firstNameExpr(stmt);
 		const idNode = ne?.id();
 		const nameSpan = idNode ? spanOfNode(idNode, docOffset, base) : undefined;
 		if (idNode && nameSpan) {
-			return { kind: "control", tagSpan, keyword, name: idNode.getText(), nameSpan };
+			return { kind: "control", tagSpan, keyword, name: idNode.getText(), nameSpan, calls };
 		}
 	}
-	return { kind: "control", tagSpan, keyword };
+	return { kind: "control", tagSpan, keyword, calls };
 }
 
 /**
@@ -382,12 +476,14 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 		const srcTok = pos[0] ? directStringToken(pos[0]) : undefined;
 		const tblTok = pos[1] ? directStringToken(pos[1]) : undefined;
 		if (srcTok && tblTok) {
+			const callSpan = spanOfNode(call, docOffset, base) ?? tagSpan;
 			return {
 				kind: "source",
 				sourceName: stringValue(srcTok),
 				tableName: stringValue(tblTok),
 				sourceNameSpan: stringContentSpan(srcTok, docOffset, base),
 				tableNameSpan: stringContentSpan(tblTok, docOffset, base),
+				callSpan,
 				tagSpan,
 			};
 		}

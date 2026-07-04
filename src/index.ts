@@ -91,7 +91,13 @@ export type { ParseResult } from "./databricks/parse.js";
 //     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
 //     grammars are untouched). See also `TemplateSourceInfo` (IR section) and
 //     `TemplateCatalog` (qualify section) — the rest of the template surface. ---
-export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./minijinja/parse.js";
+export {
+	parseTemplated,
+	tokenizeTemplated,
+	type TemplatedParseResult,
+	type TagNode,
+	type MacroCall,
+} from "./minijinja/parse.js";
 export {
 	templateRegions,
 	templateSymbols,
