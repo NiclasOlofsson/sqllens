@@ -8,6 +8,7 @@ import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
+import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
 
 // Two Trino conformance corpora, both in the corpus repo and skipped when absent:
@@ -23,6 +24,10 @@ import { walkIr } from "../helpers/ir-walk.js";
 
 const VENDOR_EXAMPLES = corpusPath("trino/bytebase");
 const DOCS_CORPUS = corpusPath("trino/docs");
+// The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject). Floor
+// pinned at the measured rejection count — mutation cannot guarantee invalidity, so it may only rise.
+const NEGATIVES = corpusPath("trino/docs/parser/negative/unparsed");
+const MUTATED_FLOOR = 344; // 344/400 mutants rejected (2026-07-04)
 
 const VENDOR_BASELINE = 93; // 94 files minus the one expression-fragment (see header)
 const QUERY_BASELINE = 600; // documented floor (635 at build); the gate itself is 100%-of-query-bucket
@@ -135,4 +140,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 			);
 		},
 	);
+});
+
+describe.skipIf(!existsSync(NEGATIVES))("Trino negative corpus (issue #5)", () => {
+	it("curated near-misses 100%-reject; mutated rejection ratchet", { timeout: 600_000 }, () => {
+		runNegativeCorpus("trino", NEGATIVES, (sql) => parseTrino(sql).errors, MUTATED_FLOOR);
+	});
 });

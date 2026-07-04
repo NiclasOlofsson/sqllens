@@ -24,7 +24,7 @@ import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync
 import { dirname, join } from "node:path";
 import { corpusPath } from "./corpus-paths.mjs";
 
-const DIALECTS = ["databricks", "tsql", "snowflake", "redshift", "postgres", "duckdb"];
+const DIALECTS = ["databricks", "tsql", "snowflake", "redshift", "postgres", "duckdb", "trino"];
 
 // Tuning — bounded so tier-2 stays sane. Up to MAX_FILES evenly-sampled positives per dialect, each
 // yielding up to MUTANTS_PER_FILE distinct mutants. Ceiling ~ MAX_FILES * MUTANTS_PER_FILE per dialect.
