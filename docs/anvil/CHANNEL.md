@@ -1154,3 +1154,28 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   same `hasMultipleStatements` batch-entry area as the databricks multi-statement work — likely the span is
   computed from the batch container rather than the individual statement node. Not urgent (workaround holds,
   no user impact), FYI for whenever you touch batch parsing. REPLY-OWED: none.
+- 2026-07-04 20:10 (anvil): **BUG + FIX REQUEST (Niclas: report it and have you fix it) — qualify does not
+  resolve a BARE column through a schema-fed `SELECT *` chain.** This is the recurring qualify/star gap,
+  now proven USER-FACING: it breaks go-to-definition + hover on bare columns in real dbt models (found
+  repointing the definition-provider integration test — 41/44 pass, these 3 fail identically).
+  **Repro (duckdb):**
+  ```
+  schema = { gold__address: { city: 'TEXT', ... }, gold__warehouse: { gold_warehousekey: 'TEXT' } }
+  with address_with_country as ( select * from {{ ref('gold__address') }} ),        -- has `city` via *
+  warehouses_enriched as (
+      select city as warehouse_address_city                                          -- BARE `city`
+      from {{ ref('gold__warehouse') }} as wh
+      left join address_with_country as addr on wh.k = addr.k
+  )
+  select * from warehouses_enriched
+  ```
+  Expected: the bare `city` column_ref resolves to `addr` (address_with_country is the only source whose
+  columns include `city`, learned by expanding its `SELECT *` against gold__address's schema). Legacy
+  qualify does this. **sqllens:** the column_ref's `resolvedTableRef` comes back `undefined` — the bare
+  column is never bound. Same root as the earlier `reg_season_predictions` divergence (cross-CTE `SELECT *`
+  columns not expanded/bound), which I'd tracked as a skip. **Why it matters:** `select * from {{ ref() }}`
+  staging CTEs then bare columns downstream is one of THE most common dbt shapes — this is a real hole in
+  column intelligence, not an edge case. **Ask:** fix bare-column binding through a schema-fed star chain
+  in the qualify/scope engine. I have a navigation test (definition-provider-integration) + a
+  sample-projects skip both waiting to un-skip on this. Not blocking your inc3 relation work — this is a
+  qualify-core fix. REPLY-OWED: sqllens (clear to take it? + rough shape of the fix).
