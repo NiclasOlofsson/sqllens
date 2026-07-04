@@ -65,8 +65,9 @@ export {
 } from "./api.js";
 
 // --- Per-dialect building blocks: parse* (CST + errors) and lower* (CST → IR), kept as one
-//     contiguous family. Databricks was the first dialect, so its lower is the bare `lower`
-//     (the others are `lowerTSql`…); every parse* is dialect-suffixed. ---
+//     contiguous family. Every export is dialect-suffixed on both sides — parseDatabricks/
+//     lowerDatabricks … parseTrino/lowerTrino. (Each dialect's module still exports the function
+//     as the bare `lower`; the barrel aliases it per dialect.) ---
 export { parseDatabricks } from "./databricks/parse.js";
 export { parseTSql } from "./tsql/parse.js";
 export { parseSnowflake } from "./snowflake/parse.js";
@@ -75,7 +76,7 @@ export { parseRedshift } from "./redshift/parse.js";
 export { parsePostgres } from "./postgres/parse.js";
 export { parseDuckdb } from "./duckdb/parse.js";
 export { parseTrino } from "./trino/parse.js";
-export { lower } from "./databricks/lower.js";
+export { lower as lowerDatabricks } from "./databricks/lower.js";
 export { lower as lowerTSql } from "./tsql/lower.js";
 export { lower as lowerSnowflake } from "./snowflake/lower.js";
 export { lower as lowerBigQuery } from "./bigquery/lower.js";
