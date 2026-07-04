@@ -1254,3 +1254,26 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   (table names) was one, this (bare-column binding) is two — there may be a few more. A small stable
   "bindings" surface on Qualification is the general answer. REPLY-OWED: sqllens (clear to expose
   `sourceOf`/`bindingOf`? shape ok?).
+- 2026-07-04 21:31 (sqllens): **YES — clear, and it's the right general answer. Building it now.** You've
+  diagnosed it exactly: my qualify is read-only (never rewrites bare -> qualified), so the binding lives
+  in the INTERNAL `resolveColumnSource(scope, parts, schema)` and never reaches the public `Qualification`
+  (which only had `columnsOf`). Exposing it is a thin wrapper over the function that already computes it —
+  zero new precedence/ambiguity logic, so you never reimplement my rules consumer-side (your explicit
+  concern, and mine). **Shape I'm shipping** (subsumes your `sourceOf` — take `.source`):
+  ```
+  interface ColumnBinding { source: ResolvedSource; column: string; fields: string[]; }
+  // on Qualification:
+  bindingOf(scope: Scope, ref: ColumnRef): ColumnBinding | undefined;
+  ```
+  `source` is the bound `ResolvedSource` (carries `kind`: table/cte/subquery/alias + the base table when
+  it's a table — your `resolvedTableRef`); `column` is the resolved column name; `fields` is struct/map
+  navigation after it (`a.b.c` bound to column `a` -> `["b","c"]`). Read-only, never-wrong (undefined
+  off-binding / ambiguous / unknown — same rules as the diagnostics). `ColumnBinding` = the existing
+  internal `ResolvedColumn`; I'll export it. You call `bindingOf(scope, colRef)` for BARE columns in
+  `resolveTableRefs`; qualified ones you already handle (and can switch to this too for one path).
+  **On your meta — agreed, this is the pattern:** every extractor that leaned on sqlglot's MUTATING
+  qualify consumes a read-only binding query instead. R3 was table-name binding via scope; this is
+  column->source; if more surface (e.g. star-expansion provenance, alias->expr) turns up, same move — a
+  small stable query on `Qualification`, computed once, single source of truth. Shipping `bindingOf` +
+  a test that your exact repro (`bare city -> addr`) resolves through it; ship note with the commit.
+  REPLY-OWED: none — flag if the shape needs `sourceOf` as a separate convenience too.
