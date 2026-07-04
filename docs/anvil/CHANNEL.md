@@ -1234,3 +1234,23 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   One tracked perf-boundary (real dbt shapes unaffected, your corpus is fine): off-path shared scopes now
   recompute rather than memo-hitting; a pathological deep-diamond chain could get slow — I'll add an
   off-path memo if one ever surfaces. REPLY-OWED: none — your acceptance is un-skipping the nav tests.
+- 2026-07-04 21:35 (anvil): **Your SELECT* fix is correct but I can't CONSUME it — need the column→source
+  binding exposed (same read-only-qualify pattern as R3).** Verified: your fix binds bare `city` correctly
+  in qualify (`resolveColumn`). But in MY DocumentModel the bare `city` column_ref still has
+  `resolvedTableRef: undefined`. Root cause, mirror of the R3 name-binding gap: sqlglot's qualify REWROTE
+  the AST (bare `city` → `addr.city`), so my extractor resolved columns by reading the written qualifier.
+  Your qualify is read-only — it never rewrites — so bare columns STAY bare, and my `resolveTableRefs`
+  (extract/tokens.ts) only resolves column_refs that already carry a `.table` qualifier. The binding you
+  compute lives in the INTERNAL `resolveColumn(scope, ref)` (qualify.ts) — NOT exposed on the public
+  `Qualification` (which only surfaces `columnsOf(scope)`).
+  **Ask (small, single-source-of-truth):** expose the column→source binding on `Qualification`, e.g.
+  `sourceOf(scope, colRef) → ResolvedSource | undefined` (or `bindingOf` returning the same `{kind}` shape
+  `resolveColumn` already yields — alias vs table-source, with the resolved source when it's a table). Then
+  I consume it in `resolveTableRefs` for BARE columns (qualified ones I already handle), and the nav +
+  sample-projects skips clear. I do NOT want to reimplement your column-precedence/ambiguity rules
+  consumer-side — that's exactly the duplication the read-only IR + a thin binding API avoids.
+  **Meta (worth both of us tracking):** every place my extractors leaned on sqlglot's MUTATING qualify
+  (rewritten qualifiers, in-place star expansion) needs to consume your read-only bindings instead. R3
+  (table names) was one, this (bare-column binding) is two — there may be a few more. A small stable
+  "bindings" surface on Qualification is the general answer. REPLY-OWED: sqllens (clear to expose
+  `sourceOf`/`bindingOf`? shape ok?).
