@@ -57,10 +57,20 @@ export interface LineageHop {
 	 *  BOTH `downstream` (derived refs) and a `terminal` Origin[] (base-table refs) — an honest
 	 *  mixed expression. Absent when every ref flows through `downstream`. */
 	terminal?: Origin[] | "unresolved";
+	/** ITEM 12 (flow view): the ordered scopes the walk COLLAPSED (pure-rename passthroughs) or
+	 *  DESCENDED (star / bare-source resolution) through while following this hop's refs to its
+	 *  `downstream`/`terminal` — consumer-side first, identity-deduped in first-traversal order,
+	 *  ABSENT when nothing was collapsed. Metadata only: no fabricated hops; a terminal's trail is
+	 *  its carrying hop's `via`. Deferred flat-walk paths (lateral/pivot/pipe) record no trail —
+	 *  absent means "not recorded on this edge", never "nothing traversed". */
+	via?: readonly Scope[];
 }
 
 // A (node, edge) pair the emitter yields for one resolved reference — the graph-factorable unit.
-type Contribution = { kind: "hop"; hop: LineageHop } | { kind: "origin"; origin: Origin } | { kind: "unresolved" };
+type Contribution = ({ kind: "hop"; hop: LineageHop } | { kind: "origin"; origin: Origin } | { kind: "unresolved" }) & {
+	/** The collapse/descent trail this contribution travelled (ITEM 12) — absent when direct. */
+	via?: Scope[];
+};
 
 /** Per-invocation state: `memo` gives the DAG (shared hops); `seen` is the recursive-CTE cycle
  *  guard (scopes currently being expanded). Fresh per lineageOf/lineageAt call. */
@@ -129,12 +139,18 @@ function isProjection(node: Expr | Projection): node is Projection {
  *  anchors at the enclosing projection / raw ref, fanning `downstream` / carrying `terminal`. */
 function headFromColumnRef(scope: Scope, colExpr: Expr, enclosing: Projection | undefined, walk: Walk): LineageHop {
 	const contribs = followColumn(scope, columnParts(colExpr), walk);
-	const { hops, origins, unresolved } = partition(contribs, scope.dialect);
-	// Collapse: a single producer with no base-table leaf and no dead end IS the head.
-	if (hops.length === 1 && origins.length === 0 && !unresolved) return hops[0];
+	const { hops, origins, unresolved, via } = partition(contribs, scope.dialect);
+	// Collapse: a single producer with no base-table leaf and no dead end IS the head. A trail
+	// crossed on the way (a rename fronting a computed producer) rides that hop — consumer-side,
+	// merged in first-traversal order (the head IS the consumer boundary here).
+	if (hops.length === 1 && origins.length === 0 && !unresolved) {
+		if (via.length) mergeVia(hops[0], via);
+		return hops[0];
+	}
 	return anchorHop(scope, enclosing, colExpr, {
 		downstream: hops,
 		terminal: terminalOf(origins, unresolved, hops.length),
+		via,
 	});
 }
 
@@ -143,11 +159,12 @@ function anchorHop(
 	scope: Scope,
 	projection: Projection | undefined,
 	expr: Expr,
-	feed: { downstream: LineageHop[]; terminal?: Origin[] | "unresolved" },
+	feed: { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: Scope[] },
 ): LineageHop {
 	const hop: LineageHop = { scope, expr, downstream: feed.downstream };
 	if (projection) hop.projection = projection;
 	if (feed.terminal !== undefined) hop.terminal = feed.terminal;
+	if (feed.via?.length) hop.via = feed.via;
 	return hop;
 }
 
@@ -163,6 +180,7 @@ function buildHop(scope: Scope, projection: Projection, walk: Walk): LineageHop 
 	const feed = followExprRefs(scope, projection.expr, walk);
 	hop.downstream = feed.downstream;
 	if (feed.terminal !== undefined) hop.terminal = feed.terminal;
+	if (feed.via?.length) hop.via = feed.via;
 	return hop;
 }
 
@@ -173,14 +191,14 @@ function followExprRefs(
 	scope: Scope,
 	expr: Expr,
 	walk: Walk,
-): { downstream: LineageHop[]; terminal?: Origin[] | "unresolved" } {
+): { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: Scope[] } {
 	const leaves = exprLeaves(expr);
 	const contribs: Contribution[] = [];
 	for (const col of leaves.columns) contribs.push(...followColumn(scope, col, walk));
 	for (const sub of leaves.subqueries)
 		for (const o of originsOfSubquery(sub, scope, walk.schema)) contribs.push({ kind: "origin", origin: o });
-	const { hops, origins, unresolved } = partition(contribs, scope.dialect);
-	return { downstream: hops, terminal: terminalOf(origins, unresolved, hops.length) };
+	const { hops, origins, unresolved, via } = partition(contribs, scope.dialect);
+	return { downstream: hops, terminal: terminalOf(origins, unresolved, hops.length), via };
 }
 
 // ---------------------------------------------------------------------------
@@ -192,41 +210,45 @@ function followExprRefs(
 // set-op legs never collapse (each leg's own projection is the point of the fork).
 // ---------------------------------------------------------------------------
 
-function followColumn(scope: Scope, parts: string[], walk: Walk): Contribution[] {
+function followColumn(scope: Scope, parts: string[], walk: Walk, trail: Scope[] = []): Contribution[] {
+	const via = trail.length ? [...trail] : undefined;
 	const binding = resolveColumnSource(scope, parts, walk.schema);
-	if (!binding) return [{ kind: "unresolved" }];
+	if (!binding) return [{ kind: "unresolved", via }];
 	const { source, column } = binding;
 	if (source.kind === "table") {
 		// A recursive CTE's self-reference is a plain table here (see Walk.activeCtes) — cycle-guard it.
 		if (source.name.length === 1 && walk.activeCtes.has(foldIdentifier(source.name[0], scope.dialect)))
-			return [{ kind: "unresolved" }];
-		return [{ kind: "origin", origin: { table: source.name, column } }];
+			return [{ kind: "unresolved", via }];
+		return [{ kind: "origin", origin: { table: source.name, column }, via }];
 	}
 
 	const child = childScopeOf(source);
 	if (!child) {
 		// lateral / pivot — no hop model here; defer to the shared flat origin walk (never-wrong).
-		return originsToContribs(columnOrigins(source, column, walk.schema, new Set()));
+		// The flat walk records no trail of its own; the trail crossed SO FAR still rides (ITEM 12).
+		return originsToContribs(columnOrigins(source, column, walk.schema, new Set()), via);
 	}
-	if (walk.seen.has(child)) return [{ kind: "unresolved" }]; // recursive-CTE cycle guard
+	if (walk.seen.has(child)) return [{ kind: "unresolved", via }]; // recursive-CTE cycle guard
 
 	const cteName = source.kind === "cte" ? foldIdentifier(source.ref.def.name, scope.dialect) : undefined;
 	walk.seen.add(child);
 	if (cteName) walk.activeCtes.add(cteName);
 	try {
-		if (child.body.kind === "setop") return forkLegs(child, column, aliasesOf(source), scope.dialect, walk);
+		if (child.body.kind === "setop") return forkLegs(child, column, aliasesOf(source), scope.dialect, walk, trail);
 		if (child.body.kind === "pipe" || child.pipeStage) {
 			// A pipe-bodied relation has no plain projection list — defer to the shared origin walk.
-			return originsToContribs(columnOrigins(source, column, walk.schema, new Set()));
+			return originsToContribs(columnOrigins(source, column, walk.schema, new Set()), via);
 		}
 		// A plain select relation: find the projection producing `column`.
 		const producer = findProducerProjection(child.body.projections, column, aliasesOf(source), child.dialect);
 		if (producer && !producer.isStar) {
-			if (producer.expr.kind === "column") return followColumn(child, columnParts(producer.expr), walk); // collapse
-			return [{ kind: "hop", hop: buildHop(child, producer, walk) }];
+			// Collapse: a pure rename is no transformation — the traversed scope joins the trail (ITEM 12).
+			if (producer.expr.kind === "column")
+				return followColumn(child, columnParts(producer.expr), walk, [...trail, child]);
+			return [{ kind: "hop", hop: buildHop(child, producer, walk), via }];
 		}
-		// A `*` / bare source: resolve the column one scope deeper (against the child's own sources).
-		return followColumn(child, [column], walk);
+		// A `*` / bare source: a silent descent — the scope joins the trail (ITEM 12).
+		return followColumn(child, [column], walk, [...trail, child]);
 	} finally {
 		walk.seen.delete(child);
 		if (cteName) walk.activeCtes.delete(cteName);
@@ -242,15 +264,17 @@ function forkLegs(
 	aliases: string[] | undefined,
 	dialect: string,
 	walk: Walk,
+	trail: Scope[] = [],
 ): Contribution[] {
 	const legs = setopLegScopes(setopScope);
 	const byName = setopScope.body.kind === "setop" ? !!setopScope.body.byName : false;
 	const idx = columnIndex(setopScope, column, aliases, dialect);
+	const via = trail.length ? [...trail] : undefined;
 	const out: Contribution[] = [];
 	for (const leg of legs) {
 		const producer = legProducer(leg, column, idx, byName, dialect);
-		if (producer && !producer.isStar) out.push({ kind: "hop", hop: buildHop(leg, producer, walk) });
-		else out.push(...followColumn(leg, [column], walk)); // star / missing leg → resolve fresh
+		if (producer && !producer.isStar) out.push({ kind: "hop", hop: buildHop(leg, producer, walk), via });
+		else out.push(...followColumn(leg, [column], walk, trail)); // star / missing leg → resolve fresh
 	}
 	return out;
 }
@@ -294,17 +318,26 @@ function legProducer(
 function partition(
 	contribs: Contribution[],
 	dialect: string,
-): { hops: LineageHop[]; origins: Origin[]; unresolved: boolean } {
+): { hops: LineageHop[]; origins: Origin[]; unresolved: boolean; via: Scope[] } {
 	const hops: LineageHop[] = [];
 	const origins: Origin[] = [];
+	const via: Scope[] = [];
 	let unresolved = false;
 	for (const c of contribs) {
 		if (c.kind === "hop") {
 			if (!hops.includes(c.hop)) hops.push(c.hop); // dedup by identity (DAG)
 		} else if (c.kind === "origin") origins.push(c.origin);
 		else unresolved = true;
+		if (c.via) for (const sc of c.via) if (!via.includes(sc)) via.push(sc); // first-traversal order
 	}
-	return { hops, origins: dedupOrigins(origins, dialect), unresolved };
+	return { hops, origins: dedupOrigins(origins, dialect), unresolved, via };
+}
+
+/** Merge a trail into an existing hop (the head-collapse consumer boundary) — ordered union. */
+function mergeVia(hop: LineageHop, scopes: Scope[]): void {
+	const merged: Scope[] = [...(hop.via ?? [])];
+	for (const sc of scopes) if (!merged.includes(sc)) merged.push(sc);
+	hop.via = merged;
 }
 
 /** The `terminal` field: base-table origins win when present; else a dead end is "unresolved" ONLY
@@ -320,10 +353,10 @@ function terminalOf(
 	return undefined;
 }
 
-function originsToContribs(origins: Origin[]): Contribution[] {
+function originsToContribs(origins: Origin[], via?: Scope[]): Contribution[] {
 	return origins.length
-		? origins.map((origin) => ({ kind: "origin", origin }) as Contribution)
-		: [{ kind: "unresolved" }];
+		? origins.map((origin) => ({ kind: "origin", origin, via }) as Contribution)
+		: [{ kind: "unresolved", via }];
 }
 
 function columnParts(expr: Expr): string[] {

@@ -436,3 +436,90 @@ describe("per-hop lineage — lineageOf programmatic entry", () => {
 		expect(terminals(hop)).toEqual(["t.a"]);
 	});
 });
+
+describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are reportable)", () => {
+	// The trail rides the HOP (consumer-side): the ordered scopes the walk collapsed (pure renames)
+	// or descended (star/bare-source resolution) through while following that hop's refs. Absent
+	// when nothing was collapsed. Spec: docs/PLAN.md "via trail (Anvil ITEM 12)".
+
+	function cteScope(scopes: ScopeTree, name: string) {
+		// CTE keys are stored folded (snowflake UPPER, most others lower) — try both.
+		const ref = scopes.root.ctes.get(name) ?? scopes.root.ctes.get(name.toUpperCase());
+		if (!ref) throw new Error(`cte ${name} not found`);
+		return ref.scope;
+	}
+
+	// anvil ITEM 12 red case: bare-rename fold chain (databricks) — via [b, a], terminal t.x
+	it("records the rename-collapsed CTE chain on the head hop", () => {
+		const sql = "WITH a AS (SELECT x AS y FROM t), b AS (SELECT y AS z FROM a) SELECT z FROM b";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
+		expect(head).toBeDefined();
+		expect(terminals(head!)).toEqual(["t.x"]);
+		expect(head!.via).toBeDefined();
+		expect(head!.via![0]).toBe(cteScope(scopes, "b")); // identity, consumer-side first
+		expect(head!.via![1]).toBe(cteScope(scopes, "a"));
+		expect(head!.via!.length).toBe(2);
+	});
+
+	// anvil ITEM 12 red case: snowflake qualified-UPPER rename chain — fold-true trail
+	it("records the trail through a snowflake qualified-ref rename chain", () => {
+		const sql = "WITH a AS (SELECT x AS y FROM t), b AS (SELECT A.Y AS z FROM a) SELECT z FROM b";
+		const scopes = snowScopes(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
+		expect(terminals(head!)).toEqual(["t.x"]);
+		expect(head!.via).toEqual([cteScope(scopes, "b"), cteScope(scopes, "a")]);
+	});
+
+	// anvil ITEM 12 red case: databricks backtick fold chain — via [a]
+	it("records the trail through a backtick-folded rename", () => {
+		const sql = "WITH a AS (SELECT x AS `Mixed` FROM t) SELECT `mixed` AS z FROM a";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "`mixed`"));
+		expect(terminals(head!)).toEqual(["t.x"]);
+		expect(head!.via).toEqual([cteScope(scopes, "a")]);
+	});
+
+	// anvil ITEM 12 red case: single-source star passthrough — via [s], no schema needed
+	it("records the star-descended scope on the trail (single source, schema-free)", () => {
+		const sql = "WITH s AS (SELECT * FROM orders) SELECT customer_id FROM s";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "customer_id"));
+		expect(terminals(head!)).toEqual(["orders.customer_id"]);
+		expect(head!.via).toEqual([cteScope(scopes, "s")]);
+	});
+
+	// anvil ITEM 12 red case: schema-resolved multi-source star — s reported, terminal via schema.
+	// The flow ends in a terminal Origin with NO producer hop — the trail rides the head anchor.
+	it("reports the descended scope when a multi-source star resolves through the schema", () => {
+		const sql =
+			"WITH s AS (SELECT * FROM orders o JOIN customers c ON c.id = o.customer_id)\nSELECT customer_name FROM s";
+		const scopes = scopesOf(sql);
+		const schema = new Schema({
+			orders: { order_id: "bigint", customer_id: "bigint" },
+			customers: { id: "bigint", customer_name: "string" },
+		});
+		const head = lineageAt(scopes, offsetOf(sql, "customer_name"), schema);
+		expect(terminals(head!)).toEqual(["customers.customer_name"]);
+		expect(head!.via).toEqual([cteScope(scopes, "s")]);
+	});
+
+	// Control: computed chains report hops, not trail — via ABSENT everywhere.
+	it("leaves via absent when nothing was collapsed (computed chain)", () => {
+		const sql = "WITH a AS (SELECT x+1 AS y FROM t), b AS (SELECT y*2 AS z FROM a) SELECT z FROM b";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
+		expect(head!.via).toBeUndefined();
+		expect(head!.downstream[0]?.via).toBeUndefined();
+	});
+
+	// Mixed: a computed hop reached THROUGH a rename — the trail lands on the consumer side.
+	it("attaches the trail of a rename that fronts a computed producer", () => {
+		const sql = "WITH a AS (SELECT x*2 AS w FROM t), b AS (SELECT w AS z FROM a) SELECT z FROM b";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
+		// head collapses onto a's computed hop; the rename scope b rides its via.
+		expect(exprText(sql, head!)).toBe("x*2");
+		expect(head!.via).toEqual([cteScope(scopes, "b")]);
+	});
+});
