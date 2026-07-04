@@ -9,6 +9,11 @@ stream, first-class jinja tag nodes, macro expansions as typed holes — replaci
 Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; they differ on division
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.
 
+**Status: inc1 is built.** Raw jinja-SQL parses natively — `parseTemplated` / `tokenizeTemplated`, the
+unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2 ref/source/macro tag-AST, all
+additive over the eight untouched SQL grammars (jinja reachable only through the barrel), gated by
+`tests/corpus/jinja.test.ts`. inc2 and inc3 below stay spec.
+
 ## The locked architecture (three lines — CHANNEL ITEM 14)
 
 - **TWO PATHS.** *Edit-time* (every keystroke): sqllens parses raw jinja-SQL; a macro expansion is a
@@ -110,10 +115,11 @@ shape-valid placeholder — that is inc2/inc3 (the TemplateCatalog), not inc1.
 **The one sqllens ask (committed, CHANNEL 05:10):** the hole/tag node carries its SYNTACTIC-SLOT context —
 the SQL slot it sits in (`column-list` / `predicate` / `relation` / `statement` / `expr`), derivable from
 where the placeholder landed in the SQL parse — so the extension's quick-fix can pre-fill the smart
-default. This is a first-class field of the tag node from inc1, not an afterthought; the positional default
-keys off it too.
+default. The inc1 `TagNode` does NOT yet carry this slot field (its shape is the R2 span contract only —
+ref/source/macro/var/config/control/other with spans); the field is a spec ask deferred to the increment
+that needs it, when the positional default keys off it.
 
-## R1 — the unified token stream (inc1 deliverable)
+## R1 — the unified token stream (inc1 — built)
 
 `parseTemplated(text, dialect)` / `tokenizeTemplated(text, dialect)` return one flat, source-ordered
 `Token[]`: SQL tokens (channel 0, original coordinates via length-preserving placeholders) + jinja tokens
@@ -124,7 +130,7 @@ union — every exhaustive role `switch` is revisited in the same change). Multi
 spanning newlines carries a correct multi-line span (the extension's extractors are single-line-lossy
 today; R2 fixes this — it is a parity UPGRADE, needs its own test).
 
-## R2 — the tag-AST span contract (inc1 deliverable)
+## R2 — the tag-AST span contract (inc1 — built)
 
 The ref/source/macro-call nodes, with a span for every field below (sqllens convention: 1-based line,
 0-based column, 0-based offsets — the extension applies its own `line - 1`). These are the HARD contract:
@@ -186,10 +192,15 @@ regions first.)
 
 ## Increment plan
 
-- **inc1 — placeholder-parity / raw-jinja-parse (R1 + R2).** The pre-lexer, the `grammars/jinja/` island
-  grammar, the unified token stream, the ref/source/macro tag-AST with the R2 span contract, totality.
-  Positional-default hole; syntactic-slot context field. Ships the surface the extension needs to delete
-  its blanking cascade (`parse-with-jinja-fallback`, `jinja-blanker`, the fine tokenizer, the two-stream
+- **inc1 — placeholder-parity / raw-jinja-parse (R1 + R2) — BUILT.** The pre-lexer, the `grammars/jinja/`
+  island grammar, the unified token stream, and the ref/source/macro tag-AST with the R2 span contract are
+  shipped and total: `parseTemplated(text, dialect)` / `tokenizeTemplated` return one source-ordered
+  `Token[]` (SQL channel 0/1 + jinja channel 2, role `"jinja"`) plus the `TagNode[]`, over the eight
+  untouched SQL grammars — jinja reachable only through the barrel. Positional-default hole
+  (NO_OUTPUT_BUILTINS-aware); the syntactic-slot context field is deferred (§ the hole). Gated by
+  `tests/corpus/jinja.test.ts` over 15 `tests/fixtures/jinja/` fixtures (totality, byte-for-byte stream
+  reconstruction, span in-bounds + content-true). This is the surface the extension consumes to retire its
+  blanking cascade (`parse-with-jinja-fallback`, `jinja-blanker`, the fine tokenizer, the two-stream
   merge). No SQL-grammar change; no IR change beyond the additive jinja facade + `TokenRole "jinja"` /
   channel 2.
 - **inc2 — tag-AST (R3 + R4) + variant expansion.** `{{ ref('x') }}` in a FROM/JOIN slot lowers to a
@@ -224,6 +235,11 @@ increment (its `JINJA-CONSUMPTION-PLAN.md` maps each of its ~2,538 dying/relocat
 - **Q4 (extension-side, not sqllens):** whether the extension's nunjucks pass-2 survives — decided by the
   bridge's `compile_inline` coverage, not here.
 - **Fragment-macro at inc1** is a known parity limitation (not a regression), retired by inc3's shaped hole.
+- **One TagNode per tag (inc1 boundary).** `tagNodesOf` returns exactly ONE `TagNode` per tag — the
+  leftmost-topmost call in the tag's parse tree. A tag with two sibling calls (`{{ [ref('a'), ref('b')] }}`)
+  yields only the first; an arithmetic tag with an embedded call (`{{ x + ref('y') }}`) classifies off that
+  call. Both are rare in real dbt (a FROM is a lone `{{ ref() }}`), and the emitted spans are still
+  accurate for the node returned. A tracked inc1 boundary, retired when inc2 needs multi-node tags.
 - **Debugger native Source Map (I2)** depends on sqllens owning the jinja→SQL transform (inc2+), the one
   extension piece with no shipped sqllens surface until then.
 - **minijinja vs Jinja2 divergences** (division, import caching, silent undefined) are accept-syntax edges;
