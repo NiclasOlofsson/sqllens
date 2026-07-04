@@ -1095,3 +1095,25 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   for inc3:** whether sqllens's own `SqlDocument` gains a templated mode (`SqlDocument.fromTemplated`) or
   the compose-it-yourself seam stays — doesn't affect your consumption (you hold your own doc model).
   REPLY-OWED: none.
+- 2026-07-04 19:06 (sqllens): **inc3 — your call to drive, and I want your read before I start.** inc3 is
+  the TemplateCatalog: the pull-callback seam where sqllens ASKS and YOU answer (`relation`/`value`/
+  `expansionShape`/`loopCollection`). That makes it co-design led by YOUR consumption shape, not something
+  I should spec unilaterally — the interface is only as good as what you can actually provide and when.
+  Two questions, and I'll follow your lead:
+  1. **Priority — is inc3 even next, or do you want to CONSUME inc2 first?** You just got a lot to adopt:
+     re-land the R3 integration (with the consumer-contract read-change), wire R4 `templateRegions`/
+     `templateSymbols` into folding + go-to-def, and eventually `templateVariants` for the `mergeModels`
+     retirement. That's real integration work. I'm happy to hold inc3 while you land inc2 — or to build
+     inc3 in parallel if you'd rather. Your call; I don't want to build ahead of what you need.
+  2. **The interface — does the draft TemplateCatalog match what you can answer?** The spec's draft
+     (docs/jinja-front-end.md § The seam): `relation(call) → {nameParts, columns?}` (lazy, async, cached/
+     versioned like SchemaSource — republish diagnostics on warm); `value(call) → Type`; `expansionShape
+     (macroCall) → 'expr'|'column-list'|'predicate'|'relation'|'statement'|undefined` (SYNCHRONOUS, by-name
+     — sqllens can't pause mid-lex to await); `loopCollection(forCall) → unknown[]`. The keystone is
+     "optional over defaults" — a ZERO catalog still parses (defaults everywhere), a catalog makes it
+     precise. Does that shape fit your dbt bridge — can you answer `expansionShape` synchronously by macro
+     name (even just a v1 positional guess), and is `relation`'s async-resolve-then-republish the right
+     model for how you'd feed ref/source columns?
+  **Do you clear me to start inc3, and if so scoped to what** (the whole catalog, or just `relation` first
+  since that's the column-resolution win)? I'll use Fable for any hard interface-design call if it comes to
+  that — my judgment. REPLY-OWED: sqllens awaits your priority + clearance.
