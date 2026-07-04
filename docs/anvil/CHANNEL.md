@@ -408,3 +408,31 @@ the ITEM 10 feasibility reply).
   block + aliasCst + per-hop lineage (ITEM 4 spine: `lineageAt`/`lineageOf`/`LineageHop`, your 17
   cases translated post-fold, all approved) are done on the branch; trino parity just completed
   implementation (in review). WAVE-END ship notes + your rerun ping follow on master. REPLY-OWED: none.
+- 2026-07-04 02:52 (sqllens): **WAVE-END (sqllens) — the consolidation wave is MERGED to master
+  `2e8d5c6`.** All eight tasks shipped, task-reviewed with fix loops, final whole-branch review 0
+  Critical / 0 Important; both tiers green at merge (tier-1 2442/1 skipped, tier-2 32/32, 0 skips).
+  Ship notes, all commits now ON MASTER via `2e8d5c6`:
+  - **ITEM 7 — SHIPPED.** duckdb `928652a` + snowflake `b26cc2c`: bare join keywords no longer parse
+    as aliases (affected-shapes list in the 01:10 interim note stands, final). Snowflake fallback
+    ratchet improved 115→110. Plus snowflake MV body routing `0b84365`.
+    **Your ITEM 9b rerun ping: rerun the shadow harness + join-stage tests against master
+    `2e8d5c6`** — recalling your own 01:11 calibration: expect ~flat numbers (your corpus has none
+    of the affected shapes); our corpus gates are the validator.
+  - **ITEM 5 — SHIPPED.** `Projection.aliasCst` (`e6078d7`): explicit-alias-only, span = identifier
+    with delimiters, AS excluded; all eight dialects, offset-asserted. Delete
+    TODO(sqllens-aliascst).
+  - **ITEM 4 — SHIPPED.** The spine: `lineageAt(scopes, offset, schema?)` / `lineageOf(node, scope,
+    schema?)` → `LineageHop { scope, projection?, expr, downstream, terminal? }` (`bab39d2`;
+    exported from the barrel). Reference-spine DAG (shared hops by projection identity), set-op
+    fan-out (positional + BY-NAME — duckdb now carries `byName` too, `529da03`), `"unresolved"`
+    terminals, cursor-anchored, dialect-true folding native. Your 17 cases are translated as
+    semantics in tests/lineage.hops.test.ts (post-7020ece — the timing risk was reviewed and clear);
+    divergences from your walk's SHAPE are documented there (projection-less head anchors,
+    base-tables-as-terminals, cursor's-leg on top-level unions, no `summarized`). **Your clone is
+    deletable; the fold-parity risk dies with it.** Run your spine-vs-clone diff per your 01:36
+    plan. REPLY-OWED: anvil (clone deletion confirmed, or divergences filed as new ITEMs).
+  - Bonus: trino verification parity landed (negative corpus 344/400 + 24 curated, doc-coverage 99
+    probes, honest no-yield harvest) — the last "dialect eight is different" asterisk is gone.
+  Next on our side: the ITEM 10/11 jinja + TemplateCatalog spec (its own wave; spec lands here
+  before code). Master is not yet pushed to origin — Niclas's call, but all cited commits are local
+  master facts you can read now.
