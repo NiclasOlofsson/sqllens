@@ -246,6 +246,47 @@ CATALOG RESPONSE, not architecture — how the extension answers `expansionShape
 positional default → v2 macro signature → v3 real dbt render of that one macro) with sqllens frozen across
 the gradient.
 
+### inc3 increment 2 — `expansionShape` (shaped placeholders; the cascade-death lever) — design decided 2026-07-05
+
+anvil's driver: `expansionShape` is the ONLY thing between them and deleting the fallback cascade
+(`parseWithJinjaFallback` + `jinja-blanker` + nunjucks). The residual class it kills: an **unknown callable
+at STATEMENT position** — `with cte as ({{ macro_a(…) }}) {{ macro_b(…) }}` (a macro-generated CTE body, a
+trailing statement-level macro) — where inc1's single-identifier placeholder can't fuse into valid SQL, so
+the SQL parse fails. anvil answers `expansionShape` synchronously by macro name from the dbt manifest
+(macro signatures are static knowledge); v1 is a positional guess, upgrading per-macro without sqllens
+changing.
+
+The mechanism is placeholder surgery in `src/minijinja/segment.ts`. Today `fillChar` returns ONE char
+(`"j"` identifier / `" "` whitespace) stamped across the tag's `[start,end)`, newlines preserved. inc3.2
+generalizes the fill from a char to a length-matched **shape-valid string**:
+
+- **Interface (extends `TemplateCatalog`):** `expansionShape(call: { name: string; parts?: string[] },
+  dialect?): "expr" | "column-list" | "predicate" | "relation" | "statement" | undefined` — SYNCHRONOUS,
+  by name (sqllens can't await mid-segment). Threaded into `parseTemplated(text, dialect, opts?)` as a
+  `shapeOf?: (call) => Shape | undefined` (the catalog's `expansionShape` bound, or a bare callback), passed
+  down to `segment`. No catalog / no `shapeOf` / `undefined` → the current positional fill, byte-identical.
+- **Shape → minimal valid fragment (dialect-neutral where it parses across all 8; per-dialect override
+  table only where one dialect rejects the neutral form):** `statement`/`relation` → `SELECT 1` (a valid
+  query body — fits BOTH a standalone statement slot AND a `(…)` CTE/subquery body, the two anvil cases);
+  `predicate` → `1=1`; `column-list` → `1` (one valid select item — the macro's real column COUNT differs
+  but the slot parses); `expr` → the identifier fill (today's `"j"` run). Each fragment is placed at the
+  tag's start, then the remaining range is padded — **length- AND newline-preserving**: pad with spaces,
+  but keep every original `\n` at its offset (whitespace incl. newlines after a valid fragment is legal
+  SQL). The coordinate invariant (every placeholder char occupies the exact tag offset) is unchanged.
+- **Fit guard (never make it worse):** the non-whitespace fragment must fit BEFORE the tag's first `\n`
+  and within the tag length. If it doesn't (tag too short, or a newline lands inside where the fragment
+  would go), FALL BACK to the positional default for that tag — the shaped placeholder is strictly an
+  improvement, never a regression on a tag it can't shape.
+- **Only MACRO-call tags consult `shapeOf`** — a `ref`/`source`/`var`/no-output-builtin tag keeps its
+  existing fill (they already parse). The call passed to `shapeOf` is the macro name (+ package parts),
+  from the same leading-call detection `fillChar` already does.
+- **Zero-catalog keystone + gate:** a `parseTemplated` with no `shapeOf` is byte-identical to today (the
+  corpus gate + consumer-contract gate prove it). The new gate: with a `shapeOf` returning `statement` for
+  the residual-class fixtures (`with cte as ({{ m() }}) {{ n() }}`), the SQL parse now succeeds (0 syntax
+  errors) where it failed before — the cascade-death proof.
+- **Two-path integrity:** this is still parse-with-holes, NOT render — `SELECT 1` is a shape-valid HOLE, not
+  the macro's output. The IR/tokens still flag the tag; the extension renders for real at validation time.
+
 ### inc3 increment 1 — `relation` only — BUILT 2026-07-04 (design decided 2026-07-04; anvil cleared relation-first)
 
 anvil cleared prototyping **`relation` FIRST, in parallel** (the column-resolution win) and holding
