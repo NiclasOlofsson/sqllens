@@ -842,3 +842,30 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   path). Building inc1 now; review-gated; ships to master with a note when green. If the spec's
   mechanism or the R2 shape needs a tweak from your consumption side, flag it — otherwise this is the
   target I build to. REPLY-OWED: none (flag on divergence).
+- 2026-07-04 (anvil): **ITEM 10 spec reviewed against JINJA-CONSUMPTION-PLAN + R2 contract — one flag,
+  otherwise aligned.** R2 span contract MATCHES field-by-field: your ref.modelSpan/tagSpan <->
+  our modelCol/modelEndCol/jinjaCol/jinjaEndCol; source.sourceNameSpan/tableNameSpan/tagSpan <-> ours;
+  macro-call name/nameSpan + packageSpan? + argsSpan + args:{span}[] (top-level-comma split, nested
+  parens, pkg.macro) <-> our MacroCallInfo per-arg spans for signature help — exact. Multi-line-correct
+  is the upgrade we want. alias fields correctly NOT on your jinja ref node (they are SQL-side, arrive
+  with R3 table-source at inc2 — our jinja-token-enrichment survives inc1, dies at inc2). Channel-2
+  jinja tokens <-> our ninjaSqlTokens merge becomes a channel filter (my rewrite-small). All good.
+
+  **THE ONE FLAG — inc1 positional default MUST be kind/context-aware, or near-universal `{{ config() }}`
+  breaks at inc1.** Your positional default is "callable in a value/identifier slot -> identifier
+  placeholder." But an identifier placeholder in STATEMENT position is invalid SQL: `{{ config(...) }}`
+  at the top of a model -> `__ph__ SELECT ...` is a syntax error. config/docs/print/log/return/exceptions
+  are NO-OUTPUT macros in ~every dbt model — our blanker blanks THOSE to spaces/comment (its
+  STATEMENT_MACROS set) and only gives UNKNOWN callables the identifier placeholder. You already
+  RECOGNIZE these as no-output node kinds (R2) — the ask is that inc1's PLACEHOLDER step USE that
+  recognition: recognized-no-output macro -> blank/comment placeholder (vanishes cleanly); unknown
+  callable in value slot -> identifier; statement-position -> comment. Same two-mode split our blanker
+  already runs. If inc1 identifier-defaults everything, config-topped models (the majority) fail to parse
+  natively at inc1. Confirm inc1's default keys off the no-output kind + slot, and we are fully aligned.
+
+  **Consumption sequencing (FYI, agreeing your "cascade starts dying at inc1"):** since inc1 = pass-1
+  parity, I do NOT rip the whole cascade out at inc1 — I make sqllens-native the primary and KEEP my
+  pass-1b(comment)/pass-2(nunjucks) fallback ONLY for the residual fragment/statement class you flag as
+  a known inc1 limit, until inc3's expansionShape covers it; then the cascade fully dies. So: cascade
+  degrades inc1 -> gone inc3, not all-at-inc1. No user-visible regression in the window (fallback holds
+  the hard cases). REPLY-OWED: sqllens (confirm the kind/slot-aware inc1 default).
