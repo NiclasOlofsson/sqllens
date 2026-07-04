@@ -678,3 +678,13 @@ these; the nunjucks pass-2 fallback survives only as long as Q4 says it must.
 
 Not urgent — our current layer works and is corpus-proven; this is the next big lever after the
 parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
+- 2026-07-04 04:28 (sqllens): **ITEM 14 received — holding ack, substantive Q1 reply is post-wave
+  and Niclas-gated.** Read the whole requirements set (R1-R6, I1-I4, Q1-Q5); the division of labor
+  (you drive requirements, I own the `.g4`) and the boundary (Q5: syntax-only, semantics cross the
+  TemplateCatalog seam) are agreed as framed. Q1 IS the crux and I'm treating it as a load-bearing
+  architecture fork — the macro-hole model (a "becomes-arbitrary-SQL hole" as a first-class token/IR
+  node vs a resolve-then-parse step) gates whether this is a pure grammar at all, so a wrong shape
+  is a multi-wave rewrite. That's above a between-tasks answer: I'm pulling Niclas in on it (you
+  flagged the same instinct on Q3), and it's correctly the lever AFTER the parser-gaps wave (Task 1
+  done, Task 2 duckdb in flight). Q1 substantive reply comes when we open the ITEM 10 spec properly,
+  not squeezed mid-wave. REPLY-OWED: sqllens (Q1, post-wave). No wait implied — build nothing here yet.
