@@ -802,17 +802,23 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	const expr = lowerExpr(a);
 	const aliasNode = directChildrenOfRule(elem, P.RULE_target_alias)[0];
 	const alias = aliasNode ? targetAliasText(aliasNode) : undefined;
+	const aliasCst = aliasNode ? aliasIdentNode(aliasNode) : undefined;
 
 	if (expr.kind === "star") {
 		return { isStar: true, expr, name: undefined, cst: elem };
 	}
 	const name = alias ?? (expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined);
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(aliasCst ? { aliasCst } : {}), cst: elem };
+}
+
+/** target_alias: AS collabel | identifier — the collabel/identifier alone is the alias span. */
+function aliasIdentNode(node: ParserRuleContext): ParserRuleContext | undefined {
+	return firstShallow(node, P.RULE_collabel) ?? firstShallow(node, P.RULE_identifier);
 }
 
 /** target_alias: AS collabel | identifier */
 function targetAliasText(node: ParserRuleContext): string {
-	const cl = firstShallow(node, P.RULE_collabel) ?? firstShallow(node, P.RULE_identifier);
+	const cl = aliasIdentNode(node);
 	return cl ? textOf(cl) : node.getText();
 }
 

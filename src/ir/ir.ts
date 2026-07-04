@@ -412,6 +412,10 @@ export interface Projection {
 	isStar: boolean;
 	/** The projected expression, modelled. */
 	expr: Expr;
+	/** The alias identifier's own span — present ⇔ the projection carries an EXPLICIT alias in
+	 *  source (with or without AS); covers the identifier only (quoting delimiters included, the
+	 *  AS keyword excluded). A derived name (a bare column ref's own name) gets NO aliasCst. */
+	aliasCst?: ParserRuleContext;
 	cst: ParserRuleContext;
 }
 

@@ -369,6 +369,7 @@ function foldSetOps(
 	let body: QueryBody | undefined;
 	let pendingTok: number | undefined;
 	let pendingAll = false;
+	let pendingByName = false;
 	let opCst: ParserRuleContext = node;
 	for (let i = 0; i < node.getChildCount(); i++) {
 		const c = node.getChild(i);
@@ -376,6 +377,10 @@ function foldSetOps(
 			if (opTokens.includes(c.symbol.type)) {
 				pendingTok = c.symbol.type;
 				opCst = node;
+			} else if (c.symbol.type === P.NAME_P) {
+				// UNION [ALL] BY NAME — grammars/duckdb/DuckdbParser.g4 select_clause: `(BY NAME_P)?`
+				// (bare inline tokens, not a sub-rule). duckdb.org/docs/current/sql/query_syntax/setops#union-all-by-name
+				pendingByName = true;
 			}
 			continue;
 		}
@@ -390,12 +395,19 @@ function foldSetOps(
 			body = branch;
 		} else {
 			const op = pendingTok === P.INTERSECT ? "intersect" : pendingTok === P.EXCEPT ? "except" : "union";
-			// UNION [ALL] BY NAME matches columns by name — the set-op node is the same; byName rides
-			// as a modelled fact only if the IR grows it (it does not today; name-matching is a
-			// binder concern the scope layer approximates by position, like Snowflake's BY NAME).
-			body = { kind: "setop", op, all: pendingAll, left: body, right: branch, columns: [], cst: opCst };
+			body = {
+				kind: "setop",
+				op,
+				all: pendingAll,
+				byName: pendingByName || undefined,
+				left: body,
+				right: branch,
+				columns: [],
+				cst: opCst,
+			};
 			pendingTok = undefined;
 			pendingAll = false;
+			pendingByName = false;
 		}
 	}
 	return body ?? emptyBody(node);
@@ -613,7 +625,8 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Sourc
 			? textOf(directChildrenOfRule(tr, P.RULE_colid)[0])
 			: undefined;
 	const alias = (aliasNode ? aliasName(aliasNode) : undefined) ?? prefixAlias;
-	const aliasCst = aliasNode ? firstShallow(aliasNode, P.RULE_table_alias) : undefined;
+	// The alias identifier sits under table_alias (AS slot) or bare_table_alias (AS-less slot).
+	const aliasCst = aliasNode ? aliasIdentNode(aliasNode) : undefined;
 	const columnAliases = aliasNode ? aliasColumnList(aliasNode) : undefined;
 
 	const rel = directChildrenOfRule(tr, P.RULE_relation_expr)[0];
@@ -689,8 +702,13 @@ function buildTableFromRelation(
 	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
 }
 
+/** The alias identifier node — under table_alias (AS slot) or bare_table_alias (AS-less slot). */
+function aliasIdentNode(aliasClause: ParserRuleContext): ParserRuleContext | undefined {
+	return firstShallow(aliasClause, P.RULE_table_alias) ?? firstShallow(aliasClause, P.RULE_bare_table_alias);
+}
+
 function aliasName(aliasClause: ParserRuleContext): string | undefined {
-	const ta = firstShallow(aliasClause, P.RULE_table_alias);
+	const ta = aliasIdentNode(aliasClause);
 	return ta ? textOf(ta) : undefined;
 }
 
@@ -704,7 +722,9 @@ function aliasColumnList(aliasClause: ParserRuleContext): string[] | undefined {
 function funcAliasName(funcAlias: ParserRuleContext): string | undefined {
 	const ac = directChildrenOfRule(funcAlias, P.RULE_alias_clause)[0];
 	if (ac) {
-		const cid = firstShallow(ac, P.RULE_colid);
+		// The alias name is the DIRECT colid (AS slot) or bare_colid (AS-less slot) child of
+		// alias_clause — never a colid buried in the column-alias name_list (`f() tbl(col)`).
+		const cid = directChildrenOfRule(ac, P.RULE_colid)[0] ?? directChildrenOfRule(ac, P.RULE_bare_colid)[0];
 		return cid ? textOf(cid) : undefined;
 	}
 	const cid = firstShallow(funcAlias, P.RULE_colid);
@@ -720,7 +740,8 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	if (prefixCid && hasDirectToken(elem, P.COLON)) {
 		const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
 		const expr = a ? lowerExpr(a) : otherExpr(elem);
-		return { name: textOf(prefixCid), isStar: false, expr, cst: elem };
+		// Prefix alias `x: 42` — the colid before the `:` is the explicit alias identifier.
+		return { name: textOf(prefixCid), isStar: false, expr, aliasCst: prefixCid, cst: elem };
 	}
 	const colref = directChildrenOfRule(elem, P.RULE_columnref)[0];
 	const a = directChildrenOfRule(elem, P.RULE_a_expr)[0];
@@ -733,13 +754,14 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	const expr = colref ? lowerColumnref(colref) : lowerExpr(a);
 	const aliasNode = directChildrenOfRule(elem, P.RULE_target_alias)[0];
 	const alias = aliasNode ? targetAliasText(aliasNode) : undefined;
+	const aliasCst = aliasNode ? targetAliasIdentNode(aliasNode) : undefined;
 
 	if (expr.kind === "star") {
 		applyStarModifiers(expr, elem);
 		return { isStar: true, expr, name: undefined, cst: elem };
 	}
 	const name = alias ?? (expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined);
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(aliasCst ? { aliasCst } : {}), cst: elem };
 }
 
 /** Star modifiers (star.md): EXCLUDE names ride on the star; REPLACE expressions' column refs
@@ -756,11 +778,17 @@ function applyStarModifiers(star: Expr & { kind: "star" }, elem: ParserRuleConte
 	if (excludes.length) star.exclude = excludes;
 }
 
-function targetAliasText(node: ParserRuleContext): string {
-	const cl =
+/** target_alias: AS collabel | identifier | sconst — the label/identifier/string alone is the span. */
+function targetAliasIdentNode(node: ParserRuleContext): ParserRuleContext | undefined {
+	return (
 		firstShallow(node, P.RULE_collabel) ??
 		firstShallow(node, P.RULE_identifier) ??
-		firstShallow(node, P.RULE_sconst);
+		firstShallow(node, P.RULE_sconst)
+	);
+}
+
+function targetAliasText(node: ParserRuleContext): string {
+	const cl = targetAliasIdentNode(node);
 	return cl ? stripStringQuotes(textOf(cl)) : node.getText();
 }
 

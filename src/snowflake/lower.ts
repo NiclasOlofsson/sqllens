@@ -117,14 +117,34 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		return q;
 	}
 	const qs = shallowFirstOfRule(commands[0], P.RULE_query_statement);
-	if (!qs) {
-		const q = nonQuery(commands[0], "non-query");
+	if (qs) {
+		const q = lowerQueryStatement(qs);
 		q.statement = statement;
 		return q;
 	}
-	const q = lowerQueryStatement(qs);
+	// create_materialized_view's body is `AS select_statement`, not `AS query_statement` like its
+	// sibling CREATE forms (grammars/snowflake/SnowflakeParser.g4 create_materialized_view — upstream
+	// comment: "MATERIALIZED VIEW accept only simple select statement at this time"), so the
+	// query_statement search above misses it; fall back to a bare select_statement.
+	const stmt = shallowFirstOfRule(commands[0], P.RULE_select_statement);
+	if (stmt) {
+		const q = selectStatementToQuery(stmt);
+		q.statement = statement;
+		return q;
+	}
+	const q = nonQuery(commands[0], "non-query");
 	q.statement = statement;
 	return q;
+}
+
+/** A bare select_statement (no WITH, no set ops — e.g. create_materialized_view's `AS select_statement`)
+ *  as a standalone QueryExpr, mirroring ssipToQuery/lowerQueryStatement for the wrapped forms. */
+function selectStatementToQuery(stmt: ParserRuleContext): QueryExpr {
+	const body = buildSelect(stmt);
+	const orderBy = extractOrderBy(stmt);
+	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	const limit = extractLimit(stmt);
+	return { kind: "query", ctes: [], body, orderBy, limit, cst: stmt };
 }
 
 /**
@@ -671,7 +691,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 	if (colAdjacent) {
 		const expr = lowerColumnElem(colAdjacent);
 		const name = alias ? aliasText(alias) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
-		return { name, isStar: false, expr, cst: elem };
+		return { name, isStar: false, expr, ...(alias ? { aliasCst: aliasCstOf(alias) } : {}), cst: elem };
 	}
 
 	const exprElem = directChildrenOfRule(elem, P.RULE_expression_elem)[0];
@@ -685,7 +705,7 @@ function buildProjection(elem: ParserRuleContext): Projection {
 		: otherExpr(elem);
 	let name = alias ? aliasText(alias) : undefined;
 	if (name === undefined && expr.kind === "column") name = expr.parts[expr.parts.length - 1];
-	return { name, isStar: false, expr, cst: elem };
+	return { name, isStar: false, expr, ...(alias ? { aliasCst: aliasCstOf(alias) } : {}), cst: elem };
 }
 
 /** column_elem: object_name_or_alias? column_name | object_name_or_alias? DOLLAR column_position —
@@ -709,17 +729,33 @@ function lowerColumnElem(colElem: ParserRuleContext): Expr {
 	return { kind: "column", parts: [...qParts, ...cParts], partSpans, cst: colElem };
 }
 
+// A FROM-source alias node is `from_alias : AS alias | bare_from_alias` (grammar). Read its text and
+// the identifier CST node (for the alias's precise span) from whichever branch matched: the `AS alias`
+// branch nests an `id_`; the bare branch is a `bare_from_alias` (id_ minus the reserved LEFT/RIGHT).
+function fromAliasParts(fa: ParserRuleContext | undefined): {
+	text?: string;
+	cst?: ParserRuleContext;
+} {
+	if (!fa) return {};
+	const node = firstOfRule(fa, P.RULE_id_) ?? directChildrenOfRule(fa, P.RULE_bare_from_alias)[0];
+	return { text: node ? node.getText() : fa.getText(), cst: node };
+}
+
 function aliasText(asAlias: ParserRuleContext): string {
 	const a = firstOfRule(asAlias, P.RULE_id_);
 	return a ? a.getText() : asAlias.getText();
 }
 
+/** The alias identifier's own span: as_alias (`AS? alias`, alias `: id_`) → its id_ (dropping AS). */
+function aliasCstOf(asAlias: ParserRuleContext): ParserRuleContext {
+	return firstOfRule(asAlias, P.RULE_id_) ?? asAlias;
+}
+
 // --- sources -------------------------------------------------------------------
 
 function buildSource(ref: ParserRuleContext): Source {
-	const asAlias = directChildrenOfRule(ref, P.RULE_as_alias)[0];
-	const alias = asAlias ? aliasText(asAlias) : undefined;
-	const aliasCst = asAlias ? firstOfRule(asAlias, P.RULE_id_) : undefined;
+	const asAlias = directChildrenOfRule(ref, P.RULE_from_alias)[0];
+	const { text: alias, cst: aliasCst } = fromAliasParts(asAlias);
 
 	// LATERAL FLATTEN(…) f / LATERAL SPLIT_TO_TABLE(…) s — fixed output columns.
 	const flatten = directChildrenOfRule(ref, P.RULE_flatten_table)[0];
@@ -762,8 +798,8 @@ function buildSource(ref: ParserRuleContext): Source {
 			expr: lowerExpr(e),
 			cst: e,
 		}));
-		const innerAs = directChildrenOfRule(values, P.RULE_as_alias)[0];
-		const valuesAliasCst = innerAs ? firstOfRule(innerAs, P.RULE_id_) : undefined;
+		const innerAs = directChildrenOfRule(values, P.RULE_from_alias)[0];
+		const { text: valuesAliasText, cst: valuesAliasCst } = fromAliasParts(innerAs);
 		const colAliases = firstOfRule(values, P.RULE_column_alias_list_in_brackets);
 		return {
 			kind: "subquery",
@@ -773,7 +809,7 @@ function buildSource(ref: ParserRuleContext): Source {
 				body: { kind: "select", projections, from: [], columns: [], aggregated: false, cst: values },
 				cst: values,
 			},
-			alias: innerAs ? aliasText(innerAs) : alias,
+			alias: innerAs ? valuesAliasText : alias,
 			aliasCst: valuesAliasCst ?? aliasCst,
 			columnAliases: colAliases
 				? directChildrenOfRule(colAliases, P.RULE_id_).map((i) => i.getText())

@@ -92,6 +92,51 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		ok("SELECT * FROM a ANTI JOIN b ON a.k = b.k;");
 	});
 
+	// A bare (AS-less) SEMI/ANTI/ASOF/POSITIONAL before JOIN is the JOIN keyword, never the left
+	// table's alias. DuckDB categorizes these four as type_func_name keywords (libpg_query
+	// type_name_keywords.list), excluded from ColId and thus never a bare alias — so `FROM a SEMI
+	// JOIN b` is a SEMI join, not `a AS semi INNER JOIN b`. (duckdb/duckdb
+	// third_party/libpg_query grammar/statements/{select.y joined_table, common.y ColId}.)
+	it("bare SEMI/ANTI/ASOF/POSITIONAL before JOIN read as the join, no alias on the left table", () => {
+		const join0 = (sql: string) => {
+			const { ast } = parse(sql, "duckdb");
+			return ast.body.kind === "select" ? ast.body.joins?.[0] : undefined;
+		};
+		const from0 = (sql: string) => {
+			const { ast } = parse(sql, "duckdb");
+			return ast.body.kind === "select" ? ast.body.from[0] : undefined;
+		};
+		expect(join0("SELECT * FROM a SEMI JOIN b ON a.x = b.x")?.kind).toBe("semi");
+		expect(join0("SELECT * FROM a ANTI JOIN b ON a.x = b.x")?.kind).toBe("anti");
+		expect(join0("SELECT * FROM a ASOF JOIN b ON a.x >= b.x")?.kind).toBe("asof");
+		expect(join0("SELECT * FROM a POSITIONAL JOIN b")?.kind).toBe("positional");
+		// the left table keeps NO alias — the keyword is no longer swallowed as one
+		expect(from0("SELECT * FROM a SEMI JOIN b ON a.x = b.x")?.alias).toBeUndefined();
+		expect(from0("SELECT * FROM a ANTI JOIN b ON a.x = b.x")?.alias).toBeUndefined();
+		expect(from0("SELECT * FROM a ASOF JOIN b ON a.x >= b.x")?.alias).toBeUndefined();
+		// same for function-table and subquery left sources (bare alias via alias_clause/colid)
+		expect(join0("SELECT * FROM range(3) SEMI JOIN b ON range = b.x")?.kind).toBe("semi");
+		expect(from0("SELECT * FROM range(3) SEMI JOIN b ON range = b.x")?.alias).toBeUndefined();
+		expect(join0("SELECT * FROM (SELECT 1) ANTI JOIN b ON true")?.kind).toBe("anti");
+		// a func-table WITH an alias + column list is unaffected (alias binds, not swallowed)
+		expect(from0("SELECT * FROM generate_series(1, 3) tbl(i)")?.alias).toBe("tbl");
+	});
+
+	it("positive controls: explicit AS keeps the keyword as an alias; column and plain-alias use unaffected", () => {
+		const from0 = (sql: string) => {
+			const { ast } = parse(sql, "duckdb");
+			return ast.body.kind === "select" ? ast.body.from[0] : undefined;
+		};
+		// explicit AS is unambiguous — the keyword IS the alias there (kept legal by the fork's
+		// permissive superset; the full unreserved set stays reachable via AS)
+		expect(from0("SELECT * FROM t AS semi")?.alias).toBe("semi");
+		expect(from0("SELECT * FROM t AS anti")?.alias).toBe("anti");
+		// keyword in column position is unaffected (still an unreserved_keyword)
+		ok("SELECT semi FROM t");
+		// a plain non-keyword bare alias still binds
+		expect(from0("SELECT * FROM t semi2")?.alias).toBe("semi2");
+	});
+
 	it("sampling and LIMIT n% (samples.md, limit.md)", () => {
 		ok("SELECT * FROM t USING SAMPLE 10%;");
 		ok("SELECT * FROM t USING SAMPLE 10 PERCENT (bernoulli);");
@@ -102,6 +147,14 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 
 	it("UNION BY NAME (setops.md#union-all-by-name)", () => {
 		ok("SELECT a, b FROM x UNION ALL BY NAME SELECT b, a FROM y;");
+	});
+
+	it("UNION BY NAME sets byName on the setop IR node; plain UNION does not", () => {
+		const byName = lower(parseDuckdb("SELECT a, b FROM t UNION ALL BY NAME SELECT b, a FROM u;").tree);
+		expect(byName.body.kind === "setop" && byName.body.byName).toBe(true);
+
+		const plain = lower(parseDuckdb("SELECT a, b FROM t UNION ALL SELECT b, a FROM u;").tree);
+		expect(plain.body.kind === "setop" && plain.body.byName).toBeUndefined();
 	});
 
 	it("PIVOT/UNPIVOT statements are queries with a visible flag (pivot.md, unpivot.md)", () => {

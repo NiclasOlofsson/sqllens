@@ -5121,17 +5121,21 @@ table_source_item_joined
     ;
 
 object_ref
-    : object_name at_before? changes? match_recognize? pivot_unpivot* as_alias? column_list_in_parentheses? sample? resample?
+    // FROM-source alias slots use `from_alias` (not `as_alias`): a bare, AS-less LEFT/RIGHT is a
+    // reserved keyword that "cannot be used as table name or alias in a FROM clause"
+    // (docs.snowflake.com/en/sql-reference/reserved-keywords), so `FROM t LEFT JOIN u` must read
+    // LEFT as the join keyword — not as t's alias with the join degrading to plain INNER.
+    : object_name at_before? changes? match_recognize? pivot_unpivot* from_alias? column_list_in_parentheses? sample? resample?
     | object_name START WITH predicate CONNECT BY prior_list?
-    | TABLE '(' (function_call | string | DBL_DOLLAR | id_ | QMARK | COLON id_) ')' pivot_unpivot* as_alias? sample?
+    | TABLE '(' (function_call | string | DBL_DOLLAR | id_ | QMARK | COLON id_) ')' pivot_unpivot* from_alias? sample?
     // a table function called directly in FROM (DIRECTORY(@stage), generators, …):
     // docs.snowflake.com/en/sql-reference/functions/directory
-    | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' as_alias?
+    | object_name '(' (named_stage | user_stage | table_stage | func_arg_list)? ')' from_alias?
     | values_table sample?
-    | LATERAL? '(' subquery ')' match_recognize? pivot_unpivot* as_alias? column_list_in_parentheses? sample? resample?
+    | LATERAL? '(' subquery ')' match_recognize? pivot_unpivot* from_alias? column_list_in_parentheses? sample? resample?
     // a parenthesized join as a join operand: t1 LEFT JOIN (t2 RIGHT JOIN t3 ON …) ON …
     // docs.snowflake.com/en/sql-reference/constructs/join
-    | '(' table_source_item_joined ')' as_alias?
+    | '(' table_source_item_joined ')' from_alias?
     // SEMANTIC_VIEW(<name> { METRICS … | FACTS … } [DIMENSIONS …] [WHERE …]) — items take an
     // optional [AS] alias, and METRICS/DIMENSIONS order is flexible (it controls result column
     // order). FACTS-vs-METRICS exclusivity and at-least-one-clause are semantic rules the parser
@@ -5140,13 +5144,52 @@ object_ref
     | SEMANTIC_VIEW '(' object_name (
         (METRICS | DIMENSIONS | FACTS) semantic_view_item_list
         | WHERE search_condition
-    )* ')' as_alias?
-    | LATERAL (flatten_table | splited_table) as_alias?
+    )* ')' from_alias?
+    | LATERAL (flatten_table | splited_table) from_alias?
     // any table function after LATERAL (STRTOK_SPLIT_TO_TABLE, …):
-    | LATERAL object_name '(' func_arg_list? ')' as_alias?
+    | LATERAL object_name '(' func_arg_list? ')' from_alias?
     // querying staged files — @stage[/path] [( FILE_FORMAT => …, PATTERN => … )] [alias]:
     // docs.snowflake.com/en/user-guide/querying-stage
-    | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? as_alias?
+    | (table_stage | user_stage | named_stage) ('(' param_assoc_list ')')? from_alias?
+    ;
+
+// A FROM-source alias. The explicit `AS <alias>` form keeps the full id_ set (a fork superset —
+// real Snowflake also rejects reserved words after AS in a FROM clause, but we stay permissive per
+// the project's alias contract). The bare (AS-less) slot uses `bare_from_alias`, which is id_ minus
+// the reserved LEFT/RIGHT, so a bare LEFT/RIGHT before JOIN parses as the join keyword.
+// docs.snowflake.com/en/sql-reference/reserved-keywords
+from_alias
+    : AS alias
+    | bare_from_alias
+    ;
+
+// id_ with the reserved LEFT/RIGHT removed (they reach id_ only via binary_builtin_function). Used
+// only in the AS-less FROM-alias slot; binary_builtin_function itself is left intact so LEFT(x, 1) /
+// RIGHT(x, 1) function calls and every other id_ use are unchanged.
+bare_from_alias
+    : ID
+    | ID2
+    | DOUBLE_QUOTE_ID
+    | DOUBLE_QUOTE_BLANK
+    | keyword
+    | non_reserved_words
+    | object_type_plural
+    | data_type
+    | builtin_function
+    | unary_or_binary_builtin_function
+    // binary_builtin_function inlined WITHOUT LEFT / RIGHT:
+    | (IFNULL | NVL)
+    | GET
+    | DATE_PART
+    | (TO_DATE | DATE)
+    | SPLIT
+    | NULLIF
+    | EQUAL_NULL
+    | CONTAINS
+    | COLLATE
+    | TO_TIMESTAMP
+    | binary_or_ternary_builtin_function
+    | ternary_builtin_function
     ;
 
 semantic_view_item_list
@@ -5321,8 +5364,10 @@ expr_list_in_parentheses
     ;
 
 values_table
-    : LR_BRACKET values_table_body RR_BRACKET (as_alias column_alias_list_in_brackets?)?
-    | values_table_body (as_alias column_alias_list_in_brackets?)?
+    // from_alias (not as_alias): a bare LEFT/RIGHT before JOIN after a VALUES source is the join
+    // keyword, not the VALUES alias. docs.snowflake.com/en/sql-reference/reserved-keywords
+    : LR_BRACKET values_table_body RR_BRACKET (from_alias column_alias_list_in_brackets?)?
+    | values_table_body (from_alias column_alias_list_in_brackets?)?
     ;
 
 values_table_body

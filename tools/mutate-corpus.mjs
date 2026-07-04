@@ -1,4 +1,4 @@
-// Deterministic corpus MUTATOR — the volume half of the six dialects' negative side (issue #5).
+// Deterministic corpus MUTATOR — the volume half of the seven dialects' negative side (issue #5).
 //
 // Reads each dialect's positive query bucket (docs/parser/positive/query/) and emits mechanically
 // broken variants ("mutants") into the negative bucket. The output is a REJECTION-RATE ratchet, not a
@@ -17,14 +17,14 @@
 //   <dialect>/docs/parser/negative/unparsed/mutated/<class>/<slug>.sql
 //   <dialect>/docs/parser/negative/unparsed/curated/NNN.sql   (hand-authored, not written here)
 //
-// Run:  node tools/mutate-corpus.mjs            (all six dialects)
+// Run:  node tools/mutate-corpus.mjs            (all seven dialects)
 //       node tools/mutate-corpus.mjs postgres   (one dialect)
 
 import { readdirSync, readFileSync, writeFileSync, mkdirSync, rmSync, existsSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { corpusPath } from "./corpus-paths.mjs";
 
-const DIALECTS = ["databricks", "tsql", "snowflake", "redshift", "postgres", "duckdb"];
+const DIALECTS = ["databricks", "tsql", "snowflake", "redshift", "postgres", "duckdb", "trino"];
 
 // Tuning — bounded so tier-2 stays sane. Up to MAX_FILES evenly-sampled positives per dialect, each
 // yielding up to MUTANTS_PER_FILE distinct mutants. Ceiling ~ MAX_FILES * MUTANTS_PER_FILE per dialect.

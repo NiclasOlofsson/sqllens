@@ -516,7 +516,7 @@ function projectionOfExprWithAlias(it: ParserRuleContext): Projection {
 	const id = directChildrenOfRule(it, P.RULE_identifier)[0];
 	const expr = e ? lowerExpr(e) : otherExpr(it);
 	const name = id ? identText(id) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
-	return { name, isStar: false, expr, cst: it };
+	return { name, isStar: false, expr, ...(id ? { aliasCst: id } : {}), cst: it };
 }
 
 /** pipe_pivot: pivot_clause as_alias? → PivotInfo (best-effort column extraction). */
@@ -841,7 +841,8 @@ function buildProjection(item: ParserRuleContext): Projection {
 			: expr.kind === "column"
 				? expr.parts[expr.parts.length - 1]
 				: undefined;
-		return { name, isStar: false, expr, cst: item };
+		// The identifier alone is the alias span (AS, when present, is its sibling token).
+		return { name, isStar: false, expr, ...(aliasId ? { aliasCst: aliasId } : {}), cst: item };
 	}
 	return { name: undefined, isStar: false, expr: otherExpr(item), cst: item };
 }
@@ -1063,7 +1064,7 @@ function graphReturnProjection(item: ParserRuleContext): Projection {
 	const id = directChildrenOfRule(item, P.RULE_identifier)[0];
 	const expr = e ? lowerExpr(e) : otherExpr(item);
 	const name = id ? identText(id) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
-	return { name, isStar: false, expr, cst: item };
+	return { name, isStar: false, expr, ...(id ? { aliasCst: id } : {}), cst: item };
 }
 
 /** table_path_expression: base (unnest | path) + alias. */

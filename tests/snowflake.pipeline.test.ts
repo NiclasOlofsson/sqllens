@@ -93,6 +93,40 @@ describe("Snowflake scope resolution", () => {
 	});
 });
 
+// CREATE MATERIALIZED VIEW's `AS select_statement` (docs.snowflake.com/en/sql-reference/sql/
+// create-materialized-view) must route its body like the sibling CREATE forms (CREATE VIEW,
+// CTAS, CREATE TASK): a real select, not an opaque nonquery. PLAN.md Open Gaps.
+describe("Snowflake CREATE MATERIALIZED VIEW body routing", () => {
+	it("lowers the AS SELECT body like sibling CREATE forms (CREATE VIEW's convention)", () => {
+		const mv = lower(parseSnowflake("CREATE MATERIALIZED VIEW mv AS SELECT a, b FROM t").tree);
+		const view = lower(parseSnowflake("CREATE VIEW v AS SELECT a, b FROM t").tree);
+		// Same statement-kind stamp as its sibling CREATE VIEW.
+		expect(mv.statement).toBe(view.statement);
+		expect(mv.body.kind).toBe("select");
+		if (mv.body.kind !== "select") throw new Error("expected select");
+		expect(mv.body.unsupported).toBeUndefined();
+		expect(mv.body.projections.map((p) => p.expr)).toEqual(
+			[
+				{ kind: "column", parts: ["a"], partSpans: expect.anything() },
+				{ kind: "column", parts: ["b"], partSpans: expect.anything() },
+			].map((e) => expect.objectContaining(e)),
+		);
+		expect(mv.body.from.map((s) => (s.kind === "table" ? s.name.join(".") : s.kind))).toEqual(["t"]);
+
+		const tree = resolveScopes(mv, "snowflake");
+		const body = tree.root.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		// No catalog given, so a bare table source's columns aren't known — "needs-schema" (not
+		// "unresolved") is the correct binding: the source was found, its columns just aren't.
+		for (const col of body.columns) expect(resolveColumn(tree.root, col).kind).toBe("needs-schema");
+
+		// With a schema, the columns resolve fully — the same qualify() path CREATE VIEW's body uses.
+		const schema = new Schema({ t: { a: "number", b: "number" } });
+		const qualified = qualify(tree, schema);
+		expect(qualified.columnsOf(tree.root)).toEqual(["a", "b"]);
+	});
+});
+
 describe("UNION BY NAME output columns", () => {
 	it("scope outputs are the name-aligned union (left order, right-only appended)", () => {
 		const tree = scopes("SELECT a, b FROM t1 UNION ALL BY NAME SELECT c, a FROM t2");

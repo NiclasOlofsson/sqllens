@@ -125,7 +125,7 @@ const PROBES: Record<string, Probe[]> = {
 		], // sql-reference/sql/create-iceberg-table
 		["create-view", "CREATE OR REPLACE VIEW v AS SELECT 1 AS a", "query"], // sql-reference/sql/create-view
 		["create-secure-view", "CREATE SECURE VIEW v AS SELECT a FROM t", "query"], // sql-reference/sql/create-view
-		["create-mv", "CREATE MATERIALIZED VIEW mv AS SELECT a FROM t", "nonquery"], // sql-reference/sql/create-materialized-view
+		["create-mv", "CREATE MATERIALIZED VIEW mv AS SELECT a FROM t", "query"], // sql-reference/sql/create-materialized-view
 		["create-stream", "CREATE STREAM s ON TABLE t", "nonquery"], // sql-reference/sql/create-stream
 		["create-task", "CREATE TASK tk WAREHOUSE = wh SCHEDULE = '1 minute' AS SELECT 1", "query"], // sql-reference/sql/create-task
 		["create-stage", "CREATE STAGE st URL = 's3://b/p'", "nonquery"], // sql-reference/sql/create-stage
