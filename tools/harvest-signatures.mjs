@@ -16,11 +16,12 @@
 // they can't yield parameter names. The only offline source in the corpus repo that carries function
 // SYNTAX notation is the T-SQL reference markdown (MicrosoftDocs/sql-docs, vendored at
 // vendor/sql-docs), whose ```syntaxsql``` fenced blocks are exactly `NAME ( param , … )`. The other
-// six dialects' reference docs (postgresql.org / docs.snowflake.com / docs.databricks.com HTML,
-// duckdb-web markdown, ZetaSQL) were consumed live by their scrapers and only the extracted example
-// SQL landed in the corpus repo — no syntax notation survives — so they get no generated table until
-// their raw docs are vendored. Each dialect's extractor is registered below; an absent source is
-// reported, not guessed.
+// seven dialects' reference docs (postgresql.org / docs.snowflake.com / docs.databricks.com HTML,
+// duckdb-web markdown, ZetaSQL, and the trinodb sphinx tree — trino/docs holds only the extracted
+// example SQL plus a block-count manifest.json, no function-syntax notation) were consumed live by
+// their scrapers and only the extracted example SQL landed in the corpus repo — no syntax notation
+// survives — so they get no generated table until their raw docs are vendored. Each dialect's
+// extractor is registered below; an absent source is reported, not guessed.
 //
 // Self-contained by design (repo convention — shares no code with the library). The emitted tables
 // are committed, so rebuild AND format after a corpus refresh:
@@ -179,6 +180,7 @@ const EXTRACTORS = {
 	redshift: () => null,
 	postgres: () => null,
 	duckdb: () => null,
+	trino: () => null,
 };
 
 const CONST_NAME = {
@@ -189,6 +191,7 @@ const CONST_NAME = {
 	redshift: "REDSHIFT_HARVESTED",
 	postgres: "POSTGRES_HARVESTED",
 	duckdb: "DUCKDB_HARVESTED",
+	trino: "TRINO_HARVESTED",
 };
 
 /** Serialize one FnSignature literal (stable key order). */
