@@ -257,7 +257,11 @@ duck-typed on `prime()`/`misses`, so `CallbackTemplateCatalog.prime()` drives wa
 `CallbackSchema`). Gated by `tests/jinja.relation.test.ts`, `tests/jinja.public-api.test.ts`, the
 `CallbackTemplateCatalog` arm of `tests/lsp.acceptance.test.ts`, and the extended
 `tests/corpus/jinja.consumer-contract.test.ts` (a catalog-resolved ref reports real columns; a zero-catalog
-run is byte-identical to R3).
+run is byte-identical to R3). **LSP boundary:** relation resolution is LIBRARY-level (parseTemplated →
+qualify with an injected catalog); the LSP server itself still builds documents from plain `parse`, not
+`parseTemplated`, so a templated `{{ ref }}` does not reach the server end-to-end until `SqlDocument.fromTemplated`
+lands (the deferred templated-document model). The `CallbackTemplateCatalog` LSP arm proves the re-publish
+loop drives this catalog type (over its physical-table side); the relation path is proven at library level.
 
 - **Interface (`src/qualify/template-catalog.ts`):** `interface TemplateCatalog extends SchemaSource {
   relation(ref: { kind: "ref" | "source"; nameParts: string[] }, dialect?: string): { nameParts: string[];
