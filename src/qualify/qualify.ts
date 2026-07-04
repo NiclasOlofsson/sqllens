@@ -246,6 +246,12 @@ function columnsOfSource(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
+		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM) — its physical
+		// relation is dbt knowledge sqllens doesn't have, so its columns are unknown-but-not-wrong.
+		// Treat it exactly like an opaque TVF: columns unknown (undefined), NO unknown-table diagnostic.
+		// A diagnostic against the dbt-logical name would be never-wrong-violating. inc3's catalog
+		// upgrades this to real resolution. (Scoped: only sources carrying `template` — plain SQL never does.)
+		if (src.source.template) return undefined;
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
 			diagnostics.push(unknownTable(src.name, src.source.cst));
@@ -371,6 +377,9 @@ function sourceColumns(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
+		// Templated source — columns unknown, no diagnostic (mirrors columnsOfSource; the
+		// checkColumn path treats "unknown" as "might own it", so no unknown-column fires).
+		if (src.source.template) return undefined;
 		return schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));
