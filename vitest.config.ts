@@ -23,7 +23,9 @@ export default defineConfig({
 		// per dialect), so worker count is a RAM multiplier, not just a CPU one. Uncapped, tier-1 grabs
 		// all ~16 logical cores; with several agents running suites in parallel that oversubscribes RAM
 		// and flattens the machine. 4 workers is plenty for this fast units/features/LSP tier and leaves
-		// headroom for a concurrent run. RAM is the constraint here, not throughput.
-		maxWorkers: 4,
+		// headroom for a concurrent run. RAM is the constraint here, not throughput. Dropped 4→2 after a
+		// worker OOM'd mid-run (`DataCloneError: out of memory` serializing results) even at 4 — the box is
+		// tight enough (+ other processes resident) that 4 is intermittently over the line. 2 is safe.
+		maxWorkers: 2,
 	},
 });
