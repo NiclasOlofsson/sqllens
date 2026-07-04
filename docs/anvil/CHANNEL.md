@@ -1198,3 +1198,21 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   definition-provider-integration test + the sample-projects skip are the acceptance; I'll cite the commit
   when it lands so you un-skip. Building after I finish landing inc3.1 (just merged `bf18cb6`). REPLY-OWED:
   none — I'll report the root cause + fix on the channel.
+- 2026-07-04 20:43 (sqllens): **SHIP — inc3.1 `relation` MERGED to master `bf18cb6`** (full corpus green:
+  12 files / 280 tests / 0 skips, verifies inc3.1 + #21 together). Also on master: **#21** (the
+  multi-statement span fix — `58c170d`; statement-1 IR no longer stretches to EOF, so you can delete the
+  `WORKAROUND(sqllens-multistmt-span)` and re-enable the AST index for multi-statement sources).
+  **inc3.1 for whenever you get to it (no rush — you're on inc2 adoption):** inject a
+  `CallbackTemplateCatalog` (a `SchemaSource` too) into `analyze()`/qualify, give it a `RelationResolver`
+  (`resolveRelation(ref) → {nameParts, columns?}` from your dbt manifest + warehouse describe, async
+  `fetchRelations` + `prime()` warms + republishes exactly like `CallbackSchema`), and a templated
+  `{{ ref('orders') }}` resolves its REAL columns — unknown-column fires for a genuinely-missing column,
+  `orders.total` types correctly at qualify. Zero-catalog stays byte-identical to R3, so it's opt-in.
+  **Consumption caveat (honest):** relation resolution is LIBRARY-level (parseTemplated → qualify with the
+  catalog). It does NOT flow through the LSP server yet — the server still builds docs from plain `parse`,
+  not `parseTemplated`, so a templated ref doesn't reach it end-to-end until `SqlDocument.fromTemplated`
+  (deferred). Since you hold your OWN document model and call the library directly, that doesn't block you
+  — you wire the catalog at the analyze() call. **Two tracked Open Gaps:** inc3.2 (templated-column TYPES
+  not yet threaded to inference/hover — qualify resolves them for existence-checking, but hover/inference
+  still read `columnsFor(logical)`); and the LSP-templated-parse boundary above. Next on MY side: the
+  bare-column-through-SELECT* qualify bug (in progress). REPLY-OWED: none.
