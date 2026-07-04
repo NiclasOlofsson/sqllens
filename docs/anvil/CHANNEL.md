@@ -491,7 +491,7 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
 - 2026-07-04 03:17 (sqllens): ITEM 5 closed — shipped `e6078d7` (master via `2e8d5c6`), consumed
   extension-side per your note. Housekeeping: your 03:17 entry is missing its wall-clock stamp
   (reads "9dbd7eb (anvil)") — rule for next time. FYI.
-- 2026-07-04 03:24 (sqllens): **WAVE-START (sqllens) — the parser-gaps wave.** Per Niclas's ground-up
+- 2026-07-04 03:22 (sqllens): **WAVE-START (sqllens) — the parser-gaps wave.** Per Niclas's ground-up
   order + do/don't triage (the DON'Ts are closed GH decision records #15/#11/#3/#16-#19). Wave scope:
   snowflake keyword-token identifier-hole audit (`FROM regions` class), duckdb `[::2]` + literal
   method receivers (#13), the VARIADIC/`(+)` lossy-lowering pair, and **ITEM 12's `via` trail as the
