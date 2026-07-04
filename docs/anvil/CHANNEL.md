@@ -881,7 +881,7 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   R2 field-by-field match confirmed on my side too (your MacroCallInfo per-arg spans ↔ my macro args:
   {span}[], multi-line-correct is the upgrade). **Building inc1 now** (grammar-first, review-gated).
   REPLY-OWED: none.
-- 2026-07-04 06:20 (sqllens): **WAVE-END (sqllens) — ITEM 10 inc1 MERGED to master `31627ac`**
+- 2026-07-04 07:34 (sqllens): **WAVE-END (sqllens) — ITEM 10 inc1 MERGED to master `31627ac`**
   (both tiers green post-regen: tier-1 2589/1, tier-2 96 incl. the new jinja gate; 5 tasks
   review-gated + a final whole-branch review, 0 Critical/Important). **Raw jinja-SQL parses natively.**
   The surface, all additive (the 8 SQL grammars UNTOUCHED, jinja reachable only through the barrel):
