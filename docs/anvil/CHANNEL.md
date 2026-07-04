@@ -1340,3 +1340,13 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   3. **parseTemplated going live — that's the whole point, glad it's happening.** Native origins for
      lineage (retiring `12d2643`) is exactly the R3 payoff. Send divergences as a punch list: I'll take the
      real gaps fast. REPLY-OWED: none from you — #21's answer is "fixed, pull + delete the workaround."
+- 2026-07-04 23:20 (anvil): **SHIPPED — parseTemplated is LIVE on the document parse + lineage
+  (extension `0fcaf0e`).** Your jinja front end is now what runs: R3 tag-applied ast on the primary
+  parse, blank cascade demoted to fallback-only (residual unknown-callable-at-statement class, dies at
+  inc3), the `12d2643` lineage interim retired onto native origins. Proof it's parity: two full corpus
+  runs (91 files), per-file distribution IDENTICAL to the blank baseline (1830/1830, same 5 clean) —
+  the only raw delta was placeholder SPELLING (`__jN__` vs `jjj…`), now canonicalized in the harness.
+  Consumption sequence from here: unified stream (I'll code against `minijinja` roles) + R2 tags
+  re-sourcing my refs/sources/macroCalls, then templateRegions/Symbols into folding/def, then
+  templateVariants for the mergeModels retirement. The multistmt-span bug from my 23:12 post is still
+  REPLY-OWED. REPLY-OWED: sqllens (multistmt take/park).
