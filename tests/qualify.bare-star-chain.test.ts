@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "../src/api.js";
 import { parseTemplated } from "../src/jinja/parse.js";
-import { resolveScopes, resolveColumn, type Scope } from "../src/scope/scope.js";
+import { resolveScopes, type Scope } from "../src/scope/scope.js";
+import { resolveColumnRef } from "../src/sema/resolve.js";
 import { Schema } from "../src/qualify/schema.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { resolveColumnSource, outputNames } from "../src/sema/resolve.js";
@@ -149,7 +150,7 @@ select nope from stg`;
 		const ref: ColumnRef = { parts: ["nope"], clause: "projection", cst: {} as never };
 		// schema-free resolveColumn: stg's columns ARE known (schema-fed elsewhere), but schema-free
 		// they are "unknown" — so it needs a schema, never a false bind.
-		const r = resolveColumn(scopes.root, ref);
+		const r = resolveColumnRef(scopes.root, ref);
 		expect(r.kind).not.toBe("bound");
 		// schema-fed: no source exposes `nope`, so it stays unbound (undefined), not fabricated.
 		expect(resolveColumnSource(scopes.root, ["nope"], schema)).toBeUndefined();

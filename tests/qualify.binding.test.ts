@@ -76,6 +76,18 @@ select * from warehouses_enriched`;
 		expect(q.bindingOf(scope, ref)).toBeUndefined();
 	});
 
+	it("returns undefined for a genuinely AMBIGUOUS bare column (never a wrong first-match)", () => {
+		// `id` is exposed by BOTH a and b — the old first-match binder wrongly returned source a.
+		const AMBIG = new Schema({ a: { id: "TEXT" }, b: { id: "TEXT" } });
+		const r = parseTemplated("select id from a join b on a.id = b.id", "duckdb");
+		const scopes = toScopes(r.sql.ast);
+		const q = qualify(scopes, AMBIG);
+		const scope = scopeWithSource(scopes.root, "a")!;
+		const ref = findColumnRef(r.sql.ast, "id")!;
+		expect(ref.parts).toEqual(["id"]);
+		expect(q.bindingOf(scope, ref)).toBeUndefined();
+	});
+
 	it("binds a QUALIFIED column to its aliased source", () => {
 		const r = parseTemplated("select wh.gold_warehousekey from {{ ref('gold__warehouse') }} as wh", "duckdb");
 		const scopes = toScopes(r.sql.ast);

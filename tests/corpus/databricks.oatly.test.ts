@@ -10,7 +10,8 @@ import type { Expr, QueryBody, QueryExpr } from "../../src/ir/ir.js";
 import { lineage } from "../../src/lineage/lineage.js";
 import { lineageAt, lineageOf } from "../../src/lineage/hops.js";
 import { Schema } from "../../src/qualify/schema.js";
-import { resolveScopes, resolveColumn, type Scope, type ScopeTree } from "../../src/scope/scope.js";
+import { resolveScopes, type Scope, type ScopeTree } from "../../src/scope/scope.js";
+import { resolveColumnRef } from "../../src/sema/resolve.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { walkIr as walkIrOther } from "../helpers/ir-walk.js";
@@ -242,7 +243,7 @@ function walkScopes(scope: Scope, acc: ScopeStats): void {
 	if (scope.body.kind === "select" && scope.body.unsupported) acc.unsupported++;
 	for (const ref of scope.body.kind === "pipe" ? [] : scope.body.columns) {
 		acc.colTotal++;
-		const r = resolveColumn(scope, ref);
+		const r = resolveColumnRef(scope, ref);
 		if (r.kind === "bound") acc.colBound++;
 		else if (r.kind === "alias") acc.colAlias++;
 		else if (r.kind === "ambiguous") acc.colAmbiguous++;

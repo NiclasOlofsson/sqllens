@@ -7,7 +7,6 @@ import {
 	applyUnpivotCols,
 	mergeByName,
 	pivotSourceOutputs,
-	resolveColumn,
 	splitColumnRefInScope,
 	type ResolvedSource,
 	type Scope,
@@ -18,7 +17,7 @@ import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
 import { type SchemaSource } from "./schema-source.js";
 import { type TemplateCatalog } from "./template-catalog.js";
-import { resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
+import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -330,8 +329,8 @@ function checkColumn(
 	diagnostics: Diagnostic[],
 ): void {
 	// A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias
-	// rather than a column — don't flag it. resolveColumn applies the alias + precedence rules.
-	if (resolveColumn(scope, ref).kind === "alias") return;
+	// rather than a column — don't flag it. resolveColumnRef applies the alias + precedence rules.
+	if (resolveColumnRef(scope, ref).kind === "alias") return;
 
 	// Split off struct/field navigation: `t.c.f` checks the column `c`, then walks the field
 	// path `f` against `c`'s struct type — resolved from a table schema or threaded through a

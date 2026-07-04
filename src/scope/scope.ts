@@ -144,51 +144,13 @@ function hasVisibleSource(scope: Scope, key: string): boolean {
 	return false;
 }
 
-/**
- * Bind a column reference to the source it comes from, schema-free.
- * - Qualified (`t.c`, `t.c.field`): the source whose key matches the qualifier; the part after
- *   it is the column and any further parts are struct/field navigation.
- * - Unqualified (`c`, `c.field`): the single source whose known columns include the column;
- *   ambiguous if several do; needs-schema if a source's columns aren't known without a catalog.
- */
-export function resolveColumn(scope: Scope, ref: ColumnRef): ColumnResolution {
-	const split = splitColumnRefInScope(scope, ref.parts);
-
-	// Qualified: bind to the nearest enclosing scope that defines the qualifier source.
-	if (split.qualifier !== undefined) {
-		for (let s: Scope | undefined = scope; s; s = s.parent) {
-			const source = s.sources.get(split.qualifier);
-			if (source) return { kind: "bound", source, column: split.column, fields: split.fields };
-		}
-		return { kind: "unresolved" }; // qualifier was visible a moment ago — defensive only
-	}
-
-	// Unqualified: resolve the column name against sources, walking enclosing scopes (correlation).
-	for (let s: Scope | undefined = scope; s; s = s.parent) {
-		const r = resolveByColumnName(s, split.column, split.fields);
-		if (r.kind === "bound" || r.kind === "ambiguous") return r;
-		// GROUP BY / HAVING / ORDER BY of this scope may reference a SELECT alias. Source columns
-		// take precedence (checked above); fall back to a matching projection alias here.
-		if (
-			s === scope &&
-			ref.parts.length === 1 &&
-			aliasVisibleClause(ref.clause) &&
-			matchesProjectionAlias(s, split.column)
-		) {
-			return { kind: "alias", name: split.column };
-		}
-		if (r.kind === "needs-schema") return r;
-		// r is unresolved — try the enclosing scope (correlation).
-	}
-	return { kind: "unresolved" };
-}
-
-/** Clauses where a bare name may reference a SELECT-list alias rather than a source column. */
-function aliasVisibleClause(clause: ColumnRef["clause"]): boolean {
+/** Clauses where a bare name may reference a SELECT-list alias rather than a source column. Used by
+ *  the unified binder (src/sema/resolve.ts) for the projection-alias fallback. */
+export function aliasVisibleClause(clause: ColumnRef["clause"] | undefined): boolean {
 	return clause === "groupBy" || clause === "having" || clause === "qualify" || clause === "orderBy";
 }
 
-function matchesProjectionAlias(scope: Scope, name: string): boolean {
+export function matchesProjectionAlias(scope: Scope, name: string): boolean {
 	const n = foldIdentifier(name, scope.dialect);
 	return aliasNames(scope).some((a) => foldIdentifier(a, scope.dialect) === n);
 }
@@ -201,20 +163,6 @@ function aliasNames(scope: Scope): string[] {
 	}
 	if (scope.body.kind === "pipe") return scope.pipe ? aliasNames(scope.pipe.stages.at(-1) ?? scope.pipe.input) : [];
 	return scope.branches ? aliasNames(scope.branches.left) : [];
-}
-
-/** Resolve an unqualified column name against a single scope's sources (no qualifier given). */
-function resolveByColumnName(scope: Scope, column: string, fields: string[]): ColumnResolution {
-	const name = foldIdentifier(column, scope.dialect);
-	const sources = [...scope.sources.values()];
-	const matches = sources.filter((s) => {
-		const cols = sourceOutputs(s);
-		return cols !== "unknown" && cols.some((c) => foldIdentifier(c, scope.dialect) === name);
-	});
-	if (matches.length === 1) return { kind: "bound", source: matches[0], column, fields };
-	if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
-	// No known source has it — but a source with unknown columns might (here or in a parent).
-	return sources.some((s) => sourceOutputs(s) === "unknown") ? { kind: "needs-schema" } : { kind: "unresolved" };
 }
 
 function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
@@ -650,8 +598,9 @@ function sourceKey(source: Source, dialect: string, isCte = false): string {
 	return "";
 }
 
-/** The columns a resolved source exposes, or "unknown" when it needs a schema (a bare table). */
-function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
+/** The columns a resolved source exposes, or "unknown" when it needs a schema (a bare table).
+ *  Exported for the unified binder's schema-free path (src/sema/resolve.ts). */
+export function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
 	if (src.kind === "table") return src.source.columnAliases ?? "unknown";
 	if (src.kind === "cte") return src.ref.scope.outputs;
 	if (src.kind === "lateral") return src.source.columns;
