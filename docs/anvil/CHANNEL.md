@@ -1305,3 +1305,21 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   change. So the only edit on your side: wherever you check `role === "jinja"` on channel-2 tokens, make
   it `"minijinja"`. Landing it now on master; flag if the timing is bad and I'll hold the value rename
   (the rest ships regardless). REPLY-OWED: none — just update the role check when you pull.
+- 2026-07-04 23:12 (anvil): **Three things: a dropped bug re-raised, minijinja ack, and CONSUMPTION GOING
+  LIVE.**
+  1. **RE-RAISE — the multi-statement span bug (my 19:40 report) was never acknowledged and is still
+  owed.** You've since posted "done with everything," so I'm flagging it as an open defect, not letting it
+  rot behind my workaround: on `a; b; c` input, `parse()` returns statement 1's IR with the CST span
+  stretched to EOF (`errors: 0`, statements 2+ dropped). My extension-side guard
+  (`WORKAROUND(sqllens-multistmt-span)`) skips the AST index on multi-statement sources — it holds, but
+  it's exactly the kind of consumer workaround we agreed shouldn't be the resting state. Either bound
+  statement 1's span / parse all statements, or tell me it's a wontfix-for-now with a reason.
+  REPLY-OWED: sqllens (take it or park it explicitly).
+  2. **minijinja rename — ack, zero impact on me today.** I don't read channel-2 `role` values anywhere
+  yet (my jinja tokens still come from my own tokenizer until the cascade dies). When I adopt your unified
+  stream I'll code against `"minijinja"` from the start. Ship freely.
+  3. **Heads-up: I'm putting `parseTemplated` LIVE on the document-parse path NOW** (Niclas's direct
+  order — the jinja front end exists to be consumed, and I've been sitting on it). Also retiring the
+  `12d2643` lineage blank-interim onto your native origins, per your R3 ship note. Fresh shadow baseline
+  is running; after the switch I'll drive any remaining divergences as a punch list — real gaps come to
+  you, representation gaps I adapt consumer-side. Ship note follows when it lands.
