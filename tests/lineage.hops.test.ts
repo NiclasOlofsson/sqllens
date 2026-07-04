@@ -457,8 +457,8 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		expect(head).toBeDefined();
 		expect(terminals(head!)).toEqual(["t.x"]);
 		expect(head!.via).toBeDefined();
-		expect(head!.via![0]).toBe(cteScope(scopes, "b")); // identity, consumer-side first
-		expect(head!.via![1]).toBe(cteScope(scopes, "a"));
+		expect(head!.via![0]).toEqual({ scope: cteScope(scopes, "b"), kind: "rename" }); // consumer-first
+		expect(head!.via![1]).toEqual({ scope: cteScope(scopes, "a"), kind: "rename" });
 		expect(head!.via!.length).toBe(2);
 	});
 
@@ -468,7 +468,10 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		const scopes = snowScopes(sql);
 		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
 		expect(terminals(head!)).toEqual(["t.x"]);
-		expect(head!.via).toEqual([cteScope(scopes, "b"), cteScope(scopes, "a")]);
+		expect(head!.via).toEqual([
+			{ scope: cteScope(scopes, "b"), kind: "rename" },
+			{ scope: cteScope(scopes, "a"), kind: "rename" },
+		]);
 	});
 
 	// anvil ITEM 12 red case: databricks backtick fold chain — via [a]
@@ -477,7 +480,7 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		const scopes = scopesOf(sql);
 		const head = lineageAt(scopes, offsetOf(sql, "`mixed`"));
 		expect(terminals(head!)).toEqual(["t.x"]);
-		expect(head!.via).toEqual([cteScope(scopes, "a")]);
+		expect(head!.via).toEqual([{ scope: cteScope(scopes, "a"), kind: "rename" }]);
 	});
 
 	// anvil ITEM 12 red case: single-source star passthrough — via [s], no schema needed
@@ -486,7 +489,7 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		const scopes = scopesOf(sql);
 		const head = lineageAt(scopes, offsetOf(sql, "customer_id"));
 		expect(terminals(head!)).toEqual(["orders.customer_id"]);
-		expect(head!.via).toEqual([cteScope(scopes, "s")]);
+		expect(head!.via).toEqual([{ scope: cteScope(scopes, "s"), kind: "expand" }]);
 	});
 
 	// anvil ITEM 12 red case: schema-resolved multi-source star — s reported, terminal via schema.
@@ -501,7 +504,21 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		});
 		const head = lineageAt(scopes, offsetOf(sql, "customer_name"), schema);
 		expect(terminals(head!)).toEqual(["customers.customer_name"]);
-		expect(head!.via).toEqual([cteScope(scopes, "s")]);
+		expect(head!.via).toEqual([{ scope: cteScope(scopes, "s"), kind: "expand" }]);
+	});
+
+	// anvil ITEM 13 acceptance: a rename-collapse step and a star-descent step in ONE trail carry
+	// DIFFERENT kinds. `s` is a `SELECT *` (expand); `r` renames s's column (rename). The outer read
+	// collapses r (rename) then descends s (expand) → via = [{r, rename}, {s, expand}].
+	it("tags a rename step and a star-descent step in the same trail with distinct kinds", () => {
+		const sql = "WITH s AS (SELECT * FROM orders), r AS (SELECT customer_id AS cid FROM s) SELECT cid FROM r";
+		const scopes = scopesOf(sql);
+		const head = lineageAt(scopes, offsetOf(sql, "cid", 2));
+		expect(terminals(head!)).toEqual(["orders.customer_id"]);
+		expect(head!.via).toEqual([
+			{ scope: cteScope(scopes, "r"), kind: "rename" },
+			{ scope: cteScope(scopes, "s"), kind: "expand" },
+		]);
 	});
 
 	// Control: computed chains report hops, not trail — via ABSENT everywhere.
@@ -520,6 +537,6 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
 		// head collapses onto a's computed hop; the rename scope b rides its via.
 		expect(exprText(sql, head!)).toBe("x*2");
-		expect(head!.via).toEqual([cteScope(scopes, "b")]);
+		expect(head!.via).toEqual([{ scope: cteScope(scopes, "b"), kind: "rename" }]);
 	});
 });

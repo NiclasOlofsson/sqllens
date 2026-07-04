@@ -251,7 +251,7 @@ export { exprOriginsOf as originsOfExpr };
 // under a cursor; `lineageOf(node, scope, schema?)` traces any column-ref/projection programmatically.
 // Rides the same shared binder as the flat lineage() so the two cannot drift. Total: lineageAt never
 // throws (returns undefined off-symbol).
-export { lineageAt, lineageOf, type LineageHop } from "./lineage/hops.js";
+export { lineageAt, lineageOf, type LineageHop, type ViaStep } from "./lineage/hops.js";
 
 // The token-stream front end: the always-available lexer-only token list (tokenize) plus the
 // neutral token types. parse() now carries the same tokens on its result; tokenize() serves the

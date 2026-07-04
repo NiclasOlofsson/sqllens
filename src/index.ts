@@ -26,6 +26,7 @@ export {
 	lineageAt,
 	lineageOf,
 	type LineageHop,
+	type ViaStep,
 	tokenize,
 	SqlDocument,
 	LineIndex,

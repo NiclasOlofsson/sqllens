@@ -57,19 +57,28 @@ export interface LineageHop {
 	 *  BOTH `downstream` (derived refs) and a `terminal` Origin[] (base-table refs) — an honest
 	 *  mixed expression. Absent when every ref flows through `downstream`. */
 	terminal?: Origin[] | "unresolved";
-	/** ITEM 12 (flow view): the ordered scopes the walk COLLAPSED (pure-rename passthroughs) or
+	/** ITEM 12/13 (flow view): the ordered scopes the walk COLLAPSED (pure-rename passthroughs) or
 	 *  DESCENDED (star / bare-source resolution) through while following this hop's refs to its
-	 *  `downstream`/`terminal` — consumer-side first, identity-deduped in first-traversal order,
-	 *  ABSENT when nothing was collapsed. Metadata only: no fabricated hops; a terminal's trail is
-	 *  its carrying hop's `via`. Deferred flat-walk paths (lateral/pivot/pipe) record no trail —
-	 *  absent means "not recorded on this edge", never "nothing traversed". */
-	via?: readonly Scope[];
+	 *  `downstream`/`terminal` — consumer-side first, identity-deduped (by scope) in first-traversal
+	 *  order, ABSENT when nothing was collapsed. Each step is TAGGED with WHY it was traversed
+	 *  (ITEM 13): `"rename"` = an explicitly-written passthrough (fully trustworthy), `"expand"` =
+	 *  a `SELECT *` / bare-source descent (schema-inferred — trust equals schema trust). Metadata
+	 *  only: no fabricated hops; a terminal's trail is its carrying hop's `via`. Deferred flat-walk
+	 *  paths (lateral/pivot/pipe) record no trail — absent means "not recorded on this edge". */
+	via?: readonly ViaStep[];
+}
+
+/** One step of a hop's `via` trail (ITEM 13). `kind` distinguishes a written rename-collapse from a
+ *  schema-inferred star/bare-source descent — the panel's DIRECT-vs-INDIRECT trust distinction. */
+export interface ViaStep {
+	scope: Scope;
+	kind: "rename" | "expand";
 }
 
 // A (node, edge) pair the emitter yields for one resolved reference — the graph-factorable unit.
 type Contribution = ({ kind: "hop"; hop: LineageHop } | { kind: "origin"; origin: Origin } | { kind: "unresolved" }) & {
-	/** The collapse/descent trail this contribution travelled (ITEM 12) — absent when direct. */
-	via?: Scope[];
+	/** The collapse/descent trail this contribution travelled (ITEM 12/13) — absent when direct. */
+	via?: ViaStep[];
 };
 
 /** Per-invocation state: `memo` gives the DAG (shared hops); `seen` is the recursive-CTE cycle
@@ -159,7 +168,7 @@ function anchorHop(
 	scope: Scope,
 	projection: Projection | undefined,
 	expr: Expr,
-	feed: { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: Scope[] },
+	feed: { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: ViaStep[] },
 ): LineageHop {
 	const hop: LineageHop = { scope, expr, downstream: feed.downstream };
 	if (projection) hop.projection = projection;
@@ -191,7 +200,7 @@ function followExprRefs(
 	scope: Scope,
 	expr: Expr,
 	walk: Walk,
-): { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: Scope[] } {
+): { downstream: LineageHop[]; terminal?: Origin[] | "unresolved"; via?: ViaStep[] } {
 	const leaves = exprLeaves(expr);
 	const contribs: Contribution[] = [];
 	for (const col of leaves.columns) contribs.push(...followColumn(scope, col, walk));
@@ -210,7 +219,7 @@ function followExprRefs(
 // set-op legs never collapse (each leg's own projection is the point of the fork).
 // ---------------------------------------------------------------------------
 
-function followColumn(scope: Scope, parts: string[], walk: Walk, trail: Scope[] = []): Contribution[] {
+function followColumn(scope: Scope, parts: string[], walk: Walk, trail: ViaStep[] = []): Contribution[] {
 	const via = trail.length ? [...trail] : undefined;
 	const binding = resolveColumnSource(scope, parts, walk.schema);
 	if (!binding) return [{ kind: "unresolved", via }];
@@ -242,13 +251,18 @@ function followColumn(scope: Scope, parts: string[], walk: Walk, trail: Scope[] 
 		// A plain select relation: find the projection producing `column`.
 		const producer = findProducerProjection(child.body.projections, column, aliasesOf(source), child.dialect);
 		if (producer && !producer.isStar) {
-			// Collapse: a pure rename is no transformation — the traversed scope joins the trail (ITEM 12).
+			// Collapse: a pure rename is no transformation — the traversed scope joins the trail as a
+			// trustworthy "rename" step (ITEM 12/13).
 			if (producer.expr.kind === "column")
-				return followColumn(child, columnParts(producer.expr), walk, [...trail, child]);
+				return followColumn(child, columnParts(producer.expr), walk, [
+					...trail,
+					{ scope: child, kind: "rename" },
+				]);
 			return [{ kind: "hop", hop: buildHop(child, producer, walk), via }];
 		}
-		// A `*` / bare source: a silent descent — the scope joins the trail (ITEM 12).
-		return followColumn(child, [column], walk, [...trail, child]);
+		// A `*` / bare source: a schema-inferred descent — the scope joins the trail as an "expand"
+		// step (ITEM 13: trust equals schema trust, rendered distinctly from a written rename).
+		return followColumn(child, [column], walk, [...trail, { scope: child, kind: "expand" }]);
 	} finally {
 		walk.seen.delete(child);
 		if (cteName) walk.activeCtes.delete(cteName);
@@ -264,7 +278,7 @@ function forkLegs(
 	aliases: string[] | undefined,
 	dialect: string,
 	walk: Walk,
-	trail: Scope[] = [],
+	trail: ViaStep[] = [],
 ): Contribution[] {
 	const legs = setopLegScopes(setopScope);
 	const byName = setopScope.body.kind === "setop" ? !!setopScope.body.byName : false;
@@ -318,25 +332,31 @@ function legProducer(
 function partition(
 	contribs: Contribution[],
 	dialect: string,
-): { hops: LineageHop[]; origins: Origin[]; unresolved: boolean; via: Scope[] } {
+): { hops: LineageHop[]; origins: Origin[]; unresolved: boolean; via: ViaStep[] } {
 	const hops: LineageHop[] = [];
 	const origins: Origin[] = [];
-	const via: Scope[] = [];
+	const via: ViaStep[] = [];
 	let unresolved = false;
 	for (const c of contribs) {
 		if (c.kind === "hop") {
 			if (!hops.includes(c.hop)) hops.push(c.hop); // dedup by identity (DAG)
 		} else if (c.kind === "origin") origins.push(c.origin);
 		else unresolved = true;
-		if (c.via) for (const sc of c.via) if (!via.includes(sc)) via.push(sc); // first-traversal order
+		if (c.via) for (const st of c.via) pushVia(via, st); // first-traversal order, dedup by scope
 	}
 	return { hops, origins: dedupOrigins(origins, dialect), unresolved, via };
 }
 
+/** Append a via step, deduping by SCOPE identity (a scope traversed twice keeps its first-seen kind
+ *  — a rename and a later star through the same scope cannot both happen, so first-seen is stable). */
+function pushVia(into: ViaStep[], step: ViaStep): void {
+	if (!into.some((s) => s.scope === step.scope)) into.push(step);
+}
+
 /** Merge a trail into an existing hop (the head-collapse consumer boundary) — ordered union. */
-function mergeVia(hop: LineageHop, scopes: Scope[]): void {
-	const merged: Scope[] = [...(hop.via ?? [])];
-	for (const sc of scopes) if (!merged.includes(sc)) merged.push(sc);
+function mergeVia(hop: LineageHop, steps: ViaStep[]): void {
+	const merged: ViaStep[] = [...(hop.via ?? [])];
+	for (const st of steps) pushVia(merged, st);
 	hop.via = merged;
 }
 
@@ -353,7 +373,7 @@ function terminalOf(
 	return undefined;
 }
 
-function originsToContribs(origins: Origin[], via?: Scope[]): Contribution[] {
+function originsToContribs(origins: Origin[], via?: ViaStep[]): Contribution[] {
 	return origins.length
 		? origins.map((origin) => ({ kind: "origin", origin, via }) as Contribution)
 		: [{ kind: "unresolved", via }];
