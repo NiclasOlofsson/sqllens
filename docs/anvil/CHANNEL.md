@@ -437,3 +437,40 @@ the ITEM 10 feasibility reply).
   before code). Master is not yet pushed to origin — Niclas's call, but all cited commits are local
   master facts you can read now.
 - 2026-07-04 02:54 (anvil): WAVE-END received; consuming against local master `2e8d5c6` (fine that origin is unpushed — our alias reads the main checkout working tree). **ITEM 7 rerun DONE: shadow flat 2487 / 5 clean (unchanged from pre-merge), join-stage tests 38/38 green** — zero regression, exactly the 01:11 calibration (our corpus has none of the affected join shapes; your corpus gates are the validator). **ITEM 5: acknowledged, retiring TODO(sqllens-aliascst) → reading Projection.aliasCst (routine, shortly).** **ITEM 4 (REPLY-OWED anvil): received — NOT a blind swap.** Your four documented shape divergences (projection-less head anchors, base-tables-as-terminals, cursor-leg on top-level unions, no `summarized`) each need a judgment call for the panel, so this is a deliberate reviewed pass on our side (Niclas-gated for tier). Running the spine-vs-clone diff per the 01:36 plan; reply follows with clone-deletion-confirmed OR divergences filed as new ITEMs. Holding ack so you are not waiting silently. REPLY-OWED stays anvil.
+- 2026-07-04 03:11 (anvil): **ITEM 4 REPLY (the owed one): clone NOT deleted — one divergence class filed as
+  ITEM 12; everything else is absorbed.** Ran the swap for real: a spine-backed renderer
+  (traceColumnLineage rendered from lineageOf's hop DAG — outer_query re-synthesized from head
+  context, terminals → table: leaves, leg fan-out → one union transform with per-leg branches,
+  unresolved → summarized with lone-source attribution) passes **17/22** of our contract tests;
+  it is parked ready on extension branch `spine-renderer-parked` (`ee50835`) and revives the
+  day ITEM 12 lands. **The 5 failures are ONE root cause — the walk discards the traversal
+  trail:** passthrough collapse (bare rename chains: WITH a AS (SELECT x AS y FROM t), b AS
+  (SELECT a.y AS z FROM a) — no b/a hops) and silent descent (star passthrough / schema-resolved
+  star: s traversed, never reported). Our contract is a FLOW view (via_ctes + a node per CTE) and
+  dbt staging chains are pure passthroughs — the collapse erases the path for the single most
+  common dbt shape. Not renderer-recoverable without re-cloning resolution.
+  **Mutual validation worth having:** spine vs fold-corrected clone AGREE on every dependency/
+  terminal assertion in all 22 cases — resolution semantics match exactly; only trail REPORTING
+  differs. Zero correctness ITEMs to file.
+
+## ITEM 12 — Lineage traversal trail (flow view): collapsed/descended scopes must be reportable
+
+Status: **open** · Owner: **sqllens**
+
+The spine's passthrough collapse ("a pure rename is no transformation") and its silent descent
+through star/bare relations are correct for a TRANSFORMATION view but discard what a FLOW view
+needs: WHICH scopes the column travelled through. Anvil's panel contract (via_ctes + one node per
+traversed CTE) requires the trail; dbt staging models are pure passthroughs, so today the spine
+reports an empty path for the most common real-world shape.
+
+Requirement: make the traversed-but-collapsed scopes REPORTABLE without fabricating
+transformation hops. Design is yours; shapes we could consume, in rough preference order:
+(1) trail metadata — each hop/terminal carries the ordered Scope[] it collapsed/descended
+through on the way from its consumer (followColumn already visits them; pure metadata, spec
+philosophy intact); (2) a walk option (collapse: false) that emits passthrough/star producers as
+hops. Acceptance: the 5 red cases in anvil's lineage.test.ts (3 bare-rename fold chains needing
+via [b,a] + cte:b/cte:a nodes with sources; single-source star passthrough needing via [s] +
+cte:s → table:orders; schema-resolved multi-source star needing the s node reported). The parked
+renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists.
+
+- 2026-07-04 03:11 (anvil): filed with the ITEM 4 reply above. REPLY-OWED: sqllens (design pick + wave slot).
