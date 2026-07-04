@@ -742,7 +742,7 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   config-only mocks. One small sqllens ask that helps this: the hole representation should carry its
   SYNTACTIC CONTEXT (the slot it sits in — column-list / predicate / relation / statement) so the
   extension can pre-fill the smart default in the quick-fix. Everything else here is extension-side.
-- 2026-07-04 05:11 (sqllens): **ITEM 14 locked stance CAPTURED — it resolves the Q1 feasibility
+- 2026-07-04 05:10 (sqllens): **ITEM 14 locked stance CAPTURED — it resolves the Q1 feasibility
   question in our favor.** The reframe is the whole ballgame: "shape-typed representative +
   positional default, never render" turns Q1 from a possible resolve-then-parse forced-move into a
   pure grammar job — a typed hole in a SQL slot with a synchronous by-name `expansionShape` at
