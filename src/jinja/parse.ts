@@ -41,15 +41,13 @@ import { parse, type Dialect, type ParseResultIR } from "../api.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyJinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
-import { lexJinjaTag } from "./parse-tag.js";
+import { lexJinjaTag, parseJinjaTag } from "./parse-tag.js";
 import { segment, type Segment } from "./segment.js";
+import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
-/**
- * R2 tag-AST node (ref / source / macro-call, with the span contract). Task 4
- * (§R2) builds these from the jinja parse tree; Task 3 always emits `tags: []`
- * and this placeholder type is the seam. Task 4 replaces it with the real union.
- */
-export type TagNode = Record<string, unknown>;
+// Re-export the R2 tag-AST union (Task 4) so `src/index.ts` keeps re-exporting
+// TagNode from this module — the union now lives in ./tag-ast.js.
+export type { TagNode } from "./tag-ast.js";
 
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
 export interface TemplatedParseResult {
@@ -88,6 +86,23 @@ function docPosAt(text: string, offset: number): DocPos {
 		}
 	}
 	return { line, column };
+}
+
+/**
+ * Shift a tag-relative jinja parse diagnostic into document coordinates: offset
+ * by the tag's document start, line/column composed with the tag's anchor (a
+ * first-line diagnostic adds the anchor column; a later-line one keeps its own).
+ * Mirrors mapJinjaToken's line/column composition so squiggles land correctly on
+ * multi-line tags.
+ */
+function offsetDiagnostic(d: SyntaxDiagnostic, tagStart: number, base: DocPos): SyntaxDiagnostic {
+	return {
+		message: d.message,
+		line: base.line + (d.line - 1),
+		column: d.line === 1 ? base.column + d.column : d.column,
+		offset: d.offset === undefined ? undefined : tagStart + d.offset,
+		length: d.length,
+	};
 }
 
 /**
@@ -188,14 +203,25 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 	}
 
 	// Step 4b: lex each tag and map its tokens into document coords on channel 2.
+	// Step 5 (R2): parse each tag and build its ref/source/macro tag-AST node +
+	// offset the jinja parse diagnostics into document coordinates. Both ride the
+	// same per-tag loop (each piece is total — never throws).
 	const jinjaTokens: Token[] = [];
+	const tags: TagNode[] = [];
+	const jinjaDiagnostics: SyntaxDiagnostic[] = [];
 	for (const seg of tagRanges) {
-		const { lexer, tokens } = lexJinjaTag(seg.text);
 		const base = docPosAt(text, seg.start);
+
+		const { lexer, tokens } = lexJinjaTag(seg.text);
 		for (const tok of tokens) {
 			if (tok.type === AntlrToken.EOF) continue;
 			jinjaTokens.push(mapJinjaToken(lexer, tok, seg.start, base));
 		}
+
+		const { tree, diagnostics } = parseJinjaTag(seg.text);
+		const node = tagNodesOf(seg, tree, base);
+		if (node) tags.push(node);
+		for (const d of diagnostics) jinjaDiagnostics.push(offsetDiagnostic(d, seg.start, base));
 	}
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are
@@ -203,9 +229,11 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 	// (stop as tiebreak) tiles the source.
 	const tokens = [...sqlTokens, ...jinjaTokens].sort((a, b) => a.start - b.start || a.stop - b.stop);
 
-	// Step 5 (R2) is Task 4: build the ref/source/macro tag-AST + jinja diagnostics.
-	// Task 3 emits tags: [] and SQL diagnostics; the jinja parse rides in with Task 4.
-	return { tokens, sql, tags: [], diagnostics: sql.diagnostics };
+	// Diagnostics: SQL (original coords) + jinja (offset into document coords),
+	// source-ordered so squiggles line up with the merged stream.
+	const diagnostics = [...sql.diagnostics, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
+
+	return { tokens, sql, tags, diagnostics };
 }
 
 /**
