@@ -2,7 +2,8 @@ import { describe, expect, it } from "vitest";
 import type { Expr, QueryExpr, SelectExpr, SetOpExpr } from "../src/ir/ir.js";
 import { lower } from "../src/redshift/lower.js";
 import { parseRedshift } from "../src/redshift/parse.js";
-import { resolveColumn, resolveScopes } from "../src/scope/scope.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { resolveColumnRef } from "../src/sema/resolve.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 
@@ -279,8 +280,8 @@ describe("Redshift PartiQL UNPIVOT — no duplicate val/attr under a schema-fed 
 		const attrRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "attr");
 		expect(valRef).toBeDefined();
 		expect(attrRef).toBeDefined();
-		expect(resolveColumn(tree.root, valRef!).kind).toBe("bound");
-		expect(resolveColumn(tree.root, attrRef!).kind).toBe("bound");
+		expect(resolveColumnRef(tree.root, valRef!).kind).toBe("bound");
+		expect(resolveColumnRef(tree.root, attrRef!).kind).toBe("bound");
 	});
 });
 
@@ -299,7 +300,7 @@ describe("Redshift CONNECT BY — LEVEL pseudo-column semantics", () => {
 		expect(body.unsupported).toBeUndefined();
 		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
 		expect(levelRef).toBeDefined();
-		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
+		expect(resolveColumnRef(tree.root, levelRef!).kind).toBe("bound");
 	});
 
 	it("excludes LEVEL from a schema-fed `SELECT *` on a CONNECT BY query", () => {

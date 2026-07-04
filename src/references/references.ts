@@ -6,8 +6,8 @@ import type { ColumnRef, Expr, QueryExpr } from "../ir/ir.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
-import { resolveColumn, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
-import { resolveColumnSource } from "../sema/resolve.js";
+import { type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
+import { resolveColumnRef, resolveColumnSource } from "../sema/resolve.js";
 import type { Span, SymbolKind } from "../symbols/symbols.js";
 
 // ---------------------------------------------------------------------------
@@ -111,9 +111,9 @@ function columnIdentity(scope: Scope, ref: ColumnRef, schema: SchemaSource): Ide
 	return undefined;
 }
 
-/** Schema-free bind via resolveColumn, normalized to the (source, column) shape. */
+/** Schema-free bind via the unified binder, normalized to the (source, column) shape. */
 function boundColumn(scope: Scope, ref: ColumnRef): { source: ResolvedSource; column: string } | undefined {
-	const r = resolveColumn(scope, ref);
+	const r = resolveColumnRef(scope, ref);
 	return r.kind === "bound" ? { source: r.source, column: r.column } : undefined;
 }
 

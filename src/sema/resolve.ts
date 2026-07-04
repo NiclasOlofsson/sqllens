@@ -1,22 +1,27 @@
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
-import type { Projection } from "../ir/ir.js";
+import type { ColumnRef, Projection } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
 import {
+	aliasVisibleClause,
 	applyPivotCols,
 	applyStarModifiers,
 	applyUnpivotCols,
+	matchesProjectionAlias,
 	mergeByName,
 	pivotSourceOutputs,
+	sourceOutputs,
 	splitColumnRefInScope,
+	type ColumnResolution,
 	type ResolvedSource,
 	type Scope,
 } from "../scope/scope.js";
 
-// Schema-aware column resolution, shared by the post-qualify analyses (type inference and
-// lineage). Unlike scope's schema-free `resolveColumn`, this binds a bare column over a physical
-// table by consulting the schema for the source's columns. The derived-column recursion (what to
-// compute when a column comes from a CTE/subquery) is left to each caller — inference recurses to
-// a type, lineage to a set of origins.
+// The ONE column→source binder. It merges the former pair — scope's schema-free `resolveColumn` and
+// this module's schema-aware `resolveColumnSource` — into a single schema-OPTIONAL walk returning
+// scope's `ColumnResolution` union. It lives in this HIGH layer (sema imports scope, never the
+// reverse) so it can be schema-aware without a circular import. The derived-column recursion (what to
+// compute when a column comes from a CTE/subquery) is still left to each caller — inference recurses
+// to a type, lineage to a set of origins.
 
 export interface ResolvedColumn {
 	source: ResolvedSource;
@@ -25,33 +30,100 @@ export interface ResolvedColumn {
 	fields: string[];
 }
 
-/** Bind a (possibly qualified) column reference to its source. Walks enclosing scopes (correlation). */
-export function resolveColumnSource(scope: Scope, parts: string[], schema: SchemaSource): ResolvedColumn | undefined {
+/**
+ * Bind a (possibly qualified) column reference to its source, schema-OPTIONAL.
+ * - Qualified (`t.c`, `t.c.field`): the source whose key matches the qualifier, at the nearest
+ *   enclosing scope defining it; the part after it is the column, any further parts field navigation.
+ * - Unqualified (`c`, `c.field`): the visible source whose columns include the column, walking
+ *   enclosing scopes local-first (correlation). >1 source exposing it → `ambiguous`.
+ *   With `schema`, a source's columns come from the catalog (`columnNamesOf` — so a bare column binds
+ *   through a schema-fed `SELECT *`), and a lone source whose columns are still unknown owns it;
+ *   without `schema`, columns come from the schema-free `sourceOutputs` and an unknown source yields
+ *   `needs-schema`. GROUP BY / HAVING / ORDER BY / QUALIFY may fall back to a SELECT-list alias
+ *   (source columns win over an alias). Never fabricates a binding.
+ */
+export function resolveColumnRef(scope: Scope, ref: ColumnRef, schema?: SchemaSource): ColumnResolution {
+	return resolveParts(scope, ref.parts, ref.clause, schema);
+}
+
+function resolveParts(
+	scope: Scope,
+	parts: string[],
+	clause: ColumnRef["clause"] | undefined,
+	schema: SchemaSource | undefined,
+): ColumnResolution {
 	const split = splitColumnRefInScope(scope, parts);
+
+	// Qualified: bind to the nearest enclosing scope that defines the qualifier source.
 	if (split.qualifier !== undefined) {
 		for (let s: Scope | undefined = scope; s; s = s.parent) {
-			const src = s.sources.get(split.qualifier);
-			if (src) return { source: src, column: split.column, fields: split.fields };
+			const source = s.sources.get(split.qualifier);
+			if (source) return { kind: "bound", source, column: split.column, fields: split.fields };
 		}
-		return undefined;
+		return { kind: "unresolved" }; // qualifier was visible a moment ago — defensive only
 	}
-	const name = foldIdentifier(split.column, scope.dialect);
-	// Resolve LOCALLY first, then correlate to enclosing scopes — so a column binds to a local
-	// source (even one with unknown columns) before it can match an enclosing one by name.
+
+	// Unqualified: resolve the column name against sources, walking enclosing scopes (correlation).
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
-		const sources = [...s.sources.values()];
-		for (const src of sources) {
-			const cols = columnNamesOf(src, schema, undefined, s.dialect);
-			if (cols?.some((c) => foldIdentifier(c, s.dialect) === name)) {
-				return { source: src, column: split.column, fields: split.fields };
-			}
+		const r = resolveByName(s, split.column, split.fields, schema);
+		if (r.kind === "bound" || r.kind === "ambiguous") return r;
+		// GROUP BY / HAVING / ORDER BY of this scope may reference a SELECT alias. Source columns
+		// take precedence (checked above); fall back to a matching projection alias here.
+		if (
+			s === scope &&
+			parts.length === 1 &&
+			aliasVisibleClause(clause) &&
+			matchesProjectionAlias(s, split.column)
+		) {
+			return { kind: "alias", name: split.column };
 		}
-		// Schema-free fallback: a single source here with unknown columns owns the column (valid SQL
-		// assumed). If this scope has sources but can't resolve it, fall through to correlate outward.
-		const unknown = sources.filter((src) => columnNamesOf(src, schema, undefined, s.dialect) === undefined);
-		if (unknown.length === 1) return { source: unknown[0], column: split.column, fields: split.fields };
+		if (r.kind === "needs-schema") return r;
+		// r is unresolved — try the enclosing scope (correlation).
 	}
-	return undefined;
+	return { kind: "unresolved" };
+}
+
+/**
+ * Resolve an unqualified column name against a single scope's sources. Schema-parameterized:
+ * with a schema, a source's columns come from the catalog (`columnNamesOf`); without one, from the
+ * schema-free `sourceOutputs`. >1 match → ambiguous. On 0 matches: with a schema a lone source whose
+ * columns are unknown owns the column (valid SQL assumed) else `unresolved` so the walk correlates
+ * outward; without a schema an unknown source yields `needs-schema`.
+ */
+function resolveByName(
+	scope: Scope,
+	column: string,
+	fields: string[],
+	schema: SchemaSource | undefined,
+): ColumnResolution {
+	const name = foldIdentifier(column, scope.dialect);
+	const sources = [...scope.sources.values()];
+	const colsOf = (src: ResolvedSource): string[] | "unknown" =>
+		schema ? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown") : sourceOutputs(src);
+	const matches = sources.filter((s) => {
+		const cols = colsOf(s);
+		return cols !== "unknown" && cols.some((c) => foldIdentifier(c, scope.dialect) === name);
+	});
+	if (matches.length === 1) return { kind: "bound", source: matches[0], column, fields };
+	if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
+	// No known source has it. A source with unknown columns might.
+	const unknown = sources.filter((s) => colsOf(s) === "unknown");
+	if (schema) {
+		// A lone source with unknown columns owns it; otherwise not found here — correlate outward.
+		if (unknown.length === 1) return { kind: "bound", source: unknown[0], column, fields };
+		return { kind: "unresolved" };
+	}
+	return unknown.length > 0 ? { kind: "needs-schema" } : { kind: "unresolved" };
+}
+
+/** Bind a (possibly qualified) column reference to its source — the `bound` case of the unified binder,
+ *  normalized to the (source, column, fields) shape. Schema-aware. Ambiguous / alias / unresolved /
+ *  needs-schema all yield `undefined` (never a fabricated binding — ambiguous no longer first-matches).
+ *  Thin adapter over `resolveColumnRef`; kept for infer / lineage / nullability / references / qualify's
+ *  `bindingOf`, which take `parts` and only ever want the concrete binding. */
+export function resolveColumnSource(scope: Scope, parts: string[], schema: SchemaSource): ResolvedColumn | undefined {
+	const r = resolveParts(scope, parts, undefined, schema);
+	return r.kind === "bound" ? { source: r.source, column: r.column, fields: r.fields } : undefined;
 }
 
 /**

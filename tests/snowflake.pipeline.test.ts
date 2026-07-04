@@ -3,7 +3,8 @@ import { inferType } from "../src/infer/infer.js";
 import { lineage } from "../src/lineage/lineage.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
-import { resolveColumn, resolveScopes } from "../src/scope/scope.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { resolveColumnRef } from "../src/sema/resolve.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 import { lower } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
@@ -53,7 +54,7 @@ describe("Snowflake scope resolution", () => {
 		expect(body.unsupported).toBeUndefined();
 		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
 		expect(levelRef).toBeDefined();
-		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
+		expect(resolveColumnRef(tree.root, levelRef!).kind).toBe("bound");
 	});
 
 	// LEVEL is a pseudo-column (like Oracle's): it must resolve by name but must NOT appear in a
@@ -74,7 +75,7 @@ describe("Snowflake scope resolution", () => {
 		if (body.kind !== "select") throw new Error("expected select");
 		const levelRef = body.columns.find((c) => c.parts.join(".").toLowerCase() === "level");
 		expect(levelRef).toBeDefined();
-		expect(resolveColumn(tree.root, levelRef!).kind).toBe("bound");
+		expect(resolveColumnRef(tree.root, levelRef!).kind).toBe("bound");
 	});
 
 	// Non-regression: FLATTEN's lateral columns are real output columns and must keep joining `*`.
@@ -118,7 +119,7 @@ describe("Snowflake CREATE MATERIALIZED VIEW body routing", () => {
 		if (body.kind !== "select") throw new Error("expected select");
 		// No catalog given, so a bare table source's columns aren't known — "needs-schema" (not
 		// "unresolved") is the correct binding: the source was found, its columns just aren't.
-		for (const col of body.columns) expect(resolveColumn(tree.root, col).kind).toBe("needs-schema");
+		for (const col of body.columns) expect(resolveColumnRef(tree.root, col).kind).toBe("needs-schema");
 
 		// With a schema, the columns resolve fully — the same qualify() path CREATE VIEW's body uses.
 		const schema = new Schema({ t: { a: "number", b: "number" } });

@@ -7,13 +7,8 @@ import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { Schema } from "../qualify/schema.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
-import {
-	resolveColumn,
-	type ColumnResolution,
-	type ResolvedSource,
-	type Scope,
-	type ScopeTree,
-} from "../scope/scope.js";
+import { type ColumnResolution, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
+import { resolveColumnRef } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Symbols — a SQL-native symbol model derived from the scope tree (and, later,
@@ -245,7 +240,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: SchemaSour
 	}
 	if (body.kind === "pipe") return; // a pipe scope's refs live in its per-stage child scopes
 	for (const ref of body.columns) {
-		const res = resolveColumn(scope, ref);
+		const res = resolveColumnRef(scope, ref);
 		const modifiers: SymbolModifier[] = ["reference"];
 		// A reference that binds to a source outside this scope is correlated.
 		if (res.kind === "bound" && !isLocalSource(scope, res.source)) modifiers.push("correlated");
