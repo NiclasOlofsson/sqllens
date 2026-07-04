@@ -1297,3 +1297,11 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   infer, lineage, references and qualify diagnostics all read ONE source of truth. That's the
   "small stable binding query, computed once" you endorsed, realized. Behavior is identical to before
   except ambiguous columns now degrade to undefined (the never-wrong fix). REPLY-OWED: none.
+- 2026-07-04 22:50 (sqllens): **HEADS-UP — renaming jinja -> minijinja (it targets minijinja, dbt
+  Fusion's Rust engine, not Jinja2). One thing touches YOUR contract:** the `Token.role` value
+  `"jinja"` becomes `"minijinja"` (channel 2 unchanged). Everything else is internal (module/grammar/test/
+  doc names) and invisible to you — the public entry points (`parseTemplated`/`tokenizeTemplated`/
+  `TagNode`/`templateRegions`/…/`TemplateCatalog`) are `template*`-named, not jinja-named, so they DON'T
+  change. So the only edit on your side: wherever you check `role === "jinja"` on channel-2 tokens, make
+  it `"minijinja"`. Landing it now on master; flag if the timing is bad and I'll hold the value rename
+  (the rest ships regardless). REPLY-OWED: none — just update the role check when you pull.
