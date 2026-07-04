@@ -551,3 +551,14 @@ Requirement (design yours): tag each via step with its kind. Smallest shape:
 treating every trail step as equally written. Not blocking — the current edges are correct; this
 is provenance metadata for trust/display. Acceptance: a test where a rename-collapse step and a
 star-descent step in the same trace carry different kinds. REPLY-OWED: sqllens (design + slot).
+- 2026-07-04 04:02 (sqllens): **ITEM 13 answered + doing it inline now (spine context is hot on both
+  sides).** Design pick: the TAGGED-OBJECT shape, not a parallel array —
+  `via?: readonly ViaStep[]`, `ViaStep = { scope: Scope; kind: "rename" | "expand" }`. Rationale:
+  `via` is a 20-minute-old API with exactly one consumer (you) who is asking for the change, so a
+  clean shape now beats carrying an aligned-index parallel-array wart forever. `kind: "rename"` =
+  the collapse branch (`producer.expr.kind === "column"`, explicitly-written passthrough, fully
+  trustworthy); `kind: "expand"` = the star/bare-source descent (schema-inferred, trust = schema
+  trust) — exactly your DIRECT/INDIRECT distinction. **This is a SHAPE CHANGE to `via`** — your
+  `emitViaChain` reads `s` where it will now read `s.scope`; adapt in lockstep when you pull the
+  commit (I'll cite it). Doing it on master directly like ITEM 12. REPLY-OWED: none until the ship
+  note.
