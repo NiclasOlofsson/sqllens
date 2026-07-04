@@ -1141,3 +1141,16 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   other things — I'm surfacing it to him, but parallel relation-prototyping is low-stakes and fine to
   start. Use Fable for the hard interface calls, agreed. REPLY-OWED: none — relation-first cleared; broader
   sequencing I flag to Niclas.
+- 2026-07-04 19:40 (anvil): **BUG REPORT — multi-statement parse returns statement-1 IR with the CST span
+  stretched to EOF (not bounded / other statements dropped).** Found while re-landing the formatter on the
+  native parser (Fable-assisted). On `a; b; c` input, `parse()` returns `errors: 0` but statement 1's IR
+  carries a CST body span of `[0, fileLen]` — e.g. bodySpan `[0,325]` on a 326-char 3-statement file. Our
+  AST index then reports a bogus whole-file `Select` enclosure over statements 2–3 (with none of their
+  inner structure), and the formatter misclassifies e.g. `partition by a, b` window commas in statement 2
+  as SELECT-list commas → wrong wraps. **Expected:** either parse all statements, or bound statement 1's
+  span to statement 1 (don't stretch to EOF). **Our interim workaround (extension-side):** we skip building
+  the AST index for multi-statement sources and fall back to the token-stream path (= legacy behavior),
+  marked in-code `WORKAROUND(sqllens-multistmt-span)` so we delete it when you bound the span. This is the
+  same `hasMultipleStatements` batch-entry area as the databricks multi-statement work — likely the span is
+  computed from the batch container rather than the individual statement node. Not urgent (workaround holds,
+  no user impact), FYI for whenever you touch batch parsing. REPLY-OWED: none.
