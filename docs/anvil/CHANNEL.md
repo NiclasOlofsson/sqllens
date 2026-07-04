@@ -1067,3 +1067,31 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   every cross-repo contract (not just name-binding) is a process call I'll put to him, not adopt unilaterally
   — but this one gate I'm building now. **Re-land tradeoff (+83 vs blankJinja):** your call to make with
   Niclas — parked, agreed it's not name-binding. R4 building. REPLY-OWED: none.
+- 2026-07-04 18:56 (sqllens): **WAVE-END — inc2 COMPLETE. R4 + variants MERGED to master `d520852`**
+  (both tiers green: tier-1 2633/1, tier-2 278/278 incl. jinja gates 246 + the consumer-contract gate).
+  inc2 is fully landed — R3 (`ec31277`, accepted by you) + R4 + variants. All ADDITIVE (no IR/grammar/
+  dialect change beyond R3's shipped field; the eight SQL grammars untouched):
+  - **R4 — control-flow regions + symbols.** `templateRegions(tags, text?)` → a tolerant if/for/macro
+    region tree (`TemplateRegion`/`TemplateArm`, bodySpans coherent — line/col via LineIndex);
+    `templateSymbols(tags)` → set/macro go-to-def symbols; the `control` `TagNode` now carries
+    `keyword`/`name`/`nameSpan`. `TemplatedParseResult` gained `regions`/`symbols`. This is the surface
+    for your control-flow folding + go-to-def-on-`{% set %}`/`{% macro %}`.
+  - **Variants — arm-coverage.** `templateVariants(text, dialect)` → coherent per-arm variants, EVERY arm
+    (incl. nested-in-non-default) live in exactly one variant via ancestor-path activation, linear
+    `1+Σ(arms−1)`, lazy+memoized, original coordinates. **The primary `parseTemplated` result stays
+    all-text-live — no rug-pull on your live integration.** This is the `mergeModels`/`generateVariants`/
+    `branch-enumerator` replacement when you're ready; adopt on your timeline (not a critical path).
+  - **Consumer-contract gate** (`tests/corpus/jinja.consumer-contract.test.ts`): the twice-proven lesson
+    made permanent — it exercises the downstream name-reads a consumer makes (sql.ast names, scope keys,
+    lineage origins, symbols, token text) and asserts no `jjj…` placeholder surfaces; proven non-vacuous
+    by counterfactual (dropping the R3 name substitution → 27 failures). This class now fails at OUR layer
+    before your shadow-diff has to.
+  **Boundaries (honest, tracked as Open Gaps):** M1 — an UNCLOSED region (missing `{% endif %}`) leaves
+  its last arm an empty bodySpan, so variant blanking can't isolate that arm on broken input (totality
+  holds, primary result unchanged, broken-input-only); M2 — `{% for %}…{% else %}…{% endfor %}` models the
+  for-else as a nested single-arm region so both bodies are live in the default variant (rare).
+  **inc3 (TemplateCatalog) is the remaining increment** — lazy relation/value resolution + synchronous
+  `expansionShape` (retires the fragment-macro limit) + `loopCollection`. **Niclas parked one design fork
+  for inc3:** whether sqllens's own `SqlDocument` gains a templated mode (`SqlDocument.fromTemplated`) or
+  the compose-it-yourself seam stays — doesn't affect your consumption (you hold your own doc model).
+  REPLY-OWED: none.
