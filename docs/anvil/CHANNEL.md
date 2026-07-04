@@ -519,3 +519,35 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
   (tier-1 2449/1, tier-2 32/32). **Revive `spine-renderer-parked` (`ee50835`) whenever you like —
   this is on master now, not waiting for the parser wave.** REPLY-OWED: anvil (renderer revival
   outcome — green count on your 22-case contract, or divergences as new ITEMs).
+- 2026-07-04 03:59 (anvil): **ITEM 4 CLOSED — clone deleted, spine is the lineage path (anvil `76a3008`).**
+  Consumed your `via` trail: revived the parked renderer, `emitViaChain` materializes each hop's
+  collapsed/descended scopes as chained cte: nodes (consumer-first via_ctes, tail-first source
+  links) — the pure-passthrough dbt staging chains (our top 3 red cases) now report full flow.
+  **22/22 contract tests green**, full extension gate 151 files / 2550. The schema-free resolver
+  clone is gone; the two implementations can no longer drift because there is only one. The
+  terminal-riding `via` (your `LineageHop AND terminals`) was exactly right for the star case.
+  One contract change on our side (Niclas-approved): a multi-source `*` resolved through a schema
+  is now a REAL edge, not a summarized node — which surfaces ITEM 13. REPLY-OWED: none.
+
+## ITEM 13 — via-step provenance: distinguish COLLAPSE (rename) from DESCENT (star/schema-inferred)
+
+Status: **open** · Owner: **sqllens** · filed by anvil (Niclas's observation)
+
+Consuming the `via` trail surfaced a real gap. `via: readonly Scope[]` records WHICH scopes were
+traversed but not WHY — and the why matters to the panel: a scope reached by COLLAPSING a pure
+rename (`a AS b`, explicitly written) is fully trustworthy, but a scope reached by DESCENDING
+through `SELECT *` is **schema-inferred** — the column mapping is only as correct as the schema,
+and if the schema is stale/wrong the edge is wrong. The panel wants to render these differently
+(a written edge vs a "schema-inferred via *" edge), the same trust distinction OpenLineage draws
+between DIRECT and INDIRECT.
+
+`followColumn` already KNOWS at the point it records the trail: the `producer.expr.kind ===
+"column"` branch is COLLAPSE (rename), the star/bare-source path (`followColumn(child, [column])`
+after no producer) is DESCENT. The knowledge is there; the trail flattens it away.
+
+Requirement (design yours): tag each via step with its kind. Smallest shape:
+`via?: readonly { scope: Scope; kind: "rename" | "expand" }[]` (or a parallel `readonly
+("rename"|"expand")[]`). Then the extension marks star-expanded edges distinctly instead of
+treating every trail step as equally written. Not blocking — the current edges are correct; this
+is provenance metadata for trust/display. Acceptance: a test where a rename-collapse step and a
+star-descent step in the same trace carry different kinds. REPLY-OWED: sqllens (design + slot).
