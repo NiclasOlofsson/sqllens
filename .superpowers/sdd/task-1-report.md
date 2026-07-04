@@ -113,3 +113,34 @@ ambiguity in the bare FROM slot. `npm run gen -- snowflake` regenerated.
 - Tests: `tests/snowflake.test.ts` (new describe block, table-driven).
 - Scratch (uncommitted, `temp_auto/`): `audit-id-holes.mjs`, `hash-corpus.mjs`, `fallback-files.mjs`,
   `accepted-mutants.mjs`, and the holes/hash JSON snapshots.
+
+---
+
+## Follow-up fixes (coordinator review, 2026-07-04)
+
+Niclas ruled on the fork; three fixes applied on top of the 537-word core:
+
+1. **`DO` added to `id_` (never-wrong).** `DO` is not reserved, so `SELECT do FROM t` must parse —
+   leaving it out was a defect. Added to `non_reserved_words` (now **538** recovered). This flips the
+   truncation-mutant `truncate/functions-table/3.sql` (`… ORDER BY do`, a complete valid clause) from
+   rejected to accepted, so the snowflake mutated rejection floor is **re-pinned 332 → 331** in
+   `tests/corpus/snowflake.test.ts` with a comment citing the documented cause (the ratchet's own
+   "mutation cannot guarantee invalidity" case — a floor correction, not a weakening). Niclas approved
+   the floor-direction change. Re-ran the proof kit: changed-set still **empty** over the 2,976 files,
+   fallback still **110**. Test: `do` moved into the RECOVERED table (asserts `FROM do` → source named
+   `do`, and `SELECT do FROM t` parses).
+
+2. **PIVOT/UNPIVOT reclassified.** They are NOT reserved, so the full-`id_` exclusion is an
+   over-exclusion (the real ambiguity is only the post-source `pivot_unpivot*` slot; the alias-only
+   cure was tried and did not clear the loop). Moved out of the "re-reads existing SQL" bucket in the
+   grammar comment and the test comment; the pragmatic full exclusion stays, now tracked as an **Open
+   Gap in docs/PLAN.md** ("Snowflake `pivot`/`unpivot` as bare identifiers — noparse; language-exact
+   cure is a post-source-slot split, deferred") so it keeps answering "what's left."
+
+3. **`warehouse` dropped from the RECOVERED test list.** `WAREHOUSE` was already reachable via the
+   pre-existing `keyword` rule — not a genuinely recovered word. Removed to keep the assertion honest.
+
+**Exclusion count is now 7 dedicated-role words** (ASC, DESC, NEXTVAL, LISTAGG, DEFAULT, PIVOT,
+UNPIVOT) — DO left the set. Re-verified: `tests/snowflake.test.ts` 207 pass, `npm test` 2498 pass (one
+worker-pool flake on the first run, green on rerun — the documented vitest signature), `npm run
+test:corpus` 10 files / 32 tests green (floor 331), typecheck + prettier clean.

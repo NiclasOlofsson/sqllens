@@ -1368,19 +1368,20 @@ describe("Snowflake bare LEFT/RIGHT before JOIN are join keywords, not aliases",
 // from id_, so any table/column named after one was rejected — `SELECT a FROM regions` failed.
 // Snowflake reserves very few words (docs.snowflake.com/en/sql-reference/reserved-keywords); every
 // non-reserved one is a legal identifier, so these were an acceptance bug. Enumerated by
-// temp_auto/audit-id-holes.mjs (539 tokens recovered).
+// temp_auto/audit-id-holes.mjs (538 tokens recovered).
 describe("Snowflake keyword-token identifier holes (SHOW-object / option words as names)", () => {
 	// A doc-cited spread across the recovered categories: SHOW-object plural (regions), COPY/format
-	// options (auto_compress, avro, csv, json, encoding, compression), object words (warehouse,
-	// volume, iceberg, listing, application), option/param words (format, header, access, masking,
-	// handler), and clause-adjacent non-reserved words (before, changes, limit, fetch, within).
+	// options (auto_compress, avro, csv, json, encoding, compression), object words (volume, iceberg,
+	// listing, application), option/param words (format, header, access, masking, handler),
+	// clause-adjacent non-reserved words (before, changes, limit, fetch, within), and the scripting
+	// keyword `do` (ON n PERCENT DO — non-reserved, so `SELECT do FROM t` must parse).
 	const RECOVERED = [
 		"regions",
 		"auto_compress",
 		"avro",
 		"csv",
 		"json",
-		"warehouse",
+		"do",
 		"volume",
 		"iceberg",
 		"format",
@@ -1410,12 +1411,13 @@ describe("Snowflake keyword-token identifier holes (SHOW-object / option words a
 
 	// --- reject-controls ---
 
-	// Eight non-reserved tokens with a dedicated grammar role stay OUT of id_: reaching them from
-	// id_ would re-read existing SQL. asc/desc = sort direction (ORDER BY x DESC); nextval =
-	// object_name DOT NEXTVAL; listagg = its WITHIN GROUP aggregate; pivot/unpivot = the pivot
-	// clause a trailing PIVOT after a source must resolve to; default = the USE SECONDARY ROLES /
-	// column DEFAULT sentinel; do = the ON n PERCENT DO trigger-action keyword. Not a bare table name.
-	it.each(["asc", "desc", "nextval", "listagg", "pivot", "unpivot", "default", "do"])(
+	// Seven non-reserved tokens stay OUT of id_ because reaching them re-reads existing SQL:
+	// asc/desc = sort direction (ORDER BY x DESC); nextval = object_name DOT NEXTVAL; listagg = its
+	// WITHIN GROUP aggregate; default = the USE SECONDARY ROLES / column DEFAULT sentinel; pivot/unpivot
+	// = the post-source pivot clause a trailing PIVOT must resolve to (not reserved — an over-exclusion
+	// tracked as an Open Gap in docs/PLAN.md, kept out until the post-source-slot split lands). Not a
+	// bare table name.
+	it.each(["asc", "desc", "nextval", "listagg", "default", "pivot", "unpivot"])(
 		"dedicated-role word `%s` is NOT usable as a bare table name",
 		(word) => {
 			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);

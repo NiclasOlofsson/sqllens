@@ -34,7 +34,13 @@ const DOCS_CORPUS = corpusPath("snowflake/docs");
 // The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject; the 3
 // snowflake.test.ts reject unit tests are folded into the curated set).
 const NEGATIVES = corpusPath("snowflake/docs/parser/negative/unparsed");
-const MUTATED_FLOOR = 332; // 332/400 mutants rejected (2026-07-02)
+// 331/400 mutants rejected. Corrected 332→331 (2026-07-04) when `DO` became a legal identifier
+// (keyword-token identifier-hole fix): the truncation-mutant `truncate/functions-table/3.sql` ends in
+// `… ORDER BY do`, which — with `do` now a valid non-reserved identifier — is a COMPLETE valid SELECT.
+// That is the "mutation cannot guarantee invalidity … truncating after a complete clause can leave
+// valid SQL" case this ratchet's own docs name, so the mutant was never a true negative. A floor
+// correction, not a weakening (curated near-misses still reject 100%). Approved by Niclas 2026-07-04.
+const MUTATED_FLOOR = 331;
 // The query bucket gate is 100% of the in-scope, non-KNOWN_BAD examples (see runDocsRatchet with
 // the knownBad option). The numeric baseline is unused in 100% mode but kept as a documented floor.
 const QUERY_BASELINE = 2976; // documented floor for the query population (path-bucketed)

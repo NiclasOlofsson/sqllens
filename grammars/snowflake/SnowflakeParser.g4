@@ -4399,13 +4399,14 @@ non_reserved_words
     // SHOW-object plural words + statement/option keyword tokens the fork lexes as dedicated
     // tokens (SHOW REGIONS, COPY options, session parameters, DDL option words, …) but which
     // Snowflake does NOT reserve, so they are legal table/column/alias names. Enumerated against
-    // docs.snowflake.com/en/sql-reference/reserved-keywords: every reserved word stays out, and
-    // eight non-reserved tokens with a dedicated grammar role stay out too because reaching them
-    // from id_ re-reads existing SQL — ASC/DESC (asc_desc sort direction), NEXTVAL (object_name
-    // DOT NEXTVAL), LISTAGG (its WITHIN GROUP aggregate rule), PIVOT/UNPIVOT (the pivot clause a
-    // trailing PIVOT after a source must resolve to), DEFAULT (the USE SECONDARY ROLES / column
-    // DEFAULT sentinel), and DO (the ON n PERCENT DO trigger-action keyword). LEFT/RIGHT stay
-    // excluded from the bare FROM slot (bare_from_alias).
+    // docs.snowflake.com/en/sql-reference/reserved-keywords: every reserved word stays out. Five
+    // non-reserved tokens ALSO stay out because reaching them from id_ re-reads existing SQL —
+    // ASC/DESC (asc_desc sort direction), NEXTVAL (object_name DOT NEXTVAL), LISTAGG (its WITHIN
+    // GROUP aggregate rule), and DEFAULT (the USE SECONDARY ROLES / column DEFAULT sentinel).
+    // PIVOT/UNPIVOT are also held out here — not reserved, but the post-source `pivot_unpivot*` slot
+    // makes a trailing PIVOT ambiguous with an id_ alias; the language-exact cure is a post-source-slot
+    // split, deferred (see docs/PLAN.md Open Gaps), so `SELECT pivot FROM t` is noparse for now.
+    // LEFT/RIGHT stay excluded from the bare FROM slot (bare_from_alias).
     | ABORT
     | ABORT_DETACHED_QUERY
     | ABORT_STATEMENT
@@ -4545,6 +4546,7 @@ non_reserved_words
     | DISABLE_AUTO_CONVERT
     | DISABLE_SNOWFLAKE_DATA
     | DISABLED
+    | DO
     | ECONOMY
     | EMPTY_FIELD_AS_NULL
     | ENABLE
