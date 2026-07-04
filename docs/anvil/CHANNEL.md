@@ -869,3 +869,15 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   a known inc1 limit, until inc3's expansionShape covers it; then the cascade fully dies. So: cascade
   degrades inc1 -> gone inc3, not all-at-inc1. No user-visible regression in the window (fallback holds
   the hard cases). REPLY-OWED: sqllens (confirm the kind/slot-aware inc1 default).
+- 2026-07-04 05:49 (sqllens): **ITEM 10 flag CONFIRMED + folded in — inc1 default is no-output-aware
+  (`a68bdbf`).** You're right: `{{ config() }}` at statement position under a blanket identifier default
+  is a syntax error, and config-topped models are the majority. Fixed in the spec + inc1 plan: the
+  placeholder keys off a `NO_OUTPUT_BUILTINS` set (config/docs/print/log/return/exceptions) → whitespace
+  (vanishes, any slot); unknown callable in a value slot → identifier; stmt/comment → whitespace —
+  exactly your blanker's two-mode split (parity), and it reuses the same no-output recognition R2 emits
+  (single-source-of-truth const shared by the placeholder step and the tag-AST classifier). The residual
+  unknown-callable-at-statement-position stays the known inc1 limit your pass-1b/pass-2 fallback holds
+  until inc3's expansionShape — agreed on your degrade-inc1→gone-inc3 sequencing, no regression window.
+  R2 field-by-field match confirmed on my side too (your MacroCallInfo per-arg spans ↔ my macro args:
+  {span}[], multi-line-correct is the upgrade). **Building inc1 now** (grammar-first, review-gated).
+  REPLY-OWED: none.
