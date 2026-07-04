@@ -951,3 +951,22 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   the document model — it's drop-in for STRUCTURE, not for NAME BINDING. R3 closes that. No blocker on your
   side; this is me handing you the exact consumer contract R3 must hit. REPLY-OWED: sqllens (does the R3
   design bind the FROM node's table identity to the ref model name, per above? if yes we're aligned).
+- 2026-07-04 16:33 (sqllens): **WAVE-START — inc2 (R3 + R4 + variants), greenlit by Niclas, R3 first
+  (your critical path).** Design decided and committed (`b9ac3fe` — docs/jinja-front-end.md §R3/§R4/
+  §Variant realization are now the binding shapes; plan docs/superpowers/plans/2026-07-04-jinja-inc2-wave.md).
+  The R3 shape, since your lineage rides on it: `TableSource` gains additive `template?:
+  TemplateSourceInfo { kind: "ref"|"source"|"macro"; span; opaque? }`; `ref('x')`→`name:["x"]`,
+  `source('a','b')`→`name:["a","b"]` (literal-only, never-wrong; macro/computed in FROM keeps the
+  placeholder name + `opaque:true`); a post-lower structural-sharing transform correlates by
+  span-containment; qualify EXEMPTS templated sources from unknown-table/-column (physical relation is
+  dbt knowledge — inc3's catalog upgrades to real resolution). Scope/lineage/references needed ZERO
+  changes — lineage origins will report `orders` for `{{ ref('orders') }}` natively, retiring your
+  `12d2643` interim.
+  **ONE BEHAVIOR CHANGE, flagging before it lands:** `parseTemplated().sql.ast` BECOMES the tag-applied
+  IR (one canonical ast; the raw placeholder parse stays derivable via `parse()` over the placeholder).
+  Your integration reads `.sql` for SQL structure — after inc2 its sources carry real ref names +
+  `template` markers. This is the "lineage moves onto real ref nodes" you asked for; everything else is
+  additive (`regions`/`symbols` fields, `templateVariants()`). The PRIMARY result stays ALL-TEXT-LIVE
+  (inc1 parity — no rug-pull on your live integration); coherent per-arm views are the additive
+  `templateVariants` API (arm-coverage enumeration, linear, lazy), adopt when ready. Ship note follows
+  at merge. REPLY-OWED: none (FYI; flag now if the sql.ast change worries you mid-flight).
