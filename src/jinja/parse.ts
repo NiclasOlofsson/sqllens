@@ -41,6 +41,7 @@ import { parse, type Dialect, type ParseResultIR } from "../api.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyJinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
+import { applyTemplateTags } from "./apply-tags.js";
 import { lexJinjaTag, parseJinjaTag } from "./parse-tag.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
@@ -223,6 +224,13 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 		if (node) tags.push(node);
 		for (const d of diagnostics) jinjaDiagnostics.push(offsetDiagnostic(d, seg.start, base));
 	}
+
+	// Step 5b (R3): rewrite templated FROM/JOIN sources onto first-class TableSource
+	// nodes carrying the dbt-logical model/source name + a `template` marker, so
+	// scope/qualify/lineage bind the real model rather than the `jjj…` placeholder.
+	// Total (returns the input ast on any surprise); the reassignment stays inside
+	// build()'s caller try/catch so parseTemplated's totality holds.
+	sql.ast = applyTemplateTags(sql.ast, tags);
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are
 	// disjoint (tag-contained SQL tokens were dropped), so a stable sort by start
