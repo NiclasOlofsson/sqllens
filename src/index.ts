@@ -75,7 +75,10 @@ export { parsePostgres } from "./postgres/parse.js";
 export { parseDuckdb } from "./duckdb/parse.js";
 export { parseTrino } from "./trino/parse.js";
 
-// --- Jinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1). ---
+// --- Jinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
+//     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
+//     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
+//     grammars are untouched). ---
 export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./jinja/parse.js";
 export {
 	templateRegions,
@@ -84,6 +87,7 @@ export {
 	type TemplateArm,
 	type TemplateSymbol,
 } from "./jinja/regions.js";
+export { templateVariants, type TemplateVariant } from "./jinja/variants.js";
 export { lower as lowerTSql } from "./tsql/lower.js";
 export { lower as lowerSnowflake } from "./snowflake/lower.js";
 export { lower as lowerBigQuery } from "./bigquery/lower.js";
@@ -109,6 +113,7 @@ export type {
 	Source,
 	SubquerySource,
 	TableSource,
+	TemplateSourceInfo,
 } from "./ir/ir.js";
 
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
