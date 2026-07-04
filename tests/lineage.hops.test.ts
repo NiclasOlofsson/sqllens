@@ -108,6 +108,30 @@ describe("per-hop lineage — spec acceptance", () => {
 		expect(head!.downstream.flatMap(terminals).sort()).toEqual(["t1.a", "t2.c"]);
 	});
 
+	// (c′) Snowflake quoted identifiers preserve case through a hop — dialect-true fold. Snowflake
+	// folds UNquoted names to UPPER and preserves quoted ones, so the quoted CTE and column keep their
+	// mixed case and the outer quoted `"Col"` binds through `"Mixed"` onto the producer `a+1 AS "Col"`,
+	// down to t.a. A wrong (case-lowering / upper-folding) quoted fold would break the match and strand
+	// the hop unresolved — pinned by the control below (a wrong-case `"COL"` outer ref → unresolved),
+	// so this asserts a real dialect-true fold, not a tautology.
+	it("(c′) hops through a Snowflake quoted CTE/column with case-preserving fold", () => {
+		const sql = 'WITH "Mixed" AS (SELECT a+1 AS "Col" FROM t) SELECT "Col" FROM "Mixed"';
+		const scopes = snowScopes(sql);
+		const head = lineageAt(scopes, offsetOf(sql, '"Col"', 2)); // the outer quoted "Col"
+		expect(head).toBeDefined();
+		// The outer passthrough collapses onto the CTE producer `a+1 AS "Col"`.
+		expect(exprText(sql, head!)).toBe("a+1");
+		expect(aliasText(sql, head!)).toBe('"Col"'); // quotes + mixed case preserved verbatim
+		expect(head!.downstream).toEqual([]);
+		expect(terminals(head!)).toEqual(["t.a"]); // resolves ONLY because quoted fold preserved case
+
+		// Control — a wrong-case quoted outer ref does NOT match the preserved-case CTE column,
+		// so the hop strands `unresolved`. This is what proves the positive above is load-bearing.
+		const bad = 'WITH "Mixed" AS (SELECT a+1 AS "Col" FROM t) SELECT "COL" FROM "Mixed"';
+		const badHead = lineageAt(snowScopes(bad), offsetOf(bad, '"COL"'));
+		expect(terminals(badHead!)).toEqual(["unresolved"]);
+	});
+
 	// (d) self-join / CTE consumed twice → the SAME hop object shared (reference equality).
 	it("(d) shares a hop object across two converging paths (DAG, reference equality)", () => {
 		const sql = [
