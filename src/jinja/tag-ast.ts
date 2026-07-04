@@ -157,18 +157,19 @@ function leftmostName(p: ParseTree | null | undefined): string | undefined {
 	return undefined;
 }
 
-/** The first STRING token anywhere under a node (DFS), or undefined. */
-function firstStringToken(node: ParseTree | null | undefined): AntlrToken | undefined {
-	if (!node) return undefined;
-	if (node instanceof TerminalNode) {
-		return node.symbol.type === JinjaParser.STRING ? node.symbol : undefined;
-	}
-	if (node instanceof ParserRuleContext) {
-		for (let i = 0; i < node.getChildCount(); i++) {
-			const t = firstStringToken(node.getChild(i));
-			if (t) return t;
-		}
-	}
+/**
+ * The STRING token of an argument ONLY when the argument's DIRECT expression is a
+ * bare string literal — i.e. the whole arg is a single STRING token (`'x'` /
+ * `"x"`). A computed arg (`var('x')`, `'a' ~ b`, `1 + 'x'`) returns undefined:
+ * its target is dynamic, so a ref/source must NOT fabricate a literal model from
+ * a string buried inside it (never-wrong — a fabricated model/modelSpan is a node
+ * the extension would wrongly position hover/rename on). A single-token arg has
+ * `start === stop`; anything with a call/operator wrapping the string does not.
+ */
+function directStringToken(arg: ParserRuleContext): AntlrToken | undefined {
+	const s = arg.start;
+	const e = arg.stop;
+	if (s && s === e && s.type === JinjaParser.STRING) return s;
 	return undefined;
 }
 
@@ -283,10 +284,12 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 
 	// Bare special forms (ref/source/var/env_var never take a package qualifier).
 	if (bare && leading === "ref") {
-		const strings = positionalArgs(call.arg_list())
-			.map((a) => firstStringToken(a))
-			.filter((t): t is AntlrToken => t !== undefined);
-		const modelTok = strings.at(-1); // dbt: ref('pkg','model') → model is last
+		// The model is the LAST positional arg (dbt: ref('pkg','model')), and only
+		// when THAT arg is a direct string literal — a computed target
+		// (`ref(var('x'))`) does not fabricate a model.
+		const pos = positionalArgs(call.arg_list());
+		const modelArg = pos.at(-1);
+		const modelTok = modelArg ? directStringToken(modelArg) : undefined;
 		if (modelTok) {
 			const callSpan = spanOfNode(call, docOffset, base) ?? tagSpan;
 			return {
@@ -297,20 +300,22 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 				tagSpan,
 			};
 		}
-		// broken/argless ref → macro fallback (never a fabricated modelSpan).
+		// computed / broken / argless ref → macro fallback (never a fabricated model).
 		return macroNode(call, callee, docOffset, base, tagSpan);
 	}
 	if (bare && leading === "source") {
-		const strings = positionalArgs(call.arg_list())
-			.map((a) => firstStringToken(a))
-			.filter((t): t is AntlrToken => t !== undefined);
-		if (strings.length >= 2) {
+		// source('name', 'table') — both must be DIRECT string literals; a computed
+		// arg does not fabricate a name/table.
+		const pos = positionalArgs(call.arg_list());
+		const srcTok = pos[0] ? directStringToken(pos[0]) : undefined;
+		const tblTok = pos[1] ? directStringToken(pos[1]) : undefined;
+		if (srcTok && tblTok) {
 			return {
 				kind: "source",
-				sourceName: stringValue(strings[0]),
-				tableName: stringValue(strings[1]),
-				sourceNameSpan: stringContentSpan(strings[0], docOffset, base),
-				tableNameSpan: stringContentSpan(strings[1], docOffset, base),
+				sourceName: stringValue(srcTok),
+				tableName: stringValue(tblTok),
+				sourceNameSpan: stringContentSpan(srcTok, docOffset, base),
+				tableNameSpan: stringContentSpan(tblTok, docOffset, base),
 				tagSpan,
 			};
 		}

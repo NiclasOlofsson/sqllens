@@ -63,6 +63,38 @@ describe("tagNodesOf — R2 span contract", () => {
 		expectSpan(text, node.tagSpan, "{{ ref('orders') }}");
 	});
 
+	it("ref: double-quoted model content span also excludes quotes", () => {
+		const text = '{{ ref("my_model") }}';
+		const node = firstTag(text);
+		expect(node.kind).toBe("ref");
+		if (node.kind !== "ref") return;
+		expect(node.model).toBe("my_model");
+		expectSpan(text, node.modelSpan, "my_model"); // NO double quotes
+	});
+
+	it("ref: a COMPUTED arg does NOT fabricate a model (never-wrong)", () => {
+		// `ref(var('x'))` — the target is dynamic; `x` is the var name, not the
+		// model. The string buried inside the nested call must not become a model.
+		const text = "{{ ref(var('x')) }}";
+		const node = firstTag(text);
+		expect(node.kind).toBe("macro");
+		if (node.kind !== "macro") return;
+		expect(node.name).toBe("ref");
+		expect((node as { model?: unknown }).model).toBeUndefined();
+		// the sole arg span covers the whole computed expression `var('x')`.
+		expect(node.args).toHaveLength(1);
+		expectSpan(text, node.args[0].span, "var('x')");
+	});
+
+	it("source: a computed arg does NOT fabricate a name/table (never-wrong)", () => {
+		const text = "{{ source(var('s'), 'tbl') }}";
+		const node = firstTag(text);
+		// first arg computed → not a source node; degrades to a macro named source.
+		expect(node.kind).toBe("macro");
+		if (node.kind !== "macro") return;
+		expect(node.name).toBe("source");
+	});
+
 	it("source: both content spans exclude quotes", () => {
 		const text = "{{ source('sch', 'tbl') }}";
 		const node = firstTag(text);
@@ -121,6 +153,25 @@ describe("tagNodesOf — R2 span contract", () => {
 		// tagSpan spans all three lines.
 		expectSpan(text, node.tagSpan, text);
 		expect(node.tagSpan.line).toBe(1);
+	});
+
+	it("multi-line ref at a NON-ZERO column: base.column does not leak to later lines", () => {
+		// The tag starts on line 2 at column 2; the model 'later' is on line 3. The
+		// anchor column must apply ONLY to the tag's first line — a later-line span
+		// carries its own absolute column, not base.column + col.
+		const text = "SELECT x,\n  {{ ref(\n  'later'\n) }}";
+		const node = firstTag(text);
+		expect(node.kind).toBe("ref");
+		if (node.kind !== "ref") return;
+		expect(node.model).toBe("later");
+		// expectSpan cross-checks line AND column against an independent posOf scan,
+		// so a base.column leak into line 4 (the 'later' line) fails here.
+		expectSpan(text, node.modelSpan, "later");
+		expect(node.modelSpan.line).toBe(3);
+		expect(node.modelSpan.column).toBe(3); // "  'later'" → l at col 3
+		// the tag itself anchors on line 2 at column 2.
+		expect(node.tagSpan.line).toBe(2);
+		expect(node.tagSpan.column).toBe(2);
 	});
 
 	it("var / env_var / config classify by leading name", () => {
