@@ -81,10 +81,10 @@ const PROBES: Record<string, Probe[]> = {
 		["list-comprehension", "SELECT [x * 2 FOR x IN [1, 2, 3]] AS l", "query"], // sql/functions/list
 		["list-slice", "SELECT l[1:3] FROM t", "query"], // sql/functions/list
 		["list-slice-step", "SELECT l[1:4:2] FROM t", "query"], // sql/functions/list
-		["list-slice-empty-step", "SELECT ([1, 2, 3, 4])[::2] AS s", "noparse"], // sql/functions/list
+		["list-slice-empty-step", "SELECT ([1, 2, 3, 4])[::2] AS s", "query"], // sql/functions/list (#13)
 		["lambda", "SELECT list_transform([1, 2], lambda x: x + 1)", "query"], // sql/functions/lambda
 		["method-chain", "SELECT s.trim().upper() FROM t", "query"], // sql/functions/overview
-		["method-on-literal", "SELECT 'abc'.upper()", "noparse"], // sql/functions/overview
+		["method-on-literal", "SELECT 'abc'.upper()", "query"], // sql/functions/overview (#13)
 		["struct-dot", "SELECT s.a FROM t", "query"], // sql/data_types/struct
 		["interval-unit", "SELECT INTERVAL 1 YEAR + now()", "query"], // sql/data_types/interval
 		["within-group", "SELECT quantile_cont(a, 0.5) FROM t", "query"], // sql/functions/aggregates

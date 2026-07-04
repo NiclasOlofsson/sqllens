@@ -1246,7 +1246,13 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 		return ind ? applyIndirection(base, ind, node) : base;
 	}
 	const constant = directChildrenOfRule(node, P.RULE_aexprconst)[0];
-	if (constant) return { kind: "literal", text: constant.getText(), cst: constant };
+	if (constant) {
+		const base: Expr = { kind: "literal", text: constant.getText(), cst: constant };
+		// A literal receiver may carry a method chain / subscript — 'abc'.upper() → upper('abc')
+		// (grammar `aexprconst opt_indirection`, #13). Empty indirection returns base unchanged.
+		const ind = directChildrenOfRule(node, P.RULE_opt_indirection)[0];
+		return ind ? applyIndirection(base, ind, node) : base;
+	}
 	const inParen = directChildrenOfRule(node, P.RULE_a_expr)[0];
 	if (inParen) {
 		const base = lowerExpr(inParen);

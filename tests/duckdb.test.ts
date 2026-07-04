@@ -65,6 +65,53 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		ok("SELECT ([1, 2, 3, 4, 5])[:-:2];");
 	});
 
+	// Empty-bound slices with a step — the `::` in `[::2]` / `[1::2]` / `[::-1]` maximal-munches to
+	// one TYPECAST token, so these previously bailed while the colon-separated `[:4:2]` / `[1:4:2]`
+	// parsed. Both bounds are optional in `list[begin:end:step]` (functions/list.md#slicing). #13.
+	it("empty-bound stepped slices [::2] [1::2] [:4:2] [::-1] parse (functions/list.md#slicing)", () => {
+		ok("SELECT ([1, 2, 3, 4])[::2];");
+		ok("SELECT ([1, 2, 3, 4])[1::2];");
+		ok("SELECT ([1, 2, 3, 4])[:4:2];");
+		ok("SELECT ([1, 2, 3, 4])[::-1];");
+		// No-regression control: the colon-separated stepped slice is unchanged.
+		ok("SELECT ([1, 2, 3, 4])[1:4:2];");
+	});
+
+	it("empty-bound slice lowers to a subscript with no fabricated bound (#13)", () => {
+		const strip = (o: unknown) =>
+			JSON.parse(
+				JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" || k === "partSpans" ? undefined : v)),
+			);
+		const { ast } = parse("SELECT ([1, 2, 3, 4])[::2];", "duckdb");
+		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
+		const e = strip(expr);
+		expect(e.kind).toBe("subscript");
+		// The absent begin/end are NOT fabricated into a 0/-1 — the whole slice is the opaque index
+		// (same shape as the existing `[2:4:2]` lowering; no new bound literals invented).
+		expect(e.index).toEqual({ kind: "literal", text: "[::2]" });
+	});
+
+	it("string-literal method receiver 'abc'.upper() lowers to upper('abc') (#13)", () => {
+		const strip = (o: unknown) =>
+			JSON.parse(
+				JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" || k === "partSpans" ? undefined : v)),
+			);
+		ok("SELECT 'abc'.upper();");
+		const { ast } = parse("SELECT 'abc'.upper();", "duckdb");
+		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
+		expect(strip(expr)).toEqual({
+			kind: "function",
+			name: "upper",
+			args: [{ kind: "literal", text: "'abc'" }],
+			aggregate: false,
+			distinct: false,
+		});
+		// No-regression control: the parenthesized receiver still lowers to a method call.
+		const { ast: paren } = parse("SELECT ('hello').upper();", "duckdb");
+		const pe = paren.body.kind === "select" ? paren.body.projections[0]?.expr : undefined;
+		expect(strip(pe).name).toBe("upper");
+	});
+
 	it("lambda keyword form lowers to an IR lambda (functions/lambda.md)", () => {
 		const { ast } = parse("SELECT list_transform([1, 2], lambda x: x + 1);", "duckdb");
 		const s = JSON.stringify(ast.body, (k, v) => (k === "cst" || k === "aliasCst" ? undefined : v));
