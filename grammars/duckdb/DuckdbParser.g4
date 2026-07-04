@@ -3927,7 +3927,11 @@ c_expr
    // dropped) while unaliased follows kept the chain — caught in Task-5 review, reverted, then replaced
    // by this split. Guard probes pin the method-chain reading across every follow context in
    // tests/duckdb.test.ts.
-   | aexprconst # c_expr_expr
+   // opt_indirection added in this fork: method-chaining/subscript on a literal receiver —
+   // 'abc'.upper() ≡ upper('abc'), [1,2][1] already via the list alt (functions/overview.md
+   // #function-chaining-via-the-dot-operator). opt_indirection matches empty, so a bare constant is
+   // unchanged; lower() applies the chain only when present (#13). Pure acceptance widening.
+   | aexprconst opt_indirection # c_expr_expr
    | plain_func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
    | plsqlvariablename # c_expr_expr
@@ -4486,7 +4490,13 @@ indirection_el
    : DOT (attr_name (OPEN_PAREN func_arg_list? CLOSE_PAREN)? | STAR)
    // The second COLON bound is DuckDB's slice STEP — l[2:4:2]; a bare `-` is the default-bound
    // placeholder in stepped slices — l[:-:2] (sql/functions/list.md#slicing).
-   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)?) CLOSE_BRACKET
+   //
+   // The TYPECAST alt handles slices whose two colons are ADJACENT — l[::2], l[1::2], l[::-1]:
+   // both slice bounds are optional in list[begin:end:step], so `::` (end omitted) maximal-munches
+   // to one TYPECAST token and never reaches the COLON alt above. begin?::step? recovers those.
+   // It stays BELOW the plain `a_expr` index, so a genuine cast-index `l[x::INT]` (a valid typename
+   // step-less) still reads as the index — pure acceptance widening (#13, functions/list.md#slicing).
+   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)?) CLOSE_BRACKET
    ;
 
 opt_slice_bound

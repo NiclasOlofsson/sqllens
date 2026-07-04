@@ -778,6 +778,19 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.body.left.all).toBe(true);
 	});
 
+	it("keeps EXCEPT as a set operator, not a bare FROM alias", () => {
+		// Seam guard: EXCEPT is non-reserved, so the bare FROM-alias slot could grab the EXCEPT of
+		// `... FROM t EXCEPT SELECT ...` as `t AS except` and fold the second select in as a bare,
+		// operator-less branch (which lowers to op=union). EXCEPT is held out of non_reserved_words
+		// so the set-op reading wins. (Parser-gaps wave: the identifier-holes fix over-included EXCEPT.)
+		const { q } = ir("SELECT * FROM t EXCEPT SELECT * FROM u");
+		if (q.body.kind !== "setop") throw new Error(`expected setop, got ${q.body.kind}`);
+		expect(q.body.op).toBe("except");
+		if (q.body.left.kind !== "select") throw new Error("left branch not a select");
+		expect(q.body.left.from[0].alias).toBeUndefined();
+		expect(q.body.right.kind).toBe("select");
+	});
+
 	it("records UNION BY NAME (name-matched column alignment)", () => {
 		const { q } = ir("SELECT a, b FROM t1 UNION ALL BY NAME SELECT b, a FROM t2");
 		if (q.body.kind !== "setop") throw new Error("setop");
@@ -1361,4 +1374,74 @@ describe("Snowflake bare LEFT/RIGHT before JOIN are join keywords, not aliases",
 		expect(body.projections[0].name).toBe("l");
 		expect(body.from[0].alias).toBeUndefined();
 	});
+});
+
+// The fork lexes SHOW-object plural words + statement/option keyword tokens (SHOW REGIONS,
+// COPY options, session parameters, DDL option words, …) as dedicated tokens that were absent
+// from id_, so any table/column named after one was rejected — `SELECT a FROM regions` failed.
+// Snowflake reserves very few words (docs.snowflake.com/en/sql-reference/reserved-keywords); every
+// non-reserved one is a legal identifier, so these were an acceptance bug. Enumerated by
+// temp_auto/audit-id-holes.mjs (538 tokens recovered).
+describe("Snowflake keyword-token identifier holes (SHOW-object / option words as names)", () => {
+	// A doc-cited spread across the recovered categories: SHOW-object plural (regions), COPY/format
+	// options (auto_compress, avro, csv, json, encoding, compression), object words (volume, iceberg,
+	// listing, application), option/param words (format, header, access, masking, handler),
+	// clause-adjacent non-reserved words (before, changes, limit, fetch, within), and the scripting
+	// keyword `do` (ON n PERCENT DO — non-reserved, so `SELECT do FROM t` must parse).
+	const RECOVERED = [
+		"regions",
+		"auto_compress",
+		"avro",
+		"csv",
+		"json",
+		"do",
+		"volume",
+		"iceberg",
+		"format",
+		"header",
+		"access",
+		"application",
+		"listing",
+		"encoding",
+		"compression",
+		"masking",
+		"handler",
+		"before",
+		"changes",
+		"limit",
+		"fetch",
+		"within",
+	];
+
+	it.each(RECOVERED)("`%s` is usable as a table name in FROM", (word) => {
+		const { body } = selectBody(`SELECT a FROM ${word}`);
+		expect(body.from[0]).toMatchObject({ kind: "table", name: [word] });
+	});
+
+	it.each(RECOVERED)("`%s` is usable as a projected column name", (word) => {
+		expect(errorsOf(`SELECT ${word} FROM t`)).toBe(0);
+	});
+
+	// --- reject-controls ---
+
+	// Seven non-reserved tokens stay OUT of id_ because reaching them re-reads existing SQL:
+	// asc/desc = sort direction (ORDER BY x DESC); nextval = object_name DOT NEXTVAL; listagg = its
+	// WITHIN GROUP aggregate; default = the USE SECONDARY ROLES / column DEFAULT sentinel; pivot/unpivot
+	// = the post-source pivot clause a trailing PIVOT must resolve to (not reserved — an over-exclusion
+	// tracked as an Open Gap in docs/PLAN.md, kept out until the post-source-slot split lands). Not a
+	// bare table name.
+	it.each(["asc", "desc", "nextval", "listagg", "default", "pivot", "unpivot"])(
+		"dedicated-role word `%s` is NOT usable as a bare table name",
+		(word) => {
+			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
+		},
+	);
+
+	// Engine-reserved words (docs.snowflake.com/en/sql-reference/reserved-keywords) stay rejected.
+	it.each(["select", "from", "where", "table", "sample"])(
+		"engine-reserved word `%s` is NOT usable as a bare table name",
+		(word) => {
+			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
+		},
+	);
 });
