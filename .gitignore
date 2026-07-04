@@ -16,3 +16,8 @@ vendor/
 # NEVER commit — proprietary. Snapshot so dbt re-runs don't disturb our tests.
 harness/local/
 .superpowers/
+
+# machine-specific corpus path. The resolver reads SQL_CORPUS_DIR from the real
+# environment (set it as a user env var — see CLAUDE.md → Corpus location); a
+# local .env is an optional personal override, never committed (it held a machine path).
+.env
