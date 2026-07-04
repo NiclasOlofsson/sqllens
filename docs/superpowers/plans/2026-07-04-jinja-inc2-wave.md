@@ -259,10 +259,12 @@ Enumeration: variant 0 = every region's arm 0 active; then one variant per (regi
 
 **Interfaces:** consumes everything above; produces the shippable inc2 surface.
 
-- [ ] **Step 1:** Write the fixtures (real dbt-shaped, one construct each) + the failing gate/api extensions.
-- [ ] **Step 2:** Run — new assertions FAIL only where wiring is missing; fix exports/wiring (no behavior changes belong in this task — if a gate assertion exposes a Task 1–4 bug, FIX IT THERE conceptually: small fixes inline are fine, but report them).
+**Consumer-contract gate (ADDED 2026-07-04 — the twice-proven lesson).** A green suite on our layer-in-isolation is NOT proof the consumer can use it: the extension's cross-repo shadow-diff caught two regressions our green unit tests missed (inc1 placeholder names; R3 source names read off the placeholder token by the consumer). So this task adds a `tests/corpus/jinja.consumer-contract.test.ts` (tier-2) that exercises the DOWNSTREAM READS the way a consumer does, over every ref/source fixture: for `parseTemplated(text, "databricks")`, scan EVERY public name path — `sql.ast` source names, `resolveScopes` binding keys, `Lineage.originsOf` origins, `deriveSymbols` names, AND the `tokens` stream text — and assert NONE contains a `^j+$` placeholder-fill for a ref/source-tagged source (the model name must be the REAL name on every consumer-visible read, never the `jjj…` placeholder). This is the exact class the shadow-diff keeps catching; it fails at OUR layer before the shadow-diff has to, and documents the consumption contract executably (read identity from `src.name`/scope, never token text). NOTE for the controller: whether consumer-contract gates become STANDING practice for every cross-repo contract is Niclas's open process call — this ONE gate for name-binding is in scope here.
+
+- [ ] **Step 1:** Write the fixtures (real dbt-shaped, one construct each) + the failing gate/api extensions + the consumer-contract gate.
+- [ ] **Step 2:** Run — new assertions FAIL only where wiring is missing; fix exports/wiring (no behavior changes belong in this task — if a gate assertion exposes a Task 1–4 bug, FIX IT THERE conceptually: small fixes inline are fine, but report them). The consumer-contract gate MUST pass (R3 already delivers real names; if it fails, a placeholder is leaking a public read — that's a real bug, surface it).
 - [ ] **Step 3:** Full `npm test` + `npm run test:corpus` green; typecheck.
-- [ ] **Step 4:** Format; commit `feat(jinja): inc2 public surface + gate extension (regions/symbols/variants + 5 fixtures)`.
+- [ ] **Step 4:** Format; commit `feat(jinja): inc2 public surface + gate extension + consumer-contract gate (regions/symbols/variants + 5 fixtures)`.
 
 ## TASK 6 — Close: docs truth-up
 
