@@ -30,7 +30,7 @@ expr_tag
 	;
 
 stmt_tag
-	: STMT_OPEN stmt? STMT_CLOSE
+	: STMT_OPEN stmt STMT_CLOSE
 	;
 
 comment_tag
@@ -41,8 +41,14 @@ comment_tag
 // loosely: an `expr` where one starts (so calls inside {% set x = ref('y') %}
 // are recognized for R2), otherwise any token that is not the close (covers the
 // connectives `= , as import from in` etc.). Precise structure is inc2.
+//
+// The lead is `keyword` for a known jinja keyword (a KeywordContext inc2/Task 4
+// key off) OR an unknown `id` — so dbt-custom statement tags in non-model files
+// (`{% snapshot s %}`, `{% docs d %}`, `{% materialization m, default %}`,
+// `{% test t(model, col) %}`) parse with 0 errors instead of false-erroring on a
+// non-jinja lead. `keyword` is first so known leads still bind to KeywordContext.
 stmt
-	: keyword ( expr | ~STMT_CLOSE )*
+	: ( keyword | id )? ( expr | ~STMT_CLOSE )*
 	;
 
 keyword

@@ -90,18 +90,23 @@ describe("jinja island grammar — expression tags", () => {
 });
 
 describe("jinja island grammar — statement tags", () => {
-	it("parses {% if cond %}", () => {
+	it("parses {% if cond %} and exposes a KeywordContext lead", () => {
 		const { tree, errors } = parseJinjaTag("{% if cond %}");
 		expect(errors).toBe(0);
 		expect(findAll(tree, "Stmt_tagContext").length).toBe(1);
+		expect(findAll(tree, "KeywordContext").length).toBe(1);
 	});
 
-	it("parses {% for x in items %}", () => {
-		expect(parseJinjaTag("{% for x in items %}").errors).toBe(0);
+	it("parses {% for x in items %} and exposes a KeywordContext lead", () => {
+		const { tree, errors } = parseJinjaTag("{% for x in items %}");
+		expect(errors).toBe(0);
+		expect(findAll(tree, "KeywordContext").length).toBe(1);
 	});
 
-	it("parses {% set y = 1 %}", () => {
-		expect(parseJinjaTag("{% set y = 1 %}").errors).toBe(0);
+	it("parses {% set y = 1 %} and exposes a KeywordContext lead", () => {
+		const { tree, errors } = parseJinjaTag("{% set y = 1 %}");
+		expect(errors).toBe(0);
+		expect(findAll(tree, "KeywordContext").length).toBe(1);
 	});
 
 	it("parses {% endif %}", () => {
@@ -116,6 +121,22 @@ describe("jinja island grammar — statement tags", () => {
 
 	it('parses from/import with as: {% from "m" import a as b %}', () => {
 		expect(parseJinjaTag('{% from "m" import a as b %}').errors).toBe(0);
+	});
+
+	// dbt-custom statement tags in non-model files (snapshots, docs blocks, custom
+	// materializations, generic tests) lead with an unknown, non-jinja keyword.
+	// They must parse with 0 errors — a false-error here rejects real dbt.
+	it("tolerates dbt-custom statement leads with 0 errors", () => {
+		expect(parseJinjaTag("{% snapshot my_snapshot %}").errors).toBe(0);
+		expect(parseJinjaTag("{% docs my_docs %}").errors).toBe(0);
+		expect(parseJinjaTag("{% materialization my_mat, default %}").errors).toBe(0);
+		expect(parseJinjaTag("{% test my_test(model, column_name) %}").errors).toBe(0);
+	});
+
+	it("an unknown lead does NOT get a KeywordContext (opaque id lead)", () => {
+		const { tree, errors } = parseJinjaTag("{% snapshot my_snapshot %}");
+		expect(errors).toBe(0);
+		expect(findAll(tree, "KeywordContext").length).toBe(0);
 	});
 });
 
