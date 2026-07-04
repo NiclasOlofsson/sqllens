@@ -9,12 +9,15 @@ stream, first-class jinja tag nodes, macro expansions as typed holes — replaci
 Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; they differ on division
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.
 
-**Status: inc1 and inc2 are built.** Raw jinja-SQL parses natively — `parseTemplated` / `tokenizeTemplated`,
-the unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2 ref/source/macro tag-AST, all
-additive over the eight untouched SQL grammars (jinja reachable only through the barrel). inc2 adds R3
-(`{{ ref }}`/`{{ source }}` in a FROM slot → a real template-tagged `TableSource`), R4 (`templateRegions` /
-`templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage `templateVariants`. Gated
-by `tests/corpus/jinja.test.ts` + `tests/corpus/jinja.consumer-contract.test.ts`. inc3 below stays spec.
+**Status: inc1, inc2, and inc3.1 are built.** Raw jinja-SQL parses natively — `parseTemplated` /
+`tokenizeTemplated`, the unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2
+ref/source/macro tag-AST, all additive over the eight untouched SQL grammars (jinja reachable only through
+the barrel). inc2 adds R3 (`{{ ref }}`/`{{ source }}` in a FROM slot → a real template-tagged `TableSource`),
+R4 (`templateRegions` / `templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage
+`templateVariants`. inc3.1 adds `TemplateCatalog.relation` — a templated ref resolves its real columns
+through an injected catalog (zero-catalog = R3 fallback, byte-identical). Gated by `tests/corpus/jinja.test.ts`
++ `tests/corpus/jinja.consumer-contract.test.ts`. The rest of inc3 (`value`/`expansionShape`/`loopCollection`)
+stays spec.
 
 ## The locked architecture (three lines — CHANNEL ITEM 14)
 
