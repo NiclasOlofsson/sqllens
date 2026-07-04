@@ -286,6 +286,17 @@ generalizes the fill from a char to a length-matched **shape-valid string**:
   errors) where it failed before — the cascade-death proof.
 - **Two-path integrity:** this is still parse-with-holes, NOT render — `SELECT 1` is a shape-valid HOLE, not
   the macro's output. The IR/tokens still flag the tag; the extension renders for real at validation time.
+- **Open Gap — slot-blind shaping in a bare FROM/JOIN.** `expansionShape` is answered BY NAME
+  (synchronous, position-blind by design), so a macro answered `relation`/`statement` gets the `SELECT 1`
+  fill EVERYWHERE it appears — including a bare `FROM {{ m() }}` / `JOIN {{ m() }}` (no parens), where it
+  fills to invalid `FROM SELECT 1`. That is a 0→1 regression vs the identifier fill for that one slot (the
+  identifier `FROM jjjj` parses as a table name). It is opt-in (zero-catalog is byte-identical, unaffected)
+  and outside anvil's residual class — the catalog contract is that `relation` is returned only for
+  parenthesized-position macros (CTE/subquery bodies), which is where the shaping is needed and correct.
+  The length/newline fit-guard is fully honored; this is a slot-mismatch, not an invariant break. Future
+  close: a cheap FROM/JOIN backward-scan (skip `relation`/`statement` shaping when the tag sits in a bare
+  table-reference slot — preceded by `FROM`/`JOIN`/`,` with no intervening `(` — since the identifier fill
+  already parses there).
 
 ### inc3 increment 1 — `relation` only — BUILT 2026-07-04 (design decided 2026-07-04; anvil cleared relation-first)
 
