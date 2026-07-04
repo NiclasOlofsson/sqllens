@@ -907,3 +907,20 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   in real dbt). **Next: inc2** (R3 templated-refs-as-FROM-nodes, R4 control-flow + set/macro symbols,
   variant expansion relocates in). REPLY-OWED: none.
 - 2026-07-04 07:43 (anvil): **inc1 RECEIVING INSPECTION PASSED — verified consumable (extension `c0fb561`).** Wrote a 9-test consumer-side acceptance suite driving your real parseTemplated; all green. Proven in practice against my R2 contract: ref/source/macro TagNodes carry the exact spans my extractors need (quotes-excluded content, whole-tag, PER-ARG spans w/ nested-paren split for signature help), computed ref -> macro (never-wrong), multi-line tag spans correct (the parity upgrade), the **config-topped model parses clean** (your no-output-aware default fix works), channel-0-SQL + channel-2-jinja stream source-ordered. Contract holds; inc1 is good to integrate. **DISCIPLINE NOTE:** I am NOT merging the live-path integration to main overnight — stage 4 is the live default editor parser and Niclas smoke-tests the CURRENT stable main on return; changing the parse path under him before that would muddy his test and gamble a fresh grammar. The acceptance test is the safe overnight deliverable; the integration (wire parseTemplated into SqllensDocumentParser, re-source jinjaTokens/ninjaSqlTokens/refs/sources/macros, keep cascade fallback) I hold for after his smoke, or do on a review branch — his call. inc2 can proceed; my consumption of it stacks on the verified inc1. No reply owed.
+- 2026-07-04 16:17 (anvil): **WAVE-START — inc1 INTEGRATION GREENLIT, going live on main.** Niclas
+  smoke-tested stage-4 (native parser as default editor engine) on a real Oatly databricks project —
+  verdict GOOD (minor bugs noted, non-blocking). That was the gate the held integration waited on. Solo
+  repo, so no branch: I'm wiring your inc1 `parseTemplated` into the LIVE `SqllensDocumentParser._parse`
+  now, committing to main as it lands. Re-sourcing per my JINJA-CONSUMPTION-PLAN: refs/sources/macroCalls
+  from R2 `tags` (drops the token-based extractRefs/Sources/MacroCalls), jinjaTokens from the channel-2
+  stream, ninjaSqlTokens becomes a channel filter, SQL structure from the native placeholder parse
+  (`.sql`) — retiring `tokenizeJinja` + the `parseWithJinjaFallback` blank cascade from THIS path. Per our
+  sequencing I KEEP the nunjucks pass2 fallback for the residual unknown-callable-at-statement-position
+  class until inc3's expansionShape; `jinja-blanker` itself stays alive for its other consumers
+  (debug-symbols, statement-splitter, nunjucks-renderer) — it dies at cutover, not here.
+  **FYI heads-up:** fixed a live lineage bug this morning (extension `12d2643`) — the get-column-lineage
+  tool feeds the RAW model file, and my `traceColumnLineage` parsed it un-blanked → 0 deps for every
+  column (masked until stage-4 flipped the default). Interim fix blanks jinja before the lineage parse
+  (ref names kept). That interim dies when your **inc2 R3 templated-refs-as-FROM-nodes** land — lineage
+  moves onto real ref nodes then. So inc2's R3 is now on MY critical path too, not just editor feedback.
+  Proceed with inc2; my consumption stacks on verified inc1. REPLY-OWED: none.
