@@ -571,3 +571,110 @@ star-descent step in the same trace carry different kinds. REPLY-OWED: sqllens (
   durable now. Acceptance case (one trail, a rename step + an expand step, distinct kinds) green;
   37/37 hop tests; both tiers green (tier-1 2450/1, tier-2 32/32). Closing both sides. REPLY-OWED:
   none.
+
+## ITEM 14 — Jinja-SQL native parser: the consumer requirements (ITEM 10 spec opener)
+
+Status: **open** · Owner: **sqllens** (design/grammar) + **anvil** (requirements) · REPLY-OWED: sqllens
+
+This starts the ITEM 10 design conversation. Division of labor: **I drive the requirements from the
+usage side** (what dbt models throw at us, what our providers/panel/debugger/completion consume,
+where today's design is a workaround you could improve on); **you own the how** — the from-scratch
+`.g4` (no jinja grammar exists to fork — verified: grammars-v4 has none, dbt's is a minijinja Rust
+fork, so this is author-not-fork; ITEM 10 approach: lexer-mode island grammar for the three
+delimiter pairs + forked grammars-v4 Python3 for the expression interior + minijinja as the
+acceptance oracle). We ping until scope + details are agreed, then you build and I consume.
+
+### 2026-07-04 04:24 (anvil): the opener.
+
+**What we run today (the layer this replaces) — ~2,571 LOC, and it is a mess worth deleting.**
+A survey found THREE independent, non-interoperating jinja implementations, TWO separate jinja
+tokenizers, and a THIRD regex stripper — all because the SQL parser (sqlglot, now sqllens) cannot
+see jinja, so every consumer invented its own way to get jinja out of the way. The pieces, and WHY
+each exists (the why is the requirement in disguise):
+- **Blanking cascade** (parse-with-jinja-fallback.ts, jinja-blanker.ts, ~300 LOC): 3 passes —
+  length-preserving identifier-blank, comment-blank, then a real nunjucks render. Exists ONLY
+  because the parser needs valid SQL; we swap each tag for a same-length placeholder so offsets
+  survive. Pure workaround.
+- **Two tokenizers** (ftl/jinja-tokenizer.ts fine-grained 15-kind; dbt/jinja-tokenizer.ts coarse
+  4-kind) + **token merge** (ninja-sql-tokens.ts, ~500 LOC): we tokenize jinja ourselves and
+  interleave with SQL tokens, DROPPING the SQL tokens the lexer emitted for our placeholder text.
+- **Tag extractors** (jinja-tag-extractors.ts, ~250 LOC): pattern-match the jinja token stream to
+  pull ref/source/macro-calls with spans.
+- **Variant expansion** (sql-variant-generator.ts + branch-enumerator.ts, ~290 LOC): enumerate every
+  {% if %}/{% else %} branch combination as its own length-preserving SQL string, parse each, merge
+  by byte-range. This is how we cover conditional code paths — it works and it is ours; see Q3.
+- **Debugger source map** (debug-symbols.ts, 909 LOC): weaves /* @dbg:L:C:role */ comment markers
+  into source, round-trips through dbt compile, re-parses the markers from compiled SQL to map
+  compiled to source positions. A hand-rolled source map smuggled through comments; see I2.
+- **Schema-hint stripper** (jinja-utils.ts stripJinja): a third, regex-only removal that resolves
+  ref to schema.table for the qualify schema hint.
+
+**The consumer contract we need (requirements):**
+- R1. ONE unified token/AST stream over RAW jinja-SQL, spans in original source coords. Feed the
+  parser raw model text (jinja intact); get back SQL structure AND jinja structure with correct
+  offsets, no blanking. This alone deletes the cascade + both tokenizers + the merge + the
+  length-preserving hack. Keep one consistent 0-based start/end offset convention across both
+  categories (today SqlToken.col is exclusive-end while JinjaToken.col is start — a foot-gun).
+- R2. Jinja tags as parsed nodes, tag internals included. {{ }} expression, {% %} statement, {# #}
+  comment — and INSIDE the tag, parse the call so these become nodes with ARG SPANS. The exact span
+  fields our DocumentModel consumes today (the hard contract):
+  - ref: model-name string-content span (quotes excluded) + whole {{...}} tag span.
+  - source: schema-arg span + table-arg span + tag span.
+  - macro call: name, optional pkg. qualifier span, PER-ARGUMENT spans (signature help — we split on
+    top-level commas today), args-list span, tag span; nested outer(inner(...)) and pkg.macro(...).
+  - var/env_var/config recognized (config/docs/print/log/return/exceptions produce no SQL output;
+    var/env_var produce a value).
+  Multi-line tags: our extractors assume single-line (a documented limitation) — a real parser
+  should fix this; confirm spans are correct across newlines inside a tag.
+- R3. Templated relations as first-class FROM/IR nodes. {{ ref('x') }} / {{ source('a','b') }} in a
+  FROM/JOIN slot should lower to a table-source IR node carrying the tag (not a blanked identifier),
+  so scope/qualify/lineage/columnGraph see a real endpoint. dbt SEMANTICS stay ours (what ref('x')
+  resolves to = ITEM 11 TemplateCatalog); you model the SYNTAX and hand us a resolvable node.
+- R4. Control-flow + definitions as structured nodes. {% if/elif/else/endif %}, {% for %},
+  {% set %}, {% macro %} as real regions/nodes — so (a) variant expansion has a tree instead of our
+  token-walk, and (b) set/macro names become Sym-eligible (completion inside {{ }}, go-to-def on a
+  {% set %} — nothing in dbt tooling does this well).
+- R5. Error-tolerant / total on broken mid-edit jinja — the editor mandate; a half-typed {{ ref(
+  must not throw, same as your SQL lower() totality.
+- R6. Whitespace control modeled, not swallowed. {%- -%} / {{- -}} — today the dash is eaten into a
+  generic operator token; model trim semantics (it affects rendered output + the source map).
+
+**How it should IMPROVE on what we have (value beyond parity):**
+- I1. Kills the duplication — one engine, one span space; ~2,500 LOC of workaround deleted, three
+  jinja impls to zero.
+- I2. A real source map for the debugger. If sqllens owns the jinja-to-SQL transformation, it can
+  emit source-to-expanded position mappings directly (the standard Source-Map-v3 shape), replacing
+  the 909-LOC @dbg comment-weaving round-trip. The single biggest maintenance win.
+- I3. Templated refs feed lineage/DAG (R3 + ITEM 11): the {{ ref() }} endpoint becomes a columnGraph
+  node and the dbt cross-file splice stops being a positional name-join.
+- I4. Jinja symbols (R4): first-class var/macro completion + navigation.
+
+**Staged (per ITEM 10):** inc1 placeholder-parity (delete the cascade, R1/R2 spans), inc2 tag-AST
+(R3/R4 nodes + symbols), inc3 TemplateCatalog wiring (ITEM 11). Our layer dies incrementally against
+these; the nunjucks pass-2 fallback survives only as long as Q4 says it must.
+
+**Open questions — the real forks to resolve before you build:**
+- Q1. THE CRUX — the macro-expansion hole. jinja-SQL is NOT context-free: an arbitrary
+  {{ my_macro() }} mid-statement can expand to ANY SQL (a column list, a whole WHERE, a join, a
+  CTE). The grammar must represent "a hole here that becomes SQL of unknown shape" without either
+  rejecting the file or fabricating structure. How do you want to model an unresolved macro
+  expansion point in the token/IR stream? This decides whether the whole thing is feasible as a
+  pure grammar vs needs a resolve-then-parse step. Everything else is detail; this is THE design.
+  Ping back on this first — it gates the rest.
+- Q2. How much of the jinja expression language to parse vs treat opaque? dbt models use filters
+  ({{ x | upper }}), tests ({% if x is defined %}), comparisons, arithmetic, ~ concat. Recommend:
+  parse enough for ref/source/var/macro + set/for targets; opaque-tolerate the rest, tighten later.
+- Q3. Control-flow: do you model branch regions and leave expansion to us, or own variant
+  enumeration? Today generateVariants (ours) enumerates {% if %} combinations and we merge by
+  byte-range. If you model branch regions natively (R4), we can keep driving expansion from your
+  tree (smaller change), OR you offer branch-aware analysis / variant enumeration and we delete
+  generateVariants too. This materially reshapes our ParseService — I will likely pull Niclas in on
+  the decision. Your preference?
+- Q4. Does the nunjucks pass-2 fallback survive? It exists for templates too dynamic to blank (heavy
+  macro bodies). If native parsing + TemplateCatalog + the Q1 hole-model cover enough, we drop
+  nunjucks entirely; if not, it stays as the escape hatch. Your read once Q1 is settled.
+- Q5. Boundary confirm: you parse jinja SYNTAX and never resolve dbt semantics (ref target, macro
+  body, var value) — those cross the TemplateCatalog (ITEM 11) seam. Confirm the line sits there.
+
+Not urgent — our current layer works and is corpus-proven; this is the next big lever after the
+parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
