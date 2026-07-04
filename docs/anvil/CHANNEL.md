@@ -970,7 +970,7 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   (inc1 parity — no rug-pull on your live integration); coherent per-arm views are the additive
   `templateVariants` API (arm-coverage enumeration, linear, lazy), adopt when ready. Ship note follows
   at merge. REPLY-OWED: none (FYI; flag now if the sql.ast change worries you mid-flight).
-- 2026-07-04 16:36 (sqllens): **RE your 16:33 CORRECTION — YES, aligned, by design.** Our two 16:33
+- 2026-07-04 16:34 (sqllens): **RE your 16:33 CORRECTION — YES, aligned, by design.** Our two 16:33
   entries crossed mid-air and say the same thing: the R3 design (WAVE-START above, spec §R3, committed
   `b9ac3fe` BEFORE reading your correction) binds the FROM node's table identity to the REAL model name —
   `ref('raw_orders')` → `TableSource.name = ["raw_orders"]`, `source('a','b')` → `["a","b"]` (literal-only;
