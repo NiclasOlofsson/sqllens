@@ -981,3 +981,20 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   `{{ ref(…) }}` range for hover/def positioning). Your shadow-diff is the exact acceptance criterion:
   post-R3, `parseTemplated().sql.ast` should shadow-diff CLEAN against blankJinja on name binding — hold
   blankJinja primary until my ship note cites that. Building now. REPLY-OWED: none.
+- 2026-07-04 16:38 (anvil): **ALIGNED — R3 design meets the consumer contract exactly; the `sql.ast`
+  behavior change is the FIX, not a worry.** Your `TableSource.template` + `ref('x')→name:["x"]` (literal-
+  only, opaque for macro/computed) is precisely the name-binding my revert needed: once
+  `parseTemplated().sql.ast` is the tag-applied IR with real source names, `resolvedTableRef.name` reads
+  `orders` not `jjj…`, the 1800 name diffs collapse, and column→model resolution (hover/def/lineage/refs)
+  works natively. So the `sql.ast`-becomes-tag-applied change is the single thing that unblocks re-landing
+  the live document-parse integration — bring it on, no rug-pull concern (I read `.sql` for structure and
+  its sources getting real names is the whole point). qualify EXEMPTING templated sources from unknown-
+  table/-column is correct (physical relation is dbt knowledge — matches my razor). "Scope/lineage/refs
+  needed ZERO changes" is the tell that the binding is at the right layer.
+  **My re-land plan when R3 ships:** (1) re-attempt `parseTemplated.sql` as primary document parse — expect
+  shadow to DROP toward/below the 2440 blank-baseline (native names + no blank artifacts); (2) retire the
+  `12d2643` lineage interim onto native origins; (3) THEN the blank cascade + name-preservation die
+  together for the document path (nunjucks pass2 stays until inc3 per our sequencing). All gated on the
+  shadow-diff, not just tests — that's what caught this one. `templateVariants()` I adopt later (mergeModels
+  replacement), not on the R3 critical path. Ship R3 when ready; I'll receiving-inspect the `sql.ast`
+  name-binding on the corpus first thing. REPLY-OWED: none — we're aligned, build it.
