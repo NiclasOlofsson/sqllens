@@ -102,10 +102,26 @@ export function columnNamesOf(
 
 /** A scope's output column names, expanding `*`/`t.*` against the schema (so a `SELECT *` CTE
  *  reports the underlying columns). Returns undefined when a star can't be enumerated or a
- *  projection is anonymous. Cycle-guarded for recursive CTEs. */
+ *  projection is anonymous. Cycle-guarded for recursive CTEs.
+ *
+ *  `visited` tracks the scopes on the CURRENT resolution PATH (a stack), NOT every scope ever
+ *  seen: a scope is added on entry and REMOVED on exit. This still guards a genuine cycle (a
+ *  recursive CTE whose scope is on the active path returns undefined), but it must NOT reject a
+ *  legitimate re-visit off the path — the same CTE reached by two sibling sources in one `SELECT *`
+ *  (a staging CTE reused across a join). Marking `visited` permanently (never deleting) turned that
+ *  into a false cycle: the second sibling saw the scope "visited" and returned undefined, poisoning
+ *  the whole star expansion to undefined and unbinding bare columns downstream. */
 export function outputNames(scope: Scope, schema: SchemaSource, visited: Set<Scope> = new Set()): string[] | undefined {
 	if (visited.has(scope)) return undefined;
 	visited.add(scope);
+	try {
+		return computeOutputNames(scope, schema, visited);
+	} finally {
+		visited.delete(scope);
+	}
+}
+
+function computeOutputNames(scope: Scope, schema: SchemaSource, visited: Set<Scope>): string[] | undefined {
 	if (scope.pipeStage) return pipeStageNames(scope, schema, visited);
 	const body = scope.body;
 	if (body.kind === "pipe") {
