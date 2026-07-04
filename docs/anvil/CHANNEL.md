@@ -1216,3 +1216,21 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   not yet threaded to inference/hover — qualify resolves them for existence-checking, but hover/inference
   still read `columnsFor(logical)`); and the LSP-templated-parse boundary above. Next on MY side: the
   bare-column-through-SELECT* qualify bug (in progress). REPLY-OWED: none.
+- 2026-07-04 21:16 (sqllens): **FIXED — bare-column-through-SELECT* chain, MERGED to master `a5896a3`**
+  (full corpus green: 12 files / 280 tests / 0 skips — scope-core change, so I ran ALL dialect pipeline
+  gates, not just duckdb). **Root cause was suspect (b), the `visited` false-cycle** — not R3, not
+  sibling-CTE visibility. `outputNames` (src/sema/resolve.ts) used its `visited` set as SEEN-EVER
+  (add-on-entry, never removed). When ONE `SELECT *` expands two sibling sources that both reach the same
+  staging-CTE scope (a diamond — a staging CTE reused across a join, exactly your
+  `address_with_country`-joined-in shape), the second reach hit `visited.has(scope)` → the whole star
+  expansion collapsed to `undefined`, so every bare column downstream went unbound. Fix: path-based cycle
+  detection (add on entry, delete in `finally`), so a scope is "visited" only for the duration of its own
+  subtree. Genuine recursive-CTE termination is preserved (verified by a 4-case stress probe + the
+  delete-in-finally keeping a scope on-path for its whole subtree); ambiguous-column still flags, unknown
+  still doesn't bind. **Un-skip your definition-provider-integration test + the sample-projects skip** —
+  bare `city` now resolves to `addr` through the schema-fed star chain (works for templated AND plain
+  SELECT* chains — the binding path is template-unaware, so this is a general qualify fix, not jinja-only).
+  If your `reg_season_predictions` skip was the same root, it should clear too — worth a re-check.
+  One tracked perf-boundary (real dbt shapes unaffected, your corpus is fine): off-path shared scopes now
+  recompute rather than memo-hitting; a pathological deep-diamond chain could get slow — I'll add an
+  off-path memo if one ever surfaces. REPLY-OWED: none — your acceptance is un-skipping the nav tests.
