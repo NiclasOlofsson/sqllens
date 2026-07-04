@@ -1417,14 +1417,22 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 }
 
 function funcArgs(app: ParserRuleContext): Expr[] {
-	const list = directChildrenOfRule(app, P.RULE_func_arg_list)[0];
-	if (!list) return [];
-	return directChildrenOfRule(list, P.RULE_func_arg_expr).map((fa) => {
+	const lowerFa = (fa: ParserRuleContext): Expr => {
 		const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
 		if (a) return lowerExpr(a);
 		const l = directChildrenOfRule(fa, P.RULE_lambda_expr)[0];
 		return l ? lowerLambda(l) : otherExpr(fa);
-	});
+	};
+	const out: Expr[] = [];
+	const list = directChildrenOfRule(app, P.RULE_func_arg_list)[0];
+	if (list) for (const fa of directChildrenOfRule(list, P.RULE_func_arg_expr)) out.push(lowerFa(fa));
+	// A VARIADIC-prefixed arg (`f(VARIADIC list)` and the trailing `f(a, VARIADIC list)`) rides as a
+	// DIRECT func_arg_expr child of the application — the grammar puts it outside func_arg_list — so it
+	// must be collected here too, else the whole arg is dropped. It keeps its expr in `args` as an
+	// ordinary arg; the VARIADIC marker itself is not modelled (no consumer needs it). The func_arg_list
+	// always precedes the trailing variadic child, so source order is preserved.
+	for (const fa of directChildrenOfRule(app, P.RULE_func_arg_expr)) out.push(lowerFa(fa));
+	return out;
 }
 
 /** func_expr_common_subexpr: CAST, TRY_CAST, EXTRACT, SUBSTRING, COALESCE, NULLIF, TRIM, … */

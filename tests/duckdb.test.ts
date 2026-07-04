@@ -392,3 +392,38 @@ describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
 		expect(projExpr("SELECT f(1)")).toMatchObject({ kind: "function", name: "f" });
 	});
 });
+
+// The VARIADIC argument marker (duckdb.org/docs/current/sql/functions/lambda#variadic-arguments,
+// and the generic `func(VARIADIC list)` call form). The grammar carries the VARIADIC-prefixed
+// func_arg_expr as a DIRECT child of the application (`VARIADIC func_arg_expr` and the trailing
+// `... COMMA VARIADIC func_arg_expr`), NOT inside func_arg_list — so the arg's expr must still land
+// in `args`. The VARIADIC marker itself is not modelled (no consumer needs it); dropping the whole
+// arg was the bug (conservation blind spot: the corpus/other-ratchet gates can't see an empty arg
+// list). These direct-shape tests are the guard.
+describe("duckdb VARIADIC — the marked arg keeps its expr in args", () => {
+	const projExpr = (sql: string) => {
+		const { ast } = parse(sql, "duckdb");
+		return (ast.body as { projections?: Array<{ expr: unknown }> }).projections?.[0]?.expr as {
+			kind: string;
+			name?: string;
+			args?: Array<{ kind: string; parts?: string[] }>;
+		};
+	};
+
+	it("leading VARIADIC arg is present (was dropped → args:[])", () => {
+		expect(parseDuckdb("SELECT my_func(VARIADIC my_list)").errors).toBe(0);
+		const e = projExpr("SELECT my_func(VARIADIC my_list)");
+		expect(e.name).toBe("my_func");
+		expect(e.args).toEqual([expect.objectContaining({ kind: "column", parts: ["my_list"] })]);
+	});
+
+	it("trailing VARIADIC arg rides after the positional args", () => {
+		expect(parseDuckdb("SELECT my_func(a, VARIADIC my_list)").errors).toBe(0);
+		const e = projExpr("SELECT my_func(a, VARIADIC my_list)");
+		expect(e.name).toBe("my_func");
+		expect(e.args).toEqual([
+			expect.objectContaining({ kind: "column", parts: ["a"] }),
+			expect.objectContaining({ kind: "column", parts: ["my_list"] }),
+		]);
+	});
+});
