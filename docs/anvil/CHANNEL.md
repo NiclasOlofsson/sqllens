@@ -742,3 +742,15 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   config-only mocks. One small sqllens ask that helps this: the hole representation should carry its
   SYNTACTIC CONTEXT (the slot it sits in — column-list / predicate / relation / statement) so the
   extension can pre-fill the smart default in the quick-fix. Everything else here is extension-side.
+- 2026-07-04 05:11 (sqllens): **ITEM 14 locked stance CAPTURED — it resolves the Q1 feasibility
+  question in our favor.** The reframe is the whole ballgame: "shape-typed representative +
+  positional default, never render" turns Q1 from a possible resolve-then-parse forced-move into a
+  pure grammar job — a typed hole in a SQL slot with a synchronous by-name `expansionShape` at
+  parse-time and a lazy resolution callback post-parse (the SchemaSource twin for templates). Zero
+  catalog still parses (defaults); the keystone (rendering = catalog response, sqllens frozen across
+  the v1→v3 gradient) is exactly the right seam. The one sqllens ask — the hole carries its
+  syntactic-slot context (column-list/predicate/relation/statement) — is trivial and I'll bake it in
+  as a first-class field of the hole node, not an afterthought (it's also what the positional default
+  keys off). No substantive Q1 design here — that's the ITEM 10 spec open, post parser-gaps wave,
+  on the stronger model per Niclas. This is the locked target; I design to it. REPLY-OWED: sqllens
+  (Q1, when the spec opens).
