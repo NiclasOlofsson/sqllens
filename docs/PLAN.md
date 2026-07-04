@@ -127,10 +127,10 @@ These are real, unfinished parts of the job. They stay here, answering "what's l
 - **Jinja — one TagNode per tag (inc1 boundary).** `tagNodesOf` returns exactly one `TagNode` per jinja tag: the leftmost-topmost call in the tag's parse tree. A tag holding two sibling calls (`{{ [ref('a'), ref('b')] }}`) yields only the first; an arithmetic tag with an embedded call (`{{ x + ref('y') }}`) classifies off that call. Rare in real dbt (a FROM is a lone `{{ ref() }}`) and the emitted spans stay accurate for the returned node — but a multi-call tag under-reports. Retired when inc2 needs multi-node tags. Also deferred (now to inc3): the syntactic-slot context field on the tag node (the `TagNode` is the R2 span contract only). Full jinja design + increment plan: [minijinja-front-end.md](minijinja-front-end.md).
 - **Jinja inc2 — two variant/region boundaries (M1/M2).** **M1 — unclosed region, empty last-arm bodySpan (broken-input-only).** An unclosed region (missing `{% endif %}`/`{% endfor %}`) closes at the last known tag, leaving its final arm an empty `bodySpan`, so `templateVariants` blanking can't isolate that arm on broken input. Totality holds and the primary all-text-live `parseTemplated` result is unchanged; only variant enumeration over unbalanced input is affected. **M2 — `{% for %}…{% else %}…{% endfor %}` for-else both-live (rare).** The for-else form models as a nested single-arm region, so both the loop body and the `else` body stay live in the default variant (the editor still sees both). Both tracked in [minijinja-front-end.md](minijinja-front-end.md) § Boundaries.
 
-## Jinja-SQL front end (ITEM 10/11/14) — inc1+inc2+inc3.1 built, inc3.2+ spec
+## Minijinja-SQL front end (ITEM 10/11/14) — inc1+inc2+inc3.1 built, inc3.2+ spec
 
-Parsing raw jinja-SQL (dbt templates) natively — a pre-lexer that segments jinja tags, substitutes
-length/newline-preserving placeholders into the untouched per-dialect SQL lexers, and merges a jinja
+Parsing raw minijinja-SQL (dbt templates) natively — a pre-lexer that segments minijinja tags, substitutes
+length/newline-preserving placeholders into the untouched per-dialect SQL lexers, and merges a minijinja
 token channel + ref/source/macro tag-AST onto the result; a standalone `grammars/minijinja/` island grammar
 never woven into the eight SQL grammars. Realizes the locked two-path / one-seam / one-razor stance
 (`docs/anvil/CHANNEL.md` ITEM 14). Full design, R2 span contract, and the inc1/inc2/inc3 plan:

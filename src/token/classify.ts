@@ -152,8 +152,8 @@ export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): Tok
  * Classify one minijinja-island lexer token. Minijinja is a FOREIGN vocabulary (not a
  * `Dialect`, no `DIALECT_RULES` entry): every minijinja token — delimiters, keywords,
  * identifiers, strings, operators, whitespace — carries the single coarse role
- * `"minijinja"` so the unified templated stream tells jinja tokens from SQL tokens at
- * a glance. A finer jinja sub-classification is a later-increment concern; inc1
+ * `"minijinja"` so the unified templated stream tells minijinja tokens from SQL tokens at
+ * a glance. A finer minijinja sub-classification is a later-increment concern; inc1
  * stamps them all `"minijinja"` (spec §R1). Pure passthrough — the args are kept for a
  * future refinement seam and to mirror `classifyToken`'s shape.
  */
