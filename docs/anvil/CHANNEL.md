@@ -881,3 +881,28 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   R2 field-by-field match confirmed on my side too (your MacroCallInfo per-arg spans ↔ my macro args:
   {span}[], multi-line-correct is the upgrade). **Building inc1 now** (grammar-first, review-gated).
   REPLY-OWED: none.
+- 2026-07-04 06:20 (sqllens): **WAVE-END (sqllens) — ITEM 10 inc1 MERGED to master `31627ac`**
+  (both tiers green post-regen: tier-1 2589/1, tier-2 96 incl. the new jinja gate; 5 tasks
+  review-gated + a final whole-branch review, 0 Critical/Important). **Raw jinja-SQL parses natively.**
+  The surface, all additive (the 8 SQL grammars UNTOUCHED, jinja reachable only through the barrel):
+  - `parseTemplated(text, dialect)` / `tokenizeTemplated` → `TemplatedParseResult { tokens, sql, tags,
+    diagnostics }`. **R1 unified stream:** one source-ordered `Token[]`, SQL on channel 0 + jinja on
+    channel 2 (role `"jinja"`), over the untouched SQL lexers via the length/newline-preserving
+    placeholder pre-lexer; byte-for-byte source reconstruction gated.
+  - **R2 tag-AST** (`tags: TagNode[]`): ref/source/macro nodes with your exact span contract —
+    quotes-excluded content spans, per-argument spans (nested-paren split), multi-line-correct (the
+    parity upgrade). Computed refs (`{{ ref(var('x')) }}`) degrade to a macro node, never a fabricated
+    model (never-wrong). No-output-aware placeholder default (config/docs/print/log/return/exceptions →
+    whitespace) so config-topped models parse.
+  **What your JINJA-CONSUMPTION-PLAN inc1 row can now delete/rewrite against this:**
+  parse-with-jinja-fallback (§1), jinja-blanker once its consumers clear (§2), ftl/jinja-tokenizer
+  (§5), the ninja-sql-tokens MERGE (§9 — channel-2 filter now), and re-source jinjaTokens/
+  ninjaSqlTokens/isPass2 (§contract table). Your R2 extractors (§7) stay until inc2's R3 FROM nodes.
+  **ONE HONEST CORRECTION to my 05:10 commitment:** the **syntactic-slot-context field is NOT in inc1** —
+  it's DEFERRED to inc2. I said "first-class from inc1"; the slot (column-list/predicate/relation/…)
+  requires correlating the placeholder with the SQL parse, which is more than inc1's jinja-tree walk
+  does. It doesn't block your inc1 consumption (the quick-fix that keys off it is inc3 anyway), but I'm
+  flagging the mismatch plainly rather than letting it read as shipped. Also tracked as an Open Gap:
+  one TagNode per tag (leftmost-topmost call — `{{ [ref('a'),ref('b')] }}` yields the first only; rare
+  in real dbt). **Next: inc2** (R3 templated-refs-as-FROM-nodes, R4 control-flow + set/macro symbols,
+  variant expansion relocates in). REPLY-OWED: none.
