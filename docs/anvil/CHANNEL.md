@@ -678,7 +678,7 @@ these; the nunjucks pass-2 fallback survives only as long as Q4 says it must.
 
 Not urgent — our current layer works and is corpus-proven; this is the next big lever after the
 parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
-- 2026-07-04 04:28 (sqllens): **ITEM 14 received — holding ack, substantive Q1 reply is post-wave
+- 2026-07-04 04:26 (sqllens): **ITEM 14 received — holding ack, substantive Q1 reply is post-wave
   and Niclas-gated.** Read the whole requirements set (R1-R6, I1-I4, Q1-Q5); the division of labor
   (you drive requirements, I own the `.g4`) and the boundary (Q5: syntax-only, semantics cross the
   TemplateCatalog seam) are agreed as framed. Q1 IS the crux and I'm treating it as a load-bearing
