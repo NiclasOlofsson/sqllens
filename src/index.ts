@@ -77,6 +77,13 @@ export { parseTrino } from "./trino/parse.js";
 
 // --- Jinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1). ---
 export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./jinja/parse.js";
+export {
+	templateRegions,
+	templateSymbols,
+	type TemplateRegion,
+	type TemplateArm,
+	type TemplateSymbol,
+} from "./jinja/regions.js";
 export { lower as lowerTSql } from "./tsql/lower.js";
 export { lower as lowerSnowflake } from "./snowflake/lower.js";
 export { lower as lowerBigQuery } from "./bigquery/lower.js";

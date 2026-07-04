@@ -43,12 +43,16 @@ import { classifyJinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
 import { lexJinjaTag, parseJinjaTag } from "./parse-tag.js";
+import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
 // Re-export the R2 tag-AST union (Task 4) so `src/index.ts` keeps re-exporting
 // TagNode from this module — the union now lives in ./tag-ast.js.
 export type { TagNode } from "./tag-ast.js";
+// Re-export the R4 region / symbol shapes (Task 3) so the barrel re-exports them here.
+export type { TemplateRegion, TemplateArm, TemplateSymbol } from "./regions.js";
+export { templateRegions, templateSymbols } from "./regions.js";
 
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
 export interface TemplatedParseResult {
@@ -58,6 +62,10 @@ export interface TemplatedParseResult {
 	sql: ParseResultIR;
 	/** R2 tag nodes. Task 4 fills these; Task 3 leaves them empty. */
 	tags: TagNode[];
+	/** R4 control-flow regions (if/for/macro), stack-paired from the control tags. */
+	regions: TemplateRegion[];
+	/** R4 go-to-def template symbols (set targets / macro names). */
+	symbols: TemplateSymbol[];
 	/** SQL diagnostics (+ jinja diagnostics from Task 4), positioned in original coordinates. */
 	diagnostics: SyntaxDiagnostic[];
 }
@@ -241,7 +249,12 @@ function build(text: string, dialect: Dialect): TemplatedParseResult {
 	// source-ordered so squiggles line up with the merged stream.
 	const diagnostics = [...sql.diagnostics, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
-	return { tokens, sql, tags, diagnostics };
+	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
+	// Both are total; they ride inside build()'s caller try/catch for totality.
+	const regions = templateRegions(tags);
+	const symbols = templateSymbols(tags);
+
+	return { tokens, sql, tags, regions, symbols, diagnostics };
 }
 
 /**
@@ -257,7 +270,7 @@ export function parseTemplated(text: string, dialect: Dialect): TemplatedParseRe
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.
 		const sql = parse(text, dialect);
-		return { tokens: sql.tokens, sql, tags: [], diagnostics: sql.diagnostics };
+		return { tokens: sql.tokens, sql, tags: [], regions: [], symbols: [], diagnostics: sql.diagnostics };
 	}
 }
 
