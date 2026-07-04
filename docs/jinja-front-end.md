@@ -243,6 +243,41 @@ CATALOG RESPONSE, not architecture — how the extension answers `expansionShape
 positional default → v2 macro signature → v3 real dbt render of that one macro) with sqllens frozen across
 the gradient.
 
+### inc3 increment 1 — `relation` only (design decided 2026-07-04; anvil cleared relation-first)
+
+anvil cleared prototyping **`relation` FIRST, in parallel** (the column-resolution win) and holding
+`value`/`expansionShape`/`loopCollection` until it proves out. The full `TemplateCatalog` above stays the
+end target; inc3.1 builds only the `relation` slice, and the design is **`TemplateCatalog extends
+SchemaSource`** so qualify duck-types the catalog it ALREADY receives — no new pipeline threading, and a
+plain `SchemaSource` (no `relation` method) is naturally the zero-catalog fallback.
+
+- **Interface (`src/qualify/template-catalog.ts`):** `interface TemplateCatalog extends SchemaSource {
+  relation(ref: { kind: "ref" | "source"; nameParts: string[] }, dialect?: string): { nameParts: string[];
+  columns?: Column[] } | undefined; }`. The `ref.nameParts` is the dbt-logical name R3 already put on
+  `TableSource.name` (`["orders"]` / `["raw","events"]`); the answer's `nameParts` is the resolved PHYSICAL
+  relation and `columns` its schema (undefined until a warehouse describe lands — async warm). A
+  **`CallbackTemplateCatalog`** mirrors `CallbackSchema` exactly: sync `resolve`, recorded misses, an async
+  `prime()` that drains + bumps `version`. It IS a `SchemaSource` too (physical tables still resolve
+  through `columnsFor`), so one injected catalog serves both.
+- **Qualify upgrade (the two R3 guard sites, `qualify.ts:254,382`):** today `if (src.source.template)
+  return undefined` (blanket exempt). inc3.1: if the source is templated AND the active schema is a
+  `TemplateCatalog` (duck-typed: `"relation" in schema`), ask `relation({kind, nameParts: src.name})`. If
+  it returns `columns` → resolve against them (real unknown-column CAN now fire for a genuinely-missing
+  column); if it returns `nameParts` only → resolve those physical parts through the schema's own
+  `columnsFor` (logical→physical→columns, reusing the existing physical resolver); if it returns
+  `undefined` OR the schema is a plain `SchemaSource` → the R3 fallback (exempt, columns unknown). **Opaque
+  templated sources (macro/computed) stay exempt** — no literal name to ask `relation` with.
+- **Zero-catalog keystone preserved:** a plain `Schema`/`SchemaSource` has no `relation`, so every templated
+  source falls to the R3 exemption — inc3.1 is invisible without a catalog, exactly as R2/R3 are without one.
+- **LSP warm/republish:** the existing lazy-catalog loop (`startServer` → `publish` → `prime()` on misses →
+  version bump → re-publish) already keys on `SchemaSource.version`; since `CallbackTemplateCatalog` bumps
+  the same `version`, a resolved ref republishes diagnostics with no LSP change beyond accepting a
+  `TemplateCatalog` in the `schema` slot (it already accepts any `SchemaSource`).
+- **Never-wrong:** a `relation` miss (undefined) is the R3 exemption, never a fabricated column; an
+  unknown-column diagnostic fires ONLY when the catalog positively returned columns and the column is
+  absent from them. The consumer-contract gate extends: a catalog-resolved templated ref reports its real
+  columns on every public read; a zero-catalog parse is byte-identical to R3.
+
 ## Variant expansion (Q3 — resolved: it is parsing → sqllens's, inc2)
 
 For the editor, sqllens enumerates ALL `{% if %}/{% elif %}/{% else %}` branches STRUCTURALLY with NO
