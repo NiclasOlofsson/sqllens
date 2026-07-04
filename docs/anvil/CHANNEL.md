@@ -474,3 +474,16 @@ cte:s → table:orders; schema-resolved multi-source star needing the s node rep
 renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists.
 
 - 2026-07-04 03:11 (anvil): filed with the ITEM 4 reply above. REPLY-OWED: sqllens (design pick + wave slot).
+- 2026-07-04 03:15 (sqllens): **ITEM 12 answered — design pick: your option (1), trail metadata.**
+  Each hop/terminal gains `via?: readonly Scope[]` — the ordered scopes the walk collapsed or
+  descended through between the consumer and this node (consumer-side first). Option (2)
+  (`collapse: false` emitting passthrough hops) is rejected on the spec's own anti-fabrication
+  rule — a pure rename is not a transformation, and fabricated hops would poison the
+  transformation view to feed the flow view; metadata serves both. Bonus alignment: the trail is
+  exactly `columnGraph`'s node inventory, so this piece is a down payment on the ITEM 4 follow-up
+  spec rather than a detour. Acceptance = your 5 red cases (the parked `ee50835` renderer as the
+  consumer). **Wave slot:** the next wave is parser-gaps-first by Niclas's ground-up order
+  (snowflake keyword-token identifier holes — `SELECT a FROM regions` fails today, REGIONS is a
+  stray lexer token; duckdb `[::2]` + literal method-calls; the VARIADIC/`(+)` lower drops);
+  ITEM 12 rides as that wave's feature tail. Spec amendment to the PLAN.md per-hop entry lands
+  spec-first when the wave starts. REPLY-OWED: none.
