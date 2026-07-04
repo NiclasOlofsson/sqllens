@@ -16,7 +16,7 @@ import type { PartSpan } from "../../src/ir/part-span.js";
 import type { QueryExpr, QueryBody, Source, TableSource } from "../../src/ir/ir.js";
 
 // ---------------------------------------------------------------------------
-// inc1 jinja corpus gate (docs/jinja-front-end.md §inc1 gates). A focused,
+// inc1 jinja corpus gate (docs/minijinja-front-end.md §inc1 gates). A focused,
 // in-repo fixture set of real-shaped dbt model snippets (NOT the big corpus —
 // raw jinja templates aren't in sqllens-corpus, which holds COMPILED SQL). Over
 // every fixture it proves the four hard inc1 contracts:
@@ -38,7 +38,7 @@ import type { QueryExpr, QueryBody, Source, TableSource } from "../../src/ir/ir.
 // cross-dialect check proves the jinja channel is dialect-agnostic.
 // ---------------------------------------------------------------------------
 
-const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/jinja/", import.meta.url));
+const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/minijinja/", import.meta.url));
 const DIALECT: Dialect = "databricks";
 
 interface Fixture {
@@ -185,7 +185,7 @@ describe("jinja corpus gate — inc1 (R1 unified stream + R2 tag spans)", () => 
 // TableSource whose name is the real dbt-logical name (NOT the `jjj…`
 // placeholder fill), and qualify against an EMPTY schema must emit zero
 // unknown-table/-column against those templated sources — a diagnostic on the
-// dbt-logical name would be never-wrong-violating (docs/jinja-front-end.md §R3).
+// dbt-logical name would be never-wrong-violating (docs/minijinja-front-end.md §R3).
 // ---------------------------------------------------------------------------
 
 /** Every TableSource reachable from a query IR (CTE bodies, FROM/JOIN, subqueries). Best-effort +
@@ -301,7 +301,7 @@ describe("jinja corpus gate — dialect-agnostic jinja channel", () => {
 // R4 (inc2): control-flow regions + set/macro symbols. Over EVERY fixture the
 // two passes must be total (never throw on any tag sequence, balanced or not),
 // their spans in-bounds, and their names honest (a symbol name always slices
-// back to its own source — no fabricated names, docs/jinja-front-end.md §R4).
+// back to its own source — no fabricated names, docs/minijinja-front-end.md §R4).
 // ---------------------------------------------------------------------------
 describe("jinja corpus gate — R4 regions + symbols totality (inc2)", () => {
 	for (const { name, text } of FIXTURES) {

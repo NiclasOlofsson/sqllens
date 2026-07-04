@@ -86,20 +86,20 @@ export { lower as lowerDuckdb } from "./duckdb/lower.js";
 export { lower as lowerTrino } from "./trino/lower.js";
 export type { ParseResult } from "./databricks/parse.js";
 
-// --- Jinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
+// --- Minijinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
 //     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
 //     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
 //     grammars are untouched). See also `TemplateSourceInfo` (IR section) and
 //     `TemplateCatalog` (qualify section) — the rest of the template surface. ---
-export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./jinja/parse.js";
+export { parseTemplated, tokenizeTemplated, type TemplatedParseResult, type TagNode } from "./minijinja/parse.js";
 export {
 	templateRegions,
 	templateSymbols,
 	type TemplateRegion,
 	type TemplateArm,
 	type TemplateSymbol,
-} from "./jinja/regions.js";
-export { templateVariants, type TemplateVariant } from "./jinja/variants.js";
+} from "./minijinja/regions.js";
+export { templateVariants, type TemplateVariant } from "./minijinja/variants.js";
 
 // --- The IR ---
 export type {

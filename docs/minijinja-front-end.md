@@ -10,13 +10,13 @@ Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; t
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.
 
 **Status: inc1, inc2, and inc3.1 are built.** Raw jinja-SQL parses natively — `parseTemplated` /
-`tokenizeTemplated`, the unified SQL(ch 0/1) + jinja(ch 2, role `"jinja"`) token stream, and the R2
+`tokenizeTemplated`, the unified SQL(ch 0/1) + jinja(ch 2, role `"minijinja"`) token stream, and the R2
 ref/source/macro tag-AST, all additive over the eight untouched SQL grammars (jinja reachable only through
 the barrel). inc2 adds R3 (`{{ ref }}`/`{{ source }}` in a FROM slot → a real template-tagged `TableSource`),
 R4 (`templateRegions` / `templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage
 `templateVariants`. inc3.1 adds `TemplateCatalog.relation` — a templated ref resolves its real columns
-through an injected catalog (zero-catalog = R3 fallback, byte-identical). Gated by `tests/corpus/jinja.test.ts`
-+ `tests/corpus/jinja.consumer-contract.test.ts`. The rest of inc3 (`value`/`expansionShape`/`loopCollection`)
+through an injected catalog (zero-catalog = R3 fallback, byte-identical). Gated by `tests/corpus/minijinja.test.ts`
++ `tests/corpus/minijinja.consumer-contract.test.ts`. The rest of inc3 (`value`/`expansionShape`/`loopCollection`)
 stays spec.
 
 ## The locked architecture (three lines — CHANNEL ITEM 14)
@@ -72,7 +72,7 @@ The pipeline for `parseTemplated(text, dialect)`:
    fragment/statement class, a known inc1 limit the extension covers with its fallback until inc3.
 3. **Lex** the placeholder string with the existing `fns.parse` / `tokenize` (grammars untouched).
 4. **Merge** into ONE source-ordered `Token[]`: the SQL tokens (default channel 0, original coords) plus
-   the jinja tokens (new **channel 2**, role `"jinja"`) from the jinja lexer, interleaved by offset. The
+   the jinja tokens (new **channel 2**, role `"minijinja"`) from the jinja lexer, interleaved by offset. The
    merge happens on the `ParseResult` (outside the lazy antlr token getter), so it is computed once.
 5. **Parse the tag interiors** with the standalone jinja grammar into the R2 tag-AST nodes
    (ref/source/macro-call) with the exact span contract (§ R2).
@@ -80,9 +80,9 @@ The pipeline for `parseTemplated(text, dialect)`:
    totality on broken SQL. A malformed tag yields a best-effort node + a positioned diagnostic, never an
    exception.
 
-### The grammar — `grammars/jinja/` (standalone split pair)
+### The grammar — `grammars/minijinja/` (standalone split pair)
 
-`grammars/jinja/JinjaLexer.g4` + `JinjaParser.g4`, generated to `src/generated/jinja/` by the existing
+`grammars/minijinja/MinijinjaLexer.g4` + `MinijinjaParser.g4`, generated to `src/generated/minijinja/` by the existing
 `tools/gen.mjs` (no driver change; the alphabetical Lexer-before-Parser sort resolves `tokenVocab`).
 
 - **Lexer — island modes**, patterned on the postgres dollar-quote precedent (`PostgresLexer.g4`
@@ -128,9 +128,9 @@ that needs it, when the positional default keys off it.
 
 `parseTemplated(text, dialect)` / `tokenizeTemplated(text, dialect)` return one flat, source-ordered
 `Token[]`: SQL tokens (channel 0, original coordinates via length-preserving placeholders) + jinja tokens
-(channel 2, role `"jinja"`). `Token.channel` is already an int (0 default, 1 hidden) — channel 2 is
+(channel 2, role `"minijinja"`). `Token.channel` is already an int (0 default, 1 hidden) — channel 2 is
 additive with zero type churn, and `document.tokenAt` already skips `channel !== 0`, so existing
-default-channel consumers ignore jinja tokens for free. `TokenRole` gains a `"jinja"` member (a closed
+default-channel consumers ignore jinja tokens for free. `TokenRole` gains a `"minijinja"` member (a closed
 union — every exhaustive role `switch` is revisited in the same change). Multi-line correct: a tag
 spanning newlines carries a correct multi-line span (the extension's extractors are single-line-lossy
 today; R2 fixes this — it is a parity UPGRADE, needs its own test).
@@ -164,13 +164,13 @@ in a FROM slot should become a real table-source IR node (R3), that is inc2.
 `{{ ref('x') }}` / `{{ source('a','b') }}` in a FROM/JOIN slot becomes a real `TableSource` carrying its
 tag, so scope/qualify/lineage/columnGraph see the model, not the placeholder. The design rides two
 existing invariants — scope binds a `TableSource` purely by `name`, and the IR is frozen after `lower()` —
-so the whole downstream pipeline works unchanged. Built: `TableSource.template` + `src/jinja/apply-tags.ts`
+so the whole downstream pipeline works unchanged. Built: `TableSource.template` + `src/minijinja/apply-tags.ts`
 + the one qualify guard; `resolveScopes`/`Lineage.originsOf`/`referencesAt` bind `{{ ref('orders') }}` to
-`orders` natively (proven in `tests/jinja.apply-tags.test.ts` + `tests/jinja.pipeline.test.ts`, gated by
-`tests/corpus/jinja.test.ts`). R4 + variant realization below are built.
+`orders` natively (proven in `tests/minijinja.apply-tags.test.ts` + `tests/minijinja.pipeline.test.ts`, gated by
+`tests/corpus/minijinja.test.ts`). R4 + variant realization below are built.
 
 - **IR (additive):** `TableSource` gains `template?: TemplateSourceInfo`; the type lives in `src/ir/ir.ts`
-  (neutral — the IR never imports `src/jinja`): `{ kind: "ref" | "source" | "macro"; span: PartSpan;
+  (neutral — the IR never imports `src/minijinja`): `{ kind: "ref" | "source" | "macro"; span: PartSpan;
   opaque?: true }` — the tag's kind, the whole-tag span (document coordinates), and the opacity verdict.
   Consumers needing the full `TagNode` correlate by span with `parseTemplated().tags`.
 - **Name substitution (literal-only, never-wrong):** `ref('x')` → `name: ["x"]`; `source('a','b')` →
@@ -178,7 +178,7 @@ so the whole downstream pipeline works unchanged. Built: `TableSource.template` 
   computed tag in a FROM slot keeps the placeholder name and gets `opaque: true` — its output relation is
   undeterminable without the catalog. (inc1's `directStringToken` guard already guarantees a `ref`/`source`
   TagNode carries only literal names.)
-- **The transform (`src/jinja/apply-tags.ts`):** post-lower, `applyTemplateTags(ast, tags)` walks the IR
+- **The transform (`src/minijinja/apply-tags.ts`):** post-lower, `applyTemplateTags(ast, tags)` walks the IR
   (bodies, CTEs, sources, joins, subqueries, pipe stages), correlates by CONTAINMENT — a `TableSource`
   whose first name token's offset lies inside a tag's `tagSpan` (containment, not equality: a multi-line
   expr tag fills as one placeholder identifier per line) — and rebuilds with structural sharing (new
@@ -196,7 +196,7 @@ so the whole downstream pipeline works unchanged. Built: `TableSource.template` 
 - **Control-tag enrichment (additive on the `TagNode` union):** the `control` variant gains `keyword?`
   (`if`/`elif`/`else`/`endif`/`for`/`endfor`/`set`/`macro`/`endmacro`/…), `name?` + `nameSpan?` (the `set`
   target / `macro` name / `for` loop variable), extracted from the existing tolerant stmt parse tree.
-- **Regions (`src/jinja/regions.ts`):** `templateRegions(tags, text?)` stack-pairs control tags into a tree —
+- **Regions (`src/minijinja/regions.ts`):** `templateRegions(tags, text?)` stack-pairs control tags into a tree —
   `TemplateRegion { kind: "if" | "for" | "macro"; arms: TemplateArm[]; span }`, `TemplateArm { keyword;
   tagSpan; bodySpan; children: TemplateRegion[] }` (an arm's body runs from its tag's end to the next
   arm/close tag's start). Tolerant: unbalanced/broken input yields best-effort regions, never a throw.
@@ -257,9 +257,9 @@ plain `SchemaSource` (no `relation` method) is naturally the zero-catalog fallba
 guard sites, the barrel exports (`TemplateCatalog`, `CallbackTemplateCatalog`, `TemplateRef`,
 `ResolvedRelation`, `RelationResolver`), and the LSP catalog injection (the lazy-catalog re-publish loop is
 duck-typed on `prime()`/`misses`, so `CallbackTemplateCatalog.prime()` drives warm/republish exactly like
-`CallbackSchema`). Gated by `tests/jinja.relation.test.ts`, `tests/jinja.public-api.test.ts`, the
+`CallbackSchema`). Gated by `tests/minijinja.relation.test.ts`, `tests/minijinja.public-api.test.ts`, the
 `CallbackTemplateCatalog` arm of `tests/lsp.acceptance.test.ts`, and the extended
-`tests/corpus/jinja.consumer-contract.test.ts` (a catalog-resolved ref reports real columns; a zero-catalog
+`tests/corpus/minijinja.consumer-contract.test.ts` (a catalog-resolved ref reports real columns; a zero-catalog
 run is byte-identical to R3). **LSP boundary:** relation resolution is LIBRARY-level (parseTemplated →
 qualify with an injected catalog); the LSP server itself still builds documents from plain `parse`, not
 `parseTemplated`, so a templated `{{ ref }}` does not reach the server end-to-end until `SqlDocument.fromTemplated`
@@ -316,23 +316,23 @@ on the R4 control-flow regions.)
 
 ## Increment plan
 
-- **inc1 — placeholder-parity / raw-jinja-parse (R1 + R2) — BUILT.** The pre-lexer, the `grammars/jinja/`
+- **inc1 — placeholder-parity / raw-jinja-parse (R1 + R2) — BUILT.** The pre-lexer, the `grammars/minijinja/`
   island grammar, the unified token stream, and the ref/source/macro tag-AST with the R2 span contract are
   shipped and total: `parseTemplated(text, dialect)` / `tokenizeTemplated` return one source-ordered
-  `Token[]` (SQL channel 0/1 + jinja channel 2, role `"jinja"`) plus the `TagNode[]`, over the eight
+  `Token[]` (SQL channel 0/1 + jinja channel 2, role `"minijinja"`) plus the `TagNode[]`, over the eight
   untouched SQL grammars — jinja reachable only through the barrel. Positional-default hole
   (NO_OUTPUT_BUILTINS-aware); the syntactic-slot context field is deferred (§ the hole). Gated by
-  `tests/corpus/jinja.test.ts` over 15 `tests/fixtures/jinja/` fixtures (totality, byte-for-byte stream
+  `tests/corpus/minijinja.test.ts` over 15 `tests/fixtures/minijinja/` fixtures (totality, byte-for-byte stream
   reconstruction, span in-bounds + content-true). This is the surface the extension consumes to retire its
   blanking cascade (`parse-with-jinja-fallback`, `jinja-blanker`, the fine tokenizer, the two-stream
-  merge). No SQL-grammar change; no IR change beyond the additive jinja facade + `TokenRole "jinja"` /
+  merge). No SQL-grammar change; no IR change beyond the additive jinja facade + `TokenRole "minijinja"` /
   channel 2.
 - **inc2 — tag-AST (R3 + R4) + variant expansion — BUILT.** `{{ ref('x') }}` in a FROM/JOIN slot lowers to
   a first-class table-source IR node carrying its tag (R3 — feeds scope/qualify/lineage/columnGraph); control
   flow + `set`/`macro` become structured regions/symbols (R4 — `templateRegions`/`templateSymbols`, with
   `regions`/`symbols` on `TemplatedParseResult`); arm-coverage `templateVariants` relocates variant expansion
   in. §R3 / §R4 / §Variant realization above are the shipped shapes; gated by
-  `tests/corpus/jinja.consumer-contract.test.ts` (plus `jinja.test.ts`). M1/M2 (§ Boundaries) are the two
+  `tests/corpus/minijinja.consumer-contract.test.ts` (plus `minijinja.test.ts`). M1/M2 (§ Boundaries) are the two
   tracked broken/rare-input limits.
 - **inc3 — TemplateCatalog wiring (ITEM 11).** The pull-callback seam: lazy relation/value resolution,
   synchronous `expansionShape` (shaped holes retire the fragment-macro limitation), `loopCollection`. Turns

@@ -55,7 +55,7 @@ import type { Dialect } from "../../src/api.js";
 // and contributes nothing to scan — also correct, not a failure.
 // ---------------------------------------------------------------------------
 
-const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/jinja/", import.meta.url));
+const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/minijinja/", import.meta.url));
 const DIALECT: Dialect = "databricks";
 
 /** A pure placeholder-fill run — one or more of the segmenter's `j` fill chars and nothing else. */

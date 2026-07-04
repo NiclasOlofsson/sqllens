@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { segment, NO_OUTPUT_BUILTINS, type Segment } from "../src/jinja/segment.js";
+import { segment, NO_OUTPUT_BUILTINS, type Segment } from "../src/minijinja/segment.js";
 
 // ---------------------------------------------------------------------------
 // Task 2 — the document-level segmenter + placeholder substitution
-// (docs/jinja-front-end.md §mechanism steps 1-2). These drive raw jinja-SQL
+// (docs/minijinja-front-end.md §mechanism steps 1-2). These drive raw jinja-SQL
 // text through the outer-language scan and assert both the segment list (tiling,
 // tag boundaries respecting jinja's own nesting) and the length/newline-
 // preserving placeholder — the load-bearing invariant.

@@ -1,10 +1,10 @@
 import { CharStream, CommonTokenStream, Token as AntlrToken, type ParserRuleContext } from "antlr4ng";
-import { JinjaLexer } from "../generated/jinja/JinjaLexer.js";
-import { JinjaParser } from "../generated/jinja/JinjaParser.js";
+import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
+import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 // ---------------------------------------------------------------------------
-// The first file of the jinja front-end module (docs/jinja-front-end.md, inc1).
+// The first file of the jinja front-end module (docs/minijinja-front-end.md, inc1).
 // A minimal wrapper that lexes + parses ONE jinja tag's text (delimiters
 // included) with the generated island grammar. Unlike the SQL wrappers this
 // uses the DEFAULT recovering error strategy (not BailErrorStrategy), so a
@@ -12,7 +12,7 @@ import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.
 // and never throws (R5 totality). Whole-document scanning is Task 2's job.
 // ---------------------------------------------------------------------------
 
-export interface JinjaTagParseResult {
+export interface MinijinjaTagParseResult {
 	/** The CST rooted at `tag`. Always defined, even on broken/partial input. */
 	tree: ParserRuleContext;
 	/** Count of lexer + parser syntax errors (0 on a clean tag). */
@@ -22,10 +22,10 @@ export interface JinjaTagParseResult {
 }
 
 /** Lex + parse a single jinja tag. Total: never throws on any input. */
-export function parseJinjaTag(text: string): JinjaTagParseResult {
-	const lexer = new JinjaLexer(CharStream.fromString(text));
+export function parseMinijinjaTag(text: string): MinijinjaTagParseResult {
+	const lexer = new MinijinjaLexer(CharStream.fromString(text));
 	const tokens = new CommonTokenStream(lexer);
-	const parser = new JinjaParser(tokens);
+	const parser = new MinijinjaParser(tokens);
 
 	const collector = makeErrorCollector();
 	lexer.removeErrorListeners();
@@ -42,9 +42,9 @@ export function parseJinjaTag(text: string): JinjaTagParseResult {
 }
 
 /** The jinja lexer plus its full token list for one tag's text (delimiters included). */
-export interface JinjaLexResult {
+export interface MinijinjaLexResult {
 	/** The lexer instance — its `.vocabulary` names the tokens for the neutral mapping. */
-	lexer: JinjaLexer;
+	lexer: MinijinjaLexer;
 	/** Every token (trivia on HIDDEN included, EOF excluded), tag-relative coordinates. */
 	tokens: AntlrToken[];
 }
@@ -52,13 +52,13 @@ export interface JinjaLexResult {
 /**
  * Lex a single jinja tag's text into its token list — the LEXER-only view Task 3
  * needs for the unified token stream (parse.ts offsets these into document
- * coordinates and stamps channel 2 / role `"jinja"`). Total: the island lexer
- * recovers via its STRAY / JINJA_ANY / COMMENT_ANY fallbacks rather than throwing,
+ * coordinates and stamps channel 2 / role `"minijinja"`). Total: the island lexer
+ * recovers via its STRAY / MINIJINJA_ANY / COMMENT_ANY fallbacks rather than throwing,
  * and no throwing error listener is attached, so this never throws. `getAllTokens`
  * returns default- and hidden-channel tokens and excludes the EOF sentinel.
  */
-export function lexJinjaTag(text: string): JinjaLexResult {
-	const lexer = new JinjaLexer(CharStream.fromString(text));
+export function lexMinijinjaTag(text: string): MinijinjaLexResult {
+	const lexer = new MinijinjaLexer(CharStream.fromString(text));
 	lexer.removeErrorListeners();
 	return { lexer, tokens: lexer.getAllTokens() };
 }

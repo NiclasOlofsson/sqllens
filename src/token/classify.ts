@@ -149,14 +149,14 @@ export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): Tok
 }
 
 /**
- * Classify one jinja-island lexer token. Jinja is a FOREIGN vocabulary (not a
- * `Dialect`, no `DIALECT_RULES` entry): every jinja token — delimiters, keywords,
+ * Classify one minijinja-island lexer token. Minijinja is a FOREIGN vocabulary (not a
+ * `Dialect`, no `DIALECT_RULES` entry): every minijinja token — delimiters, keywords,
  * identifiers, strings, operators, whitespace — carries the single coarse role
- * `"jinja"` so the unified templated stream tells jinja tokens from SQL tokens at
+ * `"minijinja"` so the unified templated stream tells jinja tokens from SQL tokens at
  * a glance. A finer jinja sub-classification is a later-increment concern; inc1
- * stamps them all `"jinja"` (spec §R1). Pure passthrough — the args are kept for a
+ * stamps them all `"minijinja"` (spec §R1). Pure passthrough — the args are kept for a
  * future refinement seam and to mirror `classifyToken`'s shape.
  */
-export function classifyJinjaToken(_lexer: Lexer, _type: number): TokenRole {
-	return "jinja";
+export function classifyMinijinjaToken(_lexer: Lexer, _type: number): TokenRole {
+	return "minijinja";
 }

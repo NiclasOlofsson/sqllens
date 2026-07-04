@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Task 4 — variant expansion (docs/jinja-front-end.md §Variant realization).
+// Task 4 — variant expansion (docs/minijinja-front-end.md §Variant realization).
 //
 // `templateVariants(text, dialect)` enumerates the `{% if %}/{% elif %}/{% else %}`
 // branch variants of a dbt template as coherent, lazily-parsed alternatives, so the

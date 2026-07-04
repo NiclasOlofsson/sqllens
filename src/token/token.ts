@@ -8,10 +8,10 @@
 // ---------------------------------------------------------------------------
 
 /** Coarse lexical role, derived from the lexer vocabulary (see classify.ts).
- *  `"jinja"` is the foreign-vocabulary role every jinja-island token carries in the
+ *  `"minijinja"` is the foreign-vocabulary role every minijinja-island token carries in the
  *  unified templated stream (channel 2); SQL tokens never use it. Adding it is a
- *  closed-union change — every exhaustive `TokenRole` consumer gets a `"jinja"` arm
- *  (the semantic-token color map skips it, so jinja tokens are not SQL-highlighted). */
+ *  closed-union change — every exhaustive `TokenRole` consumer gets a `"minijinja"` arm
+ *  (the semantic-token color map skips it, so minijinja tokens are not SQL-highlighted). */
 export type TokenRole =
 	| "keyword"
 	| "identifier"
@@ -21,7 +21,7 @@ export type TokenRole =
 	| "operator"
 	| "punctuation"
 	| "whitespace"
-	| "jinja"
+	| "minijinja"
 	| "other";
 
 /** One lexer token, with exact source span and a coarse role. */

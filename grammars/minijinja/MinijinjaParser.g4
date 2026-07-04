@@ -1,7 +1,7 @@
 /*
  * ANTLR4 parser grammar for a single Jinja tag (split lexer + parser pair).
  *
- * Companion to JinjaLexer.g4 (docs/jinja-front-end.md, inc1). Q2 scope: recognize CALLS
+ * Companion to MinijinjaLexer.g4 (docs/minijinja-front-end.md, inc1). Q2 scope: recognize CALLS
  * precisely (this is what R2 / Task 4 extracts — ref/source/macro-call), plus literals, dotted
  * and subscript access, and grouping; the rest of the expression language (filters `|`, tests
  * `is`, arithmetic, `~`, the conditional `a if b else c`) is modeled loosely/opaque — enough to
@@ -13,10 +13,10 @@
  * half-typed `{{ ref(` yields a best-effort tree + positioned diagnostics and never throws.
  */
 
-parser grammar JinjaParser;
+parser grammar MinijinjaParser;
 
 options {
-	tokenVocab = JinjaLexer;
+	tokenVocab = MinijinjaLexer;
 }
 
 // Entry — a run of tags and/or literal text, EOF-anchored. Per-tag input is one

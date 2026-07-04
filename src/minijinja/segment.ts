@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Task 2 — the document-level segmenter + placeholder substitution
-// (docs/jinja-front-end.md §mechanism steps 1-2). Pure TS text scanning at the
+// (docs/minijinja-front-end.md §mechanism steps 1-2). Pure TS text scanning at the
 // DOCUMENT level: it scans raw jinja-SQL over the OUTER jinja language, finds
 // where tags start/end, and builds the length- and newline-preserving
 // placeholder string the untouched per-dialect SQL lexer will see.

@@ -1,7 +1,7 @@
 /*
  * ANTLR4 lexer grammar for a single Jinja tag (split lexer + parser pair).
  *
- * This is the sqllens jinja "island" front end (docs/jinja-front-end.md, inc1). It lexes ONE
+ * This is the sqllens minijinja "island" front end (docs/minijinja-front-end.md, inc1). It lexes ONE
  * jinja tag's text — delimiters included — e.g. `{{ ref('x') }}`, `{% if c %}`, `{# c #}`. It
  * does NOT scan whole documents; a TS segmenter (Task 2) splits raw jinja-SQL into runs of SQL
  * text and tags, then feeds each tag here. Hand-authored (no upstream fork exists for jinja).
@@ -12,13 +12,13 @@
  * Lexer design — ISLAND MODES, patterned on grammars/postgres/PostgresLexer.g4's dollar-quote
  * `pushMode(DollarQuotedStringMode)`/`popMode`. The DEFAULT mode emits literal RAW_TEXT and, on
  * an opening delimiter (with the optional whitespace-control `-`), pushes an interior mode; the
- * closing delimiter pops. `{{`/`{%` share one interior mode (Jinja) — both close tokens live
+ * closing delimiter pops. `{{`/`{%` share one interior mode (Minijinja) — both close tokens live
  * there and the parser tells expr-tags from stmt-tags by which OPEN started them; `{#` uses a
  * separate CommentMode whose body is opaque. No `caseInsensitive` (jinja keywords are lowercase).
  * A `{% raw %}` tag lexes as an ordinary stmt tag here — raw-block spanning is the segmenter's job.
  */
 
-lexer grammar JinjaLexer;
+lexer grammar MinijinjaLexer;
 
 // ===========================================================================
 // DEFAULT mode — literal text and tag openings (minijinja: "Delimiters").
@@ -28,11 +28,11 @@ lexer grammar JinjaLexer;
 // ===========================================================================
 
 EXPR_OPEN
-	: '{{' '-'? -> pushMode(Jinja)
+	: '{{' '-'? -> pushMode(Minijinja)
 	;
 
 STMT_OPEN
-	: '{%' '-'? -> pushMode(Jinja)
+	: '{%' '-'? -> pushMode(Minijinja)
 	;
 
 COMMENT_OPEN
@@ -53,12 +53,12 @@ STRAY
 	;
 
 // ===========================================================================
-// Interior mode for {{ … }} and {% … %} — the jinja expression/statement
+// Interior mode for {{ … }} and {% … %} — the minijinja expression/statement
 // language (minijinja "Expressions"). Both close tokens live here; the parser
 // pairs them with the opening delimiter.
 // ===========================================================================
 
-mode Jinja;
+mode Minijinja;
 
 // Closing delimiters, with optional whitespace-control `-`. Longest-match wins
 // over MINUS `-` / RBRACE `}` at `-}}` / `}}`.
@@ -183,7 +183,7 @@ TILDE  : '~' ;
 
 // Totality fallback inside a tag: any otherwise-unrecognized char degrades to a
 // single token instead of throwing (R5). The parser treats it as leftover.
-JINJA_ANY
+MINIJINJA_ANY
 	: .
 	;
 
