@@ -8,6 +8,8 @@ import {
 	templateRegions,
 	templateSymbols,
 	templateVariants,
+	CallbackTemplateCatalog,
+	qualify,
 	type TemplatedParseResult,
 	type TagNode,
 	type TemplateRegion,
@@ -15,6 +17,10 @@ import {
 	type TemplateSymbol,
 	type TemplateVariant,
 	type TemplateSourceInfo,
+	type TemplateCatalog,
+	type TemplateRef,
+	type ResolvedRelation,
+	type RelationResolver,
 } from "../src/index.js";
 
 describe("jinja public surface (barrel export)", () => {
@@ -61,5 +67,24 @@ describe("jinja public surface (barrel export)", () => {
 		const from = sql.ast.body.kind === "select" ? sql.ast.body.from[0] : undefined;
 		const template: TemplateSourceInfo | undefined = from?.kind === "table" ? from.template : undefined;
 		expect(template?.kind).toBe("ref");
+	});
+
+	it("the inc3.1 template-catalog surface is reachable through src/index.ts", () => {
+		// CallbackTemplateCatalog (value) + TemplateCatalog/TemplateRef/ResolvedRelation/RelationResolver
+		// (types) all flow through the barrel. Build a warm catalog through the public surface, resolve a
+		// templated ref, and prove qualify fires a real unknown-column against it.
+		const resolver: RelationResolver = {
+			resolveRelation(ref: TemplateRef): ResolvedRelation | undefined {
+				return ref.kind === "ref" && ref.nameParts.join(".") === "orders"
+					? { nameParts: ["orders"], columns: [{ name: "id" }, { name: "total" }] }
+					: undefined;
+			},
+		};
+		const catalog: TemplateCatalog = new CallbackTemplateCatalog(resolver);
+
+		const good = parseTemplated("SELECT o.total FROM {{ ref('orders') }} o", "databricks");
+		expect(qualify(good.sql.ast, catalog).diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);
+		const bad = parseTemplated("SELECT o.nope FROM {{ ref('orders') }} o", "databricks");
+		expect(qualify(bad.sql.ast, catalog).diagnostics.filter((d) => d.kind === "unknown-column").length).toBe(1);
 	});
 });

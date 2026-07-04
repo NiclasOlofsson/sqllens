@@ -1,6 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
-import type { ColumnRef } from "../ir/ir.js";
+import type { ColumnRef, TemplateSourceInfo } from "../ir/ir.js";
 import {
 	applyPivotCols,
 	applyStarModifiers,
@@ -17,6 +17,7 @@ import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
 import { type SchemaSource } from "./schema-source.js";
+import { type TemplateCatalog } from "./template-catalog.js";
 
 // ---------------------------------------------------------------------------
 // Qualify — the schema-fed layer over the scope tree. It resolves what scope
@@ -246,12 +247,11 @@ function columnsOfSource(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM) — its physical
-		// relation is dbt knowledge sqllens doesn't have, so its columns are unknown-but-not-wrong.
-		// Treat it exactly like an opaque TVF: columns unknown (undefined), NO unknown-table diagnostic.
-		// A diagnostic against the dbt-logical name would be never-wrong-violating. inc3's catalog
-		// upgrades this to real resolution. (Scoped: only sources carrying `template` — plain SQL never does.)
-		if (src.source.template) return undefined;
+		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM). inc3.1 resolves
+		// its real columns through a TemplateCatalog when the active schema is one; a plain SchemaSource
+		// (or a catalog miss / opaque tag) keeps the R3 exemption — undefined = unknown-but-not-wrong, NO
+		// unknown-table/-column against the dbt-logical name. (Scoped: only sources carrying `template`.)
+		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
 			diagnostics.push(unknownTable(src.name, src.source.cst));
@@ -273,6 +273,33 @@ function columnsOfSource(
 
 function known(r: string[] | "unknown" | undefined): string[] | undefined {
 	return r === undefined || r === "unknown" ? undefined : r;
+}
+
+/**
+ * Resolve a templated FROM/JOIN source's column NAMES through a TemplateCatalog, or `undefined` for
+ * the R3 exemption. inc3.1 upgrades R3's blanket `return undefined` to real resolution WHEN a catalog
+ * answers. Never-wrong — `undefined` (exemption, no fabricated column, no diagnostic) for every one of:
+ *   - an opaque/macro tag (output relation undeterminable — never asks `relation`);
+ *   - a plain SchemaSource with no `relation` (the duck-type `"relation" in schema` fails) — this is
+ *     the zero-catalog keystone: without a TemplateCatalog inc3.1 is byte-identical to R3;
+ *   - a catalog MISS (`relation` returned undefined — recorded, warms on a later prime());
+ *   - a physical-name resolution that itself misses (`columnsFor` undefined).
+ * Only a POSITIVE `relation` answer yields names, so the caller's unknown-column path fires against a
+ * templated ref solely when the catalog knows the relation and the column is genuinely absent.
+ */
+function templateColumns(
+	t: TemplateSourceInfo,
+	name: string[],
+	schema: SchemaSource,
+	dialect?: string,
+): string[] | undefined {
+	if (t.opaque || t.kind === "macro" || !schema || !("relation" in schema)) return undefined;
+	const resolved = (schema as TemplateCatalog).relation({ kind: t.kind, nameParts: name }, dialect);
+	if (!resolved) return undefined; // catalog miss → R3 exemption (warms on a later prime())
+	// `columns: []` is a genuinely EMPTY relation (unknown-column fires on ANY ref), NOT a not-loaded
+	// sentinel — `columns: undefined` is the not-loaded sentinel (fall through to the physical resolver).
+	if (resolved.columns) return resolved.columns.map((c) => c.name); // real columns → real resolution
+	return schema.columnsFor(resolved.nameParts, dialect)?.map((c) => c.name); // physical name → resolver
 }
 
 /**
@@ -377,9 +404,11 @@ function sourceColumns(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		// Templated source — columns unknown, no diagnostic (mirrors columnsOfSource; the
-		// checkColumn path treats "unknown" as "might own it", so no unknown-column fires).
-		if (src.source.template) return undefined;
+		// Templated source — inc3.1 resolves its real columns through a TemplateCatalog (mirrors
+		// columnsOfSource); a plain SchemaSource / catalog miss / opaque tag keeps the R3 exemption
+		// (undefined). checkColumn treats undefined as "might own it", so unknown-column fires only when
+		// the catalog POSITIVELY returned columns and this one is absent — never on the exemption.
+		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
 		return schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));

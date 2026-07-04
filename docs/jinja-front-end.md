@@ -243,13 +243,25 @@ CATALOG RESPONSE, not architecture — how the extension answers `expansionShape
 positional default → v2 macro signature → v3 real dbt render of that one macro) with sqllens frozen across
 the gradient.
 
-### inc3 increment 1 — `relation` only (design decided 2026-07-04; anvil cleared relation-first)
+### inc3 increment 1 — `relation` only — BUILT 2026-07-04 (design decided 2026-07-04; anvil cleared relation-first)
 
 anvil cleared prototyping **`relation` FIRST, in parallel** (the column-resolution win) and holding
 `value`/`expansionShape`/`loopCollection` until it proves out. The full `TemplateCatalog` above stays the
 end target; inc3.1 builds only the `relation` slice, and the design is **`TemplateCatalog extends
 SchemaSource`** so qualify duck-types the catalog it ALREADY receives — no new pipeline threading, and a
-plain `SchemaSource` (no `relation` method) is naturally the zero-catalog fallback.
+plain `SchemaSource` (no `relation` method) is naturally the zero-catalog fallback. **Shipped:** the
+`src/qualify/template-catalog.ts` interface + `CallbackTemplateCatalog`, the qualify upgrade at the two R3
+guard sites, the barrel exports (`TemplateCatalog`, `CallbackTemplateCatalog`, `TemplateRef`,
+`ResolvedRelation`, `RelationResolver`), and the LSP catalog injection (the lazy-catalog re-publish loop is
+duck-typed on `prime()`/`misses`, so `CallbackTemplateCatalog.prime()` drives warm/republish exactly like
+`CallbackSchema`). Gated by `tests/jinja.relation.test.ts`, `tests/jinja.public-api.test.ts`, the
+`CallbackTemplateCatalog` arm of `tests/lsp.acceptance.test.ts`, and the extended
+`tests/corpus/jinja.consumer-contract.test.ts` (a catalog-resolved ref reports real columns; a zero-catalog
+run is byte-identical to R3). **LSP boundary:** relation resolution is LIBRARY-level (parseTemplated →
+qualify with an injected catalog); the LSP server itself still builds documents from plain `parse`, not
+`parseTemplated`, so a templated `{{ ref }}` does not reach the server end-to-end until `SqlDocument.fromTemplated`
+lands (the deferred templated-document model). The `CallbackTemplateCatalog` LSP arm proves the re-publish
+loop drives this catalog type (over its physical-table side); the relation path is proven at library level.
 
 - **Interface (`src/qualify/template-catalog.ts`):** `interface TemplateCatalog extends SchemaSource {
   relation(ref: { kind: "ref" | "source"; nameParts: string[] }, dialect?: string): { nameParts: string[];
@@ -277,6 +289,14 @@ plain `SchemaSource` (no `relation` method) is naturally the zero-catalog fallba
   unknown-column diagnostic fires ONLY when the catalog positively returned columns and the column is
   absent from them. The consumer-contract gate extends: a catalog-resolved templated ref reports its real
   columns on every public read; a zero-catalog parse is byte-identical to R3.
+
+**Open Gap (inc3.2 boundary — templated-column TYPES not yet threaded to inference/hover).** inc3.1
+delivers relation-for-qualify: existence and unknown-column against a templated source's columns. It does
+NOT thread the resolved columns' TYPES into inference. Inference queries `columnsFor(logical name)` (the
+`tableResolver` / physical `SchemaSource` side), not the catalog's `relation` columns, so hover on
+`{{ ref('orders') }}.total` shows no type even with a warm catalog. A future increment (inc3.2) threads the
+relation-resolved column types through `infer`/`resolve` so hover/inlay-hints type templated columns.
+`value`/`expansionShape`/`loopCollection` remain spec (the full `TemplateCatalog` above).
 
 ## Variant expansion (Q3 — resolved: it is parsing → sqllens's, inc2)
 
@@ -314,6 +334,13 @@ on the R4 control-flow regions.)
 - **inc3 — TemplateCatalog wiring (ITEM 11).** The pull-callback seam: lazy relation/value resolution,
   synchronous `expansionShape` (shaped holes retire the fragment-macro limitation), `loopCollection`. Turns
   "parses with defaults" into "resolves `{{ ref }}` with real columns pre-compile."
+  - **inc3.1 — `relation` slice — BUILT 2026-07-04.** `TemplateCatalog extends SchemaSource` +
+    `CallbackTemplateCatalog`; qualify duck-types the catalog and resolves a templated source's real
+    columns (real unknown-column diagnostics), barrel-exported, LSP-injected (the lazy re-publish loop
+    drives `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3. **Open Gap
+    (inc3.2):** templated-column TYPES are not threaded to inference/hover — see § the seam inc3.1 block.
+  - **inc3.2+ — spec:** `value` (var/env_var → Type), `expansionShape` (retires the fragment-macro
+    limitation), `loopCollection`, and threading relation-resolved column types through inference.
 
 Each increment is independently shippable to master with a channel ship note; the extension consumes per
 increment (its `JINJA-CONSUMPTION-PLAN.md` maps each of its ~2,538 dying/relocating LOC to these).

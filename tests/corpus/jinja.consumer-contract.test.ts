@@ -6,12 +6,18 @@ import {
 	resolveScopes,
 	lineage,
 	deriveSymbols,
+	qualify,
 	Schema,
+	CallbackTemplateCatalog,
 	type Scope,
 	type QueryExpr,
 	type QueryBody,
 	type Source,
 	type TableSource,
+	type Column,
+	type RelationResolver,
+	type ResolvedRelation,
+	type TemplateRef,
 } from "../../src/index.js";
 import type { Dialect } from "../../src/api.js";
 
@@ -218,4 +224,67 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 			});
 		});
 	}
+});
+
+// ---------------------------------------------------------------------------
+// inc3.1 CONSUMER-CONTRACT extension — the catalog-resolution win AND the
+// zero-catalog keystone, both end-to-end over the fixtures.
+//
+// (a) A warm CallbackTemplateCatalog resolving a fixture's `{{ ref(...) }}` to
+//     real columns makes qualify fire a real unknown-column for a bad column and
+//     stay silent for good ones — the column-resolution win is real, not just a
+//     unit-test artifact.
+// (b) A ZERO-catalog run (plain Schema, no `relation`) over EVERY fixture is
+//     byte-identical to R3: it emits NO unknown-column diagnostic against any
+//     templated source (the R3 blanket exemption). unknown-column is the only new
+//     diagnostic class inc3.1 can add, and it is catalog-gated — so its absence
+//     with a plain Schema is the keystone that inc3.1 is invisible without a catalog.
+// ---------------------------------------------------------------------------
+
+/** A resolver over a fixed map of `"<kind>:<dotted-folded-name>" → columns` (undefined = miss). */
+function catalogFor(relations: Record<string, Column[]>): CallbackTemplateCatalog {
+	const resolver: RelationResolver = {
+		resolveRelation(ref: TemplateRef): ResolvedRelation | undefined {
+			const cols = relations[`${ref.kind}:${ref.nameParts.join(".")}`];
+			return cols ? { nameParts: ref.nameParts, columns: cols } : undefined;
+		},
+	};
+	return new CallbackTemplateCatalog(resolver);
+}
+
+const unknownColumns = (q: { diagnostics: { kind: string; message: string }[] }) =>
+	q.diagnostics.filter((d) => d.kind === "unknown-column");
+
+describe("jinja CONSUMER-CONTRACT — inc3.1 catalog column resolution (relation)", () => {
+	// Fixture 02_ref_from.sql: `select o.order_id, o.customer_id, o.amount from {{ ref('stg_orders') }} o`.
+	const FIXTURE_02 = readFileSync(FIXTURES_DIR + "02_ref_from.sql", "utf8");
+
+	it("(a) warm catalog: a resolved ref's real columns silence good refs and fire on a bad one", () => {
+		const { sql } = parseTemplated(FIXTURE_02, DIALECT);
+
+		// Full column set → every `o.<col>` reference resolves, no unknown-column.
+		const full = catalogFor({
+			"ref:stg_orders": [{ name: "order_id" }, { name: "customer_id" }, { name: "amount" }],
+		});
+		expect(unknownColumns(qualify(sql.ast, full))).toEqual([]);
+
+		// Same fixture, but the resolved relation LACKS `amount` → a real unknown-column fires for it
+		// (the fixture references `o.amount` in both the SELECT list and the WHERE, so both fire; the
+		// two present columns stay silent).
+		const missingAmount = catalogFor({
+			"ref:stg_orders": [{ name: "order_id" }, { name: "customer_id" }],
+		});
+		const bad = unknownColumns(qualify(sql.ast, missingAmount));
+		expect(bad.length).toBeGreaterThanOrEqual(1);
+		for (const d of bad) expect(d.message).toContain("amount");
+	});
+
+	it("(b) KEYSTONE — a zero-catalog run over every fixture emits NO unknown-column (R3-identical)", () => {
+		const zeroCatalog = new Schema({});
+		for (const { name, text } of CASES) {
+			const { sql } = parseTemplated(text, DIALECT);
+			const uc = unknownColumns(qualify(sql.ast, zeroCatalog));
+			expect(uc, `${name}: zero-catalog must add no unknown-column (byte-identical to R3)`).toEqual([]);
+		}
+	});
 });

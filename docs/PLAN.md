@@ -127,7 +127,7 @@ These are real, unfinished parts of the job. They stay here, answering "what's l
 - **Jinja — one TagNode per tag (inc1 boundary).** `tagNodesOf` returns exactly one `TagNode` per jinja tag: the leftmost-topmost call in the tag's parse tree. A tag holding two sibling calls (`{{ [ref('a'), ref('b')] }}`) yields only the first; an arithmetic tag with an embedded call (`{{ x + ref('y') }}`) classifies off that call. Rare in real dbt (a FROM is a lone `{{ ref() }}`) and the emitted spans stay accurate for the returned node — but a multi-call tag under-reports. Retired when inc2 needs multi-node tags. Also deferred (now to inc3): the syntactic-slot context field on the tag node (the `TagNode` is the R2 span contract only). Full jinja design + increment plan: [jinja-front-end.md](jinja-front-end.md).
 - **Jinja inc2 — two variant/region boundaries (M1/M2).** **M1 — unclosed region, empty last-arm bodySpan (broken-input-only).** An unclosed region (missing `{% endif %}`/`{% endfor %}`) closes at the last known tag, leaving its final arm an empty `bodySpan`, so `templateVariants` blanking can't isolate that arm on broken input. Totality holds and the primary all-text-live `parseTemplated` result is unchanged; only variant enumeration over unbalanced input is affected. **M2 — `{% for %}…{% else %}…{% endfor %}` for-else both-live (rare).** The for-else form models as a nested single-arm region, so both the loop body and the `else` body stay live in the default variant (the editor still sees both). Both tracked in [jinja-front-end.md](jinja-front-end.md) § Boundaries.
 
-## Jinja-SQL front end (ITEM 10/11/14) — inc1+inc2 built, inc3 spec
+## Jinja-SQL front end (ITEM 10/11/14) — inc1+inc2+inc3.1 built, inc3.2+ spec
 
 Parsing raw jinja-SQL (dbt templates) natively — a pre-lexer that segments jinja tags, substitutes
 length/newline-preserving placeholders into the untouched per-dialect SQL lexers, and merges a jinja
@@ -142,7 +142,16 @@ R2 ref/source/macro tag-AST (inc1); R3 template-tagged FROM nodes (`{{ ref }}`/`
 regions/symbols (`templateRegions`/`templateSymbols`, `regions`/`symbols` on `TemplatedParseResult`), and
 arm-coverage `templateVariants` (inc2); gated by `tests/corpus/jinja.test.ts` +
 `tests/corpus/jinja.consumer-contract.test.ts`, additive over the untouched grammars (barrel-only reach).
-inc3 (TemplateCatalog) next — see docs/jinja-front-end.md.
+**inc3.1 built (relation slice):** `TemplateCatalog extends SchemaSource` + `CallbackTemplateCatalog`
+(`src/qualify/template-catalog.ts`, barrel-exported); qualify duck-types the catalog (`"relation" in
+schema`) and resolves a templated source's real columns, so unknown-column fires against a `{{ ref }}` when
+the catalog knows the relation; the LSP injects it (the lazy re-publish loop is duck-typed on
+`prime()`/`misses`, driving `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3.
+**Open Gap (inc3.2):** templated-column TYPES are not yet threaded to inference/hover — inference queries
+`columnsFor(logical name)` (the table resolver), not the catalog's `relation` columns, so hover on
+`{{ ref('orders') }}.total` shows no type even with a warm catalog; a future increment threads relation
+column types through infer/resolve. `value`/`expansionShape`/`loopCollection` remain spec. See
+docs/jinja-front-end.md.
 
 ## Repo layout (target)
 
