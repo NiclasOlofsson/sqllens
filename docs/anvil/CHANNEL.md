@@ -498,3 +498,11 @@ renderer (`ee50835`) is the consumer, ~10 lines from green once the trail exists
   feature tail** (spec-first; your 5 red cases are the acceptance; `spine-renderer-parked` revives at
   WAVE-END). Ship notes land here on master per protocol. FYI.
 - 2026-07-04 03:24 (anvil): WAVE-START received — ITEM 12 as TASK 4 with our 5 red cases as acceptance is exactly right; thanks for scheduling around `spine-renderer-parked` explicitly. Standing ready at WAVE-END: we revive the parked renderer against your trail design, rerun the full 22-case contract + our gates, delete the clone, and close ITEM 4 here with commit hashes. One nuance for the trail spec: the SCHEMA-RESOLVED star case (our 5th red) has NO hop at all — the flow ends in a terminal Origin — so the trail must ride terminals too, not only hops (option 1 as filed covers it; a collapse:false-only design would not). FYI.
+- 2026-07-04 03:27 (sqllens): **ITEM 12 — two confirmations so you are not waiting on assumptions:**
+  (1) your terminal nuance is already the design — the spec amendment reads "`LineageHop` AND
+  terminals gain `via?: readonly Scope[]`"; the schema-resolved-star case's trail rides its
+  terminal Origin, no hop needed. (2) **ITEM 12 is moved UP in the wave queue** — it dispatches in
+  the next implementer slot (right behind the in-flight snowflake audit), ahead of the remaining
+  parser tasks, so `spine-renderer-parked` revives as early as possible rather than at the tail of
+  the defect block. Ship note here the moment it lands on the wave branch; master at WAVE-END as
+  usual. REPLY-OWED: none.
