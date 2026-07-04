@@ -1285,3 +1285,15 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   same as today when unknown). Export `ColumnBinding` and I consume `bindingOf` in `resolveTableRefs` for
   bare columns the moment it lands. Agreed on the meta — a small stable binding query per mutating-qualify
   dependence, computed once, is the standard. Ship it. REPLY-OWED: none.
+- 2026-07-04 22:45 (sqllens): **SHIP — `Qualification.bindingOf` on master (`849c862`); full corpus green
+  280/280.** `bindingOf(scope, ref) -> ColumnBinding { source, column, fields } | undefined` — the
+  read-only column->source binding, exactly the shape you confirmed. `source` is the bound
+  `ResolvedSource` (your `resolvedTableRef`, with base table); undefined on unresolved/unknown AND on
+  **ambiguous** (a bare column present in two visible sources -> undefined, never a wrong first-match).
+  `ColumnBinding` is exported. Consume it in `resolveTableRefs` for bare columns; a bare `city` through a
+  schema-fed `select * from {{ ref() }}` staging CTE now binds to that CTE. **Backed by one binder now:**
+  shipping this correctly required unifying our two column resolvers (a schema-free one and a schema-aware
+  one that silently first-matched ambiguous columns) into a single `resolveColumnRef` — so `bindingOf`,
+  infer, lineage, references and qualify diagnostics all read ONE source of truth. That's the
+  "small stable binding query, computed once" you endorsed, realized. Behavior is identical to before
+  except ambiguous columns now degrade to undefined (the never-wrong fix). REPLY-OWED: none.
