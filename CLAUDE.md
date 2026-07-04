@@ -121,9 +121,9 @@ All seven reorganized dialects parse their `query/` bucket at 100% (Databricks 3
 
 Every cross-dialect `other`-ratchet baseline is now **0** (T-SQL, Snowflake, BigQuery driven there this wave from 26 / 10 / 234; Redshift / PostgreSQL / DuckDB / Trino were already 0), pinned in the `tests/corpus/` dialect files above (formerly `tests/ir-completeness.dialects.test.ts`, now deleted); Databricks stays corpus-complete at 0 in `databricks.oatly.test.ts`.
 
-**Negative corpora — all six reorganized non-BigQuery dialects now have two-sided gates (issue #5 closed).** Each carries a `negative/unparsed/{mutated,curated}` bucket: a 400-mutant set (single-token deletions/swaps of real positives) ratcheted by rejection rate (floors databricks 334 / snowflake 332 / duckdb 333 / postgres 325 / redshift 320 / tsql 315, all /400) plus 24 hand-authored, doc-cited near-misses that must reject 100%. BigQuery's ZetaSQL corpus was already two-sided; Trino's negative corpus is a tracked follow-up (see PLAN.md Open Gaps).
+**Negative corpora — all eight dialects now have two-sided gates (issue #5 closed).** Each of the seven non-BigQuery dialects carries a `negative/unparsed/{mutated,curated}` bucket: a 400-mutant set (single-token deletions/swaps of real positives) ratcheted by rejection rate (floors databricks 334 / snowflake 332 / duckdb 333 / trino 344 / postgres 325 / redshift 320 / tsql 315, all /400) plus 24 hand-authored, doc-cited near-misses that must reject 100%. BigQuery's ZetaSQL corpus was already two-sided.
 
-**Per-construct doc-coverage suites now cover six dialects.** `tests/{snowflake,redshift,postgres,duckdb}.doc-coverage.test.ts` (362 probes total) join the existing `databricks`/`tsql` suites — one probe per documented construct, each pinning the CURRENT support level (`query`/`nonquery`/`noparse`) against the vendor reference. Trino's is a tracked follow-up.
+**Per-construct doc-coverage suites now cover seven dialects.** `tests/{snowflake,redshift,postgres,duckdb,trino}.doc-coverage.test.ts` (461 probes total) join the existing `databricks`/`tsql` suites — one probe per documented construct, each pinning the CURRENT support level (`query`/`nonquery`/`noparse`) against the vendor reference.
 
 A green run with a corpus absent proves less than it looks like — check the skip count before claiming the gate passed.
 
