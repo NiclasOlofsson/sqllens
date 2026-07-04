@@ -96,6 +96,17 @@ export type TagNode =
 			tagSpan: PartSpan;
 			argsSpan?: PartSpan;
 			args: { span: PartSpan }[];
+			/**
+			 * Every macro CALL in the expression, in source order, EACH as its own
+			 * MacroCall — symmetric to `control.calls` (C1). A NESTED `outer(inner())`
+			 * yields BOTH (outer before inner); sibling calls `a() + b()` yield both in
+			 * textual order. A computed / dynamic callee is skipped, never fabricated.
+			 * Additive: `calls[0]` is the top-level call (same identifier as the node's
+			 * own `name`/`args`), the rest are nested — the node's top-level fields
+			 * (name/nameSpan/args/…) are unchanged. So the extension consumes `calls[]`
+			 * uniformly for control AND macro nodes.
+			 */
+			calls: MacroCall[];
 	  }
 	| {
 			kind: "control";
@@ -363,9 +374,28 @@ export function callToMacroCall(call: CallExprContext, docOffset: number, base: 
 	};
 }
 
-function macroNode(call: CallExprContext, callee: Callee, docOffset: number, base: DocPos, tagSpan: PartSpan): TagNode {
+function macroNode(
+	call: CallExprContext,
+	callee: Callee,
+	docOffset: number,
+	base: DocPos,
+	tagSpan: PartSpan,
+	tree: ParserRuleContext,
+): TagNode {
+	// C1-symmetric: every macro call in the expression, source order, nested
+	// included — same walk (findAllCalls) + mapping (callToMacroCall) as the
+	// control tag. Over the whole `tree` (not just `call`) so sibling calls
+	// (`{{ a() + b() }}`) are surfaced too; a computed/dynamic callee is skipped
+	// (never fabricated). `calls[0]` is the leftmost-topmost call = the node's own
+	// name/args (pre-order DFS visits it first).
+	const calls: MacroCall[] = [];
+	for (const c of findAllCalls(tree)) {
+		const mc = callToMacroCall(c, docOffset, base);
+		if (mc) calls.push(mc);
+	}
+
 	const mc = callToMacroCall(call, docOffset, base);
-	if (mc) return { kind: "macro", ...mc, tagSpan };
+	if (mc) return { kind: "macro", ...mc, tagSpan, calls };
 	// Degenerate fallback: a callee with a name but no locatable span (a broken
 	// tree). Preserve the pre-refactor node shape — nameSpan defaults to tagSpan,
 	// args are still extracted. (Unreachable for a well-formed parsed call, where
@@ -380,6 +410,7 @@ function macroNode(call: CallExprContext, callee: Callee, docOffset: number, bas
 		tagSpan,
 		...(argsSpan ? { argsSpan } : {}),
 		args,
+		calls,
 	};
 }
 
@@ -467,7 +498,7 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 			};
 		}
 		// computed / broken / argless ref → macro fallback (never a fabricated model).
-		return macroNode(call, callee, docOffset, base, tagSpan);
+		return macroNode(call, callee, docOffset, base, tagSpan, tree);
 	}
 	if (bare && leading === "source") {
 		// source('name', 'table') — both must be DIRECT string literals; a computed
@@ -487,7 +518,7 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 				tagSpan,
 			};
 		}
-		return macroNode(call, callee, docOffset, base, tagSpan);
+		return macroNode(call, callee, docOffset, base, tagSpan, tree);
 	}
 	if (bare && leading === "var") return { kind: "var", tagSpan };
 	if (bare && leading === "env_var") return { kind: "env_var", tagSpan };
@@ -500,5 +531,5 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext, base: DocPo
 	}
 
 	// pkg.macro(...) or a bare unknown call → macro.
-	return macroNode(call, callee, docOffset, base, tagSpan);
+	return macroNode(call, callee, docOffset, base, tagSpan, tree);
 }
