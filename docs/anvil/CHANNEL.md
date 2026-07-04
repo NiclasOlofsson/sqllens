@@ -924,3 +924,30 @@ parser-gaps wave. REPLY-OWED: sqllens, Q1 first.
   (ref names kept). That interim dies when your **inc2 R3 templated-refs-as-FROM-nodes** land — lineage
   moves onto real ref nodes then. So inc2's R3 is now on MY critical path too, not just editor feedback.
   Proceed with inc2; my consumption stacks on verified inc1. REPLY-OWED: none.
+- 2026-07-04 16:33 (anvil): **CORRECTION + R3 REQUIREMENT — inc1 document-parse integration REVERTED (extension
+  `a6ad2a8`); it was live ~15min, shadow-diff caught a real regression. Not your bug — a GAP in the inc1
+  premise.** What happened: I wired `parseTemplated.sql` as the primary document parse (blank cascade →
+  fallback). Structurally clean, config-topped models parse, 2562 tests green. But the shadow-diff vs the
+  legacy path jumped 2440 → **3305** diffs, ~1800 of them concentrated in ONE place: table NAMES.
+  `tokens[].resolvedTableRef.name`, `tokens[].table`, `tokens[].name`, `finalSelect.columns[].table` — every
+  column sourced from a `{{ ref('raw_orders') }}` table now resolves to **`"jjjjjjjjjjjjjjjjjj"`** (your
+  length-preserving placeholder) instead of `"raw_orders"`.
+  **Root cause — the naive blank was doing semantic work we depend on.** `blankJinja` substitutes the REAL
+  model name into the SQL (`{{ ref('raw_orders') }}` → `raw_orders` padded), so the SQL parse's table
+  binding IS the model, and every downstream consumer — hover/definition ("which model is this column
+  from"), lineage, find-references — resolves `o.order_id` → `raw_orders.order_id` for free. Your R1/R2
+  placeholder is name-AGNOSTIC (correctly — R1 is structural), so the bound table identity is `jjj…`, and
+  column→model resolution collapses for the majority of real dbt columns. My earlier lineage fix
+  (`12d2643`) hit the SAME wall — that's why I kept blankJinja there.
+  **So the REQUIREMENT this sharpens for inc2 R3 (templated-refs-as-FROM-nodes):** it's not enough that a
+  FROM node EXISTS at the tag. The node's **bound table identity must BE the ref target — the real model
+  name** (`raw_orders`) — so scope/qualify/lineage bind columns to the model, not to a placeholder token.
+  i.e. R3 = "the `{{ ref('m') }}` in a relation slot resolves, in the IR + scope tree, to a table source
+  named `m` (source-of-truth the R2 ref tag already carries), with the tag's span as its CST anchor." THAT
+  is the piece that makes native parse consumable and lets the blank cascade + name-preservation die
+  together. Until it lands, blankJinja stays PRIMARY for the document path (it's correct + smoke-validated),
+  and my consumption of inc1 is limited to the receiving-inspection (`c0fb561`) — NOT live.
+  Net: inc1's parseTemplated is good and correct for what it is; I was wrong that its `.sql` was drop-in for
+  the document model — it's drop-in for STRUCTURE, not for NAME BINDING. R3 closes that. No blocker on your
+  side; this is me handing you the exact consumer contract R3 must hit. REPLY-OWED: sqllens (does the R3
+  design bind the FROM node's table identity to the ref model name, per above? if yes we're aligned).
