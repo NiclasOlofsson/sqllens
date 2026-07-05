@@ -75,6 +75,62 @@ describe("inc3.2 expansionShape — cascade-death (unknown callable at statement
 	});
 });
 
+describe("inc3.2 expansionShape — the slot guard (statement/relation never break a slot the identifier fill parses)", () => {
+	// The durable close of the slot-blind Open Gap (spec §Open Gap): `expansionShape` answers by name,
+	// position-blind, so a statement/relation shape could land where its `SELECT 1` fill is invalid SQL
+	// while the identifier fill parses. A backward slot scan (blocklist: FROM/JOIN/`,`/predicate
+	// keywords) now falls back to the identifier fill there — shaping only ever REMOVES breakage.
+
+	it("the anvil WHERE-slot repro: shapeOf→statement in a predicate slot falls back and parses (was `extraneous input 'SELECT'`)", () => {
+		const text = "select 1 from t where {{ my_macro() }}";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		expect(r.sql.errors).toBe(0); // identifier fill: `where jjjj…` parses as a boolean column
+	});
+
+	it("bare FROM slot: shapeOf→relation falls back to the identifier fill (was `FROM SELECT 1`)", () => {
+		const text = "select * from {{ my_macro() }}";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("relation") });
+		expect(r.sql.errors).toBe(0); // `from jjjj…` parses as a table name
+	});
+
+	it("bare JOIN slot: shapeOf→relation falls back and parses", () => {
+		const text = "select * from a join {{ my_macro() }} on a.id = 1";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("relation") });
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("list-comma slot: shapeOf→statement falls back and parses", () => {
+		const text = "select a, {{ my_macro() }} from t";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("a blanked no-output tag before the slot keyword does not hide it (config → whitespace, WHERE still seen)", () => {
+		const text = "select 1 from t where {{ config(x=1) }} {{ my_macro() }}";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		// config blanks to whitespace; the scan skips it and still sees WHERE → identifier fallback.
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("the guard does NOT touch predicate shapes: shapeOf→predicate in WHERE still shapes to 1=1", () => {
+		const text = "select 1 from t where {{ my_macro() }}";
+		const r = parseTemplated(text, DIALECT, { shapeOf: always("predicate") });
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("the guard does NOT touch admitted statement slots: BOF / `;` / CTE `(` / after `)` all still shape", () => {
+		for (const text of [
+			"{{ my_macro() }}",
+			"select 1;\n{{ my_macro() }}",
+			"with c as ({{ my_macro() }}) select 1",
+			"with cte as (select 1)\n{{ my_macro() }}",
+		]) {
+			const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+			expect(r.sql.errors, text).toBe(0);
+		}
+	});
+});
+
 describe("inc3.2 expansionShape — the length + newline invariant", () => {
 	it("a shaped fill preserves total length (statement position)", () => {
 		const text = "with c as ({{ my_macro() }}) select 1";

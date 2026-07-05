@@ -160,18 +160,52 @@ const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr">, string> = {
 const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "env_var"]);
 
 /**
+ * Slot guard (the durable close of the slot-blind Open Gap, spec §Open Gap — slot-blind shaping):
+ * `expansionShape` answers BY NAME, position-blind, so a `statement`/`relation` shape can land in a
+ * slot where its `SELECT 1` fill is INVALID SQL while the identifier fill parses fine — a bare
+ * `FROM {{ m() }}` (→ `FROM SELECT 1`), a list comma (`select a, {{ m() }}`), or a predicate slot
+ * (`WHERE {{ m() }}` — the anvil repro, `extraneous input 'SELECT'`). A BLOCKLIST, not an allowlist:
+ * shaping is skipped ONLY where the shaped fill provably breaks and the identifier fill provably
+ * parses (a table name after FROM/JOIN, a list element after `,`, a boolean column after the
+ * predicate keywords) — every other slot keeps today's shipped behavior, so the guard can only
+ * remove breakage, never regress a working shape. `predicate`/`column-list` shapes are untouched.
+ */
+const SLOT_BLOCK_WORDS: ReadonlySet<string> = new Set(["from", "join", "where", "and", "or", "on", "having", "when"]);
+
+/**
+ * The slot immediately preceding `start`: skip whitespace backward over `chars` (the placeholder
+ * being built, so earlier tags read as their fills — a blanked `{{ config }}` reads as whitespace)
+ * and return the preceding word (lowercased) or single character; "" at document start.
+ */
+function precedingSlot(chars: readonly string[], start: number): string {
+	let k = start - 1;
+	while (k >= 0 && /[ \t\r\n]/.test(chars[k])) k -= 1;
+	if (k < 0) return "";
+	if (!/[A-Za-z0-9_]/.test(chars[k])) return chars[k];
+	let word = "";
+	while (k >= 0 && /[A-Za-z0-9_]/.test(chars[k])) {
+		word = chars[k] + word;
+		k -= 1;
+	}
+	return word.toLowerCase();
+}
+
+/**
  * The shaped fill fragment for a tag, or undefined to fall back to the positional
  * char fill. Returns a fragment ONLY for a macro-call expr tag whose `shapeOf`
  * answers a non-`expr` shape AND for which the fragment FITS: it must be no longer
  * than the tag and must contain no `\n` in its placement window (the fit guard —
  * the shaped fill is strictly an improvement, never a regression on a tag it can't
- * shape). The caller places the fragment at the tag start and pads the rest with
- * spaces, preserving every original `\n`.
+ * shape) — AND, for `statement`/`relation`, whose slot admits it (the slot guard
+ * above; `slot` is the preceding word/char from `precedingSlot`). The caller places
+ * the fragment at the tag start and pads the rest with spaces, preserving every
+ * original `\n`.
  */
 function shapedFill(
 	seg: Extract<Segment, { kind: "tag" }>,
 	shapeOf: ShapeOf,
 	leading: LeadingInfo,
+	slot: string,
 ): string | undefined {
 	if (seg.tagKind !== "expr") return undefined;
 	if (NO_OUTPUT_BUILTINS.has(leading.word) || SHAPE_EXCLUDED.has(leading.word)) return undefined;
@@ -179,6 +213,9 @@ function shapedFill(
 	if (!call || !call.isCall) return undefined; // only a real macro CALL is shaped
 	const shape = shapeOf({ name: call.name, ...(call.parts ? { parts: call.parts } : {}) });
 	if (!shape || shape === "expr") return undefined; // expr / unknown → identifier fill (today's default)
+	if ((shape === "statement" || shape === "relation") && (SLOT_BLOCK_WORDS.has(slot) || slot === ",")) {
+		return undefined; // slot guard: SELECT 1 breaks here, the identifier fill parses — fall back
+	}
 	const fragment = SHAPE_FRAGMENT[shape];
 	// Fit guard: the fragment must fit within the tag AND before its first `\n`. seg.text[k] is the
 	// document char at seg.start + k, so a `\n` at any k < fragment.length would land inside the fragment.
@@ -316,11 +353,14 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 
 	// Build the placeholder: copy the input, overwrite each tag range with its
 	// fill, preserving `\n` at its original offset (antlr line/column anchor).
+	// Segments are source-ordered, so when tag k is filled, chars[0..k.start) already
+	// carries every earlier fill — precedingSlot reads the placeholder-in-progress
+	// (a blanked config tag before this one reads as whitespace, as it should).
 	const chars = text.split(""); // UTF-16 units — indices align with tag offsets
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
 		const leading = leadingByTag.get(seg)!;
-		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading) : undefined;
+		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading, precedingSlot(chars, seg.start)) : undefined;
 		if (shaped !== undefined) {
 			// Shaped fill: fragment at the tag start, spaces for the rest, `\n` preserved. The fit guard
 			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.

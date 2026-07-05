@@ -291,17 +291,17 @@ generalizes the fill from a char to a length-matched **shape-valid string**:
   errors) where it failed before — the cascade-death proof.
 - **Two-path integrity:** this is still parse-with-holes, NOT render — `SELECT 1` is a shape-valid HOLE, not
   the macro's output. The IR/tokens still flag the tag; the extension renders for real at validation time.
-- **Open Gap — slot-blind shaping in a bare FROM/JOIN.** `expansionShape` is answered BY NAME
-  (synchronous, position-blind by design), so a macro answered `relation`/`statement` gets the `SELECT 1`
-  fill EVERYWHERE it appears — including a bare `FROM {{ m() }}` / `JOIN {{ m() }}` (no parens), where it
-  fills to invalid `FROM SELECT 1`. That is a 0→1 regression vs the identifier fill for that one slot (the
-  identifier `FROM jjjj` parses as a table name). It is opt-in (zero-catalog is byte-identical, unaffected)
-  and outside anvil's residual class — the catalog contract is that `relation` is returned only for
-  parenthesized-position macros (CTE/subquery bodies), which is where the shaping is needed and correct.
-  The length/newline fit-guard is fully honored; this is a slot-mismatch, not an invariant break. Future
-  close: a cheap FROM/JOIN backward-scan (skip `relation`/`statement` shaping when the tag sits in a bare
-  table-reference slot — preceded by `FROM`/`JOIN`/`,` with no intervening `(` — since the identifier fill
-  already parses there).
+- **Slot guard — CLOSED 2026-07-05 (was: Open Gap, slot-blind shaping).** `expansionShape` is answered BY
+  NAME (synchronous, position-blind by design), so a macro answered `relation`/`statement` used to get the
+  `SELECT 1` fill EVERYWHERE — including slots where that fill is invalid SQL while the identifier fill
+  parses: a bare `FROM {{ m() }}` / `JOIN {{ m() }}` (→ `FROM SELECT 1`), a list comma, and a predicate
+  slot (`WHERE {{ m() }}` — the anvil repro). The close is the backward slot scan in `segment.ts`
+  (`precedingSlot` + `SLOT_BLOCK_WORDS`): skip `statement`/`relation` shaping when the tag is directly
+  preceded (whitespace-skipping, over the placeholder-in-progress so blanked tags read as whitespace) by
+  `FROM`/`JOIN`/`,`/`WHERE`/`AND`/`OR`/`ON`/`HAVING`/`WHEN`, falling back to the identifier fill there. A
+  BLOCKLIST, so shaping only ever loses slots where it provably broke — every admitted slot (BOF, `;`,
+  `(`, after `)`, set-ops) behaves exactly as before; `predicate`/`column-list` shapes and the zero-catalog
+  path are untouched. Pinned by the slot-guard suite in `tests/minijinja.expansionshape.test.ts`.
 
 ### inc3 increment 1 — `relation` only — BUILT 2026-07-04 (design decided 2026-07-04; anvil cleared relation-first)
 
