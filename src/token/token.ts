@@ -39,6 +39,10 @@ export interface Token {
 	line: number;
 	/** 0-based (antlr token.column). */
 	column: number;
+	/** 1-based line of the token END (one past the last char; multi-line tokens advance it). */
+	endLine: number;
+	/** 0-based column of the token END (one past the last char). */
+	endColumn: number;
 	/** 0 = default, 1 = HIDDEN. */
 	channel: number;
 	role: TokenRole;

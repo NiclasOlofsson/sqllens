@@ -253,3 +253,40 @@ describe("tagNodesOf — R2 span contract", () => {
 		});
 	});
 });
+
+// ---------------------------------------------------------------------------
+// endLine/endColumn on PartSpan (anvil work order 2026-07-05) — every tag-AST
+// span carries its end position; a multi-line tag advances tagSpan.endLine.
+// ---------------------------------------------------------------------------
+describe("PartSpan endLine/endColumn", () => {
+	it("single-line ref: tagSpan/modelSpan ends on the same line, one past the last char", () => {
+		const text = "select * from {{ ref('orders') }}";
+		const r = parseTemplated(text, "databricks");
+		const ref = r.tags.find((t): t is Extract<typeof t, { kind: "ref" }> => t.kind === "ref")!;
+		expect(ref.tagSpan.endLine).toBe(1);
+		expect(ref.tagSpan.endColumn).toBe(text.length);
+		expect(ref.modelSpan.endLine).toBe(1);
+		expect(ref.modelSpan.endColumn).toBe(ref.modelSpan.column + "orders".length);
+	});
+
+	it("multi-line ref: tagSpan.endLine advances to the closing }} line", () => {
+		const text = "select * from {{ ref(\n  'orders'\n) }}";
+		const r = parseTemplated(text, "databricks");
+		const ref = r.tags.find((t) => t.kind === "ref")!;
+		expect(ref.tagSpan.line).toBe(1);
+		expect(ref.tagSpan.endLine).toBe(3);
+		expect(ref.tagSpan.endColumn).toBe(") }}".length);
+	});
+
+	it("region body spans carry end positions (exact via the text)", () => {
+		const text = "{% if a %}\nselect 1\n{% endif %}";
+		const r = parseTemplated(text, "databricks");
+		expect(r.regions.length).toBe(1);
+		const arm = r.regions[0].arms[0];
+		expect(arm.bodySpan.line).toBe(1); // body starts right after `{% if a %}`
+		expect(arm.bodySpan.endLine).toBe(3); // and ends where `{% endif %}` begins
+		expect(arm.bodySpan.endColumn).toBe(0);
+		expect(r.regions[0].span.endLine).toBe(3);
+		expect(r.regions[0].span.endColumn).toBe("{% endif %}".length);
+	});
+});

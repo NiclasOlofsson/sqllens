@@ -47,6 +47,7 @@
 import { CharStream, CommonTokenStream, ListTokenSource, type ParserRuleContext, Token as AntlrToken } from "antlr4ng";
 import { parse, type Dialect, type ParseResultIR } from "../api.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
+import { endPosition } from "../ir/span.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyMinijinjaToken } from "../token/classify.js";
@@ -153,14 +154,18 @@ function mapSliceToken(tok: AntlrToken): Token {
 		vocabLexer.vocabulary.getSymbolicName(tok.type) ??
 		vocabLexer.vocabulary.getDisplayName(tok.type) ??
 		String(tok.type);
+	const text = tok.text ?? "";
+	const end = endPosition(tok.line, tok.column, text);
 	return {
 		type: tok.type,
 		name,
-		text: tok.text ?? "",
+		text,
 		start: tok.start,
 		stop: tok.stop,
 		line: tok.line,
 		column: tok.column,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
 		channel: 2,
 		role: classifyMinijinjaToken(vocabLexer, tok.type),
 	};
@@ -170,13 +175,17 @@ function mapSliceToken(tok: AntlrToken): Token {
 function sliceToken(tok: Token, a: number, b: number, text: string): Token {
 	if (a === tok.start && b === tok.stop) return tok; // whole token — identity
 	const pos = docPosAt(text, a);
+	const sliced = tok.text.slice(a - tok.start, b - tok.start + 1);
+	const end = endPosition(pos.line, pos.column, sliced);
 	return {
 		...tok,
-		text: tok.text.slice(a - tok.start, b - tok.start + 1),
+		text: sliced,
 		start: a,
 		stop: b,
 		line: pos.line,
 		column: pos.column,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
 	};
 }
 

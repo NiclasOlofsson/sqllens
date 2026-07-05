@@ -68,3 +68,36 @@ describe("tokenize — per dialect", () => {
 		});
 	}
 });
+
+// ---------------------------------------------------------------------------
+// endLine/endColumn (anvil work order 2026-07-05) — producer-computed end
+// positions on every Token: 1-based endLine / 0-based endColumn, one past the
+// last char; a multi-line token advances endLine and resets the column count.
+// ---------------------------------------------------------------------------
+describe("Token endLine/endColumn", () => {
+	it("single-line tokens: endLine === line, endColumn = column + length", () => {
+		const tokens = tokenize("SELECT abc FROM t", "databricks");
+		for (const t of tokens) {
+			expect(t.endLine).toBe(t.line);
+			expect(t.endColumn).toBe(t.column + t.text.length);
+		}
+	});
+
+	it("a multi-line block comment advances endLine and resets the column", () => {
+		const sql = "SELECT 1 /* line1\nline2\nline3 */ FROM t";
+		const tokens = tokenize(sql, "databricks");
+		const comment = tokens.find((t) => t.role === "comment");
+		expect(comment).toBeDefined();
+		expect(comment!.line).toBe(1);
+		expect(comment!.endLine).toBe(3);
+		expect(comment!.endColumn).toBe("line3 */".length);
+	});
+
+	it("tokens after a multi-line token carry correct start AND end lines", () => {
+		const sql = "SELECT 1 /* a\nb */ FROM t";
+		const from = tokenize(sql, "databricks").find((t) => t.text === "FROM");
+		expect(from!.line).toBe(2);
+		expect(from!.endLine).toBe(2);
+		expect(from!.endColumn).toBe(from!.column + 4);
+	});
+});

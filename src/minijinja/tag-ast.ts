@@ -44,6 +44,7 @@ import {
 	StmtContext,
 } from "../generated/minijinja/MinijinjaParser.js";
 import type { PartSpan } from "../ir/part-span.js";
+import { endPosition } from "../ir/span.js";
 import { NO_OUTPUT_BUILTINS, type Segment } from "./segment.js";
 
 /** A tag segment (the `kind: "tag"` arm of Segment). */
@@ -134,7 +135,8 @@ export type TagNode =
 
 /** Span from a first + last token (inclusive stop → exclusive end). */
 function spanFromTokens(a: AntlrToken, b: AntlrToken): PartSpan {
-	return { start: a.start, end: b.stop + 1, line: a.line, column: a.column };
+	const end = endPosition(b.line, b.column, b.text ?? "");
+	return { start: a.start, end: b.stop + 1, line: a.line, column: a.column, endLine: end.endLine, endColumn: end.endColumn };
 }
 
 /** Span of a rule context (its start..stop tokens), or undefined if it has none. */
@@ -152,8 +154,18 @@ function spanOfNode(node: ParserRuleContext): PartSpan | undefined {
  */
 function stringContentSpan(t: AntlrToken): PartSpan {
 	// t.start = opening quote, t.stop = closing quote (inclusive). Content is
-	// [start+1, stop-1]; exclusive end = stop.
-	return { start: t.start + 1, end: t.stop, line: t.line, column: t.column + 1 };
+	// [start+1, stop-1]; exclusive end = stop. The end position is where the text
+	// MINUS the closing quote ends (= one past the content's last char).
+	const text = t.text ?? "";
+	const end = endPosition(t.line, t.column, text.slice(0, Math.max(0, text.length - 1)));
+	return {
+		start: t.start + 1,
+		end: t.stop,
+		line: t.line,
+		column: t.column + 1,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
+	};
 }
 
 /** The value of a STRING token with its surrounding quotes stripped. */
@@ -456,7 +468,12 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | 
 	// (they cover `{{ … }}` / `{% … %}` / `{# … #}` and any `-` whitespace control);
 	// its line/column come from the tree's own start token (the tag's OPEN token).
 	const start = tree.start;
-	const tagSpan: PartSpan = { start: seg.start, end: seg.end, line: start?.line ?? 1, column: start?.column ?? 0 };
+	const line = start?.line ?? 1;
+	const column = start?.column ?? 0;
+	// seg.text is the ENTIRE tag's source text, so the end position falls straight
+	// out of it (multi-line tags advance endLine).
+	const end = endPosition(line, column, seg.text);
+	const tagSpan: PartSpan = { start: seg.start, end: seg.end, line, column, endLine: end.endLine, endColumn: end.endColumn };
 
 	// Statement tags: classify as "control" and enrich with the lead keyword and,
 	// for the name-declaring keywords, the declared name + its span (R4). The two

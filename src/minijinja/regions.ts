@@ -117,14 +117,20 @@ export function templateRegions(tags: TagNode[], text?: string): TemplateRegion[
 		const arms: TemplateArm[] = ip.arms.map((a) => {
 			const bodyStart = a.tagSpan.end;
 			const bodyEnd = a.bodyEnd ?? bodyEndOffset ?? bodyStart;
-			// bodyStart is the char PAST the opening tag: resolve its exact position
-			// from the LineIndex when text is available, else best-effort to the tag.
-			const pos = lineIndex?.positionAt(bodyStart);
+			const clampedEnd = Math.max(bodyStart, bodyEnd);
+			// bodyStart is the char PAST the opening tag — exactly the tag's OWN end
+			// position (tagSpan.endLine/endColumn), no index needed. The body END
+			// position resolves from the LineIndex when text is available; without
+			// text it degrades to the start position (a known limit of the text-less
+			// templateRegions overload — parseTemplated always passes text).
+			const endPos = lineIndex?.positionAt(clampedEnd);
 			const bodySpan: PartSpan = {
 				start: bodyStart,
-				end: Math.max(bodyStart, bodyEnd),
-				line: pos ? pos.line + 1 : a.tagSpan.line,
-				column: pos ? pos.column : a.tagSpan.column,
+				end: clampedEnd,
+				line: a.tagSpan.endLine,
+				column: a.tagSpan.endColumn,
+				endLine: endPos ? endPos.line + 1 : a.tagSpan.endLine,
+				endColumn: endPos ? endPos.column : a.tagSpan.endColumn,
 			};
 			return { keyword: a.keyword, tagSpan: a.tagSpan, bodySpan, children: a.children };
 		});
@@ -133,11 +139,17 @@ export function templateRegions(tags: TagNode[], text?: string): TemplateRegion[
 		// EOF span end: the furthest known tag/child end belonging to this region.
 		let known = last.tagSpan.end;
 		for (const arm of arms) for (const c of arm.children) known = Math.max(known, c.span.end);
+		const spanEnd = spanEndOffset ?? known;
+		// Region end position: exact via the LineIndex; text-less fallback = the last
+		// arm tag's own end (exact whenever the region ends at that tag).
+		const spanEndPos = lineIndex?.positionAt(spanEnd);
 		const span: PartSpan = {
 			start: first.tagSpan.start,
-			end: spanEndOffset ?? known,
+			end: spanEnd,
 			line: first.tagSpan.line,
 			column: first.tagSpan.column,
+			endLine: spanEndPos ? spanEndPos.line + 1 : last.tagSpan.endLine,
+			endColumn: spanEndPos ? spanEndPos.column : last.tagSpan.endColumn,
 		};
 		return { kind: ip.kind, arms, span };
 	};
@@ -221,6 +233,9 @@ export function templateSymbols(tags: TagNode[]): TemplateSymbol[] {
 						end: tag.tagSpan.end,
 						line: open.tagSpan.line,
 						column: open.tagSpan.column,
+						// The symbol span ends exactly where the endmacro tag ends.
+						endLine: tag.tagSpan.endLine,
+						endColumn: tag.tagSpan.endColumn,
 					},
 				});
 			}

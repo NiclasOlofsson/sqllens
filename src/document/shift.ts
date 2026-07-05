@@ -41,13 +41,14 @@ export function shiftDiagnostic(
 
 /** Shift a cell-relative token to document coordinates. `line` is 1-based, `column` 0-based. */
 export function shiftToken(t: Token, baseLine: number, baseCol: number, baseOffset: number): Token {
-	const firstLine = t.line === 1;
 	return {
 		...t,
 		start: t.start + baseOffset,
 		stop: t.stop + baseOffset,
 		line: t.line + baseLine,
-		column: firstLine ? t.column + baseCol : t.column,
+		column: t.line === 1 ? t.column + baseCol : t.column,
+		endLine: t.endLine + baseLine,
+		endColumn: t.endLine === 1 ? t.endColumn + baseCol : t.endColumn,
 	};
 }
 
@@ -83,10 +84,9 @@ export function shiftSpanFields<T extends { line: number; column: number; endLin
 /** Shift a per-part source span (start/end are 0-based char offsets; line 1-based, column 0-based). */
 export function shiftPartSpan(p: PartSpan, baseLine: number, baseCol: number, baseOffset: number): PartSpan {
 	return {
+		...shiftSpanFields(p, baseLine, baseCol),
 		start: p.start + baseOffset,
 		end: p.end + baseOffset,
-		line: p.line + baseLine,
-		column: p.line === 1 ? p.column + baseCol : p.column,
 	};
 }
 

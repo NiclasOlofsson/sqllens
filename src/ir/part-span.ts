@@ -18,6 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { ParserRuleContext, TerminalNode, type ParseTree, type Token } from "antlr4ng";
+import { endPosition } from "./span.js";
 
 export interface PartSpan {
 	/** Absolute char offset of the part's first token, inclusive (0-based). */
@@ -28,6 +29,10 @@ export interface PartSpan {
 	line: number;
 	/** 0-based column of the part's first token (matches src/parse-diagnostics.ts SyntaxDiagnostic). */
 	column: number;
+	/** 1-based line of the span END (one past the last char) — same convention as symbols.ts `Span`. */
+	endLine: number;
+	/** 0-based column of the span END (one past the last char). */
+	endColumn: number;
 }
 
 function startToken(node: ParseTree): Token | null {
@@ -49,7 +54,8 @@ export function partSpanOf(node: ParseTree | null | undefined): PartSpan | undef
 	const s = startToken(node);
 	const e = stopToken(node);
 	if (!s || !e) return undefined;
-	return { start: s.start, end: e.stop + 1, line: s.line, column: s.column };
+	const end = endPosition(e.line, e.column, e.text ?? "");
+	return { start: s.start, end: e.stop + 1, line: s.line, column: s.column, endLine: end.endLine, endColumn: end.endColumn };
 }
 
 /** All-or-nothing per column reference: return one `PartSpan` per node only when EVERY part has a
