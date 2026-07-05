@@ -9,15 +9,18 @@ stream, first-class jinja tag nodes, macro expansions as typed holes — replaci
 Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; they differ on division
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.
 
-**Status: inc1, inc2, and inc3.1 are built.** Raw jinja-SQL parses natively — `parseTemplated` /
-`tokenizeTemplated`, the unified SQL(ch 0/1) + jinja(ch 2, role `"minijinja"`) token stream, and the R2
-ref/source/macro tag-AST, all additive over the eight untouched SQL grammars (jinja reachable only through
-the barrel). inc2 adds R3 (`{{ ref }}`/`{{ source }}` in a FROM slot → a real template-tagged `TableSource`),
-R4 (`templateRegions` / `templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage
-`templateVariants`. inc3.1 adds `TemplateCatalog.relation` — a templated ref resolves its real columns
-through an injected catalog (zero-catalog = R3 fallback, byte-identical). Gated by `tests/corpus/minijinja.test.ts`
-+ `tests/corpus/minijinja.consumer-contract.test.ts`. The rest of inc3 (`value`/`expansionShape`/`loopCollection`)
-stays spec.
+**Status: inc1, inc2, and inc3 (relation + type slices) are built; the seam is `TemplateProvider`.**
+Raw jinja-SQL parses natively — `parseTemplated` / `tokenizeTemplated`, the unified SQL(ch 0/1) +
+jinja(ch 2, role `"minijinja"`) token stream, and the R2 ref/source/macro tag-AST, all additive over the
+eight untouched SQL grammars (jinja reachable only through the barrel). inc2 adds R3 (`{{ ref }}`/`{{
+source }}` in a FROM slot → a real template-tagged `TableSource`), R4 (`templateRegions` /
+`templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage `templateVariants`.
+inc3 resolves templated refs to real relations/columns/types through the injected provider (zero-provider
+= R3 fallback, byte-identical) and drives shaped fills. **The resolution seam is `DefaultTemplateProvider`
+(2026-07-05 cutover — see § The seam below); the `TemplateCatalog` design in the older sections of this
+file is SUPERSEDED and kept as design history.** Gated by `tests/corpus/minijinja.test.ts` +
+`tests/corpus/minijinja.consumer-contract.test.ts`. Still spec: `value` beyond scalar-slot typing,
+`loopCollection`.
 
 ## The locked architecture (three lines — CHANNEL ITEM 14)
 
@@ -26,9 +29,10 @@ stays spec.
   (on demand — does the assembled query run): the **extension** renders via real dbt (`bridge.py
   compile_inline`) and hands clean compiled SQL back to sqllens as plain SQL. sqllens is the parser for
   BOTH artifacts; rendering is OUT of sqllens.
-- **ONE SEAM.** A pull-callback `TemplateCatalog` (generalizes the existing `SchemaSource`/`CallbackSchema`):
-  sqllens asks, the extension answers from dbt knowledge, defaults fill gaps. Two timing regimes — lazy
-  post-parse resolution, up-front synchronous parse-time shape.
+- **ONE SEAM.** A pull-callback template provider — today `DefaultTemplateProvider` (the 2026-07-05
+  cutover superseding the `TemplateCatalog` sketch below): sqllens asks via `expansion(TemplateCall)`,
+  the extension answers from dbt knowledge by overriding the granular virtuals, the shipped base's
+  defaults fill gaps. Sync-only consults from a warm cache; `prime()` is the one async seam.
 - **ONE RAZOR.** In-text STRUCTURAL work is sqllens's (parse, tokens/AST, typed holes, control-flow
   regions, variant expansion — Q3: it is parsing). Out-of-text DBT KNOWLEDGE is the extension's (macro
   output-shape, loop collections, ref/source/var meaning, rendering).

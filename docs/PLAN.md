@@ -6,7 +6,7 @@
 
 **Architecture:** ANTLR4 split grammars (`lexer grammar` + `parser grammar`), **one standalone pair per dialect — no shared "core" grammar, no inheritance** (ANTLR `import` doesn't compose; "core SQL" is a concept, not an artifact). Each dialect is forked from its best starting point: **Databricks** ← apache/spark's `SqlBase*.g4` (forked + renamed, embedded Java ported to TS), **T-SQL** ← grammars-v4 `sql/tsql`, **Snowflake** ← grammars-v4 `sql/snowflake`, **BigQuery** ← `bytebase/parser` `googlesql/` (BSD-3), **Redshift** ← Bytebase's Postgres-derived Redshift grammar (BSD-3) — all forked, none hand-authored. The ANTLR TypeScript target + antlr4ng runtime generate the parsers. A conformance harness parses a per-dialect **known-good corpus** and requires **zero syntax errors**. The parse layer is syntax-only, but Databricks has a **semantic layer** (scope → qualify, plus expression IR) built on the parse tree — see Scope and Phase 1.5.
 
-> **Updated 2026-06-06:** (1) **No shared "core" grammar** — each dialect is a standalone fork (see Architecture); Phase 1 is now the Databricks fork, not a core build. (2) Dialect order: Databricks → T-SQL → Redshift → Snowflake → BigQuery. (3) Validation gate is a **known-good corpus that must parse with zero errors**. Phases 3–5 below still hold the original Redshift-first detail and are **pending a clean re-sequence** — the per-dialect *method* (corpus → fail → manual → grammar edit → green → commit) is unchanged. See CLAUDE.md for rationale.
+> **Updated 2026-06-06 / re-sequenced 2026-07-06:** (1) **No shared "core" grammar** — each dialect is a standalone fork (see Architecture). (2) Validation gate is a **known-good corpus that must parse with zero errors**. (3) The original phase-by-phase task plan is executed and gone — what each phase became is recorded under *Execution history* below; the live per-dialect status is CLAUDE.md § Current status. The per-dialect *method* (corpus → fail → manual → grammar edit → green → commit) is unchanged and still binding.
 
 **Tech Stack:** ANTLR4 (grammars), antlr4ng (TS runtime) + antlr-ng or the ANTLR jar (generator), TypeScript, vitest, Node 20+. No Python in the loop.
 
@@ -26,7 +26,7 @@
 
 These are real, unfinished parts of the job. They stay here, answering "what's left," until built or until Nicke explicitly moves one to *Out*. They are **not** scope boundaries — never treat them as "v1 doesn't do X."
 
-- **Doc-coverage pass — DONE 2026-06-10.** Measured both dialects against the official references (~250 probes + registry-vs-catalog diffs), then fixed what it found: `parseTSql` now EOF-anchored (it silently truncated valid-SELECT-prefix input); Databricks inline-table bodies (`VALUES`, `INSERT … VALUES`, `TABLE t`) lower instead of throwing; `parseDatabricks` enters at `compoundOrSingleStatement` (SQL-scripting compounds parse, flagged as one unsupported body) and accepts the `t@v123` time-travel shorthand; the T-SQL grammar gained IS [NOT] DISTINCT FROM, the 2022 WINDOW clause + `OVER w` (lower resolves named windows, chained, cycle-guarded), FOR SYSTEM_TIME, TABLESAMPLE, the documented FREETEXT shape, and OPENQUERY in FROM; both registries extended with doc-fetched return types (Spark ~520 entries incl. H3/ST/AI/IP/VARIANT/TIME families, T-SQL ~210 incl. the 2022/2025 additions; phantom `regexp_split` removed). The probe battery is pinned as `tests/{databricks,tsql}.doc-coverage.test.ts`. **Still open from the pass:** T-SQL grammar — BULK INSERT, temporal-table DDL (`PERIOD FOR SYSTEM_TIME`), GRANT permission lists / DENY / REVOKE, ODBC `{fn …}` escapes (upstream grammars-v4 gaps; contribute-back candidates); registry — functions whose documented return type is argument-value-dependent (`ai_query`, `from_avro`, `extract`, sql_variant property functions) or whose pages state no type (the ST measure/coordinate accessors, `h3_distance` family) stay `unknown` by contract.
+- **Doc-coverage pass — DONE 2026-06-10.** Measured both dialects against the official references (~250 probes + registry-vs-catalog diffs), then fixed what it found: `parseTSql` now EOF-anchored (it silently truncated valid-SELECT-prefix input); Databricks inline-table bodies (`VALUES`, `INSERT … VALUES`, `TABLE t`) lower instead of throwing; `parseDatabricks` gained a scripting-capable entry (then `compoundOrSingleStatement`; since moved to the batch-level `multiStatement`, issue #1) and accepts the `t@v123` time-travel shorthand; the T-SQL grammar gained IS [NOT] DISTINCT FROM, the 2022 WINDOW clause + `OVER w` (lower resolves named windows, chained, cycle-guarded), FOR SYSTEM_TIME, TABLESAMPLE, the documented FREETEXT shape, and OPENQUERY in FROM; both registries extended with doc-fetched return types (Spark ~520 entries incl. H3/ST/AI/IP/VARIANT/TIME families, T-SQL ~210 incl. the 2022/2025 additions; phantom `regexp_split` removed). The probe battery is pinned as `tests/{databricks,tsql}.doc-coverage.test.ts`. **Still open from the pass:** T-SQL grammar — BULK INSERT, temporal-table DDL (`PERIOD FOR SYSTEM_TIME`), GRANT permission lists / DENY / REVOKE, ODBC `{fn …}` escapes (upstream grammars-v4 gaps; contribute-back candidates); registry — functions whose documented return type is argument-value-dependent (`ai_query`, `from_avro`, `extract`, sql_variant property functions) or whose pages state no type (the ST measure/coordinate accessors, `h3_distance` family) stay `unknown` by contract.
 - **Expression modelling — BUILT 2026-06-06; corpus-complete.** `lowerExpression` produces a typed `Expr` tree for every expression: column, literal, star, binary, unary, function (aggregate + window/`OVER`), `CASE`, cast, scalar subquery, `EXISTS`, **predicate** (`IS [NOT] NULL`, `[NOT] IN`, `BETWEEN`, `LIKE`/`RLIKE`, `IS [NOT] DISTINCT FROM`), **lambda** (`x -> …`), **subscript** (`a[i]`), and the `date_add`/`datediff`/`CURRENT_*` special-form functions. **Every expression node in all 1558 models lowers to a typed node — 0 `other` — enforced by `tests/corpus/databricks.oatly.test.ts`** (which fails with the exact CST type if anything leaks). The `other` fallback stays in the IR as a safety net for constructs the corpus doesn't use (e.g. `a:b` colon paths), so nothing is ever dropped. `SelectExpr.columns` is derived from the `Expr` trees (projections, WHERE, JOIN `ON`, GROUP BY, HAVING, ORDER BY); a **CST↔IR conservation gate** (in the same one-pass `tests/corpus/databricks.oatly.test.ts`, plus unit cases in `tests/conservation.test.ts`) runs over all 1558 models and fails if the IR drops any clause the parse tree contains. GROUP BY captures **every** grouping key, including each one inside ROLLUP/CUBE/GROUPING SETS. `aggregate` is decided by a comprehensive Spark/Databricks aggregate-name set (the standard approach — there is no signature catalog at parse time).
 - **Nullability inference — BUILT 2026-07-03 (Task 10).** `inferNullability(expr, scope, schema)` in `src/infer/nullability.ts` computes a three-valued `Nullability` = `"notnull" | "nullable" | "unknown"` as a walk PARALLEL to type inference — it never touches the `Type` ADT, the ~1,800-entry `FnRule` registry, `coerce`, `typeEq`, or `formatType`; a tiny own function table (`coalesce`/`ifnull`/`nvl`/`isnull`/`nullif`/`count`/`count_if`/`sum`/`avg`/`min`/`max`/`current_date`/`current_timestamp`/`now`, each doc-cited, plus "any other aggregate → nullable") lives beside it. NEVER-WRONG: a definite verdict only when provable from expression shape + schema (the Task-9 `Column.nullable` leaf) + join shape; anything with doubt is `unknown` (a wrong verdict is a defect). Outer-join null extension reads the first-class `SelectExpr.joins` array — LEFT null-extends the right source, RIGHT the left sources, FULL both; a source on the extended side is `nullable` whatever its base verdict. Gated by `tests/infer.nullability.test.ts` (tier 1). **INHERENT BOUNDARY — no flow narrowing:** `WHERE x IS NOT NULL` does NOT upgrade a downstream `x` to notnull. That is dataflow analysis over predicate positions — a separable subsystem, not a deferral of this engine's scope; this stage ships expression-shape + schema + join-shape nullability, which is complete for that scope. A future flow-narrowing pass would layer on top without changing this engine.
 - **Join nodes in the IR — SPEC (Anvil P1, built 2026-07-03).** `SelectExpr` gains an additive `joins?: Join[]` — the explicit `JOIN` operations of the FROM clause, in source order (left-to-right, as written), each a first-class node with a full-construct span. Built for the dbt Anvil extension (its formatter answers structural questions by span containment — "is this `ON` token inside a Join?" — and its SQL debugger slices the query text at join boundaries into progressive stage snapshots). **Purely additive:** `from: Source[]` and `joinConditions?: Expr[]` stay populated exactly as before (byte-identical IR for every existing consumer — scope/qualify/lineage/symbols are NOT migrated in this task; they keep reading `from` + `joinConditions`). Shape (`src/ir/ir.ts`):
@@ -120,7 +120,7 @@ These are real, unfinished parts of the job. They stay here, answering "what's l
   - **Postgres/DuckDB typed-string operand refinement.** `check-calls.ts` keeps `str→num` acceptance ON for postgres and duckdb because a quoted literal there is really an untyped constant (§4.1.2.1) that coerces to whatever the call needs, but our inference types every quoted literal as `string` — so a genuinely-string argument to a numeric param can't be told from an untyped literal, and rejecting would false-fire. A future untyped-literal type (distinct from `string`) would let these two dialects reject a real str→num mismatch too. Reviewer note; boundary is documented in `IMPLICIT_STR_TO_NUM`.
   - **Trino identifier fold: docs vs engine source.** `src/ident/fold.ts` encodes Trino's *documented* blanket case-insensitivity (fold both quoted and unquoted to lower), but Trino's own engine is internally inconsistent — trino-parser's `Identifier.getCanonicalValue()` upper-folds unquoted and preserves quoted (ANSI, case-sensitive quoted), while trino-main field-matching compares case-insensitively regardless of quoting. Encoded the documented behavior per the module's citation policy; flagged in-file, unresolved against a live engine.
   - **Splitter heuristic corners.** `src/document/split.ts` is a depth heuristic (BEGIN/CASE increment, END decrements, `END IF/WHILE/FOR/LOOP/REPEAT` suppressed). Its known corner is a T-SQL `SELECT … FOR XML` whose `FOR` trails an `END` token — the `FOR` reads as a loop-closer suffix, not a `FOR XML` clause. Bounded by the tiling invariant: a mis-split degrades to one cell (today's whole-document behavior), never a dropped or overlapping span, so correctness is safe and only per-statement incrementality is lost on that statement. New separator edge cases add splitter tests; they don't threaten correctness.
-  - **Schema-identity memo growth.** The per-cell `qualify`/`deriveSymbols` memos key on schema object identity + version. A host that churns `SchemaSource` instances (a fresh object per keystroke rather than `prime()`-ing one) never hits the memo and grows the cache with dead keys. Fine for the stdio binary (one static `Schema`); a note for embedders — reuse the instance and bump its version.
+  - **Schema-identity memo growth.** The per-cell `qualify`/`deriveSymbols` memos key on schema object identity + version. A host that churns `SchemaProvider` instances (a fresh object per keystroke rather than `prime()`-ing one) never hits the memo and grows the cache with dead keys. Fine for the stdio binary (one static `Schema`); a note for embedders — reuse the instance and bump its version.
   - **Signature long tail still name-only.** `check-calls.ts` arity checking is curated-only for every dialect (`ARITY_USES_HARVESTED` all false): the harvested tables (T-SQL 151, the rest empty) carry no optional/variadic encoding, so an arity check over them would fire on valid SQL. `signatureAt` likewise falls back to name + active-arg outside the ~20–40 curated functions/dialect. Flipping a dialect on needs its harvested table to earn it (optional/variadic proven against the corpus) or a curated-table expansion.
   - **Corpus gates can't see an empty lowered body.** The totality and `other`-ratchet gates prove no throw and no undermodelled node, but neither one asserts a lowered subquery body is actually non-empty — the class of bug Task 2's drive-by fix repaired slipped past both ratchets undetected. A conservation-style body-non-emptiness probe (any lowered `SelectExpr`/subquery has at least one column or a documented reason it doesn't) would close this; it's its own small follow-up, not part of either existing ratchet.
 - **Snowflake `pivot`/`unpivot` as bare identifiers — noparse (over-excluded from `id_`).** The keyword-token identifier-hole fix (parser-gaps wave, 2026-07-04) made 538 non-reserved SHOW-object/option words usable as table/column names, but PIVOT/UNPIVOT are held out of `id_` even though they are NOT reserved — so `SELECT pivot FROM t` / `FROM unpivot` are rejected. The real ambiguity is only the post-source `pivot_unpivot*` slot: a trailing PIVOT after a source is the pivot clause, and with PIVOT in `id_` that slot competes with an `id_` alias (it raised the fallback ratchet on `constructs/pivot/19.sql`, two PIVOTs after a subquery). Full `id_` exclusion is a pragmatic over-exclusion, not a reserved-word boundary. The language-exact cure is a post-source-slot split (a `bare_from_alias`-style class that `id_` reaches but the post-source alias slot does not), deferred — the alias-only exclusion was tried and did not clear the loop ambiguity. Until then these two words stay noparse as identifiers. **The opposite-direction seam — `EXCEPT` over-INCLUSION — FIXED same wave.** The same identifier-hole fix added the set-op word `EXCEPT` to `non_reserved_words` (the other three set-op words UNION/INTERSECT/MINUS_ were already out). That made `EXCEPT` a bare FROM-alias candidate, and the alias reading *won*: `SELECT * FROM t EXCEPT SELECT * FROM u` mis-parsed as `t AS except` with the second select folded in as a bare operator-less branch (lowering to `op: union`) — NOT the "never-wrong SLL fallback" first assumed; a real EXCEPT set-op mis-parse (found by the reviewer's curated seam assertion, `tests/snowflake.test.ts`). Cured by holding `EXCEPT` out of `non_reserved_words` with the other three set-op words (same class as PIVOT/UNPIVOT — a non-reserved word held out of the bare FROM-alias slot); `EXCEPT` as a bare identifier is now noparse, the set-op reading wins, pinned by the seam test. Snowflake corpus floors held (mutated 331, fallback 110, query 2,976, `other` 0).
@@ -142,7 +142,7 @@ R2 ref/source/macro tag-AST (inc1); R3 template-tagged FROM nodes (`{{ ref }}`/`
 regions/symbols (`templateRegions`/`templateSymbols`, `regions`/`symbols` on `TemplatedParseResult`), and
 arm-coverage `templateVariants` (inc2); gated by `tests/corpus/minijinja.test.ts` +
 `tests/corpus/minijinja.consumer-contract.test.ts`, additive over the untouched grammars (barrel-only reach).
-**inc3.1 built (relation slice):** `TemplateCatalog extends SchemaSource` + `CallbackTemplateCatalog`
+**inc3.1 built (relation slice — its surface since REPLACED by the provider cutover below):** `TemplateCatalog extends SchemaSource` + `CallbackTemplateCatalog`
 (`src/qualify/template-catalog.ts`, barrel-exported); qualify duck-types the catalog (`"relation" in
 schema`) and resolves a templated source's real columns, so unknown-column fires against a `{{ ref }}` when
 the catalog knows the relation; the LSP injects it (the lazy re-publish loop is duck-typed on
@@ -175,329 +175,50 @@ closed empty `Schema({})`, which unknown-table'd every `select * from t` in sche
 now schema-free runs the full pipeline diagnostic-clean). Remaining `schema?:` optional params in
 the LSP feature files are presentation-layer plumbing that rides out with the LSP extraction.
 
-## Repo layout (target)
+## Repo layout
 
-```
-grammars/<dialect>/ <Dialect>Lexer.g4, <Dialect>Parser.g4   (standalone fork of a grammars-v4 grammar, or hand-authored)
-src/generated/      ANTLR output (gitignored, via `npm run gen`)
-src/databricks/     parse.ts (parseDatabricks wrapper), ir.ts (IR types + lower CST->IR)  [Phase 1.5]
-src/scope/          scope.ts (resolveScopes: schema-free name resolution over the IR)     [Phase 1.5]
-src/qualify/        schema.ts (sqlglot-style schema input), qualify.ts (schema-fed)        [Phase 1.5]
-src/api.ts          uniform/layered/composable/immutable public surface: Dialect, parse(sql,dialect), analyze(sql,dialect,{schema?}), lift helpers (toAst/toScopes), composable qualify/lineage/deriveSymbols, typed wrappers (TypeInfo/Lineage)
-src/index.ts        public barrel: re-exports src/api.ts + the per-dialect parse*/lower building blocks (all eight) and the raw shared passes
-harness/            corpus loader + zero-errors runner
-tools/gen.mjs       generation driver (antlr-ng or jar)
-tests/              vitest specs
-docs/PLAN.md        this file
-```
+The live code map (every `src/` module, one line each) is maintained in **CLAUDE.md § Code map** —
+this file no longer duplicates it. One-folder-per-dialect grammars (`grammars/<dialect>/`),
+generated parsers gitignored under `src/generated/`, two test tiers (`tests/` fast units +
+`tests/corpus/` conformance gates), corpus data external via `SQL_CORPUS_DIR`.
 
 ---
 
-## Phase 0 — Prove "ANTLR → TypeScript" works (de-risk the central bet)
+## Execution history — phases 0–5 all DONE (kept as a record, not a plan)
 
-Goal: a generated TS parser parsing a string in a test, before any SQL. This validates the toolchain choice on day one.
+The original bite-sized task phases were executed (and superseded in detail) during June 2026.
+What each became — the live per-dialect status is CLAUDE.md § Current status:
 
-### Task 0.1: Scaffold the Node/TS project
-
-**Files:**
-- Create: `package.json`, `tsconfig.json`, `.gitignore`, `vitest.config.ts`
-
-- [ ] **Step 1: Init project**
-
-Run:
-```bash
-cd /c/Development/github/sql-dialect-grammars
-npm init -y
-npm i -D typescript vitest @types/node
-npm i antlr4ng
-```
-
-- [ ] **Step 2: Write `tsconfig.json`** (antlr4ng needs ES2022)
-
-```json
-{
-  "compilerOptions": {
-    "target": "ES2022",
-    "module": "ESNext",
-    "moduleResolution": "Bundler",
-    "strict": true,
-    "esModuleInterop": true,
-    "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": "src"
-  },
-  "include": ["src"]
-}
-```
-
-- [ ] **Step 3: Write `.gitignore`**
-
-```
-node_modules/
-dist/
-src/generated/
-harness/corpus/
-harness/oracle/
-*.tsbuildinfo
-```
-
-- [ ] **Step 4: Commit**
-
-```bash
-git init && git add -A && git commit -m "chore: scaffold sql-dialect-grammars project"
-```
-
-### Task 0.2: Generate a toy grammar to TypeScript
-
-**Files:**
-- Create: `grammars/toy/ToyLexer.g4`, `grammars/toy/ToyParser.g4`, `tools/gen.mjs`
-- Test: `tests/toy.test.ts`
-
-- [ ] **Step 1: Write the toy split grammar**
-
-`grammars/toy/ToyLexer.g4`:
-```antlr
-lexer grammar ToyLexer;
-NUMBER : [0-9]+ ;
-PLUS   : '+' ;
-WS     : [ \t\r\n]+ -> skip ;
-```
-
-`grammars/toy/ToyParser.g4`:
-```antlr
-parser grammar ToyParser;
-options { tokenVocab=ToyLexer; }
-sum : NUMBER (PLUS NUMBER)* EOF ;
-```
-
-- [ ] **Step 2: Write the generation driver** `tools/gen.mjs`
-
-Try the no-Java path first; document the fallback in a comment.
-```js
-// Generation driver. Primary: antlr-ng (pure TS, no Java).
-// Fallback: `java -jar antlr-4.13.2-complete.jar -Dlanguage=TypeScript ...`
-import { execSync } from "node:child_process";
-const dialect = process.argv[2] ?? "toy";
-const out = `src/generated/${dialect}`;
-execSync(
-  `npx antlr-ng -Dlanguage=TypeScript -o ${out} grammars/${dialect}/*.g4`,
-  { stdio: "inherit" }
-);
-```
-Add to `package.json` scripts: `"gen": "node tools/gen.mjs"`.
-
-- [ ] **Step 3: Run generation, verify it fails first if antlr-ng is missing, then install and succeed**
-
-Run: `npm i -D antlr-ng && npm run gen toy`
-Expected: files appear under `src/generated/toy/` (`ToyLexer.ts`, `ToyParser.ts`).
-If antlr-ng cannot generate, switch `gen.mjs` to the jar path (requires a JRE) and re-run. **Record which path worked in CLAUDE.md.**
-
-- [ ] **Step 4: Write the failing parse test** `tests/toy.test.ts`
-
-```ts
-import { CharStream, CommonTokenStream } from "antlr4ng";
-import { ToyLexer } from "../src/generated/toy/ToyLexer.js";
-import { ToyParser } from "../src/generated/toy/ToyParser.js";
-import { expect, test } from "vitest";
-
-function parse(input: string) {
-  const lexer = new ToyLexer(CharStream.fromString(input));
-  const parser = new ToyParser(new CommonTokenStream(lexer));
-  let errors = 0;
-  parser.removeErrorListeners();
-  parser.addErrorListener({ syntaxError: () => { errors++; },
-    reportAmbiguity(){}, reportAttemptingFullContext(){}, reportContextSensitivity(){} });
-  const tree = parser.sum();
-  return { tree, errors };
-}
-
-test("parses a sum", () => {
-  expect(parse("1 + 2 + 3").errors).toBe(0);
-});
-test("flags a syntax error", () => {
-  expect(parse("1 + + 2").errors).toBeGreaterThan(0);
-});
-```
-
-- [ ] **Step 5: Run tests**
-
-Run: `npm test`
-Expected: both pass. If imports resolve and a tree comes back, the toolchain is proven.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add -A && git commit -m "feat: prove ANTLR4 -> TypeScript (antlr4ng) toolchain with toy grammar"
-```
-
-**Phase 0 done when:** `npm run gen toy && npm test` is green and CLAUDE.md records the working generation path.
+- **Phase 0 (toolchain)** — DONE 2026-06-06. The pure-TS `antlr-ng` CLI generates every grammar
+  (no Java); antlr4ng runtime; `tsgo` typechecks. Locked in CLAUDE.md § Locked decisions.
+- **Phase 1 (Databricks grammar)** — DONE 2026-06-06, with a base switch: forked apache/spark's
+  `SqlBase*.g4` (grammars-v4's `sql/databricks` was too thin), embedded Java ported to TS.
+  100% on the 1,558-file Oatly corpus.
+- **Phase 1.5 (semantic layer)** — DONE, and outgrew its Databricks-only framing: the
+  `parse → lower → resolveScopes → qualify → infer/lineage/symbols` pipeline now runs unchanged
+  on all eight dialects; only parse+lower are per-dialect.
+- **Phase 2 (conformance harness)** — DONE as the two-tier vitest gates, not a standalone
+  `harness/` runner: `npm test` (tier 1, fast) + `npm run test:corpus` (tier 2, `tests/corpus/**`,
+  green required before any merge to master). Corpus files pre-bucketed by path
+  (`tools/organize-corpus.test.ts`); negatives two-sided for all eight dialects.
+- **Phases 3–5 (dialect builds)** — DONE, in an order that bore no resemblance to the original
+  Redshift-first sketch: Databricks → T-SQL → Snowflake (2026-06-10) → BigQuery (2026-06-13) →
+  Redshift (2026-06-28) → PostgreSQL + DuckDB + Trino (2026-07-02). Every dialect was
+  fork-and-clean (the "hand-author" track died — every assumed-missing grammar existed);
+  per-dialect detail, gates, and remaining backlogs live in CLAUDE.md § Current status and
+  docs/snowflake-backlog.md. The per-dialect method survives unchanged: corpus → fail →
+  read the vendor manual → grammar edit (doc-cited) → green → commit.
 
 ---
 
-## Phase 1 — Dialect #1: Databricks (fork → generate → smoke test)
 
-Goal: a standalone `grammars/databricks/` grammar, forked from grammars-v4's `sql/databricks`, that generates to TS and smoke-parses a handful of canonical statements. (Replaces the old "core grammar" phase — there is no core.)
+## Phase 6 — Packaging (the one still-future phase)
 
-### Task 1.1: Fork the Databricks grammar
-
-**Files:**
-- Create: `grammars/databricks/DatabricksLexer.g4`, `grammars/databricks/DatabricksParser.g4`
-
-- [ ] **Step 1:** Copy grammars-v4's `DatabricksLexer.g4` + `DatabricksParser.g4` into `grammars/databricks/`. Keep the upstream BSD/MIT license header and record the source commit SHA in a header comment (provenance).
-- [ ] **Step 2:** `npm run gen databricks` → generate to `src/generated/databricks/`. If the grammar uses ANTLR features `antlr-ng` can't handle, fall back to the jar (record which worked).
-- [ ] **Step 3:** Commit: `feat(databricks): fork grammar from grammars-v4`.
-
-### Task 1.2: Databricks smoke tests
-
-**Files:**
-- Test: `tests/databricks.test.ts`
-
-- [ ] **Step 1:** Write a `parseDatabricks(sql)` helper (same shape as the toy test's `parse`, pointing at the Databricks lexer/parser, calling the top rule).
-- [ ] **Step 2:** Add tests for ~15 canonical statements (a `SELECT … JOIN … WHERE … GROUP BY … HAVING … ORDER BY … LIMIT`; a CTE; `UNION ALL`; a window function; `INSERT … SELECT`; `CREATE TABLE … USING DELTA`; `CREATE VIEW`). Assert zero syntax errors.
-- [ ] **Step 3:** Run, fix the entry rule / any generation issues until green. If the grammars-v4 grammar is too thin for a canonical case, fill the gap (Spark's `SqlBase*.g4` is the reference — Databricks SQL = Spark SQL).
-- [ ] **Step 4:** Commit: `test(databricks): canonical statements parse`.
-
-**Phase 1 done when:** the canonical Databricks statements parse with zero errors and `npm run gen databricks` is reproducible.
-
----
-
-## Phase 1.5 — Databricks semantic layer: scope → qualify (CURRENT FOCUS)
-
-> Added 2026-06-06. The Databricks grammar is in and parses 100% of the real Oatly corpus, so we go **deep on Databricks** before the other dialects: a small semantic layer on top of the parse tree that the editor and the SQL debugger consume. Databricks-only; cross-dialect abstraction is extracted when a second dialect forces it. Build **scope first** (schema-free, unlocks most value), **qualify second** (schema-fed).
-
-> **Status (2026-06-06): name-resolution layer built, 59 tests green, typecheck clean.** Done test-first: `parseDatabricks`, IR + `lower` (SELECT, CTE, aliases incl. column-alias lists, joins, subqueries incl. scalar/correlated, set ops, PIVOT/UNPIVOT/LATERAL VIEW, structural projection naming, `ColumnRef` extraction, non-query stub); `resolveScopes` (sources, CTE resolution, output columns, `resolveColumn` with outer-scope walk); `qualify` + `Schema` (`*` expansion, unknown-table + column-level unknown/ambiguous-column diagnostics); `src/index.ts` public API. Corpus gate (`tests/corpus/databricks.oatly.test.ts`) runs `lower`+`resolveScopes`+`resolveColumn` over all 1558 Oatly models — **0 throws**; scoreboard: outputs known ~82%, column refs ~55% bound schema-free. **What is genuinely left is in [Open Gaps](#open-gaps-tracked-not-descoped) — chiefly expression modelling (unbuilt, ~half of SQL's meaning), plus `t.*`, struct access, tightening the outer-scope walk, and a curated conformance set. None of that is descoped; it is unfinished.**
-
-**Pipeline:** `sql → parse → CST → lower → IR → resolveScopes → ScopeTree → qualify(schema) → Qualification + Diagnostics`. Each arrow is a pure function. Positions flow through via CST back-references (`ctx.start`/`ctx.stop`), so every IR/scope node maps to an exact source span — the thing editor + debugger need and sqlglot's AST drops (see *Risks & open questions → CST vs AST*, now resolved).
-
-**Why an IR and not the raw CST:** Spark's CST is ~12 levels deep and grammar-shaped; doing name resolution on it directly is painful and couples everything to the grammar. The IR is a compact model (the "thin AST" deferred in Phase 1), and the CST→IR `lower` step is the only Databricks-specific piece — scope and qualify operate on the IR and stay dialect-neutral.
-
-### Task 1.5.1: Parse wrapper + IR types + `lower(tree)`
-
-**Files:** Create `src/databricks/parse.ts`, `src/databricks/lower.ts` (the CST→IR lowering; IR types live in `src/ir/ir.ts`); Test `tests/databricks.ir.test.ts`
-
-- [ ] **Step 1:** `parseDatabricks(sql) → { tree, errors }` — one wrapper that dedupes the lexer/parser/error-listener boilerplate currently copied across the test files.
-- [ ] **Step 2:** Define the IR node types in `ir.ts`: `QueryExpr` (CTEs + body), `SelectExpr` (projections, sources, clauses we use), `Source` (`table | subquery | cte-ref | join`), `Projection` (expr CST-ref, output name, `isStar`), `ColumnRef` (qualifier?, name), `CteDef` (name, column aliases?, body). Every node carries a back-ref to its CST context + a `span` helper.
-- [ ] **Step 3 (TDD):** Write failing tests asserting the IR shape for the representative queries from `databricks.structure.test.ts` (e.g. `SELECT a, b FROM t` → `SelectExpr` with 2 projections + 1 table source named `t`; a CTE query → 1 `CteDef`). Expressions are not yet modelled (see **Open Gaps** — this is an unfinished gap, not a scope cut); today only `ColumnRef`s are extracted from them.
-- [ ] **Step 4:** Implement `lower(tree)` (CST→IR visitor) until green. Commit.
-
-### Task 1.5.2: Scope resolver (schema-free)
-
-**Files:** Create `src/scope/scope.ts`; Test `tests/scope.test.ts`
-
-- [ ] **Step 1:** `resolveScopes(ir) → ScopeTree`. `Scope = { node, sources: Map<name, ResolvedSource>, ctes: Map<name, CteDef>, outputs, parent?, children }`. `ResolvedSource = table | cte-ref→scope | subquery→scope`.
-- [ ] **Step 2:** Resolution without schema: alias/name → source; chained CTE references (later CTEs see earlier); subquery outputs (from their projections, `unknown` if they star over a physical table); `resolveColumn(ref) → resolved | ambiguous | needs-schema` (`t.c` → source `t`; bare `c` → the single source whose outputs are known to contain it).
-- [ ] **Step 3:** Coverage: SELECT, WITH (chained CTEs), subqueries (derived tables + scalar/IN), JOINs (all kinds), set ops, PIVOT/UNPIVOT/LATERAL VIEW, correlated/outer-scope columns — **built** (2026-06-06). **Still flagged `unsupported` (Open Gaps), never crash:** recursive CTEs, table-valued functions.
-- [ ] **Step 4 (TDD):** Tests assert sources per scope, CTE resolution, column→source, ambiguity, and `needs-schema` cases — with spans. Commit.
-
-### Task 1.5.3: Corpus stability + sanity run
-
-**Files:** Test `tests/corpus/databricks.oatly.test.ts` (skipIf no local corpus)
-
-- [ ] **Step 1:** Run `lower` + `resolveScopes` over a sample of the 1558 Oatly files. Assert **no crashes** and report resolution stats (resolved / ambiguous / needs-schema / unsupported counts). This is a stability + sanity gate, **not** a 100%-resolve gate — schema-free resolution legitimately can't resolve everything.
-
-### Task 1.5.4: Schema input + qualify (schema-fed)
-
-**Files:** Create `src/qualify/schema.ts`, `src/qualify/qualify.ts`; Test `tests/qualify.test.ts`
-
-- [ ] **Step 1:** `Schema` — accept the sqlglot-style nested mappings (`{table:{col:type}}`, `{db:{table:{col}}}`, `{catalog:{schema:{table:{col}}}}`), normalize internally, expose `columnsFor(parts) → {name,type?}[] | undefined` with Databricks case-insensitive matching. Types are opaque strings (reserved for lineage later).
-- [ ] **Step 2:** `qualify(scopes, schema) → { resolvedColumns, expandedStars, diagnostics }`. Expand `*`/`t.*` from schema (tables) or subquery/CTE outputs; resolve bare columns via schema column lists; emit span-carrying diagnostics (unknown column, ambiguous column, unknown source). **No SQL rewrite.**
-- [ ] **Step 3 (TDD):** Hand-written `Schema`; assert `*` expansion, bare-column resolution, and each diagnostic kind. Commit.
-
-### Task 1.5.5: Public exports
-
-**Files:** Create/extend `src/index.ts`
-
-- [ ] **Step 1:** Export `parseDatabricks`, `lower`, `resolveScopes`, `qualify`, `Schema`, and the IR/Scope/Qualification types. Commit.
-
-**Phase 1.5 done when:** scope resolves the representative + corpus-sample queries with structural assertions (no crashes on the Oatly sample), qualify expands stars + emits diagnostics against a test schema, and the whole pipeline typechecks (tsgo) and is vitest-green. Deferred consumers (debug-symbol emitter matched to dbt-studio's `SymbolEntry`/`@dbg` format; editor diagnostics/semantic tokens) are noted but not built here.
-
----
-
-## Phase 2 — Conformance harness (the gate for everything after)
-
-Goal: `npm run harness -- --dialect=<d>` parses a **known-good corpus** of valid SQL and requires **zero syntax errors**. No Python in the loop — the corpus *is* the spec of "must parse." Built once, reused for every dialect. Harness shape ported in spirit from `dbt-studio-vscode/experiments/native-sql-parser-v7/harness`.
-
-### Task 2.1: Assemble the known-good corpus
-
-**Files:**
-- Create: `harness/corpus/<dialect>/` (committed seed files), `harness/load-corpus.ts`
-
-- [ ] **Step 1:** Collect valid SQL into `harness/corpus/<dialect>/*.sql`, one statement per file (or a JSONL of `{id, sql}`). Sources in priority order: the forked grammar's own `examples/` from grammars-v4 (Databricks and T-SQL both ship these), then a `seed/` of our own real compiled queries, then hand-added cases as gaps surface. Everything in the corpus is *asserted valid* by virtue of being there.
-- [ ] **Step 2:** `npm run harness:load -- --dialect=databricks` reports a non-empty corpus count. Commit the seed statements.
-
-### Task 2.2: Runner + KPI (zero-errors gate)
-
-**Files:**
-- Create: `harness/run.ts`
-
-- [ ] **Step 1:** For each corpus item, parse with our generated `<dialect>` parser, counting syntax errors via an error listener (same shape as the toy test). Bucket into **pass** (0 errors) and **fail** (>0); capture the first error message + line/col for each failure.
-- [ ] **Step 2:** Print a KPI line: `dialect=databricks  corpus=N  pass=NN%  fail=K` and list the failing statements. Exit non-zero if K > threshold (start high, ratchet to 0).
-- [ ] **Step 3:** Commit: `feat(harness): zero-errors conformance runner over known-good corpus`.
-
-**Phase 2 done when:** `npm run harness -- --dialect=databricks` runs end to end and prints a zero-errors KPI over its corpus.
-
----
-
-## Phase 3 — Dialect #1: Redshift (prove the fork-and-edit loop)
-
-Goal: a `grammars/redshift/` grammar (fork of core + Redshift edits) that drives `we-reject-they-accept` to ~0 on the Redshift corpus. Redshift is chosen because its surface is the smallest of the three (Postgres-derived).
-
-### Task 3.1: Fork core → redshift
-
-- [ ] **Step 1:** Copy `grammars/core/*` → `grammars/redshift/` as `RedshiftLexer`/`RedshiftParser`. `npm run gen redshift`. Add a `parseRedshift` test helper. Commit.
-
-### Task 3.2: Drive the corpus green (TDD-for-grammars loop, repeat per failure cluster)
-
-For each cluster of `we-reject-they-accept` failures the harness reports:
-- [ ] **Step 1:** Run `npm run harness -- --dialect=redshift`; read the top failing statements.
-- [ ] **Step 2:** Identify the missing/incorrect construct; find it in the **Redshift manual** and cross-check **sqlglot's `redshift.py`**.
-- [ ] **Step 3:** Edit the grammar to add/adjust the rule. Comment it with the manual link.
-- [ ] **Step 4:** `npm run gen redshift && npm run harness -- --dialect=redshift`; confirm the cluster is now accepted and nothing regressed.
-- [ ] **Step 5:** Commit: `feat(redshift): support <construct>`.
-
-Known Redshift clusters to expect (seed the corpus with these): `COPY`/`UNLOAD` with option lists, `CREATE TABLE` DISTKEY/SORTKEY (`COMPOUND`/`INTERLEAVED`)/ENCODE, late-binding views (`WITH NO SCHEMA BINDING`), `APPROXIMATE`, `GETDATE()`/Redshift functions, `::` casts, `QUALIFY`.
-
-**Phase 3 done when:** Redshift `we-reject-they-accept` ≤ agreed threshold (target 0 on the seed corpus) and the loop in 3.2 is documented as the per-dialect method.
-
----
-
-## Phase 4 — Dialect #2: Snowflake — DONE 2026-06-10 (fork-and-clean, not hand-authored)
-
-> **Superseded by the build.** The original framing (hand-author; "no open grammar exists") was wrong: grammars-v4 `sql/snowflake` exists (4.3k-line split parser, actively maintained since 2022, used in production by Bytebase). Snowflake was **forked** from it at `923a1a9` — the same approach as T-SQL — and cleaned against the official docs.
-
-What was built (all gated, see `tests/snowflake.*`):
-
-- **Grammar** (`grammars/snowflake/`): fork plus doc-cited fixes — window frames (upstream had them commented out), `SELECT *` ILIKE/EXCLUDE/REPLACE/RENAME, `$$` strings as expressions, real MATCH_RECOGNIZE patterns, WITHIN GROUP on ordered-set aggregates, multi-row VALUES, structured `OBJECT(…)`/`MAP(…)`/FILE types, quoted-keyword strings (`'CSV'` &c. were lexer tokens), ALTER SESSION with any parameter, `!method()` calls, ICEBERG tables, stage queries in FROM, `IDENTIFIER('…')`, GRANT DATABASE ROLE.
-- **Conformance corpus**: every SQL example from all 2,348 docs.snowflake.com sql-reference pages (`tools/scrape-snowflake-docs.mjs` → gitignored `harness/local/snowflake-docs/`, 6,259 files). Gates: grammars-v4's 51 examples at **100%**; the docs corpus as a **ratchet** (baseline in `tests/corpus/snowflake.test.ts`). Remaining shortfall is platform DDL (LISTING/APPLICATION/CORTEX …), standalone Snowflake Scripting blocks, and the statement-option long tail — raise the baseline as fixes land.
-- **Pipeline**: `src/snowflake/parse.ts` + `lower.ts` onto the shared IR (QUALIFY, star modifiers, UNION BY NAME, FLATTEN→lateral, PIVOT/UNPIVOT, variant paths→subscript, VALUES→modelled selects, `$n` refs); the semantic layer runs unchanged (`snowflake.pipeline` suite). Inference knowledge in `src/infer/snowflake.ts` (~300 doc-sourced rules, NUMBER→decimal aliases, decimal division).
-
-Open (tracked in `docs/snowflake-backlog.md`): the docs-corpus grammar long tail, embedded UDF bodies beyond `$$`-blob treatment, star-REPLACE type threading, `src/index.ts` export at packaging.
-
----
-
-## Phase 5 — Dialect #4: BigQuery (GoogleSQL) — DONE 2026-06-13 (fork-and-clean, not hand-authored)
-
-> **Superseded by the build.** The original framing (hand-author; "no open grammar exists") was wrong, the same miss as Snowflake: **`bytebase/parser` `googlesql/`** is a complete ANTLR4 port of GoogleSQL (BSD-3). BigQuery was **forked** from it — vendored at `grammars/bigquery/` — the only work to make it a TS parser was porting the Go-target embedded code (49 `NotifyErrorListeners` error actions + 7 `localctx`/`:=`/`GetStop()` predicate-and-declaration blocks) to the antlr4ng API. Entry rule `root` (`stmts EOF`).
-
-What shipped (see CLAUDE.md Current status for the live detail):
-- **Parse** — `src/bigquery/parse.ts` (two-stage SLL→LL). Generates + typechecks clean.
-- **Lower** — `src/bigquery/lower.ts` maps the ZetaSQL query CST onto the shared IR: projections (incl. `SELECT * EXCEPT/REPLACE`, `t.*`), table/subquery/UNNEST-lateral sources, join chains + ON, WHERE/GROUP BY (incl. ALL + ROLLUP/CUBE/GROUPING SETS keys)/HAVING/QUALIFY, CTEs (incl. RECURSIVE), UNION/EXCEPT/INTERSECT, ORDER BY/LIMIT, and the left-recursive expression grammar (binary/unary/CASE/CAST/EXTRACT/function+OVER/IN/BETWEEN/LIKE/IS/subscript/STRUCT/ARRAY/lambda/scalar+ARRAY+EXISTS subqueries). Statement-kind is parse-derived. A valid parse never throws; unmodelled forms become `other`.
-- **Inference** — `src/infer/bigquery.ts` (INT64/FLOAT64/NUMERIC/BOOL/BYTES/JSON aliases, typed-literal rules, INT64/INT64→FLOAT64 division, a 353-function GoogleSQL return registry — see Open Gaps).
-- **Grammar build-out (2026-06-13)** — after the initial port, the grammar was extended to the full GoogleSQL/ZetaSQL surface (transcribed from `google/googlesql` `googlesql/parser/googlesql.tm`, the live Textmapper grammar; the old Bison `.y` is gone): **pipe syntax** (`|>`, all operators + FROM-queries + subpipelines), **graph/GQL** (`GRAPH_TABLE(…)`, the `GRAPH …` statement, patterns/quantifiers/path-modes/search-prefixes, CALL/YIELD/PER, `CREATE/DROP PROPERTY GRAPH`, graph subqueries, `IS SOURCE/DESTINATION/LABELED`), **chained calls**, **braced/proto/struct constructors**, **MATCH_RECOGNIZE** (quantifiers/anchors/AFTER MATCH SKIP/OPTIONS), **FOR UPDATE**, **LATERAL**, **MAP type**, sequences, `LIMIT ALL`, `SET GENERATED`, and **DOT_IDENTIFIER** (reserved keywords as post-dot path components). Several upstream port bugs were fixed (TVF paren, AT-TIME-ZONE keyword, `braced_constructor` `{`/`}`, `cube_list` first expr, USING comma-list, the `>>` token swallowing nested-generic closers). `lower` additionally maps FROM-queries and `TABLE name` to modelled selects; pipe transforms and graph patterns lower to first-class IR (`PipeExpr` / `GraphTableSource`), and the semantic layer flows columns through them.
-- **Gate** — `tests/corpus/bigquery.analyzer.test.ts` against the **ZetaSQL `.test` golden corpus** (the extractor `tools/extract-googlesql-tests.mjs` is mode-aware — drops `type`-mode, wraps `expression`/`measure_expression` as `SELECT (…)` — and classifies each `{{…}}` alternation variant by its own ALTERNATION GROUP expected). The project's first **two-sided** conformance gate over the in-scope bucket: positives parse at **14,707/14,708**, syntax-error negatives rejected at **172/172** (0 accepted), the docs `other`-ratchet at **0**, plus a no-throw sweep proving `lower`+`resolveScopes` total over every parsed positive. The stricter parser-testdata gate (`tests/corpus/bigquery.parser.test.ts`) is 2,662/2,662 positives and 2,035/2,035 negatives.
-
-**Open gap (not descoped):** 1 in-scope unparsed positive — `chained_function_call_special_cases_18`, a chained call plus braced UPDATE constructor whose clean fix routes chained calls through `function_call_expression_with_clauses`. Pipe transforms and graph patterns are now modelled in the IR (`PipeExpr` / `GraphTableSource`), and the `other`-ratchet is wired into the analyzer corpus gate.
-
-**Ground truth:** Google's **GoogleSQL/ZetaSQL** — read `googlesql/parser/googlesql.tm` as the spec, and the `googlesql/analyzer/testdata/*.test` files as the conformance corpus (the grammar we fork is Bytebase's ANTLR port, extended toward `googlesql.tm`, not ZetaSQL itself).
-
----
-
-## Phase 6 — Packaging
-
-- [ ] Public `src/index.ts`: `parse(sql: string, dialect: "redshift"|"snowflake"|"bigquery"): ParseResult`.
-- [ ] `npm run build` produces a consumable package; document `npm run gen` as a prepublish step.
-- [ ] Decide on contributing the grammars upstream (grammars-v4 is BSD and accepts contributions; the dialects with no existing grammar are the highest-value additions).
-- [ ] Write `README.md` (deferred until the shape is real).
+- [x] Public surface — DONE long since: `src/api.ts` + the `src/index.ts` barrel (`Dialect` union of all eight, `parse`/`analyze`/`tokenize`/`complete`/`signatureAt`, `SqlDocument`, the composable passes).
+- [ ] Emit/build: there is deliberately no `build` script yet (the library is consumed as TS). At packaging, validate `.d.ts` emit from `tsgo` (tracked intentional diffs, typescript-go#989) — fall back to `tsc` for the declaration step only if output differs. Document `npm run gen` (all eight dialects) as the prepublish step.
+- [ ] V8 startup snapshot for the warmed parser DFA (proven 2026-07-02: first parse 174ms→6.5ms) — a packaging-phase item, most valuable for spawning the LSP pre-warmed.
+- [ ] Upstream contributions: the grammars-v4 fork fixes (T-SQL, Snowflake) are upstreamable per project policy — needs Niclas's go (PRs from his account); list in docs/snowflake-backlog.md.
+- [ ] Write `README.md` (deferred until the published shape is real).
 
 ---
 
@@ -522,5 +243,5 @@ Default to a single lexer mode. Introduce a mode only when a construct can't be 
 
 ## Success criteria
 
-- Each shipped dialect: **zero syntax errors** on its committed known-good corpus, corpus ≥ an agreed minimum size, `npm run gen <dialect> && npm run harness -- --dialect=<dialect>` reproducibly green.
+- Each shipped dialect: **zero syntax errors** on its known-good corpus, corpus ≥ an agreed minimum size, `npm run gen -- <dialect> && npm run test:corpus` reproducibly green (tier 2 is required before any merge to master).
 - The grammars are readable, manual-cross-referenced `.g4` files that generate working TypeScript parsers via `npm run gen`.

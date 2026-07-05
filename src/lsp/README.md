@@ -91,12 +91,14 @@ Example `schema.json`:
 }
 ```
 
-## Embedding: handing the server a live catalog (`SchemaSource`)
+## Embedding: handing the server a live catalog (`SchemaProvider`)
 
 The stdio binary reads a **static** catalog from the `.sqllens.json` `schema` file. A
 host that **embeds** the server (calls `startServer` itself, rather than launching the
-stdio binary) can instead supply a **live** catalog — any `SchemaSource` — as the
-second argument:
+stdio binary) can instead supply a **live** catalog — any `SchemaProvider` (the
+interface renamed from `SchemaSource` in the 2026-07-05 provider cutover; a
+`DefaultTemplateProvider` subclass also satisfies it, adding template resolution) — as
+the second argument:
 
 ```ts
 import { startServer } from "sqllens/lsp/server"; // in-repo: ../lsp/server.js
@@ -131,8 +133,13 @@ infeasible. `CallbackSchema` resolves each table on demand:
   new table actually arrives, so the re-publish is version-guarded (a stale prime never
   overwrites a newer edit's diagnostics).
 
-`SchemaSource`, `CallbackSchema`, and `TableResolver` are exported from the library
-barrel (`sqllens` / `src/index.ts`).
+`SchemaProvider`, `CallbackSchema`, `TableResolver`, and `DefaultTemplateProvider` are
+exported from the library barrel (`sqllens` / `src/index.ts`). Note the `world`
+capability on `SchemaProvider`: `Schema`/`CallbackSchema` are CLOSED worlds (a miss
+means the table doesn't exist — unknown-table may fire and self-heals via `prime()`),
+while `DefaultTemplateProvider` defaults OPEN (a miss is unknown, never diagnosed) —
+a subclass backing `columnsFor` with a describe cache should declare
+`override readonly world = "closed" as const` to keep the unknown-table flow.
 
 ## Running
 
