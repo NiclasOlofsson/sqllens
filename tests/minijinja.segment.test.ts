@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { segment, NO_OUTPUT_BUILTINS, type Segment } from "../src/minijinja/segment.js";
+import { DefaultTemplateProvider } from "../src/index.js";
+
+// The shipped default provider — the zero-consumer strategy these tests pin.
+const DP = new DefaultTemplateProvider();
 
 // ---------------------------------------------------------------------------
 // Task 2 — the document-level segmenter + placeholder substitution
@@ -23,7 +27,7 @@ function fillOf(placeholder: string, seg: Segment): string {
 
 /** The load-bearing property: length identical + newline offsets identical. */
 function assertLengthAndNewlines(text: string): SegmentResultForAssert {
-	const r = segment(text);
+	const r = segment(text, DP);
 	expect(r.placeholder.length).toBe(text.length);
 	expect(newlineOffsets(r.placeholder)).toEqual(newlineOffsets(text));
 	// Tiling: contiguous, cover [0, len), no gaps/overlaps.
@@ -41,7 +45,7 @@ type SegmentResultForAssert = ReturnType<typeof segment>;
 describe("jinja segmenter — segment list", () => {
 	it("splits SELECT {{ ref('x') }} FROM t into [sql, expr-tag, sql]", () => {
 		const text = "SELECT {{ ref('x') }} FROM t";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr", "sql"]);
 		const tag = segments[1];
 		expect(tag).toMatchObject({ kind: "tag", tagKind: "expr", text: "{{ ref('x') }}" });
@@ -49,7 +53,7 @@ describe("jinja segmenter — segment list", () => {
 
 	it("treats a `}}` inside the tag's string as literal, not a close", () => {
 		const text = `WHERE n = '{{ var("a}}b") }}'`;
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		const tags = segments.filter((s) => s.kind === "tag");
 		expect(tags).toHaveLength(1);
 		expect(tags[0]).toMatchObject({ tagKind: "expr", text: `{{ var("a}}b") }}` });
@@ -57,14 +61,14 @@ describe("jinja segmenter — segment list", () => {
 
 	it("segments a single-quoted `}}` inside the tag string as literal too", () => {
 		const text = "{{ ref('a}}b') }}";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments).toHaveLength(1);
 		expect(segments[0]).toMatchObject({ kind: "tag", tagKind: "expr", text });
 	});
 
 	it("emits {% raw %} / {% endraw %} as tags and the middle as ONE literal sql", () => {
 		const text = "{% raw %}{{ x }}{% endraw %}";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["stmt", "sql", "stmt"]);
 		expect(segments[0]).toMatchObject({ text: "{% raw %}" });
 		expect(segments[1]).toMatchObject({ kind: "sql" });
@@ -76,14 +80,14 @@ describe("jinja segmenter — segment list", () => {
 
 	it("raw with no endraw runs to EOF (total)", () => {
 		const text = "{% raw %}{{ x }} and more";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["stmt", "sql"]);
 		expect(segments[1]).toMatchObject({ kind: "sql", start: 9, end: text.length });
 	});
 
 	it("segments a {# comment #}", () => {
 		const text = "{# c #}";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments).toHaveLength(1);
 		expect(segments[0]).toMatchObject({ kind: "tag", tagKind: "comment", text });
 	});
@@ -94,7 +98,7 @@ describe("jinja segmenter — segment list", () => {
 			["{%- set x = 1 -%}", "stmt"],
 			["{#- c -#}", "comment"],
 		] as const) {
-			const { segments } = segment(text);
+			const { segments } = segment(text, DP);
 			expect(segments).toHaveLength(1);
 			expect(segments[0]).toMatchObject({ kind: "tag", tagKind, text });
 		}
@@ -102,7 +106,7 @@ describe("jinja segmenter — segment list", () => {
 
 	it("is total on an unterminated tag — one tag to EOF, never throws", () => {
 		const text = "SELECT {{ ref(";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr"]);
 		expect(segments[1]).toMatchObject({ kind: "tag", start: 7, end: text.length });
 	});
@@ -119,7 +123,7 @@ describe("jinja segmenter — segment list", () => {
 		// unterminated `'x)`, so it degrades to individual char tokens (MINIJINJA_ANY) and the first
 		// real `}}` closes the tag — a strictly smaller, more useful blast radius on broken input.
 		const text = "select {{ ref('x) }} from t";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr", "sql"]);
 		const tag = segments[1];
 		expect(tag).toMatchObject({ kind: "tag", tagKind: "expr", text: "{{ ref('x) }}" });
@@ -135,7 +139,7 @@ describe("jinja segmenter — segment list", () => {
 		// string was skipped as literal and the block ran past it. The ANTLR RawBody mode has no notion
 		// of SQL/jinja strings at all — it is honest to the oracle and stops at the first literal match.
 		const text = "{% raw %}{% if '{% endraw %}' %} tail";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["stmt", "sql", "stmt", "sql"]);
 		expect(segments[0]).toMatchObject({ text: "{% raw %}" });
 		const body = segments[1];
@@ -152,7 +156,7 @@ describe("jinja segmenter — segment list", () => {
 		// would run the tag to EOF and swallow everything after. Ending at the first closer of either
 		// kind keeps the breakage localized to the one broken tag (segment.ts CLOSES_FOR_OPEN).
 		const text = "select {{ a %} b }} from t";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr", "sql"]);
 		expect(segments[1]).toMatchObject({ kind: "tag", tagKind: "expr", text: "{{ a %}" });
 		const tail = segments[2];
@@ -165,7 +169,7 @@ describe("jinja segmenter — segment list", () => {
 
 	it("`{% raw x %}` does NOT open a raw block — it reads as an ordinary stmt tag", () => {
 		const text = "{% raw x %} {{ ref('m') }} {% endraw %}";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		// The {{ ref }} inside is a REAL tag (no raw block opened); the trailing endraw, with no raw
 		// block to close, lexes via the ordinary STMT_OPEN path and stays a stmt tag.
 		const kinds = segments.filter((s) => s.kind === "tag").map((s) => (s.kind === "tag" ? s.tagKind : ""));
@@ -174,7 +178,7 @@ describe("jinja segmenter — segment list", () => {
 
 	it("`{% endraw x %}` and an unterminated `{% endraw` inside raw stay literal — only an exact endraw closes", () => {
 		const text = "{% raw %} {% endraw x %} still literal";
-		const { segments } = segment(text);
+		const { segments } = segment(text, DP);
 		const tags = segments.filter((s) => s.kind === "tag");
 		expect(tags).toHaveLength(1); // just the {% raw %} opener; everything after is literal to EOF
 		expect(tags[0]).toMatchObject({ tagKind: "stmt", text: "{% raw %}" });
@@ -184,17 +188,23 @@ describe("jinja segmenter — segment list", () => {
 });
 
 describe("jinja segmenter — placeholder fill (no-output-aware default)", () => {
-	it("fills an ordinary expr tag with the `j` identifier token", () => {
+	it("fills an ordinary expr tag with the `j` identifier token (value slot)", () => {
+		const text = "select {{ x }} from t";
+		const { placeholder } = segment(text, DP);
+		expect(placeholder).toBe("select jjjjjjj from t");
+	});
+
+	it("a lone ref at document start fills SELECT 1 (the default provider knows ref is a relation)", () => {
 		const text = "{{ref('x')}}";
-		const { placeholder } = segment(text);
-		expect(placeholder).toBe("jjjjjjjjjjjj");
+		const { placeholder } = segment(text, DP);
+		expect(placeholder).toBe("SELECT 1    ");
 	});
 
 	it("fills a config() expr tag with SPACES, not `j` (no-output builtin)", () => {
 		// The critical case: an identifier at statement position is a syntax
 		// error; config-topped models are the majority. Placeholder must parse.
 		const text = "{{ config(materialized='table') }}\nSELECT 1";
-		const r = segment(text);
+		const r = segment(text, DP);
 		const configTag = r.segments.find((s) => s.kind === "tag")!;
 		const fill = fillOf(r.placeholder, configTag);
 		expect(fill).toBe(" ".repeat(configTag.end - configTag.start));
@@ -206,27 +216,33 @@ describe("jinja segmenter — placeholder fill (no-output-aware default)", () =>
 	it("fills every NO_OUTPUT_BUILTINS-topped expr tag with spaces", () => {
 		for (const name of NO_OUTPUT_BUILTINS) {
 			const text = `{{ ${name}('a') }}`;
-			const { placeholder } = segment(text);
+			const { placeholder } = segment(text, DP);
 			expect(placeholder).toBe(" ".repeat(text.length));
 		}
 	});
 
 	it("treats a dotted no-output namespace (exceptions.foo) as no-output", () => {
 		const text = "{{ exceptions.raise_compiler_error('x') }}";
-		const { placeholder } = segment(text);
+		const { placeholder } = segment(text, DP);
 		expect(placeholder).toBe(" ".repeat(text.length));
 	});
 
-	it("fills var()/ref() (value-producing) with `j`, not spaces", () => {
-		const text = "{{ var('c') }}";
-		const { placeholder } = segment(text);
-		expect(placeholder).toBe("j".repeat(text.length));
+	it("fills var()/ref() (value-producing) with `j` in value/relation slots", () => {
+		const varCase = segment("select {{ var('c') }} from t", DP);
+		expect(varCase.placeholder).toBe("select jjjjjjjjjjjjjj from t");
+		const refCase = segment("select * from {{ ref('x') }}", DP);
+		expect(refCase.placeholder).toBe("select * from jjjjjjjjjjjjjj");
+	});
+
+	it("a shapeless CALL alone at a statement slot blanks (a lone identifier is never a statement)", () => {
+		const { placeholder } = segment("{{ var('c') }}", DP);
+		expect(placeholder).toBe(" ".repeat("{{ var('c') }}".length));
 	});
 
 	it("fills stmt and comment tags with spaces", () => {
-		const stmt = segment("{% set x = 1 %}");
+		const stmt = segment("{% set x = 1 %}", DP);
 		expect(stmt.placeholder).toBe(" ".repeat("{% set x = 1 %}".length));
-		const comment = segment("{# c #}");
+		const comment = segment("{# c #}", DP);
 		expect(comment.placeholder).toBe(" ".repeat("{# c #}".length));
 	});
 });
@@ -251,14 +267,14 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 
 	it("keeps placeholder length === source length over every case", () => {
 		for (const text of cases) {
-			const { placeholder } = segment(text);
+			const { placeholder } = segment(text, DP);
 			expect(placeholder.length).toBe(text.length);
 		}
 	});
 
 	it("keeps newline offsets identical over every case", () => {
 		for (const text of cases) {
-			const { placeholder } = segment(text);
+			const { placeholder } = segment(text, DP);
 			expect(newlineOffsets(placeholder)).toEqual(newlineOffsets(text));
 		}
 	});
@@ -269,7 +285,7 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 
 	it("preserves newlines inside a multi-line expr tag at their original offsets", () => {
 		const text = "{{\n ref('x')\n}}";
-		const { placeholder } = segment(text);
+		const { placeholder } = segment(text, DP);
 		expect(newlineOffsets(placeholder)).toEqual([2, 12]);
 		// The identifier fill lands on the tag's FIRST line only (`{{` → `jj`);
 		// continuation lines fill with spaces so the SQL lexer sees ONE identifier,
@@ -280,7 +296,7 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 
 	it("preserves newlines inside a multi-line no-output tag as spaces", () => {
 		const text = "{{-\n config(x=1)\n-}}";
-		const { placeholder } = segment(text);
+		const { placeholder } = segment(text, DP);
 		expect(newlineOffsets(placeholder)).toEqual([3, 16]);
 		expect(placeholder).toBe(text.replace(/[^\n]/g, " "));
 	});

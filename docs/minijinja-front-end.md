@@ -231,7 +231,37 @@ SQL parser actually saw). **The primary `parseTemplated` result stays all-text-l
 parity — anvil integrated against it mid-flight); variants are the additive coherent-arm API
 (`templateVariants(text, dialect)`), adopted by consumers when ready.
 
-## The seam — TemplateCatalog (inc3, ITEM 11)
+## The seam — TemplateProvider (SUPERSEDES TemplateCatalog, 2026-07-05)
+
+**The catalog-unification redesign (Niclas-ordered, channel-agreed with anvil) replaced the per-kind
+catalog methods below with ONE call-keyed seam.** Current state — `src/qualify/template-provider.ts`:
+
+- `DefaultTemplateProvider` — a SHIPPED, CONCRETE default implementation designed for inheritance
+  (the C# base-class pattern): fully functional with zero consumer input (it IS the zero-consumer
+  strategy, readable + unit-testable in one class), composed of granular overridables —
+  `relationOf`/`valueOf`/`shapeOf`/`columnsOf`/`collectionOf` — a consumer overrides only the parts
+  it knows. The dbt-builtin knowledge formerly HARDCODED in the segmenter (NO_OUTPUT_BUILTINS,
+  SHAPE_EXCLUDED) lives here: config/docs/print/log/return/exceptions → shape `"nothing"`;
+  ref/source → a relation logically named by their literal args; env_var → a string value.
+- `expansion(call: TemplateCall): ResolvedExpansion | undefined` — the ONE engine consult.
+  `TemplateCall` = name + packageParts + literal args (quote-stripped, escapes-unresolved, computed
+  → null) + kwargs (carried, never dropped). `ResolvedExpansion` = shape / relation / value
+  (NEUTRAL type union string|integer|float|boolean) / columns / collection; explicit shape wins,
+  else derived relation → "relation", columns → "column-list", value → "expr".
+- SYNC-ONLY + PER-DOCUMENT instances (channel conditions); miss recording + one coalesced `prime()`
+  + version bump live on the base (`recordMiss`/`recordTableMiss`/`fetchExpansions`/`fetchTables`).
+- Consumption is uniform: the segmenter consults expansion() for every expr tag (fills); apply-tags
+  attaches the call to every template marker — TableSource markers AND the scalar-slot
+  `TemplateExprInfo` on column exprs/refs (the expr-marking pass) — and qualify/infer/nullability/
+  resolve resolve any marked node through `relationColumns`/`tableSourceColumns`
+  (src/qualify/relation-columns.ts). The engine keeps ONLY the non-overridable positional machinery
+  (length-/newline-preserving fills, the slot guards — statement/relation is an ALLOWLIST of
+  body-start slots `""|;|(|)` since the default provider mass-produces relation shapes; conjunct
+  keeps its blocklist).
+
+The section below is the ORIGINAL inc3 catalog design — kept for the rationale; interface names are
+superseded (`TemplateCatalog`→`TemplateProvider`, `expansionShape`→`shapeOf`/`expansion`,
+`CallbackTemplateCatalog`→ subclassing the base).
 
 Generalizes `SchemaSource`: ref/source/var/macros are to the template layer what the schema is to SQL —
 external catalog knowledge behind a pull interface. sqllens stays dbt-unaware; the extension answers.

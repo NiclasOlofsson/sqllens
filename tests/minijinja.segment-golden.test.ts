@@ -2,7 +2,9 @@ import { readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { segment, type ShapeOf } from "../src/minijinja/segment.js";
+import { segment } from "../src/minijinja/segment.js";
+import { DefaultTemplateProvider } from "../src/index.js";
+import { NamedShapeProvider } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
 // Segmenter golden gate — locks segment()'s EXACT output (segment list +
@@ -24,19 +26,24 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(here, "fixtures", "minijinja");
 const goldenPath = join(here, "golden", "minijinja-segment.golden.json");
 
-/** Stub catalog for the shaped-fill cases: shapes by macro name, like inc3.2's catalog would. */
-const stubShapeOf: ShapeOf = (call) => {
-	if (call.name === "stmt_macro") return "statement";
-	if (call.name === "pred_macro") return "predicate";
-	if (call.name === "cols_macro") return "column-list";
-	if (call.name === "ref") return "statement"; // buggy catalog — must be ignored (SHAPE_EXCLUDED)
-	return undefined;
-};
+/** The shipped default provider — the zero-consumer strategy the unshaped cases pin. */
+const DP = new DefaultTemplateProvider();
+
+/** Stub provider for the shaped-fill cases: shapes by macro name, like a host classifier.
+ *  `ref` is force-shaped "statement" (the old buggy-catalog case): the explicit shape now WINS
+ *  by the provider contract, and the SLOT GUARD is what protects `from {{ ref('x') }}` — the
+ *  golden pins that the FROM-slot bytes stay identical under it. */
+const stubProvider = new NamedShapeProvider({
+	stmt_macro: "statement",
+	pred_macro: "predicate",
+	cols_macro: "column-list",
+	ref: "statement",
+});
 
 interface GoldenCase {
 	name: string;
 	text: string;
-	shaped?: boolean; // run with stubShapeOf
+	shaped?: boolean; // run with stubProvider
 }
 
 const synthetic: GoldenCase[] = [
@@ -83,7 +90,7 @@ function cases(): GoldenCase[] {
 function computeGolden(): Record<string, { segments: unknown[]; placeholder: string }> {
 	const out: Record<string, { segments: unknown[]; placeholder: string }> = {};
 	for (const c of cases()) {
-		const r = segment(c.text, c.shaped ? stubShapeOf : undefined);
+		const r = segment(c.text, c.shaped ? stubProvider : DP);
 		out[c.name] = { segments: r.segments as unknown[], placeholder: r.placeholder };
 	}
 	return out;

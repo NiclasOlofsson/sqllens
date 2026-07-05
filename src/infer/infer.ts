@@ -2,6 +2,7 @@ import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
+import type { TemplateProvider } from "../qualify/template-provider.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
@@ -83,7 +84,23 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaSource, ctx: C
 
 // --- columns ---------------------------------------------------------------
 
+/** Neutral provider value types → the engine's scalar Type (the channel-agreed vocabulary). */
+const VALUE_TYPES = {
+	string: scalar("string"),
+	integer: scalar("int"),
+	float: scalar("double"),
+	boolean: scalar("boolean"),
+} as const;
+
 function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
+	// A template tag's placeholder fill: its type comes from the TemplateProvider's value
+	// answer ({{ var('x') }}, a scalar macro), never from column resolution — the placeholder
+	// name means nothing to the schema. No answer → unknown (never guessed).
+	if (col.template) {
+		const call = col.template.call;
+		const v = call && "expansion" in schema ? (schema as TemplateProvider).expansion(call)?.value : undefined;
+		return v ? VALUE_TYPES[v.type] : UNKNOWN;
+	}
 	if (col.parts.length === 1) {
 		const param = ctx.env.get(foldIdentifier(col.parts[0], scope.dialect)); // a lambda parameter shadows columns
 		if (param) return param;

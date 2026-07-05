@@ -89,14 +89,13 @@ export type { ParseResult } from "./databricks/parse.js";
 // --- Minijinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
 //     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
 //     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
-//     grammars are untouched). See also `TemplateSourceInfo` (IR section) and
-//     `TemplateCatalog` (qualify section) — the rest of the template surface. ---
+//     grammars are untouched). See also `TemplateSourceInfo`/`TemplateExprInfo` (IR section)
+//     and `DefaultTemplateProvider` (qualify section) — the rest of the template surface. ---
 export {
 	parseTemplated,
 	tokenizeTemplated,
 	type TemplatedParseResult,
 	type TemplatedParseOptions,
-	type ShapeOf,
 	type TagNode,
 	type MacroCall,
 } from "./minijinja/parse.js";
@@ -125,6 +124,7 @@ export type {
 	Source,
 	SubquerySource,
 	TableSource,
+	TemplateExprInfo,
 	TemplateSourceInfo,
 } from "./ir/ir.js";
 
@@ -141,19 +141,21 @@ export { type Diagnostic, type Qualification, type ColumnBinding } from "./quali
 
 export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";
 
-// The template-layer catalog (inc3.1 `relation` slice): a TemplateCatalog extends SchemaSource with a
-// `relation` lookup that resolves a dbt-logical `{{ ref('orders') }}` to its physical relation + columns,
-// so qualify can fire real unknown-column diagnostics against a templated source. CallbackTemplateCatalog
-// is the resolve-on-demand implementation (mirrors CallbackSchema; one shared version + one prime()). A
-// plain SchemaSource has no `relation` and is the zero-catalog fallback.
+// The template PROVIDER (the catalog-unification redesign): ONE resolution seam —
+// `expansion(call)` — for every template expression. `DefaultTemplateProvider` is the shipped,
+// concrete, inheritance-designed default (fully functional with zero input; override the granular
+// methods with what your host knows; misses + prime() warm lazily). Pass the SAME per-document
+// instance to parseTemplated (fills) and qualify/analyze (semantics).
 export {
-	CallbackTemplateCatalog,
-	type TemplateCatalog,
-	type TemplateRef,
+	DefaultTemplateProvider,
+	NO_OUTPUT_BUILTINS,
+	type TemplateProvider,
+	type TemplateCall,
+	type ResolvedExpansion,
 	type ResolvedRelation,
-	type RelationResolver,
+	type ValueType,
 	type ExpansionShape,
-} from "./qualify/template-catalog.js";
+} from "./qualify/template-provider.js";
 
 export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
 

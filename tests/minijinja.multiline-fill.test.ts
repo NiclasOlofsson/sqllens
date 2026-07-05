@@ -2,7 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parseTemplated } from "../src/minijinja/parse.js";
 import { segment } from "../src/minijinja/segment.js";
 import type { Dialect } from "../src/api.js";
-import type { ExpansionShape } from "../src/qualify/template-catalog.js";
+import { DefaultTemplateProvider } from "../src/index.js";
+import { shaped } from "./helpers/providers.js";
+
+const DP = new DefaultTemplateProvider();
 
 // ---------------------------------------------------------------------------
 // Regression: a MULTI-LINE `{{ }}` expr tag must fill to ONE first-line
@@ -40,13 +43,13 @@ describe("minijinja multi-line {{ }} fill — parse across all 8 dialects", () =
 
 describe("minijinja multi-line fill — placeholder invariants", () => {
 	it("length identical + every newline at its original offset", () => {
-		const { placeholder } = segment(MULTILINE);
+		const { placeholder } = segment(MULTILINE, DP);
 		expect(placeholder.length).toBe(MULTILINE.length);
 		expect(newlineOffsets(placeholder)).toEqual(newlineOffsets(MULTILINE));
 	});
 
 	it("the first-line run is a SINGLE identifier (no interior newline in the j-run)", () => {
-		const { placeholder } = segment(MULTILINE);
+		const { placeholder } = segment(MULTILINE, DP);
 		// The tag opens after "select " at offset 7. Its first line is "{{" → "jj",
 		// then the rest of the first line (up to the first `\n`) is the j-run.
 		const firstNl = placeholder.indexOf("\n");
@@ -60,7 +63,7 @@ describe("minijinja multi-line fill — placeholder invariants", () => {
 	it("single-line tag placeholder is byte-identical to the all-`j` fill (regression guard)", () => {
 		// A single-line macro tag has no interior newline, so first-line-only == full fill.
 		const text = "select {{ m() }} as x from t";
-		const { placeholder } = segment(text);
+		const { placeholder } = segment(text, DP);
 		// Reconstruct the expected: the whole tag range is `j`, non-tag SQL untouched.
 		const expected = "select jjjjjjjjj as x from t";
 		expect(placeholder).toBe(expected);
@@ -70,7 +73,7 @@ describe("minijinja multi-line fill — placeholder invariants", () => {
 describe("minijinja multi-line fill — whitespace + shaped paths unaffected", () => {
 	it("a multi-line `{% %}` stmt tag stays all-whitespace", () => {
 		const text = "select 1\n{% set x =\n  42 %}\nfrom t";
-		const { placeholder, segments } = segment(text);
+		const { placeholder, segments } = segment(text, DP);
 		const tag = segments.find((s) => s.kind === "tag");
 		expect(tag).toBeDefined();
 		if (tag) {
@@ -83,9 +86,8 @@ describe("minijinja multi-line fill — whitespace + shaped paths unaffected", (
 	it("a multi-line tag with shapeOf→statement falls back to the first-line identifier fill and parses", () => {
 		// `SELECT 1` cannot fit before the tag's first `\n` (`{{\n…`), so the fit guard rejects the
 		// shaped fragment and the code falls back to the identifier fill — now first-line-only.
-		const shapeOf = (): ExpansionShape => "statement";
 		const text = "select {{\n  my_macro()\n}} as x from t";
-		const r = parseTemplated(text, "duckdb", { shapeOf });
+		const r = parseTemplated(text, "duckdb", shaped("statement"));
 		expect(r.sql.errors).toBe(0);
 	});
 });

@@ -78,6 +78,9 @@ function columnNullability(
 	schema: SchemaSource,
 	ctx: Ctx,
 ): Nullability {
+	// A template tag's placeholder fill — the provider's value answer carries no nullability
+	// signal, and the placeholder name must never resolve as a real column. NEVER-WRONG default.
+	if (col.template) return "unknown";
 	const found = resolveColumnSource(scope, col.parts, schema);
 	if (!found) return "unknown";
 	// Struct/map field navigation (`a.b.c`): the schema states a column's nullability, not a nested

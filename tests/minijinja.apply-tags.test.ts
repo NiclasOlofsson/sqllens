@@ -26,10 +26,14 @@ describe("R3 apply-tags", () => {
 		expect(src.template.opaque).toBeUndefined();
 	});
 
-	it("macro call in FROM stays placeholder-named but opaque", () => {
+	it("macro call in FROM stays placeholder-named and carries its provider key", () => {
 		const r = parseTemplated("SELECT * FROM {{ my_macro() }} m", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.template).toMatchObject({ kind: "macro", opaque: true });
+		// Since the provider cutover the marker is CONSULTABLE (call attached) instead of
+		// permanently opaque; with no provider answer it behaves exactly like the old opaque
+		// marker (exemption, no diagnostics).
+		expect(src.template).toMatchObject({ kind: "macro", call: { name: "my_macro", args: [] } });
+		expect(src.template.opaque).toBeUndefined();
 		expect(src.name).not.toEqual(["my_macro"]); // the placeholder, NOT a fabricated name
 	});
 

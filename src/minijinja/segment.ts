@@ -21,7 +21,7 @@
 
 import { CharStream, Token as AntlrToken } from "antlr4ng";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
-import type { ExpansionShape } from "../qualify/template-catalog.js";
+import type { ExpansionShape, TemplateCall, TemplateProvider } from "../qualify/template-provider.js";
 
 export type Segment =
 	| { kind: "sql"; start: number; end: number }
@@ -32,15 +32,6 @@ export type Segment =
 			end: number;
 			text: string;
 	  };
-
-/**
- * A synchronous, by-name syntactic-slot lookup for a MACRO call (inc3.2). The catalog's
- * `expansionShape` bound into a bare callback, so `segment` stays decoupled from the catalog type — it
- * only knows the shape vocabulary, never the `TemplateCatalog` interface. `undefined` = no shape known
- * (fall back to the positional fill). Only macro-call expr tags consult it (ref/source/var/no-output
- * builtins keep their existing fill — they already parse).
- */
-export type ShapeOf = (call: { name: string; parts?: string[] }) => ExpansionShape | undefined;
 
 export interface SegmentResult {
 	/** Source order, tiling (contiguous, cover [0, text.length)). */
@@ -59,55 +50,32 @@ export interface SegmentResult {
 	tagTokens: ReadonlyMap<Segment, readonly AntlrToken[]>;
 }
 
-// ---------------------------------------------------------------------------
-// The dbt builtins that emit NO SQL text. An expr tag topped by one of these
-// (`{{ config(...) }}`, `{{ exceptions.raise_compiler_error(...) }}`, …) fills
-// with newline-preserving whitespace, not an identifier — an identifier at
-// statement position is a syntax error and config-topped models are the
-// majority (spec §the hole — anvil-flagged, 2026-07-04). Exported as the single
-// source of truth; Task 4's R2 classifier reuses this same set.
-// ---------------------------------------------------------------------------
-export const NO_OUTPUT_BUILTINS: ReadonlySet<string> = new Set([
-	"config",
-	"docs",
-	"print",
-	"log",
-	"return",
-	"exceptions",
-]);
+// NO_OUTPUT_BUILTINS moved to the DEFAULT PROVIDER (src/qualify/template-provider.ts) — that
+// knowledge ("config emits no SQL text") is dbt-domain knowledge, not lexer mechanics; the
+// segmenter learns it back through `provider.expansion(call).shape === "nothing"`. Re-exported
+// here for the R2 classifier (tag-ast.ts), which shares the same list for its syntactic labels.
+export { NO_OUTPUT_BUILTINS } from "../qualify/template-provider.js";
 
 /**
- * The leading word + leading call of a tag, derived from its interior DEFAULT-channel tokens (never
- * re-scanned from `seg.text`). `word` is the very first identifier-shaped token after the opener — for
- * an expr tag the leading call name (`config`, `ref`, `dbt_utils` in `dbt_utils.star(…)`), for a stmt
- * tag the keyword (`if`, `for`, …); "" when none. `call` is the same leading position read as a dotted
- * callee path (`dbt_utils.star(` → `{ name: "star", parts: ["dbt_utils","star"], isCall: true }`),
- * present only when a word actually leads. `Segment` is a public type that must not gain fields, so
- * this rides in a side map (`leadingInfoOf`'s caller) instead of on the segment itself.
+ * The lexical `TemplateCall` of a tag — the provider's key, extracted from the interior
+ * DEFAULT-channel tokens WITHOUT a parse (segmentation runs before the per-tag parses).
+ * Leading dotted path → packageParts + name; a following `(...)` is scanned at depth 1:
+ * each argument is its quote-stripped literal when it is a SINGLE escape-free STRING
+ * token, `null` otherwise (computed — never fabricated); `id = value` at depth 1 is a
+ * kwarg. A bare word (`{{ docs }}`) keys with `args: []` like a zero-arg call.
+ * Returns undefined when no identifier leads the tag (a literal / composed expression).
  */
-interface LeadingInfo {
-	word: string;
-	call?: { name: string; parts?: string[]; isCall: boolean };
+interface TagCallInfo {
+	/** The provider key, or undefined when no identifier leads the tag. */
+	call?: TemplateCall;
+	/** True when the leading path is followed by `(` — a real call (fragments apply to calls only). */
+	isCall: boolean;
 }
 
-const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
-
-/** `t.text` is optional on the antlr4ng `Token` interface; every real token here always carries it. */
-function textOf(t: AntlrToken): string {
-	return t.text ?? "";
-}
-
-/**
- * Compute `LeadingInfo` from a tag's interior tokens (every DEFAULT-channel token strictly between
- * the OPEN and CLOSE tokens; the close token itself is excluded by the caller's walk).
- */
-function leadingInfoOf(interior: AntlrToken[]): LeadingInfo {
+function tagCall(interior: AntlrToken[]): TagCallInfo {
 	let i = 0;
 	const isWord = (t: AntlrToken | undefined): boolean => t !== undefined && IDENT_RE.test(textOf(t));
-
-	const first = interior[i];
-	if (!isWord(first)) return { word: "" };
-	const word = textOf(first);
+	if (!isWord(interior[i])) return { isCall: false };
 
 	const parts: string[] = [];
 	for (;;) {
@@ -115,50 +83,97 @@ function leadingInfoOf(interior: AntlrToken[]): LeadingInfo {
 		if (!isWord(t)) break;
 		parts.push(textOf(t));
 		i += 1;
-		const dot = interior[i];
-		if (dot && dot.type === MinijinjaLexer.DOT) {
+		if (interior[i]?.type === MinijinjaLexer.DOT) {
 			i += 1;
-			continue; // read the next path segment (`pkg . macro`)
+			continue;
 		}
 		break;
 	}
-	const isCall = interior[i]?.type === MinijinjaLexer.LPAREN;
 	const name = parts[parts.length - 1];
-	return { word, call: { name, ...(parts.length > 1 ? { parts } : {}), isCall } };
+	const packageParts = parts.length > 1 ? parts.slice(0, -1) : undefined;
+	const isCall = interior[i]?.type === MinijinjaLexer.LPAREN;
+
+	const args: (string | null)[] = [];
+	const kwargs: { name: string; value: string | null }[] = [];
+	if (isCall) {
+		i += 1;
+		let depth = 1;
+		let argTokens: AntlrToken[] = [];
+		const flush = (): void => {
+			if (argTokens.length === 0) return;
+			// `id = rest` at depth 1 → kwarg (value = the rest's literal or null).
+			if (argTokens.length >= 2 && isWord(argTokens[0]) && argTokens[1].type === MinijinjaLexer.ASSIGN) {
+				kwargs.push({ name: textOf(argTokens[0]), value: literalOf(argTokens.slice(2)) });
+			} else {
+				args.push(literalOf(argTokens));
+			}
+			argTokens = [];
+		};
+		for (; i < interior.length && depth > 0; i++) {
+			const t = interior[i];
+			const ty = t.type;
+			if (ty === MinijinjaLexer.LPAREN || ty === MinijinjaLexer.LBRACK || ty === MinijinjaLexer.LBRACE)
+				depth += 1;
+			else if (ty === MinijinjaLexer.RPAREN || ty === MinijinjaLexer.RBRACK || ty === MinijinjaLexer.RBRACE) {
+				depth -= 1;
+				if (depth === 0) break;
+			} else if (ty === MinijinjaLexer.COMMA && depth === 1) {
+				flush();
+				continue;
+			}
+			argTokens.push(t);
+		}
+		flush();
+	}
+	return {
+		call: { name, ...(packageParts ? { packageParts } : {}), args, ...(kwargs.length ? { kwargs } : {}) },
+		isCall,
+	};
 }
 
-/** The fill character for a tag segment, or " " for a no-output/whitespace tag. */
-function fillChar(seg: Extract<Segment, { kind: "tag" }>, leading: LeadingInfo): string {
-	if (seg.tagKind !== "expr") return " "; // stmt / comment → whitespace to SQL
-	// expr: no-output builtin → whitespace; otherwise an identifier token.
-	return NO_OUTPUT_BUILTINS.has(leading.word) ? " " : "j";
+/** The quote-stripped literal of an argument's tokens, or null when computed: exactly ONE
+ *  STRING token whose content carries no escape (never-wrong — an escaped or composed
+ *  argument is not fabricated into a literal). */
+function literalOf(tokens: AntlrToken[]): string | null {
+	if (tokens.length !== 1 || tokens[0].type !== MinijinjaLexer.STRING) return null;
+	const text = textOf(tokens[0]);
+	if (text.length < 2) return null;
+	const content = text.slice(1, -1);
+	return content.includes("\\") ? null : content;
+}
+
+/**
+ * The leading word + leading call of a tag, derived from its interior DEFAULT-channel tokens (never
+ * re-scanned from `seg.text`). `word` is the very first identifier-shaped token after the opener — for
+ * an expr tag the leading call name (`config`, `ref`, `dbt_utils` in `dbt_utils.star(…)`), for a stmt
+ * tag the keyword (`if`, `for`, …). `Segment` is a public type that must not gain fields, so this
+ * rides in a side map (`tagCall`'s caller) instead of on the segment itself.
+ */
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `t.text` is optional on the antlr4ng `Token` interface; every real token here always carries it. */
+function textOf(t: AntlrToken): string {
+	return t.text ?? "";
 }
 
 // ---------------------------------------------------------------------------
-// inc3.2 — shaped placeholders. When a catalog answers `expansionShape` for a
-// macro-call tag, the single-char identifier fill (`"j"`) generalizes to a
-// length-matched, shape-VALID fragment placed at the tag start, padded with
-// spaces, newlines preserved — so an unknown callable at statement/CTE/predicate
-// position parses instead of failing. Everything here is a no-op without a
-// `shapeOf` (the zero-catalog keystone: byte-identical to the char fill above).
+// Shaped placeholders. The PROVIDER answers what a call produces (its
+// `expansion(call).shape`, explicit or derived); everything here — the
+// fragments, the fit guard, the slot guards, the positional fills — is the
+// ENGINE's non-overridable positional machinery: how an answer becomes a
+// length-/newline-preserving stand-in that can never corrupt a parse.
 // ---------------------------------------------------------------------------
 
 /** Shape → the minimal shape-valid SQL fragment. `SELECT 1` is valid across all eight dialects both as a
  *  standalone statement AND as a `(…)` CTE/subquery body (verified), so `statement`/`relation` share it;
- *  `expr` is absent — it keeps the identifier fill (handled before this table is consulted). */
-const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr">, string> = {
+ *  `expr` (identifier fill) and `nothing` (whitespace fill) are handled before this table is consulted. */
+const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr" | "nothing">, string> = {
 	statement: "SELECT 1",
 	relation: "SELECT 1",
 	predicate: "1=1",
 	"column-list": "1",
 	conjunct: "AND 1=1",
 };
-
-/** dbt builtins that already parse with the identifier fill and must NOT be shaped — a buggy catalog
- *  returning a shape for `ref` must never break `from {{ ref('x') }}` (spec §only macro-call tags). The
- *  no-output builtins are already excluded via `fillChar`'s whitespace path; this set covers the
- *  value/relation builtins that get the identifier fill today. */
-const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "env_var"]);
 
 /**
  * Slot guard (the durable close of the slot-blind Open Gap, spec §Open Gap — slot-blind shaping):
@@ -172,6 +187,18 @@ const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "en
  * remove breakage, never regress a working shape. `predicate`/`column-list` shapes are untouched.
  */
 const SLOT_BLOCK_WORDS: ReadonlySet<string> = new Set(["from", "join", "where", "and", "or", "on", "having", "when"]);
+
+/**
+ * statement/relation slot guard — an ALLOWLIST since the provider cutover: the `SELECT 1`
+ * fragment is structurally a statement/query body, so it is admitted ONLY where a body can
+ * START — document start, after `;`, a `(` (CTE/subquery body), or after `)` (a completed
+ * CTE's main statement). Every other slot (FROM/JOIN relation names, select-list scalars,
+ * predicates, commas — where the identifier fill parses) falls back. The old blocklist
+ * sufficed when shapes were rare consumer answers; the DEFAULT provider now derives
+ * "relation" for every `ref`/`source`, so admission must be provably-body slots only.
+ * (SLOT_BLOCK_WORDS above still drives the conjunct guard's block set.)
+ */
+const STATEMENT_SLOTS: ReadonlySet<string> = new Set(["", ";", "(", ")"]);
 
 /**
  * Conjunct slot guard — OPPOSITE polarity to the statement/relation guard above. `AND 1=1` is valid
@@ -244,29 +271,23 @@ function precedingSlot(chars: readonly string[], start: number): string {
 
 /**
  * The shaped fill fragment for a tag, or undefined to fall back to the positional
- * char fill. Returns a fragment ONLY for a macro-call expr tag whose `shapeOf`
- * answers a non-`expr` shape AND for which the fragment FITS: it must be no longer
- * than the tag and must contain no `\n` in its placement window (the fit guard —
- * the shaped fill is strictly an improvement, never a regression on a tag it can't
- * shape) — AND, for `statement`/`relation`, whose slot admits it (the slot guard
- * above; `slot` is the preceding word/char from `precedingSlot`). The caller places
- * the fragment at the tag start and pads the rest with spaces, preserving every
- * original `\n`.
+ * char fill. Applies a fragment ONLY for a real CALL whose shape admits one, whose
+ * slot admits it (the guards above), and for which the fragment FITS: no longer
+ * than the tag and no `\n` in its placement window (the fit guard — a shaped fill
+ * is strictly an improvement, never a regression on a tag it can't shape). The
+ * caller places the fragment at the tag start and pads the rest with spaces,
+ * preserving every original `\n`.
  */
-function shapedFill(
+function fragmentFill(
 	seg: Extract<Segment, { kind: "tag" }>,
-	shapeOf: ShapeOf,
-	leading: LeadingInfo,
+	shape: ExpansionShape,
+	isCall: boolean,
 	slot: string,
 ): string | undefined {
-	if (seg.tagKind !== "expr") return undefined;
-	if (NO_OUTPUT_BUILTINS.has(leading.word) || SHAPE_EXCLUDED.has(leading.word)) return undefined;
-	const call = leading.call;
-	if (!call || !call.isCall) return undefined; // only a real macro CALL is shaped
-	const shape = shapeOf({ name: call.name, ...(call.parts ? { parts: call.parts } : {}) });
-	if (!shape || shape === "expr") return undefined; // expr / unknown → identifier fill (today's default)
-	if ((shape === "statement" || shape === "relation") && (SLOT_BLOCK_WORDS.has(slot) || slot === ",")) {
-		return undefined; // slot guard: SELECT 1 breaks here, the identifier fill parses — fall back
+	if (shape === "expr" || shape === "nothing") return undefined; // positional fills, not fragments
+	if (!isCall) return undefined; // fragments only for a real macro CALL (bare words keep the char fill)
+	if ((shape === "statement" || shape === "relation") && !STATEMENT_SLOTS.has(slot)) {
+		return undefined; // slot guard: SELECT 1 is a statement/body — only where a body can START
 	}
 	if (shape === "conjunct" && !conjunctSlotAdmits(slot)) {
 		return undefined; // conjunct guard: AND 1=1 is valid only after a complete expression
@@ -324,19 +345,19 @@ const SELF_CONTAINED_TAGS: ReadonlyMap<number, string> = new Map([
  * is the lexer's own `RawBody` mode (grammar-level), so this function does no raw-specific scanning at
  * all — it just walks whatever tokens the lexer produced.
  *
- * `shapeOf` (inc3.2, optional) supplies a syntactic slot per macro-call tag; when
- * given, a shape-valid fragment (`SELECT 1`, …) replaces the identifier fill for
- * the tags it fits (fit-guarded, newline-safe). With no `shapeOf` — or when it
- * returns undefined / a tag doesn't fit — the placeholder is BYTE-IDENTICAL to the
- * positional char fill (the zero-catalog keystone).
+ * Every expr tag consults `provider.expansion(call)` (the call extracted lexically
+ * by `tagCall`): shape `"nothing"` → whitespace fill; a fragment shape → the
+ * shape-valid fragment (fit- and slot-guarded); `"expr"` / no answer → the
+ * positional identifier fill. The provider states WHAT a call produces; every
+ * fill decision here is the engine's own (non-overridable) machinery.
  */
-export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
+export function segment(text: string, provider: TemplateProvider): SegmentResult {
 	const lexer = new MinijinjaLexer(CharStream.fromString(text));
 	lexer.removeErrorListeners();
 	const tokens = lexer.getAllTokens(); // hidden-channel tokens included, EOF excluded
 
 	const segments: Segment[] = [];
-	const leadingByTag = new Map<Segment, LeadingInfo>();
+	const callByTag = new Map<Segment, TagCallInfo>();
 	const tagTokens = new Map<Segment, readonly AntlrToken[]>();
 	let sqlStart = 0;
 	let i = 0;
@@ -362,7 +383,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 				text: text.slice(openTok.start, end),
 			};
 			segments.push(seg);
-			leadingByTag.set(seg, { word: selfWord });
+			callByTag.set(seg, { isCall: false });
 			tagTokens.set(seg, [openTok]);
 			i += 1;
 			sqlStart = end;
@@ -380,7 +401,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 		i += 1;
 
 		// Tokens between OPEN and CLOSE belong to the tag and never produce their own segments; the
-		// DEFAULT-channel ones among them feed leadingInfoOf for fillChar/shapedFill, and EVERY one
+		// DEFAULT-channel ones among them feed tagCall (the provider's lexical key), and EVERY one
 		// (all channels — hidden JWS included) feeds the full slice parse.ts consumes.
 		const interior: AntlrToken[] = [];
 		const slice: AntlrToken[] = [openTok];
@@ -400,7 +421,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 		const end = closeTok ? closeTok.stop + 1 : text.length; // unterminated tag → to EOF (totality)
 		const seg: Segment = { kind: "tag", tagKind, start: openTok.start, end, text: text.slice(openTok.start, end) };
 		segments.push(seg);
-		leadingByTag.set(seg, leadingInfoOf(interior));
+		callByTag.set(seg, tagCall(interior));
 		tagTokens.set(seg, slice);
 		sqlStart = end;
 	}
@@ -414,49 +435,54 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 	const chars = text.split(""); // UTF-16 units — indices align with tag offsets
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
-		const leading = leadingByTag.get(seg)!;
+		const info = callByTag.get(seg) ?? { isCall: false };
 		const slot = precedingSlot(chars, seg.start);
-		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading, slot) : undefined;
-		if (shaped !== undefined) {
-			// Shaped fill: fragment at the tag start, spaces for the rest, `\n` preserved. The fit guard
+
+		// ONE provider consult per tag — the uniform seam. stmt/comment tags are pure
+		// jinja control text and always whitespace-fill (no consult needed).
+		const exp = seg.tagKind === "expr" && info.call ? provider.expansion(info.call) : undefined;
+		const shape = exp?.shape;
+
+		const fragment = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
+		if (fragment !== undefined) {
+			// Fragment fill: at the tag start, spaces for the rest, `\n` preserved. The fit guard
 			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.
 			for (let k = seg.start; k < seg.end; k++) {
 				if (chars[k] === "\n") continue;
 				const rel = k - seg.start;
-				chars[k] = rel < shaped.length ? shaped[rel] : " ";
+				chars[k] = rel < fragment.length ? fragment[rel] : " ";
 			}
+			continue;
+		}
+
+		// Positional char fill. The identifier fill (`"j"`) is placed on the tag's
+		// FIRST line only; every continuation line fills with spaces. A multi-line
+		// tag otherwise becomes a `j`-run PER LINE (the preserved `\n`s split it),
+		// which the SQL lexer reads as SEVERAL adjacent identifiers — a parse error
+		// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
+		// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
+		// before AND after a newline are identical); length + newline offsets hold.
+		let fill: string;
+		if (seg.tagKind !== "expr" || shape === "nothing") {
+			fill = " "; // stmt / comment / no-output call → whitespace to SQL
 		} else {
-			// Positional char fill. The identifier fill (`"j"`) is placed on the tag's
-			// FIRST line only; every continuation line fills with spaces. A multi-line
-			// tag otherwise becomes a `j`-run PER LINE (the preserved `\n`s split it),
-			// which the SQL lexer reads as SEVERAL adjacent identifiers — a parse error
-			// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
-			// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
-			// before AND after a newline are identical); length + newline offsets hold.
-			let fill = fillChar(seg, leading);
-			// Statement-slot default (2026-07-05): a CALL-shaped expr tag with NO shape answer
-			// sitting at a statement slot (BOF / after `;`) blanks to whitespace instead of the
-			// identifier fill. A lone identifier is not a valid statement, so the identifier fill
-			// ALWAYS breaks there (`{{ my_helper() }}\nselect …` → extraneous input) while blank
-			// lets the surrounding statements parse — a statement-producing macro reads as an
-			// empty statement. ref/source/var/env_var keep the identifier fill (SHAPE_EXCLUDED:
-			// they are value/relation builtins and R3 correlates on the identifier token).
-			if (
-				fill === "j" &&
-				(slot === "" || slot === ";") &&
-				leading.call?.isCall === true &&
-				!SHAPE_EXCLUDED.has(leading.word)
-			) {
-				fill = " ";
+			fill = "j";
+			// Statement-slot default: a CALL with NO expansion answer at all sitting at a
+			// statement slot (BOF / after `;`) blanks instead of the identifier fill — a lone
+			// identifier is never a valid statement, so the identifier fill ALWAYS breaks there
+			// (`{{ my_helper() }}\nselect …` → extraneous input) while blank lets the
+			// surrounding statements parse. Calls WITH an answer (ref/source → relation,
+			// var/env_var → value, a shaped macro whose fragment was slot-guarded away) keep
+			// the identifier fill.
+			if (info.isCall && exp === undefined && (slot === "" || slot === ";")) fill = " ";
+		}
+		let seenNewline = false;
+		for (let k = seg.start; k < seg.end; k++) {
+			if (chars[k] === "\n") {
+				seenNewline = true;
+				continue;
 			}
-			let seenNewline = false;
-			for (let k = seg.start; k < seg.end; k++) {
-				if (chars[k] === "\n") {
-					seenNewline = true;
-					continue;
-				}
-				chars[k] = seenNewline ? " " : fill;
-			}
+			chars[k] = seenNewline ? " " : fill;
 		}
 	}
 

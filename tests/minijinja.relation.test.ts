@@ -10,12 +10,8 @@ import {
 	type TableResolver,
 } from "../src/index.js";
 import { inferNullability } from "../src/infer/nullability.js";
-import {
-	CallbackTemplateCatalog,
-	type RelationResolver,
-	type ResolvedRelation,
-	type TemplateRef,
-} from "../src/qualify/template-catalog.js";
+import type { ResolvedRelation } from "../src/index.js";
+import { TestRelationProvider, relKey as relKeyOf } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
 // inc3.1 — qualify resolves a templated source's REAL columns through a
@@ -26,26 +22,9 @@ import {
 // exemption (no fabricated column). A zero-catalog run is byte-identical to R3.
 // ---------------------------------------------------------------------------
 
-/** Miss-identity key, mirroring template-catalog.ts's internal relKey (kind + folded dotted path). */
-function relKey(ref: TemplateRef): string {
-	return `${ref.kind}|${ref.nameParts.join(".")}`;
-}
-
-/** A test host cache: `cache` answers `resolveRelation` synchronously; `pending` is what a later
- *  `fetchRelations` (prime) warms into `cache`. Both receive FOLDED parts (the catalog folds first). */
-class TestRelationResolver implements RelationResolver {
-	readonly cache = new Map<string, ResolvedRelation>();
-	readonly pending = new Map<string, ResolvedRelation>();
-	resolveRelation(ref: TemplateRef): ResolvedRelation | undefined {
-		return this.cache.get(relKey(ref));
-	}
-	async fetchRelations(missing: TemplateRef[]): Promise<void> {
-		for (const ref of missing) {
-			const k = relKey(ref);
-			const p = this.pending.get(k);
-			if (p) this.cache.set(k, p);
-		}
-	}
+/** Miss-identity key over the shared TestRelationProvider (call name + arg path). */
+function relKey(ref: { kind: "ref" | "source"; nameParts: string[] }): string {
+	return relKeyOf(ref.kind, ref.nameParts);
 }
 
 const ORDERS: ResolvedRelation = {
@@ -54,14 +33,14 @@ const ORDERS: ResolvedRelation = {
 };
 
 /** A warm catalog: `orders` (a ref) and `raw.events` (a source) resolve to real columns immediately. */
-function warmCatalog(): CallbackTemplateCatalog {
-	const r = new TestRelationResolver();
+function warmCatalog(): TestRelationProvider {
+	const r = new TestRelationProvider();
 	r.cache.set(relKey({ kind: "ref", nameParts: ["orders"] }), ORDERS);
 	r.cache.set(relKey({ kind: "source", nameParts: ["raw", "events"] }), {
 		nameParts: ["raw", "events"],
 		columns: [{ name: "event_id" }, { name: "ts" }],
 	});
-	return new CallbackTemplateCatalog(r);
+	return r;
 }
 
 const unknownCols = (q: { diagnostics: { kind: string; message: string }[] }) =>
@@ -111,10 +90,9 @@ describe("inc3.1 — qualify resolves templated columns via TemplateCatalog.rela
 	// --- Cold catalog: a miss is the exemption; after prime() the bad column fires. ---
 
 	it("cold → exempt, then prime() → unknown-column fires for the bad column", async () => {
-		const resolver = new TestRelationResolver();
+		const catalog = new TestRelationProvider();
 		// Not warm yet, but `orders` is fetchable on prime.
-		resolver.pending.set(relKey({ kind: "ref", nameParts: ["orders"] }), ORDERS);
-		const catalog = new CallbackTemplateCatalog(resolver);
+		catalog.pending.set(relKey({ kind: "ref", nameParts: ["orders"] }), ORDERS);
 
 		const sql = "SELECT o.nope FROM {{ ref('orders') }} o";
 		// Cold: the ref is a miss → exemption, no unknown-column.
@@ -155,15 +133,14 @@ describe("inc3.1 — qualify resolves templated columns via TemplateCatalog.rela
 		}
 	}
 
-	/** A catalog whose `relation` returns a PHYSICAL name with `columns: undefined`, backed by a table
-	 *  resolver that (optionally) knows that physical relation's columns. */
-	function physicalCatalog(physical: string[], physicalCols: Column[] | undefined): CallbackTemplateCatalog {
-		const rel = new TestRelationResolver();
+	/** A provider whose relation answer carries a PHYSICAL name with `columns: undefined`, backed by
+	 *  a columnsFor side that (optionally) knows that physical relation's columns. */
+	function physicalCatalog(physical: string[], physicalCols: Column[] | undefined): TestRelationProvider {
+		const rel = new TestRelationProvider();
 		// `orders` (a ref) resolves to a physical relation but WITHOUT columns (columns undefined).
 		rel.cache.set(relKey({ kind: "ref", nameParts: ["orders"] }), { nameParts: physical });
-		const tab = new TestTableResolver();
-		if (physicalCols) tab.cache.set(physical.join("."), physicalCols);
-		return new CallbackTemplateCatalog(rel, tab);
+		if (physicalCols) rel.tableColumns.set(physical.join("."), physicalCols);
+		return rel;
 	}
 
 	it("relation nameParts only (columns undefined) → resolves through columnsFor (physical resolver)", () => {
@@ -193,8 +170,8 @@ describe("inc3.1 — qualify resolves templated columns via TemplateCatalog.rela
 // ---------------------------------------------------------------------------
 describe("inc3.2 — templated column types reach inference", () => {
 	/** A warm catalog whose `orders` relation carries typed, nullability-tagged columns. */
-	function typedCatalog(): CallbackTemplateCatalog {
-		const r = new TestRelationResolver();
+	function typedCatalog(): TestRelationProvider {
+		const r = new TestRelationProvider();
 		r.cache.set(relKey({ kind: "ref", nameParts: ["orders"] }), {
 			nameParts: ["prod", "core", "orders"],
 			columns: [
@@ -202,7 +179,7 @@ describe("inc3.2 — templated column types reach inference", () => {
 				{ name: "total", type: "decimal(10,2)", nullable: true },
 			],
 		});
-		return new CallbackTemplateCatalog(r);
+		return r;
 	}
 
 	function projectionType(sql: string, schema: Parameters<typeof inferType>[2]): string {
@@ -226,7 +203,7 @@ describe("inc3.2 — templated column types reach inference", () => {
 	});
 
 	it("catalog miss / opaque tag stays unknown (never-wrong)", () => {
-		const cold = new CallbackTemplateCatalog(new TestRelationResolver());
+		const cold = new TestRelationProvider();
 		expect(projectionType("SELECT o.total FROM {{ ref('nope') }} o", cold)).toBe("unknown");
 		expect(projectionType("SELECT m.x FROM {{ my_macro() }} m", typedCatalog())).toBe("unknown");
 	});

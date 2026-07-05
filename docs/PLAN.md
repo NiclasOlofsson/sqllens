@@ -154,6 +154,20 @@ fallback) routes infer/nullability/sema-resolve, so `{{ ref('orders') }}.total` 
 nullability) from a warm catalog. `expansionShape` is live (statement/relation/predicate/column-list/
 conjunct, slot-guarded, statement-slot blank default). `value`/`loopCollection` remain spec. See
 docs/minijinja-front-end.md.
+**Provider cutover (2026-07-05, Niclas-ordered, anvil-agreed):** the per-kind catalog surface
+(`TemplateCatalog`/`CallbackTemplateCatalog`/`relation()`/`expansionShape`/`ShapeOf`) is REPLACED by the
+ONE call-keyed seam: `DefaultTemplateProvider` (src/qualify/template-provider.ts) — a shipped concrete
+base designed for inheritance, carrying the dbt-builtin knowledge that used to be hardcoded in the
+segmenter, with `expansion(TemplateCall) → ResolvedExpansion` as the single engine consult (sync-only,
+per-document instances, miss/prime machinery on the base). Every template marker (sources AND the new
+scalar-slot TemplateExprInfo on column exprs/refs) carries its provider key; qualify skips
+unknown-column on marked refs (the placeholder-leak class), infer answers marked exprs from
+`expansion().value`. The statement/relation slot guard became an ALLOWLIST of body-start slots.
+**Open (step 2 of the same design round):** the SCHEMA seam — SchemaSource→SchemaProvider rename +
+an always-present default collapsing the 24 optional `schema?` params. Blocked on a real design point
+surfaced during implementation: qualify fires unknown-table on ANY `columnsFor` miss (a Schema is a
+CLOSED world), so a naive always-present EMPTY default would false-flag every table — the collapse
+needs an explicit closed/open-world distinction on the provider first.
 
 ## Repo layout (target)
 

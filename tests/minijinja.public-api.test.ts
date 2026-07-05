@@ -8,7 +8,7 @@ import {
 	templateRegions,
 	templateSymbols,
 	templateVariants,
-	CallbackTemplateCatalog,
+	DefaultTemplateProvider,
 	qualify,
 	type TemplatedParseResult,
 	type TagNode,
@@ -17,10 +17,9 @@ import {
 	type TemplateSymbol,
 	type TemplateVariant,
 	type TemplateSourceInfo,
-	type TemplateCatalog,
-	type TemplateRef,
+	type TemplateProvider,
+	type TemplateCall,
 	type ResolvedRelation,
-	type RelationResolver,
 } from "../src/index.js";
 
 describe("jinja public surface (barrel export)", () => {
@@ -69,18 +68,18 @@ describe("jinja public surface (barrel export)", () => {
 		expect(template?.kind).toBe("ref");
 	});
 
-	it("the inc3.1 template-catalog surface is reachable through src/index.ts", () => {
-		// CallbackTemplateCatalog (value) + TemplateCatalog/TemplateRef/ResolvedRelation/RelationResolver
-		// (types) all flow through the barrel. Build a warm catalog through the public surface, resolve a
+	it("the template-provider surface is reachable through src/index.ts", () => {
+		// DefaultTemplateProvider (value) + TemplateProvider/TemplateCall/ResolvedRelation (types) all
+		// flow through the barrel. Subclass the shipped base through the public surface, resolve a
 		// templated ref, and prove qualify fires a real unknown-column against it.
-		const resolver: RelationResolver = {
-			resolveRelation(ref: TemplateRef): ResolvedRelation | undefined {
-				return ref.kind === "ref" && ref.nameParts.join(".") === "orders"
+		class Warm extends DefaultTemplateProvider {
+			override relationOf(call: TemplateCall): ResolvedRelation | undefined {
+				return call.name === "ref" && call.args[0] === "orders"
 					? { nameParts: ["orders"], columns: [{ name: "id" }, { name: "total" }] }
-					: undefined;
-			},
-		};
-		const catalog: TemplateCatalog = new CallbackTemplateCatalog(resolver);
+					: super.relationOf(call);
+			}
+		}
+		const catalog: TemplateProvider = new Warm();
 
 		const good = parseTemplated("SELECT o.total FROM {{ ref('orders') }} o", "databricks");
 		expect(qualify(good.sql.ast, catalog).diagnostics.filter((d) => d.kind === "unknown-column")).toEqual([]);

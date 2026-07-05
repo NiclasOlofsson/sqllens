@@ -905,7 +905,7 @@
 				"text": "{{ ref('a}}b') }}"
 			}
 		],
-		"placeholder": "jjjjjjjjjjjjjjjjj"
+		"placeholder": "SELECT 1         "
 	},
 	"syn:stmt-close-in-string": {
 		"segments": [
@@ -939,7 +939,7 @@
 				"end": 27
 			}
 		],
-		"placeholder": "jjjjjjjjjjjjjjjjjjjj from t"
+		"placeholder": "                     from t"
 	},
 	"syn:comment-with-hash": {
 		"segments": [
@@ -1077,7 +1077,7 @@
 				"text": "{{ ref('x') }}"
 			}
 		],
-		"placeholder": "jjjjjjjjjjjjjj"
+		"placeholder": "SELECT 1      "
 	},
 	"syn:only-text": {
 		"segments": [

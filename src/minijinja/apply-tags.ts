@@ -42,8 +42,10 @@ import type {
 	SetOpExpr,
 	Source,
 	TableSource,
+	TemplateExprInfo,
 	TemplateSourceInfo,
 } from "../ir/ir.js";
+import type { TemplateCall } from "../qualify/template-provider.js";
 import type { MacroCall, TagNode } from "./tag-ast.js";
 
 /** The tag kinds that produce a template attachment (a FROM-slot relation). `var`/`env_var`/`other`
@@ -54,8 +56,12 @@ type ExprTag = Extract<TagNode, { kind: "var" | "env_var" | "config" | "other" }
 type RelationTag = Extract<TagNode, { kind: "ref" | "source" | "macro" }> | ExprTag;
 type ControlTag = Extract<TagNode, { kind: "control" }>;
 
-/** What a template-local variable is known to hold: a literal ref or source target. */
-type SetResolution = { kind: "ref"; name: string[] } | { kind: "source"; name: string[] };
+/** What a template-local variable is known to hold: a literal ref/source target (name resolvable),
+ *  or any other single-call RHS (identity known, relation up to the provider). */
+type SetResolution =
+	| { kind: "ref"; name: string[]; call: TemplateCall }
+	| { kind: "source"; name: string[]; call: TemplateCall }
+	| { kind: "macro"; call: TemplateCall };
 
 /** Everything transformTableSource needs, threaded once. */
 interface TagContext {
@@ -86,10 +92,86 @@ export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string)
 		if (relTags.length === 0) return ast;
 		const ctx: TagContext = { relTags, sets: resolveSets(tags, text), text };
 		const next = transformQuery(ast, ctx);
-		return next === ast ? ast : freezeIR(next);
+		// Scalar-slot marking: every column-shaped node whose token is a tag's placeholder
+		// fill gets a `template` marker (span + provider key), so inference resolves it
+		// through the provider and qualify never checks the placeholder as a real column.
+		const marked = markTemplateExprs(next, ctx) as QueryExpr;
+		return marked === ast ? ast : freezeIR(marked);
 	} catch {
 		return ast;
 	}
+}
+
+/** The TemplateExprInfo for a scalar-slot tag: its span + (when an identity is extractable)
+ *  its provider key — ref/source from their literal names, macro from its call fields,
+ *  var/env_var lexically, a bare set-bound variable from its RHS call. */
+function exprInfoOf(tag: RelationTag, ctx: TagContext): TemplateExprInfo {
+	if (tag.kind === "ref") return { span: tag.tagSpan, call: { name: "ref", args: [tag.model] } };
+	if (tag.kind === "source") {
+		return { span: tag.tagSpan, call: { name: "source", args: [tag.sourceName, tag.tableName] } };
+	}
+	if (tag.kind === "macro") return { span: tag.tagSpan, call: callOf(tag, ctx.text) };
+	if (tag.kind === "var" || tag.kind === "env_var") {
+		const m = VALUE_CALL_TAG.exec(sliceSpan(ctx.text, tag.tagSpan));
+		if (m) {
+			const args: (string | null)[] = [m[3]];
+			if (m[4] !== undefined) args.push(null); // further args present but not extracted — computed
+			return { span: tag.tagSpan, call: { name: m[1], args } };
+		}
+		return { span: tag.tagSpan };
+	}
+	const ident = bareIdentOf(tag, ctx.text);
+	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
+	if (resolved) return { span: tag.tagSpan, call: resolved.call };
+	return { span: tag.tagSpan };
+}
+
+/** `{{ var('x') }}` / `{{ env_var('Y', …) }}` — the name + first literal arg, lexically. */
+const VALUE_CALL_TAG = /^\{\{-?\s*(var|env_var)\s*\(\s*(['"])([^'"\\]*)\2\s*(,[\s\S]*?)?\)\s*(?:\|[\s\S]*)?-?\}\}$/;
+
+/**
+ * Rebuild (with structural sharing) marking every column-shaped node — a column Expr
+ * (`kind: "column"`) or a scope ColumnRef record (`parts` + `clause`, no `kind`) — whose
+ * first token sits inside a tag span. The walk is generic over plain objects/arrays,
+ * never descends through the foreign antlr back-refs (`cst`/`aliasCst` keys), and
+ * returns the SAME reference on unchanged subtrees. Total under the caller's try/catch.
+ */
+function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
+	if (Array.isArray(node)) {
+		let changed = false;
+		const out = node.map((v) => {
+			const nv = markTemplateExprs(v, ctx);
+			if (nv !== v) changed = true;
+			return nv;
+		});
+		return changed ? out : node;
+	}
+	if (node === null || typeof node !== "object") return node;
+	const rec = node as Record<string, unknown>;
+
+	const isColumnExpr = rec.kind === "column";
+	const isColumnRef = rec.kind === undefined && Array.isArray(rec.parts) && "clause" in rec;
+	if ((isColumnExpr || isColumnRef) && rec.template === undefined) {
+		const start = (rec.cst as { start?: { start: number } } | undefined)?.start?.start;
+		if (start !== undefined) {
+			const tag = containingTag(ctx.relTags, start);
+			if (tag) return { ...rec, template: exprInfoOf(tag, ctx) };
+		}
+	}
+
+	let changed = false;
+	const out: Record<string, unknown> = {};
+	for (const k of Object.keys(rec)) {
+		const v = rec[k];
+		if (k === "cst" || k === "aliasCst") {
+			out[k] = v;
+			continue;
+		}
+		const nv = markTemplateExprs(v, ctx);
+		out[k] = nv;
+		if (nv !== v) changed = true;
+	}
+	return changed ? out : node;
 }
 
 // ---------------------------------------------------------------------------
@@ -125,34 +207,68 @@ function literalArg(text: string, call: MacroCall, i: number): string | undefine
 	return m ? m[2] : undefined;
 }
 
+/** A kwarg's raw text split: `name = rest`, with `rest`'s literal (or null when computed). */
+const KWARG_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)([\s\S]*)$/;
+
+/**
+ * The provider key of a tag-AST MacroCall — name + package + literal args, with kwargs
+ * carried separately (the channel-agreed TemplateCall contract: quote-stripped, escapes
+ * NOT resolved, computed arguments null, kwargs never dropped).
+ */
+function callOf(mc: MacroCall, text: string): TemplateCall {
+	const args: (string | null)[] = [];
+	const kwargs: { name: string; value: string | null }[] = [];
+	for (const arg of mc.args) {
+		const raw = sliceSpan(text, arg.span).trim();
+		const kw = KWARG_RE.exec(raw);
+		if (kw) {
+			const m = LITERAL_ARG.exec(kw[2].trim());
+			kwargs.push({ name: kw[1], value: m ? m[2] : null });
+		} else {
+			const m = LITERAL_ARG.exec(raw);
+			args.push(m ? m[2] : null);
+		}
+	}
+	return {
+		name: mc.name,
+		...(mc.packageName !== undefined ? { packageParts: mc.packageName.split(".") } : {}),
+		args,
+		...(kwargs.length ? { kwargs } : {}),
+	};
+}
+
 /**
  * The RHS of a `{% set name = … %}` control tag as a SetResolution, or undefined.
- * Requires the tag's call list to be exactly one ref/source call whose args are all
- * direct string literals, AND that call to be the ENTIRE RHS: the text between the
- * declared name and the call is exactly `=`, and the text after the call runs
- * straight to the tag close (whitespace + optional `-%}`). `ref('a') ~ '_x'` or
- * `ref('a').identifier` therefore do not resolve.
+ * Requires the tag's call list to be exactly one call that IS the ENTIRE RHS: the
+ * text between the declared name and the call is exactly `=`, and the text after
+ * the call runs straight to the tag close (whitespace + optional `-%}`).
+ * `ref('a') ~ '_x'` or `ref('a').identifier` therefore do not resolve. A literal
+ * ref/source RHS resolves with its NAME (scope binds the real model); any other
+ * single-call RHS resolves as a macro identity (the provider may know its relation).
  */
 function setResolution(tag: ControlTag, text: string): SetResolution | undefined {
 	if (tag.calls.length !== 1 || !tag.nameSpan) return undefined;
 	const call = tag.calls[0];
-	if (call.packageName !== undefined || !call.argsSpan) return undefined;
+	if (!call.argsSpan) return undefined;
 
-	const callStart = call.nameSpan.start;
+	const callStart = call.packageSpan?.start ?? call.nameSpan.start;
 	const callEnd = call.argsSpan.end;
 	if (!/^\s*=\s*$/.test(text.slice(tag.nameSpan.end, callStart))) return undefined;
 	if (!/^\s*-?%\}$/.test(text.slice(callEnd, tag.tagSpan.end))) return undefined;
 
-	if (call.name === "ref" && call.args.length === 1) {
+	const tCall = callOf(call, text);
+	if (call.packageName === undefined && call.name === "ref" && call.args.length === 1) {
 		const model = literalArg(text, call, 0);
-		return model !== undefined ? { kind: "ref", name: [model] } : undefined;
+		return model !== undefined ? { kind: "ref", name: [model], call: tCall } : undefined;
 	}
-	if (call.name === "source" && call.args.length === 2) {
+	if (call.packageName === undefined && call.name === "source" && call.args.length === 2) {
 		const src = literalArg(text, call, 0);
 		const tbl = literalArg(text, call, 1);
-		return src !== undefined && tbl !== undefined ? { kind: "source", name: [src, tbl] } : undefined;
+		return src !== undefined && tbl !== undefined
+			? { kind: "source", name: [src, tbl], call: tCall }
+			: undefined;
 	}
-	return undefined;
+	return { kind: "macro", call: tCall };
 }
 
 /** The template-wide map of resolvable set variables (empty when any guard trips globally). */
@@ -349,30 +465,51 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 
 	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR
 	// therefore also freezes the TagNode.tagSpan object returned in `.tags` — benign,
-	// since spans are read-only.
+	// since spans are read-only. Every marker with a resolvable identity carries its
+	// `call` — the provider key the semantic layer consults (relation-columns.ts).
 	if (tag.kind === "ref") {
-		const template: TemplateSourceInfo = { kind: "ref", span: tag.tagSpan };
+		const call: TemplateCall = { name: "ref", args: [tag.model] };
+		const template: TemplateSourceInfo = { kind: "ref", span: tag.tagSpan, call };
 		return { ...base, name: [tag.model], template };
 	}
 	if (tag.kind === "source") {
-		const template: TemplateSourceInfo = { kind: "source", span: tag.tagSpan };
+		const call: TemplateCall = { name: "source", args: [tag.sourceName, tag.tableName] };
+		const template: TemplateSourceInfo = { kind: "source", span: tag.tagSpan, call };
 		return { ...base, name: [tag.sourceName, tag.tableName], template };
 	}
 	if (tag.kind === "macro") {
-		// macro in a FROM slot: keep the placeholder name (honest), mark opaque.
-		const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, opaque: true };
+		// A macro in a FROM slot keeps the placeholder name (never fabricated) but is no
+		// longer a dead end: its `call` lets a provider resolve the relation it produces
+		// (a TVF-like macro). Without a provider answer it behaves exactly like the old
+		// opaque marker (exemption, no diagnostics).
+		const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, call: callOf(tag, ctx.text) };
 		return { ...base, template };
 	}
 
 	// Non-call expression tag (var / env_var / other) in a FROM slot. A bare `{{ t }}`
-	// resolving through a literal `{% set t = ref(…) %}` binds the real model (indirect);
-	// everything else gets the opaque "expr" marker — either way the placeholder name
-	// stops posing as a real table to qualify/hover.
+	// resolving through a `{% set t = … %}` single-call RHS binds the real model
+	// (ref/source) or carries the call identity (macro); everything else gets the opaque
+	// "expr" marker — either way the placeholder name stops posing as a real table.
 	const ident = tag.kind === "other" ? bareIdentOf(tag, ctx.text) : undefined;
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
-	if (resolved) {
-		const template: TemplateSourceInfo = { kind: resolved.kind, span: tag.tagSpan, indirect: true };
+	if (resolved && resolved.kind !== "macro") {
+		const template: TemplateSourceInfo = {
+			kind: resolved.kind,
+			span: tag.tagSpan,
+			indirect: true,
+			call: resolved.call,
+		};
 		return { ...base, name: [...resolved.name], template };
+	}
+	if (resolved) {
+		// set-var bound to a non-ref/source call: macro semantics at the use site.
+		const template: TemplateSourceInfo = {
+			kind: "macro",
+			span: tag.tagSpan,
+			indirect: true,
+			call: resolved.call,
+		};
+		return { ...base, template };
 	}
 	const template: TemplateSourceInfo = { kind: "expr", span: tag.tagSpan, opaque: true };
 	return { ...base, template };

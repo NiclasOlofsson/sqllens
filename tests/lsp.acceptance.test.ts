@@ -50,9 +50,8 @@ import { startServer } from "../src/lsp/server.js";
 import {
 	SqlDocument,
 	CallbackSchema,
-	CallbackTemplateCatalog,
+	DefaultTemplateProvider,
 	type TableResolver,
-	type RelationResolver,
 } from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
@@ -1055,10 +1054,19 @@ describe("LSP lazy catalog drives CallbackTemplateCatalog.prime() (inc3.1)", () 
 				}
 			},
 		};
-		// No templated refs reach the LSP yet, so the relation side just never resolves; the catalog is
-		// exercised through its inherited physical-table columnsFor (the TableResolver side).
-		const relationResolver: RelationResolver = { resolveRelation: () => undefined };
-		const schema = new CallbackTemplateCatalog(relationResolver, tableResolver);
+		// No templated refs reach the LSP yet, so the relation side just never resolves; the provider
+		// is exercised through its physical-table columnsFor side (the TableResolver-backed override).
+		class LspProvider extends DefaultTemplateProvider {
+			override columnsFor(parts: string[]): { name: string; type?: string }[] | undefined {
+				const cols = tableResolver.resolve(parts);
+				if (cols === undefined) this.recordTableMiss(parts);
+				return cols;
+			}
+			protected override fetchTables(missing: string[][]): Promise<void> {
+				return tableResolver.fetch!(missing);
+			}
+		}
+		const schema = new LspProvider();
 
 		const up = new TestStream();
 		const down = new TestStream();

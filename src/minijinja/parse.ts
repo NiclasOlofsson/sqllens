@@ -54,7 +54,8 @@ import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
 import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
-import { segment, type Segment, type ShapeOf } from "./segment.js";
+import { DefaultTemplateProvider, type TemplateProvider } from "../qualify/template-provider.js";
+import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
 /**
@@ -73,17 +74,15 @@ export type { TagNode, MacroCall } from "./tag-ast.js";
 // Re-export the R4 region / symbol shapes (Task 3) so the barrel re-exports them here.
 export type { TemplateRegion, TemplateArm, TemplateSymbol } from "./regions.js";
 export { templateRegions, templateSymbols } from "./regions.js";
-// Re-export the inc3.2 shaped-placeholder callback type so the barrel carries it (the LSP/caller binds
-// `catalog.expansionShape` into it).
-export type { ShapeOf } from "./segment.js";
-
 /**
- * Options for `parseTemplated` (inc3.2, all optional — the 2-arg call is unchanged and byte-identical).
- * `shapeOf` supplies a per-macro-call syntactic slot so an unknown callable at statement/CTE/predicate
- * position gets a shape-valid (length-/newline-preserving) placeholder instead of the identifier fill.
+ * Options for `parseTemplated` (all optional — the 2-arg call runs on the shipped default provider).
+ * `provider` is the ONE resolution seam for every template expression (the catalog-unification
+ * redesign): a `DefaultTemplateProvider` subclass whose overrides answer what your host knows —
+ * shapes for the fill, relations/values for the semantic layer. Pass the SAME per-document instance
+ * you hand to qualify/analyze so both layers share one warm cache.
  */
 export interface TemplatedParseOptions {
-	shapeOf?: ShapeOf;
+	provider?: TemplateProvider;
 }
 
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
@@ -281,8 +280,8 @@ function scrubPlaceholderDiagnostics(
 }
 
 /** The core build — total by construction (every composed piece is total). */
-function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedParseResult {
-	const { segments, placeholder, tagTokens } = segment(text, shapeOf);
+function build(text: string, dialect: Dialect, provider: TemplateProvider): TemplatedParseResult {
+	const { segments, placeholder, tagTokens } = segment(text, provider);
 
 	// Step 3: lex the placeholder with the UNTOUCHED per-dialect SQL entry. Its
 	// tokens are already in original document coordinates (length preservation).
@@ -355,7 +354,7 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
  */
 export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult {
 	try {
-		return build(text, dialect, opts?.shapeOf);
+		return build(text, dialect, opts?.provider ?? new DefaultTemplateProvider());
 	} catch {
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.

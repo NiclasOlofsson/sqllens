@@ -290,16 +290,16 @@ function known(r: string[] | "unknown" | undefined): string[] | undefined {
 }
 
 /**
- * Resolve a templated FROM/JOIN source's column NAMES through a TemplateCatalog, or `undefined` for
- * the R3 exemption. inc3.1 upgrades R3's blanket `return undefined` to real resolution WHEN a catalog
- * answers. Never-wrong — `undefined` (exemption, no fabricated column, no diagnostic) for every one of:
- *   - an opaque/macro tag (output relation undeterminable — never asks `relation`);
- *   - a plain SchemaSource with no `relation` (the duck-type `"relation" in schema` fails) — this is
- *     the zero-catalog keystone: without a TemplateCatalog inc3.1 is byte-identical to R3;
- *   - a catalog MISS (`relation` returned undefined — recorded, warms on a later prime());
- *   - a physical-name resolution that itself misses (`columnsFor` undefined).
- * Only a POSITIVE `relation` answer yields names, so the caller's unknown-column path fires against a
- * templated ref solely when the catalog knows the relation and the column is genuinely absent.
+ * Resolve a templated FROM/JOIN source's column NAMES through the TemplateProvider, or `undefined`
+ * for the exemption. Never-wrong — `undefined` (no fabricated column, no diagnostic) for: a marker
+ * with no provider key (the opaque `"expr"` kind), a schema that is not a provider, a provider with
+ * no relation answer (default provider / cold cache — warms on prime()), or a physical-name lookup
+ * that itself misses. Only a POSITIVE relation answer with resolvable columns lets the caller's
+ * unknown-column path fire against a templated source.
+ *
+ * PROVIDER-ONLY on purpose (relationColumns, shared with infer/nullability/resolve): the diagnostic
+ * exemption must not fire merely because a plain Schema happens to declare the dbt-logical name —
+ * the TYPE consumers add that fallback themselves (tableSourceColumns).
  */
 function templateColumns(
 	t: TemplateSourceInfo,
@@ -307,9 +307,6 @@ function templateColumns(
 	schema: SchemaSource,
 	dialect?: string,
 ): string[] | undefined {
-	// CATALOG-ONLY on purpose (relationColumns, shared with infer/nullability/resolve): the
-	// diagnostic exemption must not narrow just because a plain Schema happens to declare the
-	// dbt-logical name — the type consumers add that fallback themselves (tableSourceColumns).
 	return relationColumns(t, name, schema, dialect)?.map((c) => c.name);
 }
 
@@ -325,6 +322,11 @@ function checkColumn(
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): void {
+	// A template tag's placeholder fill is not a user-written column — its meaning lives with the
+	// TemplateProvider (inference), never with unknown-column checking (a `jjj…` diagnostic would
+	// be placeholder leakage, and a provider-typed value is not a column at all).
+	if (ref.template) return;
+
 	// A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias
 	// rather than a column — don't flag it. resolveColumnRef applies the alias + precedence rules.
 	if (resolveColumnRef(scope, ref).kind === "alias") return;

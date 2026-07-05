@@ -1,8 +1,21 @@
 import type { ParserRuleContext } from "antlr4ng";
+// Type-only (erased at runtime — no runtime edge from the IR up into qualify): the provider's
+// call-identity key, carried on template markers so the semantic layer can consult
+// TemplateProvider.expansion() for ANY templated node, source or scalar.
+import type { TemplateCall } from "../qualify/template-provider.js";
 import type { PartSpan } from "./part-span.js";
 import type { StatementCategory } from "./statement.js";
 
 export type { PartSpan } from "./part-span.js";
+
+/** A template tag standing in a scalar/expression slot: the tag's span + (when a call/identifier
+ *  leads it) its provider key. Attached post-lower by the jinja front end; plain SQL never carries it. */
+export interface TemplateExprInfo {
+	/** The whole tag's span ({{ … }} inclusive), document coordinates. */
+	span: PartSpan;
+	/** The provider key, absent for a composed/opaque expression tag. */
+	call?: TemplateCall;
+}
 
 // ---------------------------------------------------------------------------
 // IR — a compact, DIALECT-NEUTRAL semantic model. Each dialect's `lower()` (e.g.
@@ -163,6 +176,9 @@ export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "q
 export interface ColumnRef {
 	/** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
 	parts: string[];
+	/** Present when this ref is a template tag's placeholder fill (see the column Expr's
+	 *  `template`) — qualify skips unknown-column checks on it. Attached post-lower. */
+	template?: TemplateExprInfo;
 	/** Per-part source spans, PARALLEL to `parts` (same length) — each covers that part's own
 	 *  token(s) including any quoting delimiters, excluding the dots. ADDITIVE/optional: present only
 	 *  when every part was read from a real token; absent (all-or-nothing) when any part is synthesized.
@@ -193,6 +209,11 @@ export type Expr =
 			parts: string[];
 			partSpans?: PartSpan[];
 			outerJoinMarker?: true;
+			/** Present when this "column" is really a template tag's placeholder fill in a scalar slot
+			 *  (`select {{ my_macro() }}` / `{{ var('x') }} > 1`) — attached post-lower by the jinja
+			 *  front end (apply-tags), so inference resolves it through the TemplateProvider and
+			 *  qualify never fires unknown-column against a placeholder name. */
+			template?: TemplateExprInfo;
 			cst: ParserRuleContext;
 	  }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
@@ -506,6 +527,10 @@ export interface TemplateSourceInfo {
 	 *  carry the resolved ref/source, but the TagNode at `span` is the USE site (kind "other"), not a
 	 *  ref/source node — consumers correlating span→TagNode must not expect a ref node here. */
 	indirect?: true;
+	/** The provider key for this source's tag (ref/source/macro calls, and resolved set-indirection):
+	 *  the semantic layer resolves the source through `TemplateProvider.expansion(call)`. Absent only
+	 *  on the opaque `"expr"` kind (no call to ask about). */
+	call?: TemplateCall;
 }
 
 export interface TableSource {

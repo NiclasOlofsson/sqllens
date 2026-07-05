@@ -8,16 +8,15 @@ import {
 	deriveSymbols,
 	qualify,
 	Schema,
-	CallbackTemplateCatalog,
+	DefaultTemplateProvider,
 	type Scope,
 	type QueryExpr,
 	type QueryBody,
 	type Source,
 	type TableSource,
 	type Column,
-	type RelationResolver,
 	type ResolvedRelation,
-	type TemplateRef,
+	type TemplateCall,
 } from "../../src/index.js";
 import type { Dialect } from "../../src/api.js";
 
@@ -241,15 +240,17 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 //     with a plain Schema is the keystone that inc3.1 is invisible without a catalog.
 // ---------------------------------------------------------------------------
 
-/** A resolver over a fixed map of `"<kind>:<dotted-folded-name>" → columns` (undefined = miss). */
-function catalogFor(relations: Record<string, Column[]>): CallbackTemplateCatalog {
-	const resolver: RelationResolver = {
-		resolveRelation(ref: TemplateRef): ResolvedRelation | undefined {
-			const cols = relations[`${ref.kind}:${ref.nameParts.join(".")}`];
-			return cols ? { nameParts: ref.nameParts, columns: cols } : undefined;
-		},
-	};
-	return new CallbackTemplateCatalog(resolver);
+/** A provider over a fixed map of `"<name>:<dotted-args>" → columns` (undefined = miss). */
+function catalogFor(relations: Record<string, Column[]>): DefaultTemplateProvider {
+	class Fixed extends DefaultTemplateProvider {
+		override relationOf(call: TemplateCall): ResolvedRelation | undefined {
+			if (call.name !== "ref" && call.name !== "source") return super.relationOf(call);
+			const parts = call.args.filter((a): a is string => a !== null);
+			const cols = relations[`${call.name}:${parts.join(".")}`];
+			return cols ? { nameParts: parts, columns: cols } : undefined;
+		}
+	}
+	return new Fixed();
 }
 
 const unknownColumns = (q: { diagnostics: { kind: string; message: string }[] }) =>

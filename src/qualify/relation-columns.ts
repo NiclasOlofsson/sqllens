@@ -1,34 +1,49 @@
 // ---------------------------------------------------------------------------
-// Template-aware TYPED column resolution for a table source — the inc3.2
-// remainder: thread a TemplateCatalog's `relation` columns (name + type +
-// nullable) to every consumer that types or binds a table source's columns
-// (infer / nullability / sema-resolve), not just qualify's name checks.
+// Template-aware TYPED column resolution for a table source — the semantic half
+// of the provider seam: a templated source's marker carries its provider key
+// (`TemplateSourceInfo.call`), and everything that types or binds its columns
+// (qualify / infer / nullability / sema-resolve) resolves through ONE
+// `TemplateProvider.expansion(call)` consult here.
 //
-// A leaf module: imports only the schema/catalog types, so `src/infer` and
-// `src/sema` can use it without a runtime cycle through qualify.ts (qualify
+// A leaf module: imports only the schema/provider types, so `src/infer` and
+// `src/sema` use it without a runtime cycle through qualify.ts (qualify
 // imports inferType).
 //
 // Two layers, different fallback semantics on purpose:
-//   - `relationColumns` — CATALOG-ONLY: undefined for an opaque tag, a plain
-//     SchemaSource, or a catalog miss. qualify's diagnostic exemption is built
-//     on this (unknown-column fires only on a POSITIVE catalog answer).
-//   - `tableSourceColumns` — catalog first, then the plain `columnsFor(name)`
+//   - `relationColumns` — PROVIDER-ONLY: undefined for a marker with no call,
+//     a schema that is not a provider, or a provider with no relation answer.
+//     qualify's diagnostic exemption is built on this (unknown-column fires
+//     only on a POSITIVE relation answer that yields columns).
+//   - `tableSourceColumns` — provider first, then the plain `columnsFor(name)`
 //     lookup the type consumers have always done. The fallback keeps a Schema
-//     keyed by dbt-LOGICAL names working for types (the pre-inc3.2 behavior of
-//     infer/resolve, unchanged), while the catalog path adds real warehouse
-//     types for `{{ ref('x') }}.col` hover/inference.
+//     keyed by dbt-LOGICAL names working for types, while the provider path
+//     adds real warehouse types for `{{ ref('x') }}.col` hover/inference.
 // ---------------------------------------------------------------------------
 
 import type { TemplateSourceInfo } from "../ir/ir.js";
 import type { Column } from "./schema.js";
 import type { SchemaSource } from "./schema-source.js";
-import type { TemplateCatalog } from "./template-catalog.js";
+import type { TemplateCall, TemplateProvider } from "./template-provider.js";
+
+/** The schema as a TemplateProvider when it is one (structural — the shipped base or a subclass). */
+function asProvider(schema: SchemaSource): TemplateProvider | undefined {
+	return schema && "expansion" in schema ? (schema as TemplateProvider) : undefined;
+}
+
+/** The provider key of a template SOURCE marker — the carried call, reconstructed for markers
+ *  written before `call` existed (ref/source markers always know their literal names). */
+function sourceCall(t: TemplateSourceInfo, name: string[]): TemplateCall | undefined {
+	if (t.call) return t.call;
+	if (t.kind === "ref" && name.length >= 1) return { name: "ref", args: [name[name.length - 1]] };
+	if (t.kind === "source" && name.length === 2) return { name: "source", args: [name[0], name[1]] };
+	return undefined; // opaque expr marker — nothing to ask about
+}
 
 /**
- * Resolve a templated source's TYPED columns through a TemplateCatalog, or undefined
- * for the R3 exemption (opaque/macro/expr tag, plain SchemaSource, catalog miss).
- * `columns: []` is a genuinely EMPTY relation; `columns: undefined` on a resolved
- * relation falls through to the physical-name resolver (the not-loaded sentinel).
+ * Resolve a templated source's TYPED columns through the provider, or undefined for the
+ * exemption (no call, no provider, no relation answer). A relation answer WITHOUT columns
+ * (`columns: undefined` — the not-loaded sentinel) resolves through the physical-name
+ * lookup; `columns: []` is a genuinely EMPTY relation.
  */
 export function relationColumns(
 	t: TemplateSourceInfo,
@@ -36,19 +51,20 @@ export function relationColumns(
 	schema: SchemaSource,
 	dialect?: string,
 ): Column[] | undefined {
-	if (t.opaque || t.kind === "macro" || t.kind === "expr" || !schema || !("relation" in schema)) return undefined;
-	const resolved = (schema as TemplateCatalog).relation({ kind: t.kind, nameParts: name }, dialect);
-	if (!resolved) return undefined; // catalog miss → exemption (warms on a later prime())
-	if (resolved.columns) return resolved.columns;
-	return schema.columnsFor(resolved.nameParts, dialect);
+	const provider = asProvider(schema);
+	const call = sourceCall(t, name);
+	if (!provider || !call) return undefined;
+	const rel = provider.expansion(call)?.relation;
+	if (!rel) return undefined; // no/cold answer → exemption (warms on a later prime())
+	if (rel.columns) return rel.columns;
+	return schema.columnsFor(rel.nameParts, dialect);
 }
 
 /**
- * TYPED columns of a table source, template-aware: a templated source resolves
- * through the catalog first (real warehouse columns); a catalog miss — or no
- * catalog — falls back to the plain `columnsFor(name)` lookup (which for a
- * templated source carries the dbt-logical name, so a Schema declaring model
- * names keeps answering exactly as before).
+ * TYPED columns of a table source, template-aware: a templated source resolves through
+ * the provider first (real warehouse columns); no answer — or no provider — falls back
+ * to the plain `columnsFor(name)` lookup (which for a templated source carries the
+ * dbt-logical name, so a Schema declaring model names keeps answering as before).
  */
 export function tableSourceColumns(
 	name: string[],
@@ -57,8 +73,8 @@ export function tableSourceColumns(
 	dialect?: string,
 ): Column[] | undefined {
 	if (template) {
-		const fromCatalog = relationColumns(template, name, schema, dialect);
-		if (fromCatalog) return fromCatalog;
+		const fromProvider = relationColumns(template, name, schema, dialect);
+		if (fromProvider) return fromProvider;
 	}
 	return schema.columnsFor(name, dialect);
 }

@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { DefaultTemplateProvider, parseTemplated, type TemplateCall } from "../src/index.js";
 import type { Dialect } from "../src/api.js";
 import type { ExpansionShape } from "../src/index.js";
+import { shaped } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
 // inc3.2 — `expansionShape`: shaped, length- AND newline-preserving placeholders
@@ -25,21 +26,12 @@ const DIALECT: Dialect = "databricks";
  *  tokens plus the tag regions. We assert the invariant directly on the tokens the SQL parse saw:
  *  the merged stream tiles the source, so the joined token texts equal the ORIGINAL text; the placeholder
  *  invariant (length + newline) is proven via the tag regions carrying the same char count as the source. */
-function placeholderLength(
-	text: string,
-	shapeOf?: (c: { name: string; parts?: string[] }) => ExpansionShape | undefined,
-): number {
+function placeholderLength(text: string, shape?: ExpansionShape): number {
 	// The merged token stream always reconstructs the original text (tiling). To observe the placeholder
 	// itself we count via the invariant: length is preserved iff the stream tiles to text.length.
-	const { tokens } = parseTemplated(text, DIALECT, shapeOf ? { shapeOf } : undefined);
+	const { tokens } = parseTemplated(text, DIALECT, shape ? shaped(shape) : undefined);
 	return tokens.reduce((n, t) => n + t.text.length, 0);
 }
-
-/** All shapeOf calls always answering `shape`. */
-const always =
-	(shape: ExpansionShape) =>
-	(_c: { name: string; parts?: string[] }): ExpansionShape =>
-		shape;
 
 describe("inc3.2 expansionShape — cascade-death (unknown callable at statement position)", () => {
 	it("(a) a standalone `{{ m() }}` statement parses with 0 errors — shaped AND unshaped", () => {
@@ -50,7 +42,7 @@ describe("inc3.2 expansionShape — cascade-death (unknown callable at statement
 		const before = parseTemplated(text, DIALECT); // no catalog
 		expect(before.sql.errors, "statement-slot blank default").toBe(0);
 
-		const after = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const after = parseTemplated(text, DIALECT, shaped("statement"));
 		expect(after.sql.errors, "shaped fill makes the statement valid").toBe(0);
 	});
 
@@ -59,13 +51,13 @@ describe("inc3.2 expansionShape — cascade-death (unknown callable at statement
 		const before = parseTemplated(text, DIALECT);
 		expect(before.sql.errors, "no-catalog fill leaves an invalid CTE body").toBeGreaterThan(0);
 
-		const after = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const after = parseTemplated(text, DIALECT, shaped("statement"));
 		expect(after.sql.errors).toBe(0);
 	});
 
 	it("(b') the same CTE-body case parses with shapeOf→relation too (SELECT 1 fits both slots)", () => {
 		const text = "with c as ({{ my_macro() }}) select 1";
-		const after = parseTemplated(text, DIALECT, { shapeOf: always("relation") });
+		const after = parseTemplated(text, DIALECT, shaped("relation"));
 		expect(after.sql.errors).toBe(0);
 	});
 
@@ -73,7 +65,7 @@ describe("inc3.2 expansionShape — cascade-death (unknown callable at statement
 		const text = "with cte as ({{ macro_a() }})\n{{ macro_b() }}";
 		const before = parseTemplated(text, DIALECT);
 		expect(before.sql.errors).toBeGreaterThan(0);
-		const after = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const after = parseTemplated(text, DIALECT, shaped("statement"));
 		expect(after.sql.errors).toBe(0);
 	});
 });
@@ -86,38 +78,38 @@ describe("inc3.2 expansionShape — the slot guard (statement/relation never bre
 
 	it("the anvil WHERE-slot repro: shapeOf→statement in a predicate slot falls back and parses (was `extraneous input 'SELECT'`)", () => {
 		const text = "select 1 from t where {{ my_macro() }}";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const r = parseTemplated(text, DIALECT, shaped("statement"));
 		expect(r.sql.errors).toBe(0); // identifier fill: `where jjjj…` parses as a boolean column
 	});
 
 	it("bare FROM slot: shapeOf→relation falls back to the identifier fill (was `FROM SELECT 1`)", () => {
 		const text = "select * from {{ my_macro() }}";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("relation") });
+		const r = parseTemplated(text, DIALECT, shaped("relation"));
 		expect(r.sql.errors).toBe(0); // `from jjjj…` parses as a table name
 	});
 
 	it("bare JOIN slot: shapeOf→relation falls back and parses", () => {
 		const text = "select * from a join {{ my_macro() }} on a.id = 1";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("relation") });
+		const r = parseTemplated(text, DIALECT, shaped("relation"));
 		expect(r.sql.errors).toBe(0);
 	});
 
 	it("list-comma slot: shapeOf→statement falls back and parses", () => {
 		const text = "select a, {{ my_macro() }} from t";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const r = parseTemplated(text, DIALECT, shaped("statement"));
 		expect(r.sql.errors).toBe(0);
 	});
 
 	it("a blanked no-output tag before the slot keyword does not hide it (config → whitespace, WHERE still seen)", () => {
 		const text = "select 1 from t where {{ config(x=1) }} {{ my_macro() }}";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const r = parseTemplated(text, DIALECT, shaped("statement"));
 		// config blanks to whitespace; the scan skips it and still sees WHERE → identifier fallback.
 		expect(r.sql.errors).toBe(0);
 	});
 
 	it("the guard does NOT touch predicate shapes: shapeOf→predicate in WHERE still shapes to 1=1", () => {
 		const text = "select 1 from t where {{ my_macro() }}";
-		const r = parseTemplated(text, DIALECT, { shapeOf: always("predicate") });
+		const r = parseTemplated(text, DIALECT, shaped("predicate"));
 		expect(r.sql.errors).toBe(0);
 	});
 
@@ -128,7 +120,7 @@ describe("inc3.2 expansionShape — the slot guard (statement/relation never bre
 			"with c as ({{ my_macro() }}) select 1",
 			"with cte as (select 1)\n{{ my_macro() }}",
 		]) {
-			const r = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+			const r = parseTemplated(text, DIALECT, shaped("statement"));
 			expect(r.sql.errors, text).toBe(0);
 		}
 	});
@@ -137,13 +129,13 @@ describe("inc3.2 expansionShape — the slot guard (statement/relation never bre
 describe("inc3.2 expansionShape — the length + newline invariant", () => {
 	it("a shaped fill preserves total length (statement position)", () => {
 		const text = "with c as ({{ my_macro() }}) select 1";
-		expect(placeholderLength(text, always("statement"))).toBe(text.length);
+		expect(placeholderLength(text, "statement")).toBe(text.length);
 	});
 
 	it("newlines inside a shaped tag survive at their exact offsets", () => {
 		// The `\n` sits AFTER where SELECT 1 lands, so the tag is shaped and the newline is preserved.
 		const text = "{{ my_macro() }}\nselect 1";
-		const { tokens } = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const { tokens } = parseTemplated(text, DIALECT, shaped("statement"));
 		// Tiling + exact reconstruction proves every char (incl. the newline) is at its original offset.
 		expect(tokens.map((t) => t.text).join("")).toBe(text);
 		// And the whole thing is a valid two-statement-ish parse (the newline separated the fragment
@@ -156,21 +148,21 @@ describe("inc3.2 expansionShape — the fit guard (never a regression)", () => {
 	it("a tag too short for the fragment falls back to the identifier fill (no crash, length preserved)", () => {
 		// `{{a()}}` is 7 chars; `SELECT 1` is 8 → does not fit → identifier fill, exactly as today.
 		const text = "{{a()}}";
-		const shaped = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const forced = parseTemplated(text, DIALECT, shaped("statement"));
 		const plain = parseTemplated(text, DIALECT);
 		// Byte-identical to the no-catalog run: the fit guard fell back to the positional fill.
-		expect(shaped.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`)).toEqual(
+		expect(forced.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`)).toEqual(
 			plain.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`),
 		);
-		expect(shaped.tokens.reduce((n, t) => n + t.text.length, 0)).toBe(text.length);
+		expect(forced.tokens.reduce((n, t) => n + t.text.length, 0)).toBe(text.length);
 	});
 
 	it("a newline where the fragment would go forces fallback (never a broken fill)", () => {
 		// The `\n` at offset 3 lands inside the 8-char `SELECT 1` placement window → fall back.
 		const text = "{{\nmacro_a() }}";
-		const shaped = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
+		const forced = parseTemplated(text, DIALECT, shaped("statement"));
 		const plain = parseTemplated(text, DIALECT);
-		expect(shaped.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`)).toEqual(
+		expect(forced.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`)).toEqual(
 			plain.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`),
 		);
 	});
@@ -194,7 +186,7 @@ describe("inc3.2 expansionShape — zero-catalog byte-identity (the keystone)", 
 			// An opts object with NO shapeOf must also be identical.
 			const withEmptyOpts = parseTemplated(text, DIALECT, {});
 			// A shapeOf that always returns undefined must also be identical (undefined = fall back).
-			const withUndefShape = parseTemplated(text, DIALECT, { shapeOf: () => undefined });
+			const withUndefShape = parseTemplated(text, DIALECT, { provider: new DefaultTemplateProvider() });
 
 			const key = (r: ReturnType<typeof parseTemplated>) =>
 				r.tokens.map((t) => `${t.text}:${t.start}-${t.stop}:${t.channel}`).join("|");
@@ -208,35 +200,57 @@ describe("inc3.2 expansionShape — zero-catalog byte-identity (the keystone)", 
 	});
 });
 
-describe("inc3.2 expansionShape — only macro-call tags consult shapeOf", () => {
-	it("a ref/source/var tag is never shaped even under an aggressive shapeOf", () => {
-		// These already parse with the identifier fill; a shape must not touch them (a buggy catalog
-		// returning `statement` for `ref` must not break `from {{ ref('x') }}`).
+describe("provider-seam contract — builtins under a shape-forcing provider", () => {
+	it("FROM-slot ref/source stay byte-identical under a forced statement shape (the SLOT GUARD protects them)", () => {
+		// Under the provider contract an EXPLICIT shape wins — the old SHAPE_EXCLUDED name list is
+		// gone. What protects `from {{ ref('x') }}` from a buggy forced shape is the positional slot
+		// guard (engine-side, non-overridable), and these pin exactly that.
+		for (const text of [
+			"select * from {{ ref('orders') }}",
+			"select * from {{ source('raw', 'events') }}",
+		]) {
+			const forced = parseTemplated(text, DIALECT, shaped("statement"));
+			const plain = parseTemplated(text, DIALECT);
+			expect(
+				forced.tokens.map((t) => `${t.text}:${t.start}-${t.stop}`),
+				text,
+			).toEqual(plain.tokens.map((t) => `${t.text}:${t.start}-${t.stop}`));
+			expect(forced.sql.errors, text).toBe(plain.sql.errors);
+		}
+	});
+
+	it("with NO forced shape, the default provider's builtin knowledge keeps ref/source/var on the identifier fill in value/relation slots", () => {
 		for (const text of [
 			"select * from {{ ref('orders') }}",
 			"select * from {{ source('raw', 'events') }}",
 			"select {{ var('x') }} from t",
 		]) {
-			const shaped = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
-			const plain = parseTemplated(text, DIALECT);
-			expect(
-				shaped.tokens.map((t) => `${t.text}:${t.start}-${t.stop}`),
-				text,
-			).toEqual(plain.tokens.map((t) => `${t.text}:${t.start}-${t.stop}`));
-			expect(shaped.sql.errors, text).toBe(plain.sql.errors);
+			const r = parseTemplated(text, DIALECT);
+			expect(r.sql.errors, text).toBe(0);
+			expect(r.placeholder, text).toMatch(/j/);
 		}
 	});
 
-	it("the shapeOf callback receives the macro name (+ package parts)", () => {
-		const seen: { name: string; parts?: string[] }[] = [];
-		parseTemplated("select {{ dbt_utils.star() }} from t", DIALECT, {
-			shapeOf: (c) => {
-				seen.push(c);
+	it("the provider receives the full lexical call — name, packageParts, literal args, kwargs", () => {
+		const seen: TemplateCall[] = [];
+		class Spy extends DefaultTemplateProvider {
+			override shapeOf(call: TemplateCall): undefined {
+				seen.push(call);
 				return undefined;
-			},
-		});
-		// dbt_utils.star → name "star", parts ["dbt_utils","star"].
-		expect(seen.some((c) => c.name === "star" && c.parts?.join(".") === "dbt_utils.star")).toBe(true);
+			}
+		}
+		parseTemplated(
+			"select {{ dbt_utils.star(ref('x'), quote=true) }} from {{ ref(model='orders') }}",
+			DIALECT,
+			{ provider: new Spy() },
+		);
+		const star = seen.find((c) => c.name === "star");
+		expect(star?.packageParts).toEqual(["dbt_utils"]);
+		expect(star?.args).toEqual([null]); // ref('x') is computed → null, never fabricated
+		// Literal extraction is STRING-only (the channel contract): a boolean/number kwarg is computed (null).
+		expect(star?.kwargs).toEqual([{ name: "quote", value: null }]);
+		const ref = seen.find((c) => c.name === "ref");
+		expect(ref?.kwargs).toEqual([{ name: "model", value: "orders" }]);
 	});
 });
 
@@ -248,39 +262,38 @@ describe("inc3.2 expansionShape — only macro-call tags consult shapeOf", () =>
 // identifier fill stays.
 // ---------------------------------------------------------------------------
 describe("conjunct shape", () => {
-	const conjunct = () => "conjunct" as const;
 
 	it("after a complete ON expression: parses clean, fill is AND 1=1", () => {
 		const text = "select * from a join b on a.id = b.id\n  {{ isdel(col) }}\nunion all\nselect * from c";
-		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		const r = parseTemplated(text, "databricks", shaped("conjunct"));
 		expect(r.sql.errors).toBe(0);
 		expect(r.placeholder).toContain("AND 1=1");
 	});
 
 	it("after a complete WHERE expression: parses clean", () => {
 		const text = "select * from t where x = 1 {{ isdel(col) }}";
-		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		const r = parseTemplated(text, "databricks", shaped("conjunct"));
 		expect(r.sql.errors).toBe(0);
 		expect(r.placeholder).toContain("AND 1=1");
 	});
 
 	it("after a closing paren: shaped", () => {
 		const text = "select * from t where (x = 1) {{ isdel() }}";
-		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		const r = parseTemplated(text, "databricks", shaped("conjunct"));
 		expect(r.sql.errors).toBe(0);
 		expect(r.placeholder).toContain("AND 1=1");
 	});
 
 	it("guard: bare WHERE slot falls back to the identifier fill (which parses)", () => {
 		const text = "select * from t where {{ isdel() }}";
-		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		const r = parseTemplated(text, "databricks", shaped("conjunct"));
 		expect(r.sql.errors).toBe(0);
 		expect(r.placeholder).not.toContain("AND 1=1");
 	});
 
 	it("guard: list comma and open paren fall back", () => {
 		for (const text of ["select a, {{ isdel() }} from t", "select * from t where ({{ isdel() }})"]) {
-			const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+			const r = parseTemplated(text, "databricks", shaped("conjunct"));
 			expect(r.sql.errors).toBe(0);
 			expect(r.placeholder).not.toContain("AND 1=1");
 		}
@@ -310,13 +323,17 @@ describe("statement-slot blank default (no shapeOf)", () => {
 
 	it("shapeOf answering undefined gets the same default (the unsure-classifier path)", () => {
 		const text = "{{ my_helper() }}\nselect 1 from t";
-		const r = parseTemplated(text, "databricks", { shapeOf: () => undefined });
+		const r = parseTemplated(text, "databricks", { provider: new DefaultTemplateProvider() });
 		expect(r.sql.errors).toBe(0);
 	});
 
-	it("ref/source at BOF keep the identifier fill (SHAPE_EXCLUDED)", () => {
+	it("ref at BOF: the default provider's relation answer derives a statement-slot SELECT 1 (parses clean)", () => {
+		// Successor of the old SHAPE_EXCLUDED pin: `{{ ref('x') }}` alone used to be a guaranteed
+		// identifier-fill error; the default provider knows ref produces a relation, the derived
+		// shape fills SELECT 1 at the admitted statement slot, and the parse is clean.
 		const r = parseTemplated("{{ ref('x') }}", "databricks");
-		expect(r.placeholder).toMatch(/j/);
+		expect(r.placeholder).toContain("SELECT 1");
+		expect(r.sql.errors).toBe(0);
 	});
 
 	it("a bare non-call tag at BOF keeps the identifier fill (calls only)", () => {

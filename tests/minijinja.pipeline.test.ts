@@ -74,7 +74,7 @@ describe("R3 pipeline — scope/qualify/lineage over templated sources", () => {
 		const tree = toScopes(r.sql.ast);
 		// The macro FROM tag is opaque (name stays the placeholder, template.opaque set).
 		const m = tableSource(tree, "m");
-		expect(m?.source.template?.opaque).toBe(true);
+		expect(m?.source.template?.kind).toBe("macro"); // consultable (call attached), no longer opaque
 		const q = qualify(tree, new Schema({ other: { x: "int" } }));
 		const bad = q.diagnostics.filter((d) => d.kind === "unknown-table" || d.kind === "unknown-column");
 		expect(bad).toEqual([]);
