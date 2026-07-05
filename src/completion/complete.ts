@@ -20,7 +20,7 @@ import { nodeAt } from "../document/node-at.js";
 import { displayName, foldIdentifier } from "../ident/fold.js";
 import { inferDialect } from "../infer/dialect.js";
 import type { QueryExpr } from "../ir/ir.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
 import { COMPLETION_CONFIG, type CompletionConfig } from "./config.js";
@@ -40,7 +40,7 @@ export interface Completion {
  * (table names + column types). NEVER throws: on broken / mid-edit input it still returns the
  * keyword candidates the walk can reach.
  */
-export function complete(doc: SqlDocument, offset: number, schema?: SchemaSource): Completion[] {
+export function complete(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	try {
 		return collect(doc, offset, schema);
 	} catch {
@@ -49,7 +49,7 @@ export function complete(doc: SqlDocument, offset: number, schema?: SchemaSource
 	}
 }
 
-function collect(doc: SqlDocument, offset: number, schema?: SchemaSource): Completion[] {
+function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	const dialect = doc.dialect;
 	const cfg = COMPLETION_CONFIG[dialect];
 
@@ -150,7 +150,7 @@ function intersects(a: Set<number>, b: Set<number>): boolean {
 function fromRelationColumns(
 	m: MadeParser,
 	cfg: CompletionConfig,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	dialect?: string,
 ): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
@@ -178,7 +178,7 @@ function visibleColumns(
 	ast: QueryExpr,
 	dialect: string,
 	offset: number,
-	schema?: SchemaSource,
+	schema?: SchemaProvider,
 ): Completion[] {
 	const scope = enclosingScope(scopes, ast, offset);
 	if (!scope) return [];
@@ -228,7 +228,7 @@ function deepestScopeAt(tree: ScopeTree, offset: number): Scope | undefined {
 /** The completion items for one visible source's columns. Derived sources (CTE / subquery / pipe
  *  relation / lateral) carry their output column names directly; a base table's columns come from
  *  the schema (with types as `detail`). A source whose columns aren't determinable contributes none. */
-function columnsOf(src: ResolvedSource, dialect: string, schema?: SchemaSource): Completion[] {
+function columnsOf(src: ResolvedSource, dialect: string, schema?: SchemaProvider): Completion[] {
 	if (src.kind === "table") {
 		// Declared column aliases win; otherwise look the table up in the schema (names + types).
 		const declared = src.source.columnAliases;

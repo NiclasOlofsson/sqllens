@@ -163,11 +163,17 @@ per-document instances, miss/prime machinery on the base). Every template marker
 scalar-slot TemplateExprInfo on column exprs/refs) carries its provider key; qualify skips
 unknown-column on marked refs (the placeholder-leak class), infer answers marked exprs from
 `expansion().value`. The statement/relation slot guard became an ALLOWLIST of body-start slots.
-**Open (step 2 of the same design round):** the SCHEMA seam — SchemaSource→SchemaProvider rename +
-an always-present default collapsing the 24 optional `schema?` params. Blocked on a real design point
-surfaced during implementation: qualify fires unknown-table on ANY `columnsFor` miss (a Schema is a
-CLOSED world), so a naive always-present EMPTY default would false-flag every table — the collapse
-needs an explicit closed/open-world distinction on the provider first.
+**Step 2 built (same day):** the SCHEMA seam — `SchemaSource` renamed `SchemaProvider`
+(src/qualify/schema-provider.ts), and the design point resolved with a `world?: "closed" | "open"`
+capability on the interface: a CLOSED provider declares a complete world (a `columnsFor` miss = the
+table does not exist → unknown-table may fire — `Schema`, `CallbackSchema`); an OPEN provider's miss
+means "unknown, never diagnose" (the never-wrong floor — `DefaultTemplateProvider`, overridable).
+qualify gates the miss-driven unknown-table on it; positive-knowledge diagnostics (unknown-column on
+a known table) fire regardless of world. The always-present default is a shared OPEN
+DefaultTemplateProvider instance (api.analyze + SqlDocument.analyze — previously a fresh/shared
+closed empty `Schema({})`, which unknown-table'd every `select * from t` in schema-free analysis;
+now schema-free runs the full pipeline diagnostic-clean). Remaining `schema?:` optional params in
+the LSP feature files are presentation-layer plumbing that rides out with the LSP extraction.
 
 ## Repo layout (target)
 

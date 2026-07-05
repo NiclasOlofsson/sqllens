@@ -18,7 +18,7 @@ import { TestRelationProvider, relKey as relKeyOf } from "./helpers/providers.js
 // TemplateCatalog.relation, upgrading the R3 blanket exemption to real
 // resolution WHEN a catalog answers. Never-wrong: unknown-column fires against a
 // templated ref ONLY when `relation` positively returned columns and the column
-// is absent. A `relation` miss (undefined) OR a plain SchemaSource → the R3
+// is absent. A `relation` miss (undefined) OR a plain SchemaProvider → the R3
 // exemption (no fabricated column). A zero-catalog run is byte-identical to R3.
 // ---------------------------------------------------------------------------
 

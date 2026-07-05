@@ -1,5 +1,5 @@
 import { type Diagnostic as LspDiagnostic, DiagnosticSeverity } from "vscode-languageserver-types";
-import type { SchemaSource, SqlDocument } from "../../index.js";
+import type { SchemaProvider, SqlDocument } from "../../index.js";
 import { rangeFromSpan, rangeFromSyntaxDiagnostic } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -10,7 +10,7 @@ import { rangeFromSpan, rangeFromSyntaxDiagnostic } from "../ranges.js";
 // this only maps them to LSP ranges and severities. No re-parse here.
 // ---------------------------------------------------------------------------
 
-export function computeDiagnostics(doc: SqlDocument, schema?: SchemaSource): LspDiagnostic[] {
+export function computeDiagnostics(doc: SqlDocument, schema?: SchemaProvider): LspDiagnostic[] {
 	const out: LspDiagnostic[] = [];
 
 	for (const d of doc.diagnostics) {

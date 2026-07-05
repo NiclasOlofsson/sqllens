@@ -16,7 +16,7 @@ import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
 import { relationColumns } from "./relation-columns.js";
-import { type SchemaSource } from "./schema-source.js";
+import { type SchemaProvider } from "./schema-provider.js";
 import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -63,7 +63,7 @@ export interface Qualification {
  *  the shared `ResolvedColumn` (src/sema/resolve.ts); re-exported under this public name. */
 export type ColumnBinding = ResolvedColumn;
 
-export function qualify(tree: ScopeTree, schema: SchemaSource): Qualification {
+export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification {
 	const diagnostics: Diagnostic[] = [];
 	const resolved = new Map<Scope, string[] | "unknown">();
 
@@ -97,7 +97,7 @@ function bodyColumns(scope: Scope): ColumnRef[] {
 
 function resolveColumns(
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -132,7 +132,7 @@ function resolveColumns(
 function projectionColumns(
 	scope: Scope,
 	projections: import("../ir/ir.js").Projection[],
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -157,7 +157,7 @@ function projectionColumns(
  *  flow in scope.ts, but resolves stars / a JOINed table's columns against the catalog. */
 function resolvePipeStage(
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): string[] | "unknown" {
@@ -224,7 +224,7 @@ function resolvePipeStage(
 
 function expandStar(
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 	qualifier?: string[],
@@ -254,7 +254,7 @@ function expandStar(
  *  lateral view. Types are not threaded here; type inference (src/infer) owns types. */
 function columnsOfSource(
 	src: ResolvedSource,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 	dialect?: string,
@@ -262,13 +262,15 @@ function columnsOfSource(
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
 		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM). inc3.1 resolves
-		// its real columns through a TemplateCatalog when the active schema is one; a plain SchemaSource
+		// its real columns through a TemplateCatalog when the active schema is one; a plain SchemaProvider
 		// (or a catalog miss / opaque tag) keeps the R3 exemption — undefined = unknown-but-not-wrong, NO
 		// unknown-table/-column against the dbt-logical name. (Scoped: only sources carrying `template`.)
 		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
-			diagnostics.push(unknownTable(src.name, src.source.cst));
+			// Miss semantics are the provider's `world`: a CLOSED world declares completeness, so the
+			// miss IS "table does not exist"; an OPEN world's miss is unknown — never-wrong, no diagnostic.
+			if ((schema.world ?? "closed") === "closed") diagnostics.push(unknownTable(src.name, src.source.cst));
 			return undefined;
 		}
 		return cols.map((c) => c.name);
@@ -304,7 +306,7 @@ function known(r: string[] | "unknown" | undefined): string[] | undefined {
 function templateColumns(
 	t: TemplateSourceInfo,
 	name: string[],
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	dialect?: string,
 ): string[] | undefined {
 	return relationColumns(t, name, schema, dialect)?.map((c) => c.name);
@@ -318,7 +320,7 @@ function templateColumns(
 function checkColumn(
 	scope: Scope,
 	ref: ColumnRef,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 ): void {
@@ -388,7 +390,7 @@ function checkColumn(
 function checkFieldPath(
 	fields: string[],
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ref: ColumnRef,
 	diagnostics: Diagnostic[],
 ): void {
@@ -411,14 +413,14 @@ function checkFieldPath(
 /** Schema-resolved column names of a source, or undefined when unknown (needs a catalog). */
 function sourceColumns(
 	src: ResolvedSource,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	dialect?: string,
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
 		// Templated source — inc3.1 resolves its real columns through a TemplateCatalog (mirrors
-		// columnsOfSource); a plain SchemaSource / catalog miss / opaque tag keeps the R3 exemption
+		// columnsOfSource); a plain SchemaProvider / catalog miss / opaque tag keeps the R3 exemption
 		// (undefined). checkColumn treats undefined as "might own it", so unknown-column fires only when
 		// the catalog POSITIVELY returned columns and this one is absent — never on the exemption.
 		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);

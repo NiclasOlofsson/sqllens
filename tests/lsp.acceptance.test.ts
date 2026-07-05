@@ -972,7 +972,7 @@ describe("LSP lazy catalog (Task 8)", () => {
 		const up = new TestStream();
 		const down = new TestStream();
 		const serverConnection = createConnection(new StreamMessageReader(up), new StreamMessageWriter(down));
-		// The embedding entry point: the host hands the server a SchemaSource.
+		// The embedding entry point: the host hands the server a SchemaProvider.
 		startServer(serverConnection, { schema });
 
 		lazyClient = createProtocolConnection(new StreamMessageReader(down), new StreamMessageWriter(up));
@@ -1057,6 +1057,9 @@ describe("LSP lazy catalog drives CallbackTemplateCatalog.prime() (inc3.1)", () 
 		// No templated refs reach the LSP yet, so the relation side just never resolves; the provider
 		// is exercised through its physical-table columnsFor side (the TableResolver-backed override).
 		class LspProvider extends DefaultTemplateProvider {
+			// The host's describe cache is authoritative + self-healing → closed world (unknown-table
+			// fires cold, prime() + re-publish clears it — exactly what this test exercises).
+			override readonly world = "closed" as const;
 			override columnsFor(parts: string[]): { name: string; type?: string }[] | undefined {
 				const cols = tableResolver.resolve(parts);
 				if (cols === undefined) this.recordTableMiss(parts);

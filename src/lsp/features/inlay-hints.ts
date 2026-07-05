@@ -1,5 +1,5 @@
 import { type InlayHint, InlayHintKind, type Position, type Range } from "vscode-languageserver-types";
-import { formatType, type SchemaSource, type Scope, type SqlDocument } from "../../index.js";
+import { formatType, type SchemaProvider, type Scope, type SqlDocument } from "../../index.js";
 import { cellBaseOf, rangeFromCst, shiftPosition } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -12,7 +12,7 @@ import { cellBaseOf, rangeFromCst, shiftPosition } from "../ranges.js";
 // anchor falls within the requested (visible) range are emitted. Never throws.
 // ---------------------------------------------------------------------------
 
-export function computeInlayHints(doc: SqlDocument, range: Range, schema?: SchemaSource): InlayHint[] {
+export function computeInlayHints(doc: SqlDocument, range: Range, schema?: SchemaProvider): InlayHint[] {
 	const types = doc.analyze(schema).types;
 	const out: InlayHint[] = [];
 

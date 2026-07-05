@@ -1,7 +1,7 @@
 import { foldIdentifier, foldTableName } from "../ident/fold.js";
 import type { Expr, Projection } from "../ir/ir.js";
 import { Schema } from "../qualify/schema.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { nodeAt } from "../document/node-at.js";
 import { findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
@@ -84,7 +84,7 @@ type Contribution = ({ kind: "hop"; hop: LineageHop } | { kind: "origin"; origin
 /** Per-invocation state: `memo` gives the DAG (shared hops); `seen` is the recursive-CTE cycle
  *  guard (scopes currently being expanded). Fresh per lineageOf/lineageAt call. */
 interface Walk {
-	schema: SchemaSource;
+	schema: SchemaProvider;
 	memo: Map<Projection, LineageHop>;
 	seen: Set<Scope>;
 	/** Folded names of the CTEs currently being expanded. A recursive CTE's self-reference resolves
@@ -93,7 +93,7 @@ interface Walk {
 	activeCtes: Set<string>;
 }
 
-function newWalk(schema: SchemaSource | undefined): Walk {
+function newWalk(schema: SchemaProvider | undefined): Walk {
 	return { schema: schema ?? new Schema({}), memo: new Map(), seen: new Set(), activeCtes: new Set() };
 }
 
@@ -104,7 +104,7 @@ function newWalk(schema: SchemaSource | undefined): Walk {
 /** Cursor-anchored: the hop map for the column reference (or projection/alias) under `offset`,
  *  ANYWHERE in the tree. Returns undefined off a resolvable column/projection (a keyword, an
  *  operator, whitespace). Total: never throws. V1 domain — column refs, projections, aliases. */
-export function lineageAt(scopes: ScopeTree, offset: number, schema?: SchemaSource): LineageHop | undefined {
+export function lineageAt(scopes: ScopeTree, offset: number, schema?: SchemaProvider): LineageHop | undefined {
 	try {
 		const hit = nodeAt(scopes, offset);
 		if (hit && hit.expr.kind === "column") {
@@ -121,7 +121,7 @@ export function lineageAt(scopes: ScopeTree, offset: number, schema?: SchemaSour
 }
 
 /** Programmatic: the hop map for any column-ref Expr or Projection node, evaluated in `scope`. */
-export function lineageOf(node: Expr | Projection, scope: Scope, schema?: SchemaSource): LineageHop {
+export function lineageOf(node: Expr | Projection, scope: Scope, schema?: SchemaProvider): LineageHop {
 	const walk = newWalk(schema);
 	if (isProjection(node)) {
 		// A bare passthrough projection follows into its producer (the head IS that producer);
@@ -455,7 +455,7 @@ function projectionAtAlias(root: Scope, offset: number): { scope: Scope; project
 
 /** Origins of a scalar / EXISTS subquery's value column — the shared flat walk (originsOf already
  *  descends subquery/exists), so the hop walk and the origin walk agree on subquery provenance. */
-function originsOfSubquery(sub: Expr, scope: Scope, schema: SchemaSource): Origin[] {
+function originsOfSubquery(sub: Expr, scope: Scope, schema: SchemaProvider): Origin[] {
 	return originsOf(sub, scope, schema);
 }
 

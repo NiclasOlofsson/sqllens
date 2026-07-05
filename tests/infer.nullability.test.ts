@@ -3,7 +3,7 @@ import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { inferNullability, type Nullability } from "../src/infer/nullability.js";
 import { Schema } from "../src/qualify/schema.js";
-import type { SchemaSource } from "../src/qualify/schema-source.js";
+import type { SchemaProvider } from "../src/qualify/schema-provider.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { lower as lowerTSql } from "../src/tsql/lower.js";
 import { parseTSql } from "../src/tsql/parse.js";
@@ -25,17 +25,17 @@ const SCHEMA = new Schema({
 const EMPTY = new Schema({});
 
 /** Nullability of each projection of a single-SELECT statement. */
-function proj(sql: string, schema: SchemaSource = SCHEMA): Nullability[] {
+function proj(sql: string, schema: SchemaProvider = SCHEMA): Nullability[] {
 	const tree = resolveScopes(lower(parseDatabricks(sql).tree), "databricks");
 	const body = tree.root.body;
 	if (body.kind !== "select") throw new Error("expected a select");
 	return body.projections.map((p) => inferNullability(p.expr, tree.root, schema));
 }
 
-const one = (sql: string, schema: SchemaSource = SCHEMA): Nullability => proj(sql, schema)[0];
+const one = (sql: string, schema: SchemaProvider = SCHEMA): Nullability => proj(sql, schema)[0];
 
 /** Same as `one` but through the T-SQL pipeline — for the dialect-polymorphic cases (2-arg ISNULL). */
-function oneTSql(sql: string, schema: SchemaSource = SCHEMA): Nullability {
+function oneTSql(sql: string, schema: SchemaProvider = SCHEMA): Nullability {
 	const tree = resolveScopes(lowerTSql(parseTSql(sql).tree), "tsql");
 	const body = tree.root.body;
 	if (body.kind !== "select") throw new Error("expected a select");

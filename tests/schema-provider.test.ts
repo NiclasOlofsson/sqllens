@@ -1,10 +1,11 @@
 import { describe, it, expect } from "vitest";
 import { SqlDocument } from "../src/document/document.js";
 import { Schema, type Column } from "../src/qualify/schema.js";
-import { CallbackSchema, type TableResolver } from "../src/qualify/schema-source.js";
+import { CallbackSchema, type TableResolver } from "../src/qualify/schema-provider.js";
+import { analyze, parse, qualify, DefaultTemplateProvider } from "../src/index.js";
 
 // ---------------------------------------------------------------------------
-// SchemaSource + CallbackSchema (Task 7). A resolve-on-demand catalog: the
+// SchemaProvider + CallbackSchema (Task 7). A resolve-on-demand catalog: the
 // analysis pipeline stays 100% sync (columnsFor answers from whatever the host
 // cache holds NOW; unknown tables degrade to unknown types exactly like a
 // missing mapping entry), and asynchrony lives entirely in prime(), which
@@ -209,5 +210,41 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 		const schema = new Schema({ t: {} });
 		expect(schema.columnsFor(["t"])).toBeUndefined();
 		expect(schema.tables()).toEqual([]);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// The `world` capability (step 2 of the provider redesign) — a provider states
+// what a columnsFor MISS means: "closed" (complete world → unknown-table may
+// fire) vs "open" (unknown → never diagnose). The shipped DefaultTemplateProvider
+// is open, which makes it the always-present schema default.
+// ---------------------------------------------------------------------------
+describe("SchemaProvider.world — closed vs open miss semantics", () => {
+	it("a declared Schema is closed: star expansion over an unknown table fires unknown-table", () => {
+		const { ast } = parse("select * from t", "databricks");
+		const q = qualify(ast, new Schema({ u: { x: "int" } }));
+		expect(q.diagnostics.map((d) => d.kind)).toContain("unknown-table");
+	});
+
+	it("an open provider never fires unknown-table on a miss", () => {
+		const { ast } = parse("select * from t", "databricks");
+		const q = qualify(ast, new DefaultTemplateProvider());
+		expect(q.diagnostics).toEqual([]);
+	});
+
+	it("schema-free analyze() runs the full pipeline with NO miss-driven diagnostics", () => {
+		const a = analyze("select * from t", "databricks");
+		expect(a.diagnostics).toEqual([]);
+	});
+
+	it("positive knowledge still diagnoses regardless of world (unknown-column on a known table)", () => {
+		class Knows extends DefaultTemplateProvider {
+			override columnsFor(parts: string[]): { name: string }[] | undefined {
+				return parts.join(".") === "u" ? [{ name: "x" }] : undefined;
+			}
+		}
+		const { ast } = parse("select nope from u", "databricks");
+		const q = qualify(ast, new Knows());
+		expect(q.diagnostics.map((d) => d.kind)).toContain("unknown-column");
 	});
 });

@@ -34,7 +34,12 @@ import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
 import { qualify as qualifyScopes, type Qualification } from "./qualify/qualify.js";
 import { Schema } from "./qualify/schema.js";
-import { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
+import { CallbackSchema, type SchemaProvider, type TableResolver } from "./qualify/schema-provider.js";
+import { DefaultTemplateProvider } from "./qualify/template-provider.js";
+
+/** The always-present schema default when none is configured: the shipped OPEN-world provider —
+ *  every lookup answers unknown, no miss-driven diagnostics, stable identity (memo-key safe). */
+const OPEN_DEFAULT = new DefaultTemplateProvider();
 import { inferType } from "./infer/infer.js";
 import type { Type } from "./infer/types.js";
 import { inferNullability, type Nullability } from "./infer/nullability.js";
@@ -130,8 +135,8 @@ export interface Analysis {
  * and return each tier as a first-class terminal value. With no schema the schema-fed tiers still
  * answer what they can (scopes, symbols) and stay empty/`unknown` where a catalog is required.
  */
-export function analyze(sql: string, dialect: Dialect, opts: { schema?: SchemaSource } = {}): Analysis {
-	const schema = opts.schema ?? new Schema({});
+export function analyze(sql: string, dialect: Dialect, opts: { schema?: SchemaProvider } = {}): Analysis {
+	const schema = opts.schema ?? OPEN_DEFAULT;
 	const { ast, errors } = parse(sql, dialect);
 	const scopes = resolveScopes(ast, dialect);
 	const qualification = qualifyScopes(scopes, schema);
@@ -185,19 +190,19 @@ function isScopeTree(x: unknown): x is ScopeTree {
 /** Schema-fed resolution. Accepts a ScopeTree (no rework), an IR, or a raw string. */
 export function qualify(
 	x: string | QueryExpr | ScopeTree,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	opts: DialectOpts = {},
 ): Qualification {
 	return qualifyScopes(toScopes(x, opts), schema);
 }
 
 /** Column lineage. Accepts a ScopeTree (no rework), an IR, or a raw string. */
-export function lineage(x: string | QueryExpr | ScopeTree, schema: SchemaSource, opts: DialectOpts = {}): Lineage {
+export function lineage(x: string | QueryExpr | ScopeTree, schema: SchemaProvider, opts: DialectOpts = {}): Lineage {
 	return new Lineage(lineageScopes(toScopes(x, opts), schema));
 }
 
 /** Symbol model. Accepts a ScopeTree (no rework), an IR, or a raw string. Schema is optional. */
-export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: SchemaSource, opts: DialectOpts = {}): Sym[] {
+export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: SchemaProvider, opts: DialectOpts = {}): Sym[] {
 	return deriveSymbolsScopes(toScopes(x, opts), schema);
 }
 
@@ -209,7 +214,7 @@ export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: Schema
 /** Per-expression type access. `typeOf(expr, scope)` returns the inferred `Type` (a typed union;
  *  `unknown` when undeterminable — no schema, or no rule), never a guess. */
 export class TypeInfo {
-	constructor(private readonly schema: SchemaSource) {}
+	constructor(private readonly schema: SchemaProvider) {}
 
 	/** The inferred type of an expression evaluated in a scope. */
 	typeOf(expr: Expr, scope: Scope): Type {
@@ -296,8 +301,8 @@ export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
 // The catalog interface the whole pipeline resolves against, plus its resolve-on-demand
 // implementation. `Schema` (a full upfront mapping) and `CallbackSchema` (a host-driven
 // lazy resolver whose prime() bumps a version to invalidate SqlDocument.analyze's memo) both
-// satisfy `SchemaSource`; every analysis entry point accepts the interface.
-export { CallbackSchema, type SchemaSource, type TableResolver } from "./qualify/schema-source.js";
+// satisfy `SchemaProvider`; every analysis entry point accepts the interface.
+export { CallbackSchema, type SchemaProvider, type TableResolver } from "./qualify/schema-provider.js";
 // The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
 // spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
 export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";

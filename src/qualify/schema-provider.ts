@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// SchemaSource — the catalog interface the analysis pipeline resolves against.
+// SchemaProvider — the catalog interface the analysis pipeline resolves against.
 //
 // Two implementations satisfy it:
 //   - Schema (schema.ts): a full upfront mapping, the eager catalog. Its `version`
@@ -27,7 +27,7 @@ import type { Column } from "./schema.js";
 
 /** The catalog interface qualify / infer / lineage / symbols / completion resolve against.
  *  Structural, so every existing `Schema` caller keeps compiling. */
-export interface SchemaSource {
+export interface SchemaProvider {
 	/** Columns for a table identified by its RAW (unfolded) name parts, or undefined if unknown.
 	 *  Folding for `dialect` happens inside the implementation, once. */
 	columnsFor(parts: string[], dialect?: string): Column[] | undefined;
@@ -36,6 +36,16 @@ export interface SchemaSource {
 	/** Monotonic invalidation signal: a bump means "answers may have changed — drop memos keyed on
 	 *  me". A plain Schema is constant 0 (its answers are fixed); a CallbackSchema bumps in prime(). */
 	readonly version: number;
+	/**
+	 * What a `columnsFor` MISS means — and therefore whether the miss-driven diagnostics may fire:
+	 *   - `"closed"` (the default when absent): the provider declares a COMPLETE world; a miss means
+	 *     "this table does not exist" and unknown-table may fire (`Schema`; `CallbackSchema`, whose
+	 *     transiently-cold misses self-heal via prime() + re-publish).
+	 *   - `"open"`: a miss means "unknown — do not diagnose" (the never-wrong floor). The shipped
+	 *     `DefaultTemplateProvider` is open, making it the safe ALWAYS-PRESENT default when no schema
+	 *     was configured: schema-free analysis runs the full pipeline and emits no unknown-table.
+	 */
+	readonly world?: "closed" | "open";
 }
 
 /** The host-side resolver a CallbackSchema drives. Both hooks receive FOLDED name parts (see the
@@ -50,10 +60,12 @@ export interface TableResolver {
 	fetch?(missing: string[][]): Promise<void>;
 }
 
-/** A resolve-on-demand catalog. Implements SchemaSource by delegating each folded lookup to a
+/** A resolve-on-demand catalog. Implements SchemaProvider by delegating each folded lookup to a
  *  TableResolver and recording the misses; prime() drains those misses through the resolver's
  *  async fetch, re-probes, and bumps `version` when anything new arrived. */
-export class CallbackSchema implements SchemaSource {
+export class CallbackSchema implements SchemaProvider {
+	/** Closed world: a host cache miss is transiently wrong at worst — prime() + re-publish heal it. */
+	readonly world = "closed" as const;
 	private readonly resolver: TableResolver;
 	private _version = 0;
 	/** Distinct folded miss keys, in first-seen order. */

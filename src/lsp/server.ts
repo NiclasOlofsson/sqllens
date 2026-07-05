@@ -9,7 +9,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
-import { SqlDocument, type SchemaSource } from "../index.js";
+import { SqlDocument, type SchemaProvider } from "../index.js";
 import { loadDialectConfig, type DialectConfig } from "./dialect-config.js";
 import { computeDiagnostics } from "./features/diagnostics.js";
 import { computeDocumentDiagnostics } from "./features/pull-diagnostics.js";
@@ -43,7 +43,7 @@ import { computeInlayHints } from "./features/inlay-hints.js";
 //
 // EMBEDDING (Task 8): the stdio binary reads a static catalog from .sqllens.json.
 // A host that embeds the server can instead hand it a live catalog via
-// startServer(connection, { schema }) — any SchemaSource, typically a
+// startServer(connection, { schema }) — any SchemaProvider, typically a
 // CallbackSchema whose tables are fetched lazily from a big warehouse, or a
 // CallbackTemplateCatalog that ALSO resolves dbt-logical refs. An injected schema
 // is the active catalog for every document (it wins over the file schema). When it
@@ -62,7 +62,7 @@ interface LazyCatalog {
 
 /** True when `s` is a resolve-on-demand catalog (has prime() + misses) — CallbackSchema OR
  *  CallbackTemplateCatalog. Duck-typed so the loop stays catalog-implementation-agnostic. */
-function isLazyCatalog(s: SchemaSource | undefined): s is SchemaSource & LazyCatalog {
+function isLazyCatalog(s: SchemaProvider | undefined): s is SchemaProvider & LazyCatalog {
 	const c = s as Partial<LazyCatalog> | undefined;
 	return !!c && typeof c.prime === "function" && Array.isArray(c.misses);
 }
@@ -73,7 +73,7 @@ export interface ServerOptions {
 	 *  schema for every document, taking precedence over the file-configured `.sqllens.json` schema.
 	 *  A CallbackSchema or CallbackTemplateCatalog here enables the lazy-catalog re-publish loop (fetch
 	 *  on miss, re-publish when the resolver warms). */
-	schema?: SchemaSource;
+	schema?: SchemaProvider;
 }
 
 export function startServer(connection: Connection, options: ServerOptions = {}): void {
@@ -83,10 +83,10 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 	let rootDir = process.cwd();
 	let config: DialectConfig = loadDialectConfig(rootDir);
 
-	// The catalog every feature resolves against: an injected host SchemaSource wins over the
+	// The catalog every feature resolves against: an injected host SchemaProvider wins over the
 	// file-configured `.sqllens.json` schema (the embedding slot supplements, never fights, the file
 	// path). Read through this everywhere so the two sources have exactly one precedence point.
-	const activeSchema = (): SchemaSource | undefined => options.schema ?? config.schema;
+	const activeSchema = (): SchemaProvider | undefined => options.schema ?? config.schema;
 
 	const uriToRel = (uri: string): string => {
 		try {

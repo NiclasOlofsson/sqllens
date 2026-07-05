@@ -48,6 +48,9 @@ export function relKey(name: string, parts: readonly (string | null)[]): string 
  * `prime()` warms them and bumps `version`.
  */
 export class TestRelationProvider extends DefaultTemplateProvider {
+	/** A host describe-cache is a CLOSED world (misses are transiently wrong at worst, healed by
+	 *  prime + re-publish) — so miss-driven unknown-table diagnostics fire, like the host's would. */
+	override readonly world = "closed" as const;
 	readonly cache = new Map<string, ResolvedRelation>();
 	readonly pending = new Map<string, ResolvedRelation>();
 	/** Physical-table columns for the inherited columnsFor (the describe-cache side). */

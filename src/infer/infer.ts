@@ -1,6 +1,6 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
 import type { TemplateProvider } from "../qualify/template-provider.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
@@ -31,7 +31,7 @@ const INT = scalar("int");
 
 const freshCtx = (): Ctx => ({ seen: new Set(), env: new Map() });
 
-export function inferType(expr: Expr, scope: Scope, schema: SchemaSource, ctx: Ctx = freshCtx()): Type {
+export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx: Ctx = freshCtx()): Type {
 	const d = inferDialect(scope.dialect);
 	switch (expr.kind) {
 		case "literal":
@@ -92,7 +92,7 @@ const VALUE_TYPES = {
 	boolean: scalar("boolean"),
 } as const;
 
-function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
+function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema: SchemaProvider, ctx: Ctx): Type {
 	// A template tag's placeholder fill: its type comes from the TemplateProvider's value
 	// answer ({{ var('x') }}, a scalar macro), never from column resolution — the placeholder
 	// name means nothing to the schema. No answer → unknown (never guessed).
@@ -114,7 +114,7 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 function sourceColumnType(
 	src: ResolvedSource,
 	column: string,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 	d: InferDialect,
 	dialect: string,
@@ -141,7 +141,7 @@ function derivedColumnType(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Type {
 	if (ctx.seen.has(child) || child.body.kind !== "select") return UNKNOWN;
@@ -164,7 +164,7 @@ function derivedColumnType(
  *  resolve it inside the producing scope, honouring EXCLUDE/ILIKE (removed → unknown),
  *  RENAME (the output name maps back to the source column) and REPLACE (the column's type
  *  is the replacing expression's). */
-function starPassthroughType(child: Scope, column: string, schema: SchemaSource, ctx: Ctx): Type {
+function starPassthroughType(child: Scope, column: string, schema: SchemaProvider, ctx: Ctx): Type {
 	for (const p of child.body.kind === "select" ? child.body.projections : []) {
 		if (!p.isStar || p.expr.kind !== "star") continue;
 		const star = p.expr;
@@ -202,7 +202,7 @@ function fieldType(type: Type, fields: string[], dialect: string): Type {
 
 // --- functions, higher-order functions, constructors -----------------------
 
-function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: SchemaSource, ctx: Ctx): Type {
+function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: SchemaProvider, ctx: Ctx): Type {
 	const name = fn.name.toLowerCase();
 	const args = fn.args;
 	const d = inferDialect(scope.dialect);
@@ -242,7 +242,7 @@ export const HOF_LAMBDA_ARG: Record<string, number> = {
 
 /** Higher-order functions: bind the lambda parameters to the right element/value types, type the
  *  lambda body, and build the result. Returns undefined when `name` isn't a higher-order function. */
-function higherOrder(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
+function higherOrder(name: string, args: Expr[], scope: Scope, schema: SchemaProvider, ctx: Ctx): Type | undefined {
 	const lambdaArg = HOF_LAMBDA_ARG[name];
 	if (lambdaArg !== undefined && args[lambdaArg]?.kind !== "lambda") return undefined;
 	switch (name) {
@@ -286,7 +286,7 @@ function lambdaResult(
 	lambda: Expr | undefined,
 	paramTypes: Type[],
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Type | undefined {
 	if (lambda?.kind !== "lambda") return undefined;
@@ -300,7 +300,7 @@ function arrayElem(t: Type): Type {
 }
 
 /** map(), struct()/named_struct(), from_json() — types built from the arguments. */
-function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaSource, ctx: Ctx): Type | undefined {
+function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaProvider, ctx: Ctx): Type | undefined {
 	if (name === "map") {
 		const keys: Type[] = [];
 		const values: Type[] = [];
@@ -337,7 +337,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaSou
 
 // --- subqueries ------------------------------------------------------------
 
-function subqueryType(query: QueryExpr, schema: SchemaSource, ctx: Ctx, dialect: string): Type {
+function subqueryType(query: QueryExpr, schema: SchemaProvider, ctx: Ctx, dialect: string): Type {
 	const root = resolveScopes(query, dialect).root;
 	if (root.body.kind !== "select" || root.body.projections.length === 0) return UNKNOWN;
 	return inferType(root.body.projections[0].expr, root, schema, { seen: ctx.seen, env: ctx.env });

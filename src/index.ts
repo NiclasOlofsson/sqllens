@@ -43,7 +43,7 @@ export {
 	dialectSymbols,
 	type DialectSymbols,
 	CallbackSchema,
-	type SchemaSource,
+	type SchemaProvider,
 	type TableResolver,
 	ADAPTER_DIALECTS,
 	adapterDialect,

@@ -38,8 +38,8 @@ import type { StatementCategory } from "../ir/statement.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
-import { Schema } from "../qualify/schema.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
+import { DefaultTemplateProvider } from "../qualify/template-provider.js";
 import type { Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
@@ -47,25 +47,26 @@ import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
 import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan } from "./shift.js";
 
-// A single stable empty schema, used as the analyze() default when no catalog is
-// configured. Sharing ONE instance keeps the schema-keyed analyze() memo working
-// for schema-free calls (cache key = schema ?? EMPTY_SCHEMA), instead of a fresh
-// Schema per call that would defeat the cache.
-const EMPTY_SCHEMA = new Schema({});
+// A single stable OPEN-WORLD default, used by analyze() when no catalog is configured.
+// Sharing ONE instance keeps the schema-keyed analyze() memo working for schema-free
+// calls (cache key = schema ?? EMPTY_SCHEMA). Open world: every lookup answers unknown
+// and NO miss-driven diagnostics fire — an empty CLOSED Schema here would unknown-table
+// every `select * from t` in a schema-free document.
+const EMPTY_SCHEMA = new DefaultTemplateProvider();
 
-/** A memo entry stamped with the SchemaSource `version` it was computed for. */
+/** A memo entry stamped with the SchemaProvider `version` it was computed for. */
 interface Versioned<T> {
 	version: number;
 	value: T;
 }
 
-/** Identity + version memo: one slot per SchemaSource identity, holding the value computed for the
+/** Identity + version memo: one slot per SchemaProvider identity, holding the value computed for the
  *  last-seen version. A version bump (monotonic — CallbackSchema.prime() only increases it) misses
  *  and recomputes; a plain Schema (version constant 0) always hits, memoizing exactly as an
  *  identity-only Map did. Single-slot (not Map<version,…>) keeps memory bounded to one entry per
  *  schema even for a CachedCell that survives many edits + primes, and is correct because a
  *  superseded version is never queried again. */
-function memoByVersion<T>(cache: WeakMap<SchemaSource, Versioned<T>>, schema: SchemaSource, compute: () => T): T {
+function memoByVersion<T>(cache: WeakMap<SchemaProvider, Versioned<T>>, schema: SchemaProvider, compute: () => T): T {
 	const hit = cache.get(schema);
 	if (hit && hit.version === schema.version) return hit.value;
 	const value = compute();
@@ -104,7 +105,7 @@ interface CachedCell {
 	 *  bumps its version in prime(), which must invalidate this cell's cached analysis). The Map
 	 *  reference is stable across edits (the CachedCell is reused via the CellCache), so a cell
 	 *  untouched by an edit keeps its analysis until a schema/version change. */
-	readonly analysis: WeakMap<SchemaSource, Versioned<CellAnalysis>>;
+	readonly analysis: WeakMap<SchemaProvider, Versioned<CellAnalysis>>;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -203,7 +204,7 @@ export class SqlDocument {
 	 *  memoized on the CachedCell and survives edits. Keyed on schema IDENTITY + VERSION (a primed
 	 *  CallbackSchema bumps its version, invalidating this memo). The Map reference is frozen with the
 	 *  instance, but its contents stay mutable, so memoization works on a frozen SqlDocument. */
-	private readonly _analysisCache = new WeakMap<SchemaSource, Versioned<DocumentAnalysis>>();
+	private readonly _analysisCache = new WeakMap<SchemaProvider, Versioned<DocumentAnalysis>>();
 	/** The CachedCell backing each StatementCell, parallel to `statements`. Holds the cross-edit
 	 *  per-cell analysis memo; analyze() reads it to merge per-statement results. */
 	private readonly _cells: readonly CachedCell[];
@@ -293,7 +294,7 @@ export class SqlDocument {
 				tokens: p.tokens,
 				errors: p.errors,
 				diagnostics: p.diagnostics,
-				analysis: new WeakMap<SchemaSource, Versioned<CellAnalysis>>(),
+				analysis: new WeakMap<SchemaProvider, Versioned<CellAnalysis>>(),
 			};
 			// Cache only the FIRST product for a key (see above — duplicates stay uncached).
 			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
@@ -379,13 +380,13 @@ export class SqlDocument {
 	 *  statement re-qualifies only that statement; the cheap merge (concat + shift) redoes per version.
 	 *  With no schema the symbols/scopes still resolve structurally and types come back `unknown` where
 	 *  a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
-	analyze(schema?: SchemaSource): DocumentAnalysis {
+	analyze(schema?: SchemaProvider): DocumentAnalysis {
 		const s = schema ?? EMPTY_SCHEMA;
 		return memoByVersion(this._analysisCache, s, () => this.buildAnalysis(s));
 	}
 
 	/** Compute (no memo) the merged document analysis for schema `s`. */
-	private buildAnalysis(s: SchemaSource): DocumentAnalysis {
+	private buildAnalysis(s: SchemaProvider): DocumentAnalysis {
 		const cells = this.statements;
 		let analysis: DocumentAnalysis;
 		if (cells.length === 1) {
@@ -440,7 +441,7 @@ export class SqlDocument {
 	/** The per-cell schema-dependent analysis (cell-relative), memoized on the CachedCell (by schema
 	 *  identity + version) so it survives edits that don't touch this cell, yet re-runs when a primed
 	 *  CallbackSchema bumps its version. */
-	private cellAnalysis(i: number, s: SchemaSource): CellAnalysis {
+	private cellAnalysis(i: number, s: SchemaProvider): CellAnalysis {
 		const cached = this._cells[i];
 		return memoByVersion(cached.analysis, s, () => {
 			const scopes = this.statements[i].scopes;

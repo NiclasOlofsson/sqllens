@@ -1,6 +1,6 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, Source } from "../ir/ir.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
 import { likePatternToRegExp, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
@@ -31,7 +31,7 @@ interface Ctx {
 
 const freshCtx = (): Ctx => ({ seen: new Set() });
 
-export function inferNullability(expr: Expr, scope: Scope, schema: SchemaSource, ctx: Ctx = freshCtx()): Nullability {
+export function inferNullability(expr: Expr, scope: Scope, schema: SchemaProvider, ctx: Ctx = freshCtx()): Nullability {
 	switch (expr.kind) {
 		case "literal":
 			return isNullLiteral(expr.text) ? "nullable" : "notnull";
@@ -75,7 +75,7 @@ function isNullLiteral(text: string): boolean {
 function columnNullability(
 	col: Extract<Expr, { kind: "column" }>,
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Nullability {
 	// A template tag's placeholder fill — the provider's value answer carries no nullability
@@ -93,7 +93,7 @@ function sourceColumnNullability(
 	src: ResolvedSource,
 	column: string,
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Nullability {
 	// A source on the null-extended side of an outer join yields NULLs for its rows regardless of the
@@ -114,7 +114,7 @@ function tableColumnNullability(
 	src: Extract<ResolvedSource, { kind: "table" }>,
 	column: string,
 	dialect: string,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 ): Nullability {
 	// Declared / inline-aliased columns (T-SQL OPENJSON WITH (col type …), `t (c1, c2)`) carry no
 	// nullability signal.
@@ -136,7 +136,7 @@ function derivedColumnNullability(
 	child: Scope,
 	column: string,
 	aliases: string[] | undefined,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Nullability {
 	if (ctx.seen.has(child) || child.body.kind !== "select") return "unknown";
@@ -158,7 +158,7 @@ function derivedColumnNullability(
 /** A column with no named projection may pass through a `*` projection (mirrors infer.ts's
  *  starPassthroughType): resolve it inside the producing scope, honouring EXCLUDE/ILIKE (removed →
  *  unknown), RENAME (output name → source column) and REPLACE (the replacing expression's verdict). */
-function starPassthroughNullability(child: Scope, column: string, schema: SchemaSource, ctx: Ctx): Nullability {
+function starPassthroughNullability(child: Scope, column: string, schema: SchemaProvider, ctx: Ctx): Nullability {
 	for (const p of child.body.kind === "select" ? child.body.projections : []) {
 		if (!p.isStar || p.expr.kind !== "star") continue;
 		const star = p.expr;
@@ -266,7 +266,7 @@ function weakenToNullable(n: Nullability): Nullability {
 function caseNullability(
 	expr: Extract<Expr, { kind: "case" }>,
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Nullability {
 	// No ELSE: a row matching no WHEN yields NULL → the whole expression is nullable.
@@ -327,7 +327,7 @@ const FN: Record<string, (args: Nullability[]) => Nullability> = {
 function functionNullability(
 	fn: Extract<Expr, { kind: "function" }>,
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	ctx: Ctx,
 ): Nullability {
 	// A dotted / qualified call is a user function — no builtin knowledge.

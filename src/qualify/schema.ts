@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import { foldIdentifier } from "../ident/fold.js";
-import type { SchemaSource } from "./schema-source.js";
+import type { SchemaProvider } from "./schema-provider.js";
 
 export interface Column {
 	name: string;
@@ -40,7 +40,9 @@ interface DialectIndex {
 	byTable: Map<string, Column[]>;
 }
 
-export class Schema implements SchemaSource {
+export class Schema implements SchemaProvider {
+	/** A declared mapping is a CLOSED world: a miss means the table does not exist (unknown-table fires). */
+	readonly world = "closed" as const;
 	/** A full upfront mapping's answers never change, so its invalidation signal is constant 0 — a
 	 *  memo keyed on a Schema never has to invalidate (contrast CallbackSchema, which bumps). */
 	readonly version = 0;

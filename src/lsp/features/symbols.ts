@@ -1,7 +1,7 @@
 import { type DocumentSymbol, SymbolKind } from "vscode-languageserver-types";
 import {
 	formatType,
-	type SchemaSource,
+	type SchemaProvider,
 	type Sym,
 	type SymbolKind as SqlSymbolKind,
 	type SqlDocument,
@@ -34,7 +34,7 @@ function include(s: Sym): boolean {
 	return false;
 }
 
-export function computeDocumentSymbols(doc: SqlDocument, schema?: SchemaSource): DocumentSymbol[] {
+export function computeDocumentSymbols(doc: SqlDocument, schema?: SchemaProvider): DocumentSymbol[] {
 	const out: DocumentSymbol[] = [];
 	for (const s of doc.analyze(schema).symbols) {
 		if (!include(s)) continue;

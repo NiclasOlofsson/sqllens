@@ -22,11 +22,11 @@
 
 import type { TemplateSourceInfo } from "../ir/ir.js";
 import type { Column } from "./schema.js";
-import type { SchemaSource } from "./schema-source.js";
+import type { SchemaProvider } from "./schema-provider.js";
 import type { TemplateCall, TemplateProvider } from "./template-provider.js";
 
 /** The schema as a TemplateProvider when it is one (structural — the shipped base or a subclass). */
-function asProvider(schema: SchemaSource): TemplateProvider | undefined {
+function asProvider(schema: SchemaProvider): TemplateProvider | undefined {
 	return schema && "expansion" in schema ? (schema as TemplateProvider) : undefined;
 }
 
@@ -48,7 +48,7 @@ function sourceCall(t: TemplateSourceInfo, name: string[]): TemplateCall | undef
 export function relationColumns(
 	t: TemplateSourceInfo,
 	name: string[],
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	dialect?: string,
 ): Column[] | undefined {
 	const provider = asProvider(schema);
@@ -69,7 +69,7 @@ export function relationColumns(
 export function tableSourceColumns(
 	name: string[],
 	template: TemplateSourceInfo | undefined,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	dialect?: string,
 ): Column[] | undefined {
 	if (template) {

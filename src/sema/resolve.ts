@@ -1,6 +1,6 @@
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
 import type { ColumnRef, Projection } from "../ir/ir.js";
-import type { SchemaSource } from "../qualify/schema-source.js";
+import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
 import {
 	aliasVisibleClause,
@@ -43,7 +43,7 @@ export interface ResolvedColumn {
  *   `needs-schema`. GROUP BY / HAVING / ORDER BY / QUALIFY may fall back to a SELECT-list alias
  *   (source columns win over an alias). Never fabricates a binding.
  */
-export function resolveColumnRef(scope: Scope, ref: ColumnRef, schema?: SchemaSource): ColumnResolution {
+export function resolveColumnRef(scope: Scope, ref: ColumnRef, schema?: SchemaProvider): ColumnResolution {
 	return resolveParts(scope, ref.parts, ref.clause, schema);
 }
 
@@ -51,7 +51,7 @@ function resolveParts(
 	scope: Scope,
 	parts: string[],
 	clause: ColumnRef["clause"] | undefined,
-	schema: SchemaSource | undefined,
+	schema: SchemaProvider | undefined,
 ): ColumnResolution {
 	const split = splitColumnRefInScope(scope, parts);
 
@@ -95,7 +95,7 @@ function resolveByName(
 	scope: Scope,
 	column: string,
 	fields: string[],
-	schema: SchemaSource | undefined,
+	schema: SchemaProvider | undefined,
 ): ColumnResolution {
 	const name = foldIdentifier(column, scope.dialect);
 	const sources = [...scope.sources.values()];
@@ -122,7 +122,7 @@ function resolveByName(
  *  needs-schema all yield `undefined` (never a fabricated binding — ambiguous no longer first-matches).
  *  Thin adapter over `resolveColumnRef`; kept for infer / lineage / nullability / references / qualify's
  *  `bindingOf`, which take `parts` and only ever want the concrete binding. */
-export function resolveColumnSource(scope: Scope, parts: string[], schema: SchemaSource): ResolvedColumn | undefined {
+export function resolveColumnSource(scope: Scope, parts: string[], schema: SchemaProvider): ResolvedColumn | undefined {
 	const r = resolveParts(scope, parts, undefined, schema);
 	return r.kind === "bound" ? { source: r.source, column: r.column, fields: r.fields } : undefined;
 }
@@ -155,7 +155,7 @@ export function findProducerProjection(
  *  raw form); when absent, the default fold (backtick-strip + lower) reproduces legacy behavior. */
 export function columnNamesOf(
 	src: ResolvedSource,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	visited: Set<Scope> = new Set(),
 	dialect?: string,
 ): string[] | undefined {
@@ -188,7 +188,7 @@ export function columnNamesOf(
  *  (a staging CTE reused across a join). Marking `visited` permanently (never deleting) turned that
  *  into a false cycle: the second sibling saw the scope "visited" and returned undefined, poisoning
  *  the whole star expansion to undefined and unbinding bare columns downstream. */
-export function outputNames(scope: Scope, schema: SchemaSource, visited: Set<Scope> = new Set()): string[] | undefined {
+export function outputNames(scope: Scope, schema: SchemaProvider, visited: Set<Scope> = new Set()): string[] | undefined {
 	if (visited.has(scope)) return undefined;
 	visited.add(scope);
 	try {
@@ -198,7 +198,7 @@ export function outputNames(scope: Scope, schema: SchemaSource, visited: Set<Sco
 	}
 }
 
-function computeOutputNames(scope: Scope, schema: SchemaSource, visited: Set<Scope>): string[] | undefined {
+function computeOutputNames(scope: Scope, schema: SchemaProvider, visited: Set<Scope>): string[] | undefined {
 	if (scope.pipeStage) return pipeStageNames(scope, schema, visited);
 	const body = scope.body;
 	if (body.kind === "pipe") {
@@ -229,7 +229,7 @@ function computeOutputNames(scope: Scope, schema: SchemaSource, visited: Set<Sco
 }
 
 /** All source columns of a scope (the base relation) — used to apply a PIVOT/UNPIVOT transform. */
-function sourceColumnsAll(scope: Scope, schema: SchemaSource, visited: Set<Scope>): string[] | undefined {
+function sourceColumnsAll(scope: Scope, schema: SchemaProvider, visited: Set<Scope>): string[] | undefined {
 	const out: string[] = [];
 	for (const src of scope.sources.values()) {
 		const cols = columnNamesOf(src, schema, visited, scope.dialect);
@@ -243,7 +243,7 @@ function sourceColumnsAll(scope: Scope, schema: SchemaSource, visited: Set<Scope
 function projectionNames(
 	scope: Scope,
 	projections: import("../ir/ir.js").Projection[],
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	visited: Set<Scope>,
 ): string[] | undefined {
 	const out: string[] = [];
@@ -269,7 +269,7 @@ function projectionNames(
 }
 
 /** Output column names of a pipe stage, given the schema-expanded incoming columns. */
-function pipeStageNames(scope: Scope, schema: SchemaSource, visited: Set<Scope>): string[] | undefined {
+function pipeStageNames(scope: Scope, schema: SchemaProvider, visited: Set<Scope>): string[] | undefined {
 	const stage = scope.pipeStage!;
 	const incoming = scope.pipeIncoming ? outputNames(scope.pipeIncoming, schema, visited) : undefined;
 	switch (stage.op) {

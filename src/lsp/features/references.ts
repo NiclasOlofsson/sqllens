@@ -1,6 +1,6 @@
 import type { Location, Position, DocumentHighlight } from "vscode-languageserver-types";
 import { DocumentHighlightKind } from "vscode-languageserver-types";
-import { referencesAt, type Occurrence, type SchemaSource, type SqlDocument } from "../../index.js";
+import { referencesAt, type Occurrence, type SchemaProvider, type SqlDocument } from "../../index.js";
 import { cellBaseOf, rangeFromSpan, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -21,7 +21,7 @@ export function computeReferences(
 	position: Position,
 	includeDeclaration: boolean,
 	uri: string,
-	schema?: SchemaSource,
+	schema?: SchemaProvider,
 ): Location[] {
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const cell = doc.cellAt(off);
@@ -46,7 +46,7 @@ export function computeReferences(
 export function computeDocumentHighlight(
 	doc: SqlDocument,
 	position: Position,
-	schema?: SchemaSource,
+	schema?: SchemaProvider,
 ): DocumentHighlight[] {
 	const off = doc.lines.offsetAt(position.line, position.character);
 	const cell = doc.cellAt(off);

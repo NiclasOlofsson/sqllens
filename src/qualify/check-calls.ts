@@ -8,7 +8,7 @@ import type { Scope, ScopeTree } from "../scope/scope.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES, type FnSignature } from "../signature/signatures.js";
 import type { Dialect } from "../api.js";
 import type { Diagnostic } from "./qualify.js";
-import type { SchemaSource } from "./schema-source.js";
+import type { SchemaProvider } from "./schema-provider.js";
 
 // ---------------------------------------------------------------------------
 // Call-signature diagnostics — arity + operand types, over the modelled function
@@ -56,7 +56,7 @@ const ARITY_USES_HARVESTED: Record<Dialect, boolean> = {
 	trino: false,
 };
 
-export function checkCalls(tree: ScopeTree, schema: SchemaSource, diagnostics: Diagnostic[]): void {
+export function checkCalls(tree: ScopeTree, schema: SchemaProvider, diagnostics: Diagnostic[]): void {
 	const visit = (scope: Scope): void => {
 		for (const expr of ownExprs(scope)) walkCalls(expr, scope, schema, diagnostics);
 		for (const child of scope.children) visit(child);
@@ -107,7 +107,7 @@ function stageExprs(stage: PipeStage): Expr[] {
 
 /** Descend an expression, checking every modelled function call. Stops at subquery/EXISTS boundaries —
  *  their inner calls are checked in their own child scope, where their argument types resolve. */
-function walkCalls(expr: Expr, scope: Scope, schema: SchemaSource, diagnostics: Diagnostic[]): void {
+function walkCalls(expr: Expr, scope: Scope, schema: SchemaProvider, diagnostics: Diagnostic[]): void {
 	switch (expr.kind) {
 		case "function":
 			checkOneCall(expr, scope, schema, diagnostics);
@@ -157,7 +157,7 @@ function walkCalls(expr: Expr, scope: Scope, schema: SchemaSource, diagnostics: 
 function checkOneCall(
 	fn: Extract<Expr, { kind: "function" }>,
 	scope: Scope,
-	schema: SchemaSource,
+	schema: SchemaProvider,
 	diagnostics: Diagnostic[],
 ): void {
 	// A named-argument invocation (fn(x => v)) can't be mapped to a positional arg list confidently.
