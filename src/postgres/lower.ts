@@ -304,7 +304,11 @@ function lowerSelectNoParens(node: ParserRuleContext): QueryExpr {
 	const selectClause = directChildrenOfRule(node, P.RULE_select_clause)[0];
 	const body = selectClause ? lowerSelectClause(selectClause) : emptyBody(node);
 
-	const sort = firstShallow(node, P.RULE_sort_clause);
+	// The query's OWN sort clause is a DIRECT opt_sort_clause child (grammar: select_no_parens).
+	// A deep search finds a CTE body's inner ORDER BY first (document order), hoisting the wrong
+	// clause whenever the names coincide (anvil bug report, 2026-07-06).
+	const optSort = directChildrenOfRule(node, P.RULE_opt_sort_clause)[0];
+	const sort = optSort ? directChildrenOfRule(optSort, P.RULE_sort_clause)[0] : undefined;
 	const orderBy = sort ? extractSortKeys(sort) : undefined;
 	if (orderBy && body.kind === "select") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 
