@@ -16,7 +16,7 @@ import type {
 	Source,
 	UnpivotInfo,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { displayName } from "../ident/fold.js";
@@ -111,14 +111,18 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const statement = statementCategory(tree);
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
-	if (commands.length !== 1) {
+	// Recovery-swallowed statements count toward batch-ness: a broken statement makes recovery dump
+	// the rest of the batch as flat error nodes, so the command count alone under-reports.
+	const swallowed = swallowedStatements(tree);
+	const total = commands.length + swallowed;
+	if (total !== 1 || commands.length !== 1) {
 		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST command,
 		// NOT the whole `snowflake_file` container (which reaches EOF): a whole-file span on a
 		// flagged body makes a downstream AST index read a bogus enclosure over commands 2..n.
 		// Bounding to command 1 keeps the span honest — the "compound" kind + "multi-statement"
 		// flag already tell a consumer this is an unmodelled batch (issue #21). Empty stays `tree`.
-		const cst = commands.length > 1 ? commands[0] : tree;
-		const q = nonQuery(cst, commands.length === 0 ? "empty" : "multi-statement");
+		const cst = total > 1 && commands.length > 0 ? commands[0] : tree;
+		const q = nonQuery(cst, total > 1 ? "multi-statement" : total === 1 ? "broken" : "empty");
 		q.statement = statement;
 		return q;
 	}
@@ -173,7 +177,8 @@ function statementCategory(tree: ParserRuleContext): StatementCategory {
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const batch = firstOfRule(tree, P.RULE_batch);
 	const commands = batch ? directChildrenOfRule(batch, P.RULE_sql_command) : [];
-	return commands.map(commandCategory);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...commands.map(commandCategory), ...swallowedCategories(tree)];
 }
 
 function commandCategory(cmd: ParserRuleContext): StatementCategory {

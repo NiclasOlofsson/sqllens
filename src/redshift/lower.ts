@@ -17,7 +17,7 @@ import type {
 	UnpivotInfo,
 	WindowSpec,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { displayName } from "../ident/fold.js";
@@ -93,15 +93,19 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const stmts = topLevelStmts(tree);
-	const statement = statementCategory(stmts);
-	if (stmts.length !== 1) {
+	// Recovery-swallowed statements count toward batch-ness: a broken statement makes recovery dump
+	// the rest of the batch as flat error nodes, so the stmt count alone under-reports.
+	const swallowed = swallowedStatements(tree);
+	const total = stmts.length + swallowed;
+	const statement = statementCategory(stmts, swallowed);
+	if (total !== 1 || stmts.length !== 1) {
 		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST top-level
 		// statement, NOT the whole `root` container (which reaches EOF): a whole-file span on a
 		// flagged body makes a downstream AST index read a bogus enclosure over statements 2..n.
 		// Bounding to statement 1 keeps the span honest — the "compound" kind + "multi-statement"
 		// flag already tell a consumer this is an unmodelled batch (issue #21). Empty stays `tree`.
-		const cst = stmts.length > 1 ? stmts[0] : tree;
-		const q = nonQuery(cst, stmts.length === 0 ? "empty" : "multi-statement");
+		const cst = total > 1 && stmts.length > 0 ? stmts[0] : tree;
+		const q = nonQuery(cst, total > 1 ? "multi-statement" : total === 1 ? "broken" : "empty");
 		q.statement = statement;
 		return q;
 	}
@@ -116,9 +120,9 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	return q;
 }
 
-function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
+function statementCategory(stmts: ParserRuleContext[], swallowed = 0): StatementCategory {
+	if (stmts.length + swallowed > 1) return "compound";
 	if (stmts.length === 0) return "other";
-	if (stmts.length > 1) return "compound";
 	return redshiftCategory(stmts[0]);
 }
 
@@ -126,18 +130,28 @@ function statementCategory(stmts: ParserRuleContext[]): StatementCategory {
  *  file-level view behind statementCategory (which folds >1 into "compound"). Parity with the other
  *  dialects; feeds the corpus reclassifier. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return topLevelStmts(tree).map(redshiftCategory);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...topLevelStmts(tree).map(redshiftCategory), ...swallowedCategories(tree)];
 }
 
 /** The top-level `stmt` nodes of a parsed file — root → stmtblock → stmtmulti's DIRECT `stmt`
  *  children. A deep `collectOfRule(tree, RULE_stmt)` would also pick up a `stmt` nested inside
  *  `createfunc_opt_item` (`CREATE FUNCTION … BEGIN ATOMIC <stmt>; END`, RedshiftParser.g4), so a
  *  single CREATE FUNCTION would count as two statements. Walk only the top level, like the other
- *  dialects. */
+ *  dialects.
+ */
 function topLevelStmts(tree: ParserRuleContext): ParserRuleContext[] {
 	const stmtblock = directChildrenOfRule(tree, P.RULE_stmtblock)[0] ?? tree;
 	const stmtmulti = directChildrenOfRule(stmtblock, P.RULE_stmtmulti)[0] ?? stmtblock;
-	return directChildrenOfRule(stmtmulti, P.RULE_stmt);
+	// A token-less stmt (an empty statement slot between `;;`) is no statement at all. NOTE: no
+	// separator-based merging here — this grammar parses `select 1 select 2` CLEAN as two sibling
+	// stmts (lenient separators), so merging separator-less siblings would silently drop validly
+	// parsed statements. The cost: recovery can split ONE broken statement into several sibling
+	// fragments, which then over-report as a compound (an over-report on broken input, never an
+	// under-report — pinned in tests/broken-batch.test.ts).
+	return directChildrenOfRule(stmtmulti, P.RULE_stmt).filter(
+		(s) => s.start && s.stop && s.start.tokenIndex <= s.stop.tokenIndex,
+	);
 }
 
 // Structural statement classification over the Postgres-derived `stmt` alternatives (grammars/

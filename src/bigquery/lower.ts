@@ -22,7 +22,7 @@ import type {
 	Source,
 	UnpivotInfo,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpanOf, partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
@@ -110,10 +110,19 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// NOT the whole `root` container (which reaches EOF): a whole-file span on a flagged body makes a
 	// downstream AST index read a bogus enclosure over statements 2..n. Bounding to statement 1 keeps
 	// the span honest — the "compound" kind already tells a consumer this is an unmodelled batch
-	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical).
+	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical). A batch (healthy
+	// or recovery-swallowed) flags "multi-statement"; a wholly-unparsed statement flags "broken".
 	const bodies = sqlStatementBodies(tree);
 	const cst = bodies.length > 1 ? bodies[0] : tree;
-	const q = emptyQuery(cst, statement === "other" ? "empty" : "non-query");
+	const reason =
+		statement === "compound"
+			? "multi-statement"
+			: statement === "other"
+				? swallowedStatements(tree) > 0
+					? "broken"
+					: "empty"
+				: "non-query";
+	const q = emptyQuery(cst, reason);
 	q.statement = statement;
 	return q;
 }
@@ -149,7 +158,8 @@ function sqlStatementBodies(tree: ParserRuleContext): ParserRuleContext[] {
  *  order — the file-level view behind statementCategory (which folds >1 into "compound"), using the
  *  same `bodyCategory` per element. Parity with the other dialects; feeds the corpus reclassifier. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return sqlStatementBodies(tree).map(bodyCategory);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...sqlStatementBodies(tree).map(bodyCategory), ...swallowedCategories(tree)];
 }
 
 function bodyCategory(body: ParserRuleContext): StatementCategory {

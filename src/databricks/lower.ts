@@ -62,7 +62,7 @@ import type {
 	UnpivotInfo,
 	WindowSpec,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
@@ -164,6 +164,10 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// (the issue is parse-entry parity only). 0 elements is an empty file — also flagged,
 	// never a throw (an editor opens empty documents).
 	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
+	// Statements swallowed by error recovery count toward batch-ness: a broken statement makes
+	// recovery dump the rest of the batch (healthy statements included) as flat error nodes, so
+	// the element count alone under-reports and a broken batch would misreport as "query".
+	const swallowed = tree.ruleIndex === P.RULE_multiStatement ? swallowedStatements(tree) : 0;
 	// A `;`-separated batch of >1 statements is a compound script — flagged, not modelled.
 	// Anchor the flagged body's CST span to the FIRST statement element, NOT the whole
 	// `multiStatement` container: the container reaches EOF, and a whole-file span on a
@@ -171,8 +175,9 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// statements 2..n (which carry none of their inner structure). Bounding to statement 1
 	// keeps the span honest — the "compound" statement kind + "multi-statement" flag already
 	// tell a consumer this is an unmodelled batch (issue #21).
-	if (elements.length > 1) return flagged(elements[0], "multi-statement", "compound");
-	if (elements.length === 0 && tree.ruleIndex === P.RULE_multiStatement) return flagged(tree, "empty", "other");
+	if (elements.length + swallowed > 1) return flagged(elements[0] ?? tree, "multi-statement", "compound");
+	if (elements.length === 0 && tree.ruleIndex === P.RULE_multiStatement)
+		return flagged(tree, swallowed > 0 ? "broken" : "empty", "other");
 	const stmt = elements[0] ?? tree; // the single element, or a legacy single-statement root
 	const statement = statementCategory(stmt);
 	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
@@ -211,10 +216,11 @@ function statementCategory(stmt: ParserRuleContext): StatementCategory {
  *  single-statement root (not a `multiStatement`) yields its one category; an empty batch yields []. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const elements = directChildrenOfRule(tree, P.RULE_multiStatementElement);
-	if (elements.length === 0) {
-		return tree.ruleIndex === P.RULE_multiStatement ? [] : [statementCategory(tree)];
+	if (elements.length === 0 && tree.ruleIndex !== P.RULE_multiStatement) {
+		return [statementCategory(tree)];
 	}
-	return elements.map(statementCategory);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...elements.map(statementCategory), ...swallowedCategories(tree)];
 }
 
 function lowerQuery(query: ParserRuleContext): QueryExpr {

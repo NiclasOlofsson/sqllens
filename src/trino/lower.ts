@@ -121,7 +121,7 @@ import type {
 	Source,
 	WindowSpec,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { foldIdentifier } from "../ident/fold.js";
@@ -204,15 +204,20 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 
 function lowerRoot(tree: ParserRuleContext): QueryExpr {
 	const statements = tree instanceof RootContext ? tree.statement() : [];
-	if (statements.length === 0) return flagged(tree, "other", "empty");
-	if (statements.length > 1) {
+	// Recovery-swallowed statements count toward batch-ness: a broken statement makes recovery dump
+	// the rest of the batch as flat error nodes, so the statement count alone under-reports.
+	const swallowed = tree instanceof RootContext ? swallowedStatements(tree) : 0;
+	const total = statements.length + swallowed;
+	if (total === 0) return flagged(tree, "other", "empty");
+	if (total > 1) {
 		// A multi-statement batch is a flagged compound. Anchor its span to the FIRST statement,
 		// NOT the whole `root` container (which reaches EOF): a whole-file span on a flagged body
 		// makes a downstream AST index read a bogus enclosure over statements 2..n. Bounding to
 		// statement 1 keeps the span honest — the "compound" kind + "multi-statement" flag already
 		// tell a consumer this is an unmodelled batch (issue #21).
-		return flagged(statements[0], "compound", "multi-statement");
+		return flagged(statements[0] ?? tree, "compound", "multi-statement");
 	}
+	if (statements.length === 0) return flagged(tree, "other", "broken");
 	return lowerStatement(statements[0]);
 }
 
@@ -220,7 +225,8 @@ function lowerRoot(tree: ParserRuleContext): QueryExpr {
  *  bucket source). Mirrors lowerStatement's mapping without building IR. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const statements = tree instanceof RootContext ? tree.statement() : [];
-	return statements.map(categoryOf);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...statements.map(categoryOf), ...swallowedCategories(tree)];
 }
 
 function categoryOf(stmt: StatementContext): StatementCategory {

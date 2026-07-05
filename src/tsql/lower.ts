@@ -16,7 +16,7 @@ import type {
 	Source,
 	UnpivotInfo,
 } from "../ir/ir.js";
-import { keywordCategory, type StatementCategory } from "../ir/statement.js";
+import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { displayName, foldIdentifier } from "../ident/fold.js";
@@ -80,10 +80,16 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// NOT the whole `tsql_file` (which reaches EOF): a whole-file span on a flagged body makes a
 	// downstream AST index read a bogus enclosure over statements 2..n. Bounding to statement 1 keeps
 	// the span honest — the "compound" kind already tells a consumer this is an unmodelled batch
-	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical).
+	// (issue #21). Single-statement and empty inputs keep `tree` (byte-identical). Recovery-swallowed
+	// statements count toward batch-ness (a broken batch stays "compound", flag "multi-statement").
 	const units = topLevelUnits(tree);
-	const cst = units.length > 1 ? units[0] : tree;
-	const q = emptyQuery(cst);
+	const swallowed = swallowedStatements(tree);
+	const total = units.length + swallowed;
+	const cst = total > 1 && units.length > 0 ? units[0] : tree;
+	const q = emptyQuery(
+		cst,
+		total > 1 ? "multi-statement" : units.length === 0 && swallowed > 0 ? "broken" : undefined,
+	);
 	q.statement = statement;
 	return q;
 }
@@ -105,7 +111,8 @@ function statementCategory(tree: ParserRuleContext): StatementCategory {
  *  the file-level view behind statementCategory (which folds >1 into "compound"). Lets consumers
  *  (e.g. the corpus gates) see what a multi-statement script contains. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
-	return topLevelUnits(tree).map(unitCategory);
+	// Recovery-swallowed statements append as "other" — honest count, no keyword guessing.
+	return [...topLevelUnits(tree).map(unitCategory), ...swallowedCategories(tree)];
 }
 
 /** The top-level statement nodes of a parsed `tsql_file`, in source order — each batch's
@@ -1291,18 +1298,18 @@ function otherExpr(node: ParserRuleContext): Expr {
 	return { kind: "other", text: node.getText(), cst: node };
 }
 
-function emptyBody(cst: ParserRuleContext): SelectExpr {
+function emptyBody(cst: ParserRuleContext, reason = "unparsed"): SelectExpr {
 	return {
 		kind: "select",
 		projections: [],
 		from: [],
 		columns: [],
 		aggregated: false,
-		unsupported: ["unparsed"],
+		unsupported: [reason],
 		cst,
 	};
 }
 
-function emptyQuery(cst: ParserRuleContext): QueryExpr {
-	return { kind: "query", ctes: [], body: emptyBody(cst), cst };
+function emptyQuery(cst: ParserRuleContext, reason?: string): QueryExpr {
+	return { kind: "query", ctes: [], body: emptyBody(cst, reason), cst };
 }
