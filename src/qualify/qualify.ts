@@ -15,8 +15,8 @@ import {
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
+import { relationColumns } from "./relation-columns.js";
 import { type SchemaSource } from "./schema-source.js";
-import { type TemplateCatalog } from "./template-catalog.js";
 import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -307,13 +307,10 @@ function templateColumns(
 	schema: SchemaSource,
 	dialect?: string,
 ): string[] | undefined {
-	if (t.opaque || t.kind === "macro" || t.kind === "expr" || !schema || !("relation" in schema)) return undefined;
-	const resolved = (schema as TemplateCatalog).relation({ kind: t.kind, nameParts: name }, dialect);
-	if (!resolved) return undefined; // catalog miss → R3 exemption (warms on a later prime())
-	// `columns: []` is a genuinely EMPTY relation (unknown-column fires on ANY ref), NOT a not-loaded
-	// sentinel — `columns: undefined` is the not-loaded sentinel (fall through to the physical resolver).
-	if (resolved.columns) return resolved.columns.map((c) => c.name); // real columns → real resolution
-	return schema.columnsFor(resolved.nameParts, dialect)?.map((c) => c.name); // physical name → resolver
+	// CATALOG-ONLY on purpose (relationColumns, shared with infer/nullability/resolve): the
+	// diagnostic exemption must not narrow just because a plain Schema happens to declare the
+	// dbt-logical name — the type consumers add that fallback themselves (tableSourceColumns).
+	return relationColumns(t, name, schema, dialect)?.map((c) => c.name);
 }
 
 /**

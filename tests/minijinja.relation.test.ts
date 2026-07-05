@@ -1,5 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated, qualify, toScopes, Schema, type Column, type TableResolver } from "../src/index.js";
+import {
+	parseTemplated,
+	qualify,
+	toScopes,
+	Schema,
+	formatType,
+	inferType,
+	type Column,
+	type TableResolver,
+} from "../src/index.js";
+import { inferNullability } from "../src/infer/nullability.js";
 import {
 	CallbackTemplateCatalog,
 	type RelationResolver,
@@ -170,5 +180,64 @@ describe("inc3.1 — qualify resolves templated columns via TemplateCatalog.rela
 		const catalog = physicalCatalog(["analytics", "orders"], undefined); // physical relation unknown
 		const bad = parseTemplated("SELECT o.nope FROM {{ ref('orders') }} o", "databricks");
 		expect(unknownCols(qualify(bad.sql.ast, catalog))).toEqual([]); // exempt: physical columns unknown
+	});
+});
+
+// ---------------------------------------------------------------------------
+// inc3.2 remainder (2026-07-05) — templated column TYPES thread through
+// inference: a warm catalog's `relation` columns (type + nullable) answer
+// inferType / inferNullability for `{{ ref('x') }}.col`, so hover/inlay types
+// stop being dark on templated sources. The logical-name fallback (a plain
+// Schema declaring model names) keeps typing exactly as before; qualify's
+// diagnostic exemption stays CATALOG-ONLY (unchanged).
+// ---------------------------------------------------------------------------
+describe("inc3.2 — templated column types reach inference", () => {
+	/** A warm catalog whose `orders` relation carries typed, nullability-tagged columns. */
+	function typedCatalog(): CallbackTemplateCatalog {
+		const r = new TestRelationResolver();
+		r.cache.set(relKey({ kind: "ref", nameParts: ["orders"] }), {
+			nameParts: ["prod", "core", "orders"],
+			columns: [
+				{ name: "id", type: "bigint", nullable: false },
+				{ name: "total", type: "decimal(10,2)", nullable: true },
+			],
+		});
+		return new CallbackTemplateCatalog(r);
+	}
+
+	function projectionType(sql: string, schema: Parameters<typeof inferType>[2]): string {
+		const r = parseTemplated(sql, "databricks");
+		const tree = toScopes(r.sql.ast);
+		const body = tree.root.body as { projections: { expr: Parameters<typeof inferType>[0] }[] };
+		return formatType(inferType(body.projections[0].expr, tree.root, schema));
+	}
+
+	it("inferType answers from the catalog relation columns", () => {
+		expect(projectionType("SELECT o.total FROM {{ ref('orders') }} o", typedCatalog())).toBe("decimal");
+		expect(projectionType("SELECT o.id FROM {{ ref('orders') }} o", typedCatalog())).toBe("bigint");
+	});
+
+	it("inferNullability answers from the catalog relation columns", () => {
+		const r = parseTemplated("SELECT o.id, o.total FROM {{ ref('orders') }} o", "databricks");
+		const tree = toScopes(r.sql.ast);
+		const body = tree.root.body as { projections: { expr: Parameters<typeof inferNullability>[0] }[] };
+		expect(inferNullability(body.projections[0].expr, tree.root, typedCatalog())).toBe("notnull");
+		expect(inferNullability(body.projections[1].expr, tree.root, typedCatalog())).toBe("nullable");
+	});
+
+	it("catalog miss / opaque tag stays unknown (never-wrong)", () => {
+		const cold = new CallbackTemplateCatalog(new TestRelationResolver());
+		expect(projectionType("SELECT o.total FROM {{ ref('nope') }} o", cold)).toBe("unknown");
+		expect(projectionType("SELECT m.x FROM {{ my_macro() }} m", typedCatalog())).toBe("unknown");
+	});
+
+	it("a plain Schema declaring the LOGICAL name still types (pre-inc3.2 fallback preserved)", () => {
+		const schema = new Schema({ orders: { total: "decimal(10,2)" } });
+		expect(projectionType("SELECT o.total FROM {{ ref('orders') }} o", schema)).toBe("decimal");
+	});
+
+	it("set-indirection composes: {% set t = ref(...) %} + catalog types the use site", () => {
+		const sql = "{% set t = ref('orders') %}\nSELECT o.total FROM {{ t }} o";
+		expect(projectionType(sql, typedCatalog())).toBe("decimal");
 	});
 });

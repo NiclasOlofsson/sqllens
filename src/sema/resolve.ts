@@ -1,6 +1,7 @@
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
 import type { ColumnRef, Projection } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
+import { tableSourceColumns } from "../qualify/relation-columns.js";
 import {
 	aliasVisibleClause,
 	applyPivotCols,
@@ -159,7 +160,11 @@ export function columnNamesOf(
 	dialect?: string,
 ): string[] | undefined {
 	if (src.kind === "table") {
-		return src.source.columnAliases ?? schema.columnsFor(src.name, dialect)?.map((c) => c.name);
+		// Template-aware (inc3.2): catalog columns first, then the logical-name lookup.
+		return (
+			src.source.columnAliases ??
+			tableSourceColumns(src.name, src.source.template, schema, dialect)?.map((c) => c.name)
+		);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? outputNames(src.ref.scope, schema, visited);
 	if (src.kind === "subquery") return src.source.columnAliases ?? outputNames(src.scope, schema, visited);

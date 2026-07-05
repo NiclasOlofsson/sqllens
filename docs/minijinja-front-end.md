@@ -353,13 +353,16 @@ loop drives this catalog type (over its physical-table side); the relation path 
   absent from them. The consumer-contract gate extends: a catalog-resolved templated ref reports its real
   columns on every public read; a zero-catalog parse is byte-identical to R3.
 
-**Open Gap (inc3.2 boundary — templated-column TYPES not yet threaded to inference/hover).** inc3.1
-delivers relation-for-qualify: existence and unknown-column against a templated source's columns. It does
-NOT thread the resolved columns' TYPES into inference. Inference queries `columnsFor(logical name)` (the
-`tableResolver` / physical `SchemaSource` side), not the catalog's `relation` columns, so hover on
-`{{ ref('orders') }}.total` shows no type even with a warm catalog. A future increment (inc3.2) threads the
-relation-resolved column types through `infer`/`resolve` so hover/inlay-hints type templated columns.
-`value`/`expansionShape`/`loopCollection` remain spec (the full `TemplateCatalog` above).
+**Templated-column TYPES → inference/hover — CLOSED 2026-07-05 (the inc3.2 type slice).**
+`src/qualify/relation-columns.ts` is the shared template-aware typed resolver: `relationColumns`
+(CATALOG-ONLY — qualify's diagnostic exemption is built on it and stays conservative) and
+`tableSourceColumns` (catalog first, then the plain `columnsFor(logical name)` fallback the type
+consumers always did — a Schema keyed by dbt-logical names keeps typing). infer (`sourceColumnType`),
+nullability (`tableColumnNullability`) and sema-resolve (`columnNamesOf`) route table sources through it,
+so `{{ ref('orders') }}.total` types (and carries nullability) from a warm catalog's `relation` columns —
+hover/inlay-hints included. Catalog misses recorded by the type path warm on `prime()` like every other
+lookup. `value`/`loopCollection` remain spec (the full `TemplateCatalog` above); `expansionShape` shipped
+(statement/relation/predicate/column-list/conjunct + slot guards).
 
 ## Variant expansion (Q3 — resolved: it is parsing → sqllens's, inc2)
 
@@ -400,10 +403,11 @@ on the R4 control-flow regions.)
   - **inc3.1 — `relation` slice — BUILT 2026-07-04.** `TemplateCatalog extends SchemaSource` +
     `CallbackTemplateCatalog`; qualify duck-types the catalog and resolves a templated source's real
     columns (real unknown-column diagnostics), barrel-exported, LSP-injected (the lazy re-publish loop
-    drives `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3. **Open Gap
-    (inc3.2):** templated-column TYPES are not threaded to inference/hover — see § the seam inc3.1 block.
-  - **inc3.2+ — spec:** `value` (var/env_var → Type), `expansionShape` (retires the fragment-macro
-    limitation), `loopCollection`, and threading relation-resolved column types through inference.
+    drives `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3.
+  - **inc3.2 — type slice + expansionShape — BUILT 2026-07-05.** Relation-resolved column TYPES thread
+    through infer/nullability/resolve (§ the seam — the CLOSED block above), and `expansionShape` is live
+    (statement/relation/predicate/column-list/conjunct, slot-guarded, statement-slot blank default).
+  - **inc3.3+ — spec:** `value` (var/env_var → Type), `loopCollection`.
 
 Each increment is independently shippable to master with a channel ship note; the extension consumes per
 increment (its `JINJA-CONSUMPTION-PLAN.md` maps each of its ~2,538 dying/relocating LOC to these).

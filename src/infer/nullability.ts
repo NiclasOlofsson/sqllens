@@ -1,6 +1,7 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, Source } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
+import { tableSourceColumns } from "../qualify/relation-columns.js";
 import { likePatternToRegExp, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 
@@ -116,7 +117,10 @@ function tableColumnNullability(
 	// nullability signal.
 	if (src.source.declaredColumns?.some((c) => eq(c.name, column, dialect))) return "unknown";
 	if (src.source.columnAliases) return "unknown";
-	const col = schema.columnsFor(src.name, dialect)?.find((c) => eq(c.name, column, dialect));
+	// Template-aware (inc3.2): catalog columns carry `nullable` too.
+	const col = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find(
+		(c) => eq(c.name, column, dialect),
+	);
 	if (!col) return "unknown"; // no schema / unknown table / unknown column
 	if (col.nullable === false) return "notnull";
 	if (col.nullable === true) return "nullable";

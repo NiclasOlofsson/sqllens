@@ -147,10 +147,12 @@ arm-coverage `templateVariants` (inc2); gated by `tests/corpus/minijinja.test.ts
 schema`) and resolves a templated source's real columns, so unknown-column fires against a `{{ ref }}` when
 the catalog knows the relation; the LSP injects it (the lazy re-publish loop is duck-typed on
 `prime()`/`misses`, driving `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3.
-**Open Gap (inc3.2):** templated-column TYPES are not yet threaded to inference/hover — inference queries
-`columnsFor(logical name)` (the table resolver), not the catalog's `relation` columns, so hover on
-`{{ ref('orders') }}.total` shows no type even with a warm catalog; a future increment threads relation
-column types through infer/resolve. `value`/`expansionShape`/`loopCollection` remain spec. See
+**inc3.2 built (type slice + expansionShape, 2026-07-05):** templated-column TYPES thread to
+inference/hover — `src/qualify/relation-columns.ts` (`relationColumns` catalog-only for qualify's
+diagnostic exemption; `tableSourceColumns` = catalog first, then the plain logical-name `columnsFor`
+fallback) routes infer/nullability/sema-resolve, so `{{ ref('orders') }}.total` types (and carries
+nullability) from a warm catalog. `expansionShape` is live (statement/relation/predicate/column-list/
+conjunct, slot-guarded, statement-slot blank default). `value`/`loopCollection` remain spec. See
 docs/minijinja-front-end.md.
 
 ## Repo layout (target)

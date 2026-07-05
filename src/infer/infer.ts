@@ -1,6 +1,7 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaSource } from "../qualify/schema-source.js";
+import { tableSourceColumns } from "../qualify/relation-columns.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
@@ -106,7 +107,11 @@ function sourceColumnType(
 		const declared = src.source.declaredColumns?.find((c) => eq(c.name, column, dialect));
 		if (declared) return declared.type ? d.parseType(declared.type) : UNKNOWN;
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
-		const t = schema.columnsFor(src.name, dialect)?.find((c) => eq(c.name, column, dialect))?.type;
+		// Template-aware (inc3.2): a {{ ref }}/{{ source }} source resolves its typed
+		// columns through the TemplateCatalog first, then the plain logical-name lookup.
+		const t = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find(
+			(c) => eq(c.name, column, dialect),
+		)?.type;
 		return t ? d.parseType(t) : UNKNOWN;
 	}
 	if (src.kind === "cte") return derivedColumnType(src.ref.scope, column, src.ref.def.columnAliases, schema, ctx);
