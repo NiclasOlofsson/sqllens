@@ -495,10 +495,17 @@ export interface LateralViewSource {
  *  dbt-logical name parts (ref model, or [sourceName, tableName]). This type is IR-neutral (no import
  *  from src/minijinja); consumers needing the full TagNode correlate by `span` with parseTemplated().tags. */
 export interface TemplateSourceInfo {
-	kind: "ref" | "source" | "macro";
+	/** `"expr"` = a non-call templated expression in the slot (a bare variable `{{ t }}`, a concat
+	 *  `{{ a ~ b }}`, …) — always `opaque` (its relation is undeterminable), `name` stays the raw
+	 *  placeholder, exactly like the macro-opaque case. */
+	kind: "ref" | "source" | "macro" | "expr";
 	/** The whole tag's span ({{ … }} inclusive), document coordinates. */
 	span: PartSpan;
 	opaque?: true;
+	/** Present when a bare `{{ t }}` resolved through a literal `{% set t = ref('x') %}`: `kind`/`name`
+	 *  carry the resolved ref/source, but the TagNode at `span` is the USE site (kind "other"), not a
+	 *  ref/source node — consumers correlating span→TagNode must not expect a ref node here. */
+	indirect?: true;
 }
 
 export interface TableSource {

@@ -183,3 +183,37 @@ describe("TemplatedParseResult.placeholder — the SQL parser's actual input", (
 		expect(parseTemplated(text, "databricks").placeholder).toBe(text);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Diagnostic hygiene (2026-07-05) — a syntax diagnostic whose offending token is
+// a placeholder fill quotes the ORIGINAL tag text and spans the whole tag.
+// ---------------------------------------------------------------------------
+describe("placeholder-scrubbed diagnostics", () => {
+	it("message quotes the tag text, never the jjj fill; span widens to the tag", () => {
+		// A bare non-call tag at BOF keeps the identifier fill (the blank default is
+		// calls-only), so the parse errors ON the fill — the scrub must rewrite it.
+		const text = "{{ my_var }}\nselect 1 from t";
+		const r = parseTemplated(text, "databricks");
+		expect(r.sql.errors).toBeGreaterThan(0);
+		const d = r.diagnostics.find((x) => x.offset === 0);
+		expect(d).toBeDefined();
+		expect(d!.message).toContain("{{ my_var }}");
+		expect(d!.message).not.toMatch(/j{3,}/);
+		expect(d!.length).toBe("{{ my_var }}".length);
+	});
+
+	it("diagnostics outside tags pass through untouched", () => {
+		const text = "select 1 from {{ ref('t') }} where where";
+		const r = parseTemplated(text, "databricks");
+		const outside = r.diagnostics.filter((d) => (d.offset ?? 0) > text.indexOf("}}"));
+		for (const d of outside) expect(d.message).not.toContain("{{");
+	});
+});
+
+describe("degraded marker", () => {
+	it("absent on every normal parse — plain SQL, templated, and broken jinja", () => {
+		for (const text of ["select 1", "select * from {{ ref('x') }}", "select {{ ref(", "{%", ""]) {
+			expect(parseTemplated(text, "databricks").degraded).toBeUndefined();
+		}
+	});
+});

@@ -307,7 +307,7 @@ function templateColumns(
 	schema: SchemaSource,
 	dialect?: string,
 ): string[] | undefined {
-	if (t.opaque || t.kind === "macro" || !schema || !("relation" in schema)) return undefined;
+	if (t.opaque || t.kind === "macro" || t.kind === "expr" || !schema || !("relation" in schema)) return undefined;
 	const resolved = (schema as TemplateCatalog).relation({ kind: t.kind, nameParts: name }, dialect);
 	if (!resolved) return undefined; // catalog miss → R3 exemption (warms on a later prime())
 	// `columns: []` is a genuinely EMPTY relation (unknown-column fires on ANY ref), NOT a not-loaded

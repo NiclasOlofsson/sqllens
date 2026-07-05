@@ -151,6 +151,7 @@ const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr">, string> = {
 	relation: "SELECT 1",
 	predicate: "1=1",
 	"column-list": "1",
+	conjunct: "AND 1=1",
 };
 
 /** dbt builtins that already parse with the identifier fill and must NOT be shaped — a buggy catalog
@@ -171,6 +172,57 @@ const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "en
  * remove breakage, never regress a working shape. `predicate`/`column-list` shapes are untouched.
  */
 const SLOT_BLOCK_WORDS: ReadonlySet<string> = new Set(["from", "join", "where", "and", "or", "on", "having", "when"]);
+
+/**
+ * Conjunct slot guard — OPPOSITE polarity to the statement/relation guard above. `AND 1=1` is valid
+ * only where a complete expression can just have ENDED; everywhere else the identifier fill parses
+ * and the conjunct fill breaks, so those slots fall back. The block set = the clause/operator
+ * keywords after which an expression is being OPENED, not closed (the statement/relation block words
+ * plus the select-list/operator keywords); the char test in `conjunctSlotAdmits` blocks every
+ * operator/opener char and admits only expression terminators (`)`, a string/quoted-ident close).
+ */
+const CONJUNCT_BLOCK_WORDS: ReadonlySet<string> = new Set([
+	...SLOT_BLOCK_WORDS,
+	"select",
+	"by",
+	"distinct",
+	"all",
+	"as",
+	"case",
+	"then",
+	"else",
+	"not",
+	"in",
+	"like",
+	"ilike",
+	"rlike",
+	"between",
+	"is",
+	"escape",
+	"exists",
+	"any",
+	"some",
+	"union",
+	"intersect",
+	"except",
+	"over",
+	"partition",
+	"order",
+	"group",
+	"limit",
+	"offset",
+	"set",
+	"values",
+]);
+
+/** A conjunct fill is admitted only after an operand word (identifier / number / TRUE / FALSE / NULL
+ *  — any word outside the block set), a closing paren/bracket, or a string / quoted-identifier
+ *  terminator. BOF, `;`, `,`, `(`, operator chars and the clause keywords keep the identifier fill. */
+function conjunctSlotAdmits(slot: string): boolean {
+	if (slot.length === 0 || slot === ";") return false;
+	if (/^[A-Za-z0-9_]+$/.test(slot)) return !CONJUNCT_BLOCK_WORDS.has(slot);
+	return slot === ")" || slot === "]" || slot === "'" || slot === '"' || slot === "`";
+}
 
 /**
  * The slot immediately preceding `start`: skip whitespace backward over `chars` (the placeholder
@@ -215,6 +267,9 @@ function shapedFill(
 	if (!shape || shape === "expr") return undefined; // expr / unknown → identifier fill (today's default)
 	if ((shape === "statement" || shape === "relation") && (SLOT_BLOCK_WORDS.has(slot) || slot === ",")) {
 		return undefined; // slot guard: SELECT 1 breaks here, the identifier fill parses — fall back
+	}
+	if (shape === "conjunct" && !conjunctSlotAdmits(slot)) {
+		return undefined; // conjunct guard: AND 1=1 is valid only after a complete expression
 	}
 	const fragment = SHAPE_FRAGMENT[shape];
 	// Fit guard: the fragment must fit within the tag AND before its first `\n`. seg.text[k] is the
@@ -360,7 +415,8 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
 		const leading = leadingByTag.get(seg)!;
-		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading, precedingSlot(chars, seg.start)) : undefined;
+		const slot = precedingSlot(chars, seg.start);
+		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading, slot) : undefined;
 		if (shaped !== undefined) {
 			// Shaped fill: fragment at the tag start, spaces for the rest, `\n` preserved. The fit guard
 			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.
@@ -377,7 +433,22 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 			// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
 			// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
 			// before AND after a newline are identical); length + newline offsets hold.
-			const fill = fillChar(seg, leading);
+			let fill = fillChar(seg, leading);
+			// Statement-slot default (2026-07-05): a CALL-shaped expr tag with NO shape answer
+			// sitting at a statement slot (BOF / after `;`) blanks to whitespace instead of the
+			// identifier fill. A lone identifier is not a valid statement, so the identifier fill
+			// ALWAYS breaks there (`{{ my_helper() }}\nselect …` → extraneous input) while blank
+			// lets the surrounding statements parse — a statement-producing macro reads as an
+			// empty statement. ref/source/var/env_var keep the identifier fill (SHAPE_EXCLUDED:
+			// they are value/relation builtins and R3 correlates on the identifier token).
+			if (
+				fill === "j" &&
+				(slot === "" || slot === ";") &&
+				leading.call?.isCall === true &&
+				!SHAPE_EXCLUDED.has(leading.word)
+			) {
+				fill = " ";
+			}
 			let seenNewline = false;
 			for (let k = seg.start; k < seg.end; k++) {
 				if (chars[k] === "\n") {

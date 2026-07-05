@@ -58,9 +58,11 @@ export interface ResolvedRelation {
  *   - `relation`   — a relation in FROM (rendered as a query body — same `SELECT 1` fill as `statement`).
  *   - `predicate`  — a boolean expression (a WHERE/ON/HAVING slot).
  *   - `column-list`— one or more select items (the slot parses; the real column COUNT differs).
+ *   - `conjunct`   — a TRAILING boolean conjunct (`and c = false`) appended to a complete ON/WHERE
+ *                    expression (the dbt `is_deleted_filter`-family macro shape) — fills `AND 1=1`.
  *   - `expr`       — a scalar expression (today's identifier fill — the zero-catalog default).
  */
-export type ExpansionShape = "expr" | "column-list" | "predicate" | "relation" | "statement";
+export type ExpansionShape = "expr" | "column-list" | "predicate" | "relation" | "statement" | "conjunct";
 
 /** Extends SchemaSource: a catalog that ALSO resolves dbt template refs to physical relations+columns.
  *  qualify duck-types this (`"relation" in schema`); a plain SchemaSource is the zero-catalog fallback. */

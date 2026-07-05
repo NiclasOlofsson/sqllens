@@ -84,7 +84,7 @@ describe("R3 apply-tags", () => {
 		const r = parseTemplated("SELECT 1", "databricks");
 		expect(r.sql.ast).toBeDefined();
 		// applyTemplateTags(ast, []) is a no-op that returns the same reference (structural sharing).
-		expect(applyTemplateTags(r.sql.ast, [])).toBe(r.sql.ast);
+		expect(applyTemplateTags(r.sql.ast, [], "SELECT 1")).toBe(r.sql.ast);
 	});
 
 	it("result is frozen", () => {
@@ -103,5 +103,83 @@ describe("R3 apply-tags", () => {
 			.filter((rs): rs is Extract<typeof rs, { kind: "table" }> => rs.kind === "table")
 			.map((rs) => rs.name.join("."));
 		expect(names).toContain("raw_orders");
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Bare-variable / expression tags in a FROM slot (2026-07-05, gap wave) —
+// literal `{% set %}` indirection resolves to the real model; everything else
+// gets the opaque "expr" marker so the `jjj…` placeholder never poses as a
+// real table to qualify/hover/scope consumers.
+// ---------------------------------------------------------------------------
+describe("bare-variable FROM sources — set indirection + the expr marker", () => {
+	it("{% set t = ref('x') %} … from {{ t }} binds the real model, indirect", () => {
+		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks");
+		const src = firstSource(r.sql.ast);
+		expect(src.name).toEqual(["stg_orders"]);
+		expect(src.template).toMatchObject({ kind: "ref", indirect: true });
+		expect(src.template.opaque).toBeUndefined();
+	});
+
+	it("{% set s = source('raw','orders') %} resolves the two-part name", () => {
+		const r = parseTemplated("{% set s = source('raw', 'orders') %}\nselect * from {{ s }}", "databricks");
+		const src = firstSource(r.sql.ast);
+		expect(src.name).toEqual(["raw", "orders"]);
+		expect(src.template).toMatchObject({ kind: "source", indirect: true });
+	});
+
+	it("unresolvable bare {{ t }} gets the opaque expr marker (no placeholder table)", () => {
+		const r = parseTemplated("select * from {{ t }}", "databricks");
+		const src = firstSource(r.sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("a composed expression tag {{ a ~ b }} gets the opaque expr marker", () => {
+		const r = parseTemplated("select * from {{ a ~ b }}", "databricks");
+		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("{{ var('t') }} in FROM gets the opaque expr marker", () => {
+		const r = parseTemplated("select * from {{ var('t') }}", "databricks");
+		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("guard: two sets of the same name do not resolve (ambiguous)", () => {
+		const text = "{% set t = ref('a') %}\n{% set t = ref('b') %}\nselect * from {{ t }}";
+		const src = firstSource(parseTemplated(text, "databricks").sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("guard: computed RHS ref(var('x')) does not resolve", () => {
+		const text = "{% set t = ref(var('x')) %}\nselect * from {{ t }}";
+		const src = firstSource(parseTemplated(text, "databricks").sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("guard: a composed RHS ref('a') ~ '_x' does not resolve", () => {
+		const text = "{% set t = ref('a') ~ '_x' %}\nselect * from {{ t }}";
+		const src = firstSource(parseTemplated(text, "databricks").sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("guard: a for-loop target shadows the set name", () => {
+		const text = "{% set t = ref('a') %}\n{% for t in tables %}x{% endfor %}\nselect * from {{ t }}";
+		const src = firstSource(parseTemplated(text, "databricks").sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("guard: an inline {% macro %} disables resolution (param shadowing unknowable)", () => {
+		const text = "{% macro m(t) %}{{ t }}{% endmacro %}\n{% set t = ref('a') %}\nselect * from {{ t }}";
+		const src = firstSource(parseTemplated(text, "databricks").sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+	});
+
+	it("scope binds the resolved model name (the pipeline consumes the rewrite)", () => {
+		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks");
+		const scopes = resolveScopes(r.sql.ast, "databricks");
+		// cst back-refs are cyclic — stringify with a replacer that drops them.
+		const names = JSON.stringify(scopes, (k, v) => (k === "cst" || k === "aliasCst" ? undefined : v));
+		expect(names).toContain("stg_orders");
+		expect(names).not.toMatch(/jjj/);
 	});
 });

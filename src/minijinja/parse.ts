@@ -106,6 +106,13 @@ export interface TemplatedParseResult {
 	 * degrade-to-plain-SQL path this IS the original text.
 	 */
 	placeholder: string;
+	/**
+	 * Present (true) ONLY on the defensive degrade path: the jinja front end threw and the
+	 * result is the whole text parsed as plain SQL — `tags`/`regions`/`symbols` are empty
+	 * NOT because the text has no jinja, but because jinja handling gave up. Absent on
+	 * every normal parse (including plain SQL with no jinja).
+	 */
+	degraded?: true;
 }
 
 /** Document line (1-based) / column (0-based) of a source offset. */
@@ -238,6 +245,32 @@ function parseSliceTag(slice: readonly AntlrToken[]): { tree: ParserRuleContext;
 	return { tree, diagnostics: collector.diagnostics };
 }
 
+/**
+ * Scrub placeholder gibberish out of SQL syntax diagnostics. A diagnostic whose
+ * offending token starts inside a tag range is really complaining about the TAG:
+ * rewrite every occurrence of the placeholder token's text in the message with the
+ * tag's original source text, and widen offset/length (+ line/column) to the whole
+ * tag. Diagnostics outside every tag pass through untouched.
+ */
+function scrubPlaceholderDiagnostics(
+	diags: SyntaxDiagnostic[],
+	tagRanges: readonly { start: number; end: number }[],
+	text: string,
+	placeholder: string,
+): SyntaxDiagnostic[] {
+	if (tagRanges.length === 0) return diags;
+	return diags.map((d) => {
+		if (d.offset === undefined) return d;
+		const tag = tagRanges.find((s) => d.offset! >= s.start && d.offset! < s.end);
+		if (!tag) return d;
+		const seen = placeholder.slice(d.offset, d.offset + d.length);
+		const tagText = text.slice(tag.start, tag.end);
+		const message = seen.length > 0 ? d.message.split(`'${seen}'`).join(`'${tagText}'`) : d.message;
+		const pos = docPosAt(text, tag.start);
+		return { ...d, message, offset: tag.start, length: tag.end - tag.start, line: pos.line, column: pos.column };
+	});
+}
+
 /** The core build — total by construction (every composed piece is total). */
 function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedParseResult {
 	const { segments, placeholder, tagTokens } = segment(text, shapeOf);
@@ -281,7 +314,7 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 	// scope/qualify/lineage bind the real model rather than the `jjj…` placeholder.
 	// Total (returns the input ast on any surprise); the reassignment stays inside
 	// build()'s caller try/catch so parseTemplated's totality holds.
-	sql.ast = applyTemplateTags(sql.ast, tags);
+	sql.ast = applyTemplateTags(sql.ast, tags, text);
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are
 	// disjoint (tag-contained SQL tokens were dropped), so a stable sort by start
@@ -289,8 +322,12 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 	const tokens = [...sqlTokens, ...jinjaTokens].sort((a, b) => a.start - b.start || a.stop - b.stop);
 
 	// Diagnostics: SQL + jinja, both already in document coordinates, source-ordered
-	// so squiggles line up with the merged stream.
-	const diagnostics = [...sql.diagnostics, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
+	// so squiggles line up with the merged stream. SQL diagnostics whose offending
+	// token is a placeholder fill are scrubbed first — the message quotes the ORIGINAL
+	// tag text (never `jjj…` gibberish) and the span widens to the whole tag, which is
+	// the true offending unit the user can act on.
+	const scrubbed = scrubPlaceholderDiagnostics(sql.diagnostics, tagRanges, text, placeholder);
+	const diagnostics = [...scrubbed, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
 	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
 	// Both are total; they ride inside build()'s caller try/catch for totality.
@@ -314,7 +351,16 @@ export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedP
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.
 		const sql = parse(text, dialect);
-		return { tokens: sql.tokens, sql, tags: [], regions: [], symbols: [], diagnostics: sql.diagnostics, placeholder: text };
+		return {
+			tokens: sql.tokens,
+			sql,
+			tags: [],
+			regions: [],
+			symbols: [],
+			diagnostics: sql.diagnostics,
+			placeholder: text,
+			degraded: true,
+		};
 	}
 }
 

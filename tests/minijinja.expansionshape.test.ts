@@ -42,10 +42,13 @@ const always =
 		shape;
 
 describe("inc3.2 expansionShape — cascade-death (unknown callable at statement position)", () => {
-	it("(a) a standalone `{{ m() }}` statement parses with 0 errors under shapeOf→statement (was >0)", () => {
+	it("(a) a standalone `{{ m() }}` statement parses with 0 errors — shaped AND unshaped", () => {
 		const text = "{{ my_macro() }}";
+		// Since the statement-slot blank default (2026-07-05) the no-catalog fill is
+		// ALSO clean here: a call at BOF blanks instead of the guaranteed-broken
+		// identifier fill. The shaped fill stays clean too.
 		const before = parseTemplated(text, DIALECT); // no catalog
-		expect(before.sql.errors, "no-catalog fill leaves an invalid statement").toBeGreaterThan(0);
+		expect(before.sql.errors, "statement-slot blank default").toBe(0);
 
 		const after = parseTemplated(text, DIALECT, { shapeOf: always("statement") });
 		expect(after.sql.errors, "shaped fill makes the statement valid").toBe(0);
@@ -234,5 +237,97 @@ describe("inc3.2 expansionShape — only macro-call tags consult shapeOf", () =>
 		});
 		// dbt_utils.star → name "star", parts ["dbt_utils","star"].
 		expect(seen.some((c) => c.name === "star" && c.parts?.join(".") === "dbt_utils.star")).toBe(true);
+	});
+});
+
+// ---------------------------------------------------------------------------
+// conjunct shape (anvil work order 2026-07-05) — a trailing AND-conjunct macro
+// (`... on a = b {{ is_deleted_filter(c) }}`) fills `AND 1=1`. Guard polarity is
+// OPPOSITE to statement/relation: admitted only where a complete expression can
+// just have ended (operand word / `)` / string close); everywhere else the
+// identifier fill stays.
+// ---------------------------------------------------------------------------
+describe("conjunct shape", () => {
+	const conjunct = () => "conjunct" as const;
+
+	it("after a complete ON expression: parses clean, fill is AND 1=1", () => {
+		const text = "select * from a join b on a.id = b.id\n  {{ isdel(col) }}\nunion all\nselect * from c";
+		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).toContain("AND 1=1");
+	});
+
+	it("after a complete WHERE expression: parses clean", () => {
+		const text = "select * from t where x = 1 {{ isdel(col) }}";
+		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).toContain("AND 1=1");
+	});
+
+	it("after a closing paren: shaped", () => {
+		const text = "select * from t where (x = 1) {{ isdel() }}";
+		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).toContain("AND 1=1");
+	});
+
+	it("guard: bare WHERE slot falls back to the identifier fill (which parses)", () => {
+		const text = "select * from t where {{ isdel() }}";
+		const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).not.toContain("AND 1=1");
+	});
+
+	it("guard: list comma and open paren fall back", () => {
+		for (const text of ["select a, {{ isdel() }} from t", "select * from t where ({{ isdel() }})"]) {
+			const r = parseTemplated(text, "databricks", { shapeOf: conjunct });
+			expect(r.sql.errors).toBe(0);
+			expect(r.placeholder).not.toContain("AND 1=1");
+		}
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Statement-slot blank default (2026-07-05) — a call-shaped tag with NO shape
+// answer at a statement slot (BOF / after `;`) blanks to whitespace instead of
+// the identifier fill: a lone identifier is never a valid statement, so the old
+// fill produced a guaranteed false error.
+// ---------------------------------------------------------------------------
+describe("statement-slot blank default (no shapeOf)", () => {
+	it("BOF macro before a select: 0 errors, tag blanked", () => {
+		const text = "{{ my_incremental_helper() }}\nselect 1 from t";
+		const r = parseTemplated(text, "databricks");
+		expect(r.sql.errors).toBe(0);
+		// The tag region is all whitespace in the placeholder.
+		expect(r.placeholder.slice(0, text.indexOf("\n"))).toMatch(/^\s*$/);
+	});
+
+	it("after a semicolon: 0 errors", () => {
+		const text = "select 1;\n{{ audit_hook() }}\nselect 2";
+		const r = parseTemplated(text, "databricks");
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("shapeOf answering undefined gets the same default (the unsure-classifier path)", () => {
+		const text = "{{ my_helper() }}\nselect 1 from t";
+		const r = parseTemplated(text, "databricks", { shapeOf: () => undefined });
+		expect(r.sql.errors).toBe(0);
+	});
+
+	it("ref/source at BOF keep the identifier fill (SHAPE_EXCLUDED)", () => {
+		const r = parseTemplated("{{ ref('x') }}", "databricks");
+		expect(r.placeholder).toMatch(/j/);
+	});
+
+	it("a bare non-call tag at BOF keeps the identifier fill (calls only)", () => {
+		const r = parseTemplated("{{ my_var }}\nselect 1 from t", "databricks");
+		expect(r.placeholder).toMatch(/^j/);
+	});
+
+	it("mid-statement calls are untouched (only statement slots blank)", () => {
+		const text = "select {{ fmt(x) }} from t";
+		const r = parseTemplated(text, "databricks");
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).toMatch(/j/);
 	});
 });
