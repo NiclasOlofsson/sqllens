@@ -1,10 +1,14 @@
 /*
- * ANTLR4 lexer grammar for a single Jinja tag (split lexer + parser pair).
+ * ANTLR4 lexer grammar for jinja-SQL (split lexer + parser pair).
  *
- * This is the sqllens minijinja "island" front end (docs/minijinja-front-end.md, inc1). It lexes ONE
- * jinja tag's text — delimiters included — e.g. `{{ ref('x') }}`, `{% if c %}`, `{# c #}`. It
- * does NOT scan whole documents; a TS segmenter (Task 2) splits raw jinja-SQL into runs of SQL
- * text and tags, then feeds each tag here. Hand-authored (no upstream fork exists for jinja).
+ * This is the sqllens minijinja "island" front end (docs/minijinja-front-end.md, inc1-inc2). It scans
+ * WHOLE documents: the DEFAULT mode emits literal RAW_TEXT plus tag-opening delimiters, the `Minijinja`/
+ * `Comment` interior modes lex one `{{ }}`/`{% %}`/`{# #}` tag's body, and the `RawBody` mode spans a
+ * `{% raw %} … {% endraw %}` literal block as one run of text (minijinja "Template Inheritance" / raw
+ * blocks — see below). `src/minijinja/segment.ts` (Task 2) drives this single whole-document
+ * tokenization to build the length/newline-preserving SQL placeholder; a single tag's text (e.g.
+ * `{{ ref('x') }}` alone, fed by `src/minijinja/parse-tag.ts`) still works unchanged — a lone tag is
+ * itself a valid (one-token-longer) document. Hand-authored (no upstream fork exists for jinja).
  *
  * Oracle: minijinja (the Rust engine dbt Fusion uses — NOT Jinja2; cited per rule). Reference:
  *   https://docs.rs/minijinja/latest/minijinja/syntax/index.html
@@ -15,10 +19,66 @@
  * closing delimiter pops. `{{`/`{%` share one interior mode (Minijinja) — both close tokens live
  * there and the parser tells expr-tags from stmt-tags by which OPEN started them; `{#` uses a
  * separate CommentMode whose body is opaque. No `caseInsensitive` (jinja keywords are lowercase).
- * A `{% raw %}` tag lexes as an ordinary stmt tag here — raw-block spanning is the segmenter's job.
+ *
+ * `{% raw %}` raw-block spanning: minijinja's raw blocks are literal — "the contents ... are not
+ * interpreted as Jinja code" and the block ends at the FIRST `{% endraw %}`, full stop (reference
+ * above, "Template Inheritance" § raw / "Whitespace Control"). The `@members` `nextToken()` override
+ * below detects a `{% raw %}` stmt tag (RAW as its leading keyword) and pushes the `RawBody` mode,
+ * whose only exit is `ENDRAW_OPEN` — an exact `{% endraw %}` (predicate-guarded so `{% endrawX %}`
+ * stays literal). Everything else in RawBody, including text that LOOKS like a jinja tag or a quoted
+ * string, is opaque literal text.
  */
 
 lexer grammar MinijinjaLexer;
+
+@members {
+	// Raw-block ({% raw %} … {% endraw %}) detection state, consulted/reset by nextToken() below.
+	// `stmtOpened` is true only for the single token immediately following a STMT_OPEN — long enough
+	// to see whether RAW is that tag's leading keyword (a variable named `raw`, e.g. `{% set raw = 1
+	// %}`, must NOT trigger: SET consumes and clears `stmtOpened` before the RAW token arrives).
+	private stmtOpened = false;
+	// True once RAW has been seen as a stmt tag's leading keyword; consumed by that same tag's
+	// STMT_CLOSE, which pushes RawBody.
+	private rawPending = false;
+
+	/**
+	 * Semantic predicate for ENDRAW_OPEN: the next input char must not continue an identifier, so
+	 * `{% endrawX %}` stays literal RawBody text — only an EXACT `endraw` tag closes the block
+	 * (minijinja raw-block semantics, see the header above). LA(1) returns -1 at EOF, which is
+	 * correctly "not an identifier char".
+	 */
+	private laNotIdentifier(): boolean {
+		const c = this.inputStream.LA(1);
+		return !((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122));
+	}
+
+	/**
+	 * Detects a `{% raw %}` stmt tag — STMT_OPEN, then RAW as the tag's very first token, then
+	 * STMT_CLOSE — and pushes RawBody so the literal block that follows is scanned as opaque text,
+	 * not re-segmented into further tags. The channel guard skips hidden JWS (whitespace) tokens so
+	 * whitespace between `{%` and `raw` doesn't defeat detection. `pushMode` (not `mode`) here because
+	 * RawBody must sit ON TOP of the pre-tag mode (DEFAULT) on the mode stack; ENDRAW_OPEN's own
+	 * `-> mode(Minijinja)` command (a plain mode-set, not push/pop) then leaves that stack entry
+	 * intact so the endraw tag's STMT_CLOSE `popMode` correctly returns to DEFAULT.
+	 */
+	public override nextToken(): Token {
+		const t = super.nextToken();
+		if (t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF) {
+			if (t.type === MinijinjaLexer.STMT_OPEN) {
+				this.stmtOpened = true;
+				this.rawPending = false;
+			} else {
+				if (t.type === MinijinjaLexer.RAW && this.stmtOpened) this.rawPending = true;
+				if (t.type === MinijinjaLexer.STMT_CLOSE && this.rawPending) {
+					this.rawPending = false;
+					this.pushMode(MinijinjaLexer.RawBody);
+				}
+				this.stmtOpened = false;
+			}
+		}
+		return t;
+	}
+}
 
 // ===========================================================================
 // DEFAULT mode — literal text and tag openings (minijinja: "Delimiters").
@@ -205,5 +265,36 @@ COMMENT_TEXT
 	;
 
 COMMENT_ANY
+	: .
+	;
+
+// ===========================================================================
+// RawBody mode — the literal interior of a `{% raw %} … {% endraw %}` block
+// (minijinja raw blocks: content is literal until the first `{% endraw %}`, no
+// interpretation of the body — see the header's raw-block citation). Entered
+// by the `nextToken()` override above, on top of DEFAULT on the mode stack.
+// ===========================================================================
+
+mode RawBody;
+
+// Closes the raw block: an exact `endraw` keyword (optional whitespace-control
+// `-`, any run of intervening whitespace), guarded so the following char must
+// not continue an identifier (`{% endrawX %}` stays literal). `mode(Minijinja)`
+// is a plain mode-set (see the nextToken doc above), NOT popMode+pushMode.
+ENDRAW_OPEN
+	: '{%' '-'? [ \t\r\n]* 'endraw' {this.laNotIdentifier()}? -> mode(Minijinja)
+	;
+
+// Literal raw-block text: any run not starting a `{%` (mirrors RAW_TEXT's `{`
+// handling in DEFAULT mode, but only `{%` needs guarding here — a raw block has
+// no `{{`/`{#` delimiters to protect).
+RAW_BODY
+	: ( '{' ~'%' | ~'{' )+
+	;
+
+// Totality fallback: a lone `{` before `%` that isn't `{% endraw ...%}` (the
+// ENDRAW_OPEN predicate failed, e.g. `{% if %}` or `{% endrawX %}` inside raw)
+// resumes as RAW_BODY from the next char — one stray token, never throws.
+RAW_BODY_STRAY
 	: .
 	;

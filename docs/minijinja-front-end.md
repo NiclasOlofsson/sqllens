@@ -51,7 +51,12 @@ The pipeline for `parseTemplated(text, dialect)`:
    '{{ var("x") }}'` templates the string content). The segmenter respects only JINJA's own nesting:
    `{% raw %}…{% endraw %}` (contents are literal, no tags), `{# … #}` comments, and string literals
    *inside* a tag's expression (`{{ ref('a}}b') }}` — the `}}` inside the string is not a close). It does
-   NOT respect SQL string/comment boundaries.
+   NOT respect SQL string/comment boundaries. Since 2026-07-05 segmentation is driven by ONE
+   whole-document tokenization from the island lexer itself (`grammars/minijinja/MinijinjaLexer.g4` —
+   DEFAULT-mode text + tag interior modes + a `RawBody` mode that spans raw blocks), replacing the
+   original hand-rolled TS outer scan; there is a single definition of what a jinja tag is, and raw-block
+   semantics are oracle-true (a raw block ends at the FIRST `{% endraw %}`, even inside what looks like a
+   quoted string). `tests/minijinja.segment-golden.test.ts` locks the segmenter's output byte-for-byte.
 2. **Placeholder-substitute** into a length-preserving, newline-preserving copy of the text that feeds the
    UNTOUCHED per-dialect SQL lexer. Because every placeholder occupies the exact character range (and
    preserves `\n` count and position) of the tag it replaces, every antlr `start/stop/line/column` the SQL

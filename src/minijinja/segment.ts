@@ -1,9 +1,10 @@
 // ---------------------------------------------------------------------------
 // Task 2 — the document-level segmenter + placeholder substitution
-// (docs/minijinja-front-end.md §mechanism steps 1-2). Pure TS text scanning at the
-// DOCUMENT level: it scans raw jinja-SQL over the OUTER jinja language, finds
-// where tags start/end, and builds the length- and newline-preserving
-// placeholder string the untouched per-dialect SQL lexer will see.
+// (docs/minijinja-front-end.md §mechanism steps 1-2). Driven by ONE whole-document
+// tokenization from the minijinja island lexer (grammars/minijinja/MinijinjaLexer.g4):
+// it walks the token stream over the OUTER jinja language, finds where tags
+// start/end, and builds the length- and newline-preserving placeholder string
+// the untouched per-dialect SQL lexer will see.
 //
 // The load-bearing invariant: every placeholder occupies the EXACT [start,end)
 // char range of the tag it replaces AND preserves every `\n` at its original
@@ -11,13 +12,15 @@
 // document coordinates with no remap (global-constraints §length + newline).
 //
 // Jinja is the OUTER language: a `{{ }}` inside what LOOKS like a SQL string is
-// a real jinja tag (dbt renders into SQL strings). The scan respects only
+// a real jinja tag (dbt renders into SQL strings). The lexer respects only
 // JINJA's own nesting — string literals inside a tag's expression, `{% raw %}`
 // literal blocks, and `{# #}` comments — never SQL string/comment boundaries.
 //
 // Total: unterminated tag/string is treated to EOF as that tag; never throws.
 // ---------------------------------------------------------------------------
 
+import { CharStream, Token as AntlrToken } from "antlr4ng";
+import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import type { ExpansionShape } from "../qualify/template-catalog.js";
 
 export type Segment =
@@ -63,108 +66,62 @@ export const NO_OUTPUT_BUILTINS: ReadonlySet<string> = new Set([
 	"exceptions",
 ]);
 
-/** Opening delimiter → interior kind + matching close. Order-independent. */
-const OPENERS = {
-	"{{": { tagKind: "expr" as const, close: "}}", hasStrings: true },
-	"{%": { tagKind: "stmt" as const, close: "%}", hasStrings: true },
-	"{#": { tagKind: "comment" as const, close: "#}", hasStrings: false },
-};
+/**
+ * The leading word + leading call of a tag, derived from its interior DEFAULT-channel tokens (never
+ * re-scanned from `seg.text`). `word` is the very first identifier-shaped token after the opener — for
+ * an expr tag the leading call name (`config`, `ref`, `dbt_utils` in `dbt_utils.star(…)`), for a stmt
+ * tag the keyword (`if`, `for`, …); "" when none. `call` is the same leading position read as a dotted
+ * callee path (`dbt_utils.star(` → `{ name: "star", parts: ["dbt_utils","star"], isCall: true }`),
+ * present only when a word actually leads. `Segment` is a public type that must not gain fields, so
+ * this rides in a side map (`leadingInfoOf`'s caller) instead of on the segment itself.
+ */
+interface LeadingInfo {
+	word: string;
+	call?: { name: string; parts?: string[]; isCall: boolean };
+}
 
-/** Detect an opening delimiter at `i` (`{{` / `{%` / `{#`). */
-function openerAt(text: string, i: number): (typeof OPENERS)[keyof typeof OPENERS] | undefined {
-	if (text.charCodeAt(i) !== 0x7b /* { */) return undefined;
-	const two = text.slice(i, i + 2);
-	return (OPENERS as Record<string, (typeof OPENERS)[keyof typeof OPENERS]>)[two];
+const IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+
+/** `t.text` is optional on the antlr4ng `Token` interface; every real token here always carries it. */
+function textOf(t: AntlrToken): string {
+	return t.text ?? "";
 }
 
 /**
- * Skip a string literal starting at the opening quote `i`. Respects backslash
- * escapes (minijinja `\'`). Returns the index PAST the closing quote, or the
- * text length if the string is unterminated (total).
+ * Compute `LeadingInfo` from a tag's interior tokens (every DEFAULT-channel token strictly between
+ * the OPEN and CLOSE tokens; the close token itself is excluded by the caller's walk).
  */
-function skipString(text: string, i: number): number {
-	const quote = text[i];
-	i += 1;
-	const len = text.length;
-	while (i < len) {
-		const c = text[i];
-		if (c === "\\") {
-			i += 2;
-			continue;
+function leadingInfoOf(interior: AntlrToken[]): LeadingInfo {
+	let i = 0;
+	const isWord = (t: AntlrToken | undefined): boolean => t !== undefined && IDENT_RE.test(textOf(t));
+
+	const first = interior[i];
+	if (!isWord(first)) return { word: "" };
+	const word = textOf(first);
+
+	const parts: string[] = [];
+	for (;;) {
+		const t = interior[i];
+		if (!isWord(t)) break;
+		parts.push(textOf(t));
+		i += 1;
+		const dot = interior[i];
+		if (dot && dot.type === MinijinjaLexer.DOT) {
+			i += 1;
+			continue; // read the next path segment (`pkg . macro`)
 		}
-		if (c === quote) return i + 1;
-		i += 1;
+		break;
 	}
-	return len;
-}
-
-/**
- * Find the matching close for a tag opened at `start`. Scans the interior; for
- * string-bearing tags (`{{ }}` / `{% %}`) a `}}`/`%}` inside a `'...'`/`"..."`
- * string does NOT close (the outer-language rule). Returns the exclusive end
- * offset (past the close delimiter), or the text length if unterminated.
- */
-function findClose(text: string, start: number, close: string, hasStrings: boolean): number {
-	const len = text.length;
-	let i = start + 2; // past the two-char opener
-	while (i < len) {
-		if (hasStrings) {
-			const c = text[i];
-			if (c === "'" || c === '"') {
-				i = skipString(text, i);
-				continue;
-			}
-		}
-		if (text.startsWith(close, i)) return i + close.length;
-		i += 1;
-	}
-	return len;
-}
-
-/**
- * The leading word of a tag: strip the two-char opener + optional whitespace-
- * control `-`, skip whitespace, read the first identifier. For an expr tag it is
- * the leading call name (`config`, `ref`, `dbt_utils` in `dbt_utils.star(…)`);
- * for a stmt tag it is the keyword (`raw`, `if`, `for`, …). "" when none.
- */
-function leadingWord(tagText: string): string {
-	let i = 2; // past `{{` / `{%` / `{#`
-	if (tagText[i] === "-") i += 1;
-	while (i < tagText.length && /\s/.test(tagText[i])) i += 1;
-	let word = "";
-	while (i < tagText.length && /[A-Za-z0-9_]/.test(tagText[i])) {
-		word += tagText[i];
-		i += 1;
-	}
-	return word;
-}
-
-/**
- * Find the start offset of the `{% endraw %}` tag that closes a raw block whose
- * literal region begins at `from`. Only `{% endraw %}` (with any whitespace-
- * control / spacing) closes raw; all other `{% %}`-looking content is literal.
- * Returns the text length when there is no endraw (broken input → raw to EOF).
- */
-function findEndraw(text: string, from: number): number {
-	const len = text.length;
-	let i = from;
-	while (i < len) {
-		if (text.charCodeAt(i) === 0x7b /* { */ && text[i + 1] === "%") {
-			const close = findClose(text, i, "%}", true);
-			if (leadingWord(text.slice(i, close)) === "endraw") return i;
-			i = close; // a non-endraw stmt inside raw is literal; skip past it
-			continue;
-		}
-		i += 1;
-	}
-	return len;
+	const isCall = interior[i]?.type === MinijinjaLexer.LPAREN;
+	const name = parts[parts.length - 1];
+	return { word, call: { name, ...(parts.length > 1 ? { parts } : {}), isCall } };
 }
 
 /** The fill character for a tag segment, or " " for a no-output/whitespace tag. */
-function fillChar(seg: Extract<Segment, { kind: "tag" }>): string {
+function fillChar(seg: Extract<Segment, { kind: "tag" }>, leading: LeadingInfo): string {
 	if (seg.tagKind !== "expr") return " "; // stmt / comment → whitespace to SQL
 	// expr: no-output builtin → whitespace; otherwise an identifier token.
-	return NO_OUTPUT_BUILTINS.has(leadingWord(seg.text)) ? " " : "j";
+	return NO_OUTPUT_BUILTINS.has(leading.word) ? " " : "j";
 }
 
 // ---------------------------------------------------------------------------
@@ -193,43 +150,6 @@ const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr">, string> = {
 const SHAPE_EXCLUDED: ReadonlySet<string> = new Set(["ref", "source", "var", "env_var"]);
 
 /**
- * The leading CALL of an expr tag: the dotted callee path + whether a `(` follows.
- * `macro_a(` → { name: "macro_a", isCall: true }; `dbt_utils.star(` →
- * { name: "star", parts: ["dbt_utils", "star"], isCall: true }; a bare non-call
- * expr (`{{ x }}`, `{{ a + b }}`) → isCall false. undefined when no identifier leads.
- */
-function leadingCall(tagText: string): { name: string; parts?: string[]; isCall: boolean } | undefined {
-	let i = 2; // past `{{`
-	if (tagText[i] === "-") i += 1;
-	const skipWs = (): void => {
-		while (i < tagText.length && /\s/.test(tagText[i])) i += 1;
-	};
-	skipWs();
-	const parts: string[] = [];
-	for (;;) {
-		let word = "";
-		while (i < tagText.length && /[A-Za-z0-9_]/.test(tagText[i])) {
-			word += tagText[i];
-			i += 1;
-		}
-		if (word === "") break;
-		parts.push(word);
-		skipWs();
-		if (tagText[i] === ".") {
-			i += 1;
-			skipWs();
-			continue; // read the next path segment (`pkg . macro`)
-		}
-		break;
-	}
-	if (parts.length === 0) return undefined;
-	skipWs();
-	const isCall = tagText[i] === "(";
-	const name = parts[parts.length - 1];
-	return { name, ...(parts.length > 1 ? { parts } : {}), isCall };
-}
-
-/**
  * The shaped fill fragment for a tag, or undefined to fall back to the positional
  * char fill. Returns a fragment ONLY for a macro-call expr tag whose `shapeOf`
  * answers a non-`expr` shape AND for which the fragment FITS: it must be no longer
@@ -238,11 +158,14 @@ function leadingCall(tagText: string): { name: string; parts?: string[]; isCall:
  * shape). The caller places the fragment at the tag start and pads the rest with
  * spaces, preserving every original `\n`.
  */
-function shapedFill(seg: Extract<Segment, { kind: "tag" }>, shapeOf: ShapeOf): string | undefined {
+function shapedFill(
+	seg: Extract<Segment, { kind: "tag" }>,
+	shapeOf: ShapeOf,
+	leading: LeadingInfo,
+): string | undefined {
 	if (seg.tagKind !== "expr") return undefined;
-	const lead = leadingWord(seg.text);
-	if (NO_OUTPUT_BUILTINS.has(lead) || SHAPE_EXCLUDED.has(lead)) return undefined;
-	const call = leadingCall(seg.text);
+	if (NO_OUTPUT_BUILTINS.has(leading.word) || SHAPE_EXCLUDED.has(leading.word)) return undefined;
+	const call = leading.call;
 	if (!call || !call.isCall) return undefined; // only a real macro CALL is shaped
 	const shape = shapeOf({ name: call.name, ...(call.parts ? { parts: call.parts } : {}) });
 	if (!shape || shape === "expr") return undefined; // expr / unknown → identifier fill (today's default)
@@ -256,9 +179,40 @@ function shapedFill(seg: Extract<Segment, { kind: "tag" }>, shapeOf: ShapeOf): s
 	return fragment;
 }
 
+/** Tag-opening token type → its tag kind. `ENDRAW_OPEN` reads as a stmt tag, same as `STMT_OPEN`. */
+const OPEN_TAG_KIND: ReadonlyMap<number, Extract<Segment, { kind: "tag" }>["tagKind"]> = new Map([
+	[MinijinjaLexer.EXPR_OPEN, "expr"],
+	[MinijinjaLexer.STMT_OPEN, "stmt"],
+	[MinijinjaLexer.COMMENT_OPEN, "comment"],
+	[MinijinjaLexer.ENDRAW_OPEN, "stmt"],
+]);
+
+/**
+ * Tag-opening token type → the token types that end it. Expr and stmt tags share the `Minijinja`
+ * interior mode, where BOTH close tokens live and either one pops the mode — so a MISMATCHED closer
+ * (`{{ a %}`) must still end the tag: after the pop the lexer is back in DEFAULT mode and the "right"
+ * closer can never arrive, which would otherwise swallow the rest of the document into this tag.
+ * Ending at the first closer of either kind keeps broken input localized (totality/tolerance).
+ * Comments have their own mode with a single close token.
+ */
+const INTERIOR_CLOSES = new Set<number>([MinijinjaLexer.EXPR_CLOSE, MinijinjaLexer.STMT_CLOSE]);
+const CLOSES_FOR_OPEN: ReadonlyMap<number, ReadonlySet<number>> = new Map([
+	[MinijinjaLexer.EXPR_OPEN, INTERIOR_CLOSES],
+	[MinijinjaLexer.STMT_OPEN, INTERIOR_CLOSES],
+	[MinijinjaLexer.COMMENT_OPEN, new Set([MinijinjaLexer.COMMENT_CLOSE])],
+	[MinijinjaLexer.ENDRAW_OPEN, INTERIOR_CLOSES],
+]);
+
 /**
  * Segment raw jinja-SQL over the outer jinja language and build the length- and
  * newline-preserving placeholder. Total: never throws on any input.
+ *
+ * Driven by ONE whole-document tokenization from the minijinja island lexer
+ * (`grammars/minijinja/MinijinjaLexer.g4`): every RAW_TEXT/STRAY/RAW_BODY/RAW_BODY_STRAY token outside
+ * a tag accumulates into the current sql run; an OPEN token starts a tag that runs to its matching
+ * CLOSE token (or to `text.length` on EOF — unterminated-tag totality); `{% raw %}` raw-block spanning
+ * is the lexer's own `RawBody` mode (grammar-level), so this function does no raw-specific scanning at
+ * all — it just walks whatever tokens the lexer produced.
  *
  * `shapeOf` (inc3.2, optional) supplies a syntactic slot per macro-call tag; when
  * given, a shape-valid fragment (`SELECT 1`, …) replaces the identifier fill for
@@ -267,59 +221,61 @@ function shapedFill(seg: Extract<Segment, { kind: "tag" }>, shapeOf: ShapeOf): s
  * positional char fill (the zero-catalog keystone).
  */
 export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
-	const len = text.length;
+	const lexer = new MinijinjaLexer(CharStream.fromString(text));
+	lexer.removeErrorListeners();
+	const tokens = lexer.getAllTokens(); // hidden-channel tokens included, EOF excluded
+
 	const segments: Segment[] = [];
-	let i = 0;
+	const leadingByTag = new Map<Segment, LeadingInfo>();
 	let sqlStart = 0;
+	let i = 0;
+	const n = tokens.length;
 
 	const pushSql = (start: number, end: number): void => {
 		if (end > start) segments.push({ kind: "sql", start, end });
 	};
 
-	while (i < len) {
-		const opener = openerAt(text, i);
-		if (!opener) {
-			i += 1;
+	while (i < n) {
+		const openTok = tokens[i];
+		const tagKind = OPEN_TAG_KIND.get(openTok.type);
+		if (tagKind === undefined) {
+			i += 1; // RAW_TEXT / STRAY / RAW_BODY / RAW_BODY_STRAY — sql text, merges into the current run
 			continue;
 		}
 
-		pushSql(sqlStart, i);
-		const end = findClose(text, i, opener.close, opener.hasStrings);
-		const tagText = text.slice(i, end);
-		segments.push({ kind: "tag", tagKind: opener.tagKind, start: i, end, text: tagText });
+		pushSql(sqlStart, openTok.start);
+		const closeTypes = CLOSES_FOR_OPEN.get(openTok.type)!;
+		i += 1;
 
-		if (opener.tagKind === "stmt" && leadingWord(tagText) === "raw") {
-			// The region up to `{% endraw %}` is ONE literal sql segment — its
-			// `{{ }}`-looking content is NOT segmented. Missing endraw → to EOF.
-			const rawStart = end;
-			const endrawStart = findEndraw(text, rawStart);
-			pushSql(rawStart, endrawStart);
-			if (endrawStart < len) {
-				const endrawEnd = findClose(text, endrawStart, "%}", true);
-				segments.push({
-					kind: "tag",
-					tagKind: "stmt",
-					start: endrawStart,
-					end: endrawEnd,
-					text: text.slice(endrawStart, endrawEnd),
-				});
-				i = endrawEnd;
-			} else {
-				i = len;
+		// Tokens between OPEN and CLOSE belong to the tag and never produce their own segments; the
+		// DEFAULT-channel ones among them feed leadingInfoOf for fillChar/shapedFill.
+		const interior: AntlrToken[] = [];
+		let closeTok: AntlrToken | undefined;
+		while (i < n) {
+			const t = tokens[i];
+			i += 1;
+			if (closeTypes.has(t.type)) {
+				closeTok = t;
+				break;
 			}
-		} else {
-			i = end;
+			if (t.channel === AntlrToken.DEFAULT_CHANNEL) interior.push(t);
 		}
-		sqlStart = i;
+
+		const end = closeTok ? closeTok.stop + 1 : text.length; // unterminated tag → to EOF (totality)
+		const seg: Segment = { kind: "tag", tagKind, start: openTok.start, end, text: text.slice(openTok.start, end) };
+		segments.push(seg);
+		leadingByTag.set(seg, leadingInfoOf(interior));
+		sqlStart = end;
 	}
-	pushSql(sqlStart, len);
+	pushSql(sqlStart, text.length);
 
 	// Build the placeholder: copy the input, overwrite each tag range with its
 	// fill, preserving `\n` at its original offset (antlr line/column anchor).
 	const chars = text.split(""); // UTF-16 units — indices align with tag offsets
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
-		const shaped = shapeOf ? shapedFill(seg, shapeOf) : undefined;
+		const leading = leadingByTag.get(seg)!;
+		const shaped = shapeOf ? shapedFill(seg, shapeOf, leading) : undefined;
 		if (shaped !== undefined) {
 			// Shaped fill: fragment at the tag start, spaces for the rest, `\n` preserved. The fit guard
 			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.
@@ -336,7 +292,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 			// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
 			// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
 			// before AND after a newline are identical); length + newline offsets hold.
-			const fill = fillChar(seg);
+			const fill = fillChar(seg, leading);
 			let seenNewline = false;
 			for (let k = seg.start; k < seg.end; k++) {
 				if (chars[k] === "\n") {

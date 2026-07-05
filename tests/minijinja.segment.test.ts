@@ -106,6 +106,58 @@ describe("jinja segmenter — segment list", () => {
 		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr"]);
 		expect(segments[1]).toMatchObject({ kind: "tag", start: 7, end: text.length });
 	});
+
+	// ---------------------------------------------------------------------------------------------
+	// Broken-input tolerance deliberately IMPROVED by the ANTLR-lexer unification (docs/minijinja-
+	// front-end.md / the segment-golden gate's header comment excludes these two classes on purpose).
+	// Neither case was previously pinned by a test — these are NEW expectations, not changed ones.
+	// ---------------------------------------------------------------------------------------------
+
+	it("closes at the first real `}}` when a tag's string is unterminated (was: ran to EOF)", () => {
+		// Old hand-rolled scanner treated the whole rest of the document as one unterminated string
+		// inside the tag, so the tag ran to EOF. The ANTLR lexer's STRING rule can't match the
+		// unterminated `'x)`, so it degrades to individual char tokens (MINIJINJA_ANY) and the first
+		// real `}}` closes the tag — a strictly smaller, more useful blast radius on broken input.
+		const text = "select {{ ref('x) }} from t";
+		const { segments } = segment(text);
+		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr", "sql"]);
+		const tag = segments[1];
+		expect(tag).toMatchObject({ kind: "tag", tagKind: "expr", text: "{{ ref('x) }}" });
+		const tail = segments[2];
+		expect(text.slice(tail.start, tail.end)).toBe(" from t");
+	});
+
+	it("a raw block closes at the FIRST `{% endraw %}` even where it sits inside what looks like a string (oracle-true to minijinja)", () => {
+		// minijinja raw blocks are literal — https://docs.rs/minijinja/latest/minijinja/syntax/index.html
+		// ("the contents ... are not interpreted as Jinja code") and end at the first `{% endraw %}`,
+		// full stop; there is no string-nesting exception. The old hand-rolled scanner used the STMT-tag
+		// string-skipping rule even INSIDE a raw block, so a `{% endraw %}` written inside a quoted
+		// string was skipped as literal and the block ran past it. The ANTLR RawBody mode has no notion
+		// of SQL/jinja strings at all — it is honest to the oracle and stops at the first literal match.
+		const text = "{% raw %}{% if '{% endraw %}' %} tail";
+		const { segments } = segment(text);
+		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["stmt", "sql", "stmt", "sql"]);
+		expect(segments[0]).toMatchObject({ text: "{% raw %}" });
+		const body = segments[1];
+		expect(text.slice(body.start, body.end)).toBe("{% if '");
+		const endraw = segments[2];
+		expect(endraw).toMatchObject({ tagKind: "stmt", text: "{% endraw %}" });
+		const tail = segments[3];
+		expect(text.slice(tail.start, tail.end)).toBe("' %} tail");
+	});
+
+	it("a MISMATCHED closer ends the tag (`{{ a %}` closes at the `%}`) instead of swallowing the document", () => {
+		// Expr and stmt tags share the lexer's interior mode, where EITHER close token pops back to
+		// DEFAULT — after `%}` pops, the "right" `}}` can never be lexed as a close, so waiting for it
+		// would run the tag to EOF and swallow everything after. Ending at the first closer of either
+		// kind keeps the breakage localized to the one broken tag (segment.ts CLOSES_FOR_OPEN).
+		const text = "select {{ a %} b }} from t";
+		const { segments } = segment(text);
+		expect(segments.map((s) => (s.kind === "tag" ? s.tagKind : "sql"))).toEqual(["sql", "expr", "sql"]);
+		expect(segments[1]).toMatchObject({ kind: "tag", tagKind: "expr", text: "{{ a %}" });
+		const tail = segments[2];
+		expect(text.slice(tail.start, tail.end)).toBe(" b }} from t");
+	});
 });
 
 describe("jinja segmenter — placeholder fill (no-output-aware default)", () => {

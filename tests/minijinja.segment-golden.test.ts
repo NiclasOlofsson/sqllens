@@ -46,7 +46,7 @@ const synthetic: GoldenCase[] = [
 	{ name: "syn:raw-unterminated", text: "a {% raw %} everything after is literal {{ x }}" },
 	{ name: "syn:endraw-ws-control", text: "{%- raw -%}body{%- endraw -%}" },
 	{ name: "syn:ws-control", text: "{{- x -}} and {%- if c -%}y{%- endif -%}" },
-	{ name: "syn:close-in-dquote-string", text: 'WHERE n = \'{{ var("a}}b") }}\'' },
+	{ name: "syn:close-in-dquote-string", text: "WHERE n = '{{ var(\"a}}b\") }}'" },
 	{ name: "syn:close-in-squote-string", text: "{{ ref('a}}b') }}" },
 	{ name: "syn:stmt-close-in-string", text: "{% set x = 'a%}b' %} select 1" },
 	{ name: "syn:escaped-quote-in-string", text: "{{ ref('a\\'b}}c') }} from t" },
