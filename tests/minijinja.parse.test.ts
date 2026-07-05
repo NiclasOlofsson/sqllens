@@ -151,3 +151,35 @@ describe("parseTemplated — unified token stream", () => {
 		});
 	});
 });
+
+// ---------------------------------------------------------------------------
+// `TemplatedParseResult.placeholder` — the placeholder-filled SQL text the SQL
+// parser actually saw (anvil work order 2026-07-05: re-founds their legacy
+// engine's jinja pre-processing on our fill; also "what did the parser see"
+// debugging). Contract: identical length, newlines at identical offsets, text
+// outside tags byte-identical, no jinja delimiter survives.
+// ---------------------------------------------------------------------------
+describe("TemplatedParseResult.placeholder — the SQL parser's actual input", () => {
+	it("length-/newline-preserving, byte-identical outside tags, no jinja delimiters", () => {
+		const text = "select a,\n  {{ ref('stg_orders') }}.b\nfrom {{ source('raw', 'orders') }}\n{% if x %}where a > 1{% endif %}";
+		const result = parseTemplated(text, "databricks");
+		const p = result.placeholder;
+
+		expect(p.length).toBe(text.length);
+		for (let i = 0; i < text.length; i++) {
+			if (text[i] === "\n") expect(p[i]).toBe("\n");
+		}
+		expect(p).not.toContain("{{");
+		expect(p).not.toContain("{%");
+
+		// Everything outside the tag segments is byte-identical: check a few anchors.
+		expect(p.startsWith("select a,")).toBe(true);
+		expect(p).toContain("where a > 1");
+		expect(p.indexOf("from ")).toBe(text.indexOf("from "));
+	});
+
+	it("plain SQL (no jinja): placeholder IS the input", () => {
+		const text = "select 1 from t";
+		expect(parseTemplated(text, "databricks").placeholder).toBe(text);
+	});
+});

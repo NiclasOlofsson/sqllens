@@ -152,3 +152,54 @@ describe("templateVariants — arm-coverage enumeration (Task 4)", () => {
 		expect(second).toBe(first);
 	});
 });
+
+// ---------------------------------------------------------------------------
+// `TemplateVariant.text()` — the realized (arm-blanked) source, exposed (anvil
+// work order 2026-07-05: one text-in seam feeding both engines during their
+// cutover). Contract: text() is exactly what parse() parses; length-/newline-
+// preserving over the original; lazy + memoized separately from parse().
+// ---------------------------------------------------------------------------
+describe("TemplateVariant.text() — realized variant source", () => {
+	const text = "SELECT *\nFROM my_table\n{% if a %}WHERE x > 1{% else %}WHERE y > 1{% endif %}";
+
+	it("each variant's text() carries its live arm and blanks the other, length/newlines preserved", () => {
+		const variants = templateVariants(text, DIALECT);
+		expect(variants.length).toBe(2);
+
+		const t0 = variants[0].text();
+		expect(t0.length).toBe(text.length);
+		expect(t0).toContain("WHERE x > 1");
+		expect(t0).not.toContain("WHERE y > 1");
+
+		const t1 = variants[1].text();
+		expect(t1.length).toBe(text.length);
+		expect(t1).toContain("WHERE y > 1");
+		expect(t1).not.toContain("WHERE x > 1");
+
+		for (const t of [t0, t1]) {
+			for (let i = 0; i < text.length; i++) {
+				if (text[i] === "\n") expect(t[i]).toBe("\n");
+			}
+		}
+	});
+
+	it("text() is exactly what parse() parses (one seam)", () => {
+		const v = templateVariants(text, DIALECT)[1];
+		const realized = v.text();
+		const parsed = v.parse();
+		// The parse's placeholder is the SQL-fill of the realized text — same length,
+		// and every non-tag byte identical (this variant has only control tags, which
+		// the placeholder pass whitespace-fills; the live WHERE arm must survive).
+		expect(parsed.placeholder.length).toBe(realized.length);
+		expect(parsed.placeholder).toContain("WHERE y > 1");
+		// Direct equivalence: re-parsing text() reproduces the variant's parse.
+		expect(parseTemplated(realized, DIALECT).sql.errors).toBe(parsed.sql.errors);
+	});
+
+	it("text() memoizes (same string value on repeat calls) and no-region input works", () => {
+		const plain = templateVariants("select 1 from t", DIALECT);
+		expect(plain.length).toBe(1);
+		expect(plain[0].text()).toBe("select 1 from t");
+		expect(plain[0].text()).toBe(plain[0].text());
+	});
+});

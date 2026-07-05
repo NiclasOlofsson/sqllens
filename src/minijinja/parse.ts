@@ -99,6 +99,13 @@ export interface TemplatedParseResult {
 	symbols: TemplateSymbol[];
 	/** SQL diagnostics (+ jinja diagnostics from Task 4), positioned in original coordinates. */
 	diagnostics: SyntaxDiagnostic[];
+	/**
+	 * The placeholder-filled SQL text the SQL parser actually saw: `text` with every jinja
+	 * tag replaced by its length-/newline-preserving fill (identical length, newlines at
+	 * identical offsets, everything outside tags byte-identical). On the defensive
+	 * degrade-to-plain-SQL path this IS the original text.
+	 */
+	placeholder: string;
 }
 
 /** Document line (1-based) / column (0-based) of a source offset. */
@@ -290,7 +297,7 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 	const regions = templateRegions(tags, text);
 	const symbols = templateSymbols(tags);
 
-	return { tokens, sql, tags, regions, symbols, diagnostics };
+	return { tokens, sql, tags, regions, symbols, diagnostics, placeholder };
 }
 
 /**
@@ -307,7 +314,7 @@ export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedP
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.
 		const sql = parse(text, dialect);
-		return { tokens: sql.tokens, sql, tags: [], regions: [], symbols: [], diagnostics: sql.diagnostics };
+		return { tokens: sql.tokens, sql, tags: [], regions: [], symbols: [], diagnostics: sql.diagnostics, placeholder: text };
 	}
 }
 

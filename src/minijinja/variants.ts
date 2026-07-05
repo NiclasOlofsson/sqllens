@@ -48,6 +48,12 @@ import { templateRegions, type TemplateRegion } from "./regions.js";
 export interface TemplateVariant {
 	/** The one non-default arm this variant activates; undefined for variant 0 (all defaults). */
 	active?: { region: TemplateRegion; armIndex: number };
+	/**
+	 * This variant's realized source: the ORIGINAL text with every inactive arm's body
+	 * whitespace-blanked (identical length, newlines at identical offsets). Lazy + memoized
+	 * separately from `parse()` — calling `text()` alone never forces a parse.
+	 */
+	text(): string;
 	/** Parse this variant (lazy + memoized). Coordinates are ORIGINAL-document; inactive arm bodies are whitespace-blanked. */
 	parse(): TemplatedParseResult;
 }
@@ -134,16 +140,14 @@ function makeVariant(
 	varied: RegionEntry | undefined,
 	armIndex: number,
 ): TemplateVariant {
-	let computed = false;
-	let cached: TemplatedParseResult;
+	let realized: string | undefined;
+	let cached: TemplatedParseResult | undefined;
+	const textOf = (): string => (realized ??= realize(text, flat, varied, armIndex));
 	return {
 		active: varied ? { region: varied.region, armIndex } : undefined,
+		text: textOf,
 		parse(): TemplatedParseResult {
-			if (!computed) {
-				cached = parseTemplated(realize(text, flat, varied, armIndex), dialect);
-				computed = true;
-			}
-			return cached;
+			return (cached ??= parseTemplated(textOf(), dialect));
 		},
 	};
 }

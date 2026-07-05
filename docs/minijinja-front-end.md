@@ -224,7 +224,10 @@ emit a degenerate duplicate of variant 0). It stays LINEAR — one variant per n
 selection. A `{% for %}` contributes no extra variant (its default IS the representative single iteration —
 the body parses in place). A variant is realized by whitespace-blanking the INACTIVE arms' body ranges over
 the original text (newline-preserving, coordinates intact) and feeding `parseTemplated`; results are lazy
-(`TemplateVariant.parse()` memoized). **The primary `parseTemplated` result stays all-text-live** (inc1
+(`TemplateVariant.parse()` memoized; `TemplateVariant.text()` exposes the realized blanked source, memoized
+separately so text alone never forces a parse — anvil's one text-in seam feeding both engines during their
+cutover, added 2026-07-05 alongside `TemplatedParseResult.placeholder`, the placeholder-filled SQL text the
+SQL parser actually saw). **The primary `parseTemplated` result stays all-text-live** (inc1
 parity — anvil integrated against it mid-flight); variants are the additive coherent-arm API
 (`templateVariants(text, dialect)`), adopted by consumers when ready.
 
