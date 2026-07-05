@@ -4,17 +4,25 @@
 //
 // This is the INTEGRATION stage. It composes three pieces that each stay in their
 // lane:
-//   1. segment()      (Task 2) — split raw jinja-SQL over the OUTER jinja language
-//                     into SQL runs + tag runs, and build the length-/newline-
-//                     preserving placeholder string.
+//   1. segment()      (Task 2) — ONE whole-document tokenization with the
+//                     generated MinijinjaLexer: splits raw jinja-SQL over the
+//                     OUTER jinja language into SQL runs + tag runs, builds the
+//                     length-/newline-preserving placeholder string, and hands
+//                     back each tag's FULL document-native token slice
+//                     (`tagTokens`, keyed by tag segment identity).
 //   2. parse()        (src/api.ts, UNTOUCHED) — the existing per-dialect SQL entry,
 //                     run over the placeholder. Because the placeholder occupies
 //                     each tag's EXACT char range and preserves every `\n`, every
 //                     antlr start/stop/line/column it returns is already in ORIGINAL
 //                     document coordinates — no span remap for SQL tokens.
-//   3. lexMinijinjaTag()  (Task 1 / parse-tag.ts) — lex each tag's text with the jinja
-//                     island lexer; parse.ts offsets those tag-relative tokens into
-//                     document coordinates and stamps channel 2 / role "minijinja".
+//   3. per-tag PARSE  — a `MinijinjaParser` fed by a `CommonTokenStream` wrapping
+//                     an antlr4ng `ListTokenSource` over that SAME document-native
+//                     slice (NOT a re-lex of `seg.text`), so the resulting tag-AST
+//                     tree and its tokens are ALREADY in document coordinates —
+//                     no offset/anchor composition anywhere below. The parse stays
+//                     PER-TAG (not one whole-document parse): a broken tag's error
+//                     recovery never bleeds into its neighbors (error containment
+//                     by construction, same as before).
 //
 // The merge (step 4): one source-ordered Token[] = SQL tokens (channel 0) + jinja
 // tokens (channel 2), sorted by start. The placeholder's FILLER tokens inside a
@@ -27,25 +35,35 @@
 //
 // Total (R5, step 6): the whole build is wrapped so no input — including a half-
 // typed `{{ ref(` — ever throws. Each composed piece is already total (segment,
-// the SQL parse, the jinja lexer all recover rather than throw); the try/catch is
-// defense-in-depth, degrading worst-case to the whole text as plain SQL with no
-// jinja tokens.
+// the SQL parse, the per-tag jinja parse all recover rather than throw); the
+// try/catch is defense-in-depth, degrading worst-case to the whole text as plain
+// SQL with no jinja tokens.
 //
 // The eight SQL grammars are UNTOUCHED: jinja is a pre-stage that WRAPS parse();
 // parseTemplated is NOT a `DIALECTS` entry. The merge happens on the Token[]
 // outside antlr's lazy token buffer, so no dialect parse.ts is touched.
 // ---------------------------------------------------------------------------
 
-import { Token as AntlrToken } from "antlr4ng";
+import { CharStream, CommonTokenStream, ListTokenSource, type ParserRuleContext, Token as AntlrToken } from "antlr4ng";
 import { parse, type Dialect, type ParseResultIR } from "../api.js";
-import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
+import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
+import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
-import { lexMinijinjaTag, parseMinijinjaTag } from "./parse-tag.js";
 import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
 import { segment, type Segment, type ShapeOf } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
+
+/**
+ * A single shared `MinijinjaLexer` instance, used ONLY for its static vocabulary
+ * (`.vocabulary.getSymbolicName`/`getDisplayName`, consulted by `classifyMinijinjaToken`
+ * and the token `name` lookup below) — never for lexing. One instance suffices because
+ * the vocabulary is a property of the GRAMMAR, not of any particular input; constructing
+ * it once here avoids a throwaway `new MinijinjaLexer(...)` per tag per document.
+ */
+const vocabLexer = new MinijinjaLexer(CharStream.fromString(""));
 
 // Re-export the R2 tag-AST union (Task 4) so `src/index.ts` keeps re-exporting
 // TagNode from this module — the union now lives in ./tag-ast.js. MacroCall (C1)
@@ -111,48 +129,26 @@ function docPosAt(text: string, offset: number): DocPos {
 }
 
 /**
- * Shift a tag-relative jinja parse diagnostic into document coordinates: offset
- * by the tag's document start, line/column composed with the tag's anchor (a
- * first-line diagnostic adds the anchor column; a later-line one keeps its own).
- * Mirrors mapMinijinjaToken's line/column composition so squiggles land correctly on
- * multi-line tags.
+ * Map one jinja token from a tag's document-native slice (segment.ts's `tagTokens`)
+ * to a neutral document Token: channel 2, role "minijinja", every other field read
+ * straight off the antlr token — it is ALREADY in document coordinates (no offset
+ * shift, no anchor composition; the old tag-relative re-lex + shift is gone).
  */
-function offsetDiagnostic(d: SyntaxDiagnostic, tagStart: number, base: DocPos): SyntaxDiagnostic {
-	return {
-		message: d.message,
-		line: base.line + (d.line - 1),
-		column: d.line === 1 ? base.column + d.column : d.column,
-		offset: d.offset === undefined ? undefined : tagStart + d.offset,
-		length: d.length,
-	};
-}
-
-/**
- * Map one jinja lexer token (tag-relative coordinates) to a neutral document
- * Token: offsets shifted by the tag's document start, line/column composed with
- * the tag's document anchor, channel 2, role "minijinja". `base` is the tag start's
- * document line/column; a token on the tag's first line adds the anchor column, a
- * token on a later line already sits at its own absolute column.
- */
-function mapMinijinjaToken(
-	lexer: ReturnType<typeof lexMinijinjaTag>["lexer"],
-	tok: AntlrToken,
-	tagStart: number,
-	base: DocPos,
-): Token {
+function mapSliceToken(tok: AntlrToken): Token {
 	const name =
-		lexer.vocabulary.getSymbolicName(tok.type) ?? lexer.vocabulary.getDisplayName(tok.type) ?? String(tok.type);
-	const onFirstLine = tok.line === 1;
+		vocabLexer.vocabulary.getSymbolicName(tok.type) ??
+		vocabLexer.vocabulary.getDisplayName(tok.type) ??
+		String(tok.type);
 	return {
 		type: tok.type,
 		name,
 		text: tok.text ?? "",
-		start: tagStart + tok.start,
-		stop: tagStart + tok.stop,
-		line: base.line + (tok.line - 1),
-		column: onFirstLine ? base.column + tok.column : tok.column,
+		start: tok.start,
+		stop: tok.stop,
+		line: tok.line,
+		column: tok.column,
 		channel: 2,
-		role: classifyMinijinjaToken(lexer, tok.type),
+		role: classifyMinijinjaToken(vocabLexer, tok.type),
 	};
 }
 
@@ -207,9 +203,37 @@ function clipToTagBoundaries(tok: Token, tagRanges: readonly Segment[], text: st
 	return intervals.map(([a, b]) => sliceToken(tok, a, b, text));
 }
 
+/**
+ * Parse one tag's DOCUMENT-NATIVE token slice (segment.ts's `tagTokens` — the one
+ * whole-document tokenization, not a re-lex of `seg.text`) with the jinja island
+ * grammar. The slice feeds a `CommonTokenStream` wrapping antlr4ng's
+ * `ListTokenSource` (a TokenSource over a plain token array — it auto-supplies an
+ * EOF once the list is exhausted, so no manual EOF append is needed), so the
+ * resulting tree's tokens stay document-native throughout: no offset/anchor
+ * composition anywhere downstream. Uses the DEFAULT recovering error strategy
+ * (like the old parseMinijinjaTag), so a half-typed tag yields a best-effort tree
+ * + positioned diagnostics and never throws (R5). There is no lexer stage here —
+ * the tokens are already lexed — so lexer-level diagnostics are moot; the island
+ * lexer is total via its STRAY/*_ANY fallbacks and never actually errors, so
+ * nothing is lost. Kept strictly PER-TAG (never one whole-document parse): a
+ * broken tag's error recovery must never bleed into its neighbors.
+ */
+function parseSliceTag(slice: readonly AntlrToken[]): { tree: ParserRuleContext; diagnostics: SyntaxDiagnostic[] } {
+	const tokenSource = new ListTokenSource([...slice]);
+	const tokenStream = new CommonTokenStream(tokenSource);
+	const parser = new MinijinjaParser(tokenStream);
+
+	const collector = makeErrorCollector();
+	parser.removeErrorListeners();
+	parser.addErrorListener(collector.listener as never);
+
+	const tree = parser.tag();
+	return { tree, diagnostics: collector.diagnostics };
+}
+
 /** The core build — total by construction (every composed piece is total). */
 function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedParseResult {
-	const { segments, placeholder } = segment(text, shapeOf);
+	const { segments, placeholder, tagTokens } = segment(text, shapeOf);
 
 	// Step 3: lex the placeholder with the UNTOUCHED per-dialect SQL entry. Its
 	// tokens are already in original document coordinates (length preservation).
@@ -224,26 +248,25 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 		for (const clipped of clipToTagBoundaries(t, tagRanges, text)) sqlTokens.push(clipped);
 	}
 
-	// Step 4b: lex each tag and map its tokens into document coords on channel 2.
-	// Step 5 (R2): parse each tag and build its ref/source/macro tag-AST node +
-	// offset the jinja parse diagnostics into document coordinates. Both ride the
-	// same per-tag loop (each piece is total — never throws).
+	// Step 4b: map each tag's document-native token slice onto channel 2.
+	// Step 5 (R2): parse that SAME slice (parseSliceTag — no re-lex) and build its
+	// ref/source/macro tag-AST node; its diagnostics are already document-positioned
+	// (the offending tokens are), so they're pushed straight through — no offset
+	// step. Both ride the same per-tag loop (each piece is total — never throws).
 	const jinjaTokens: Token[] = [];
 	const tags: TagNode[] = [];
 	const jinjaDiagnostics: SyntaxDiagnostic[] = [];
 	for (const seg of tagRanges) {
-		const base = docPosAt(text, seg.start);
-
-		const { lexer, tokens } = lexMinijinjaTag(seg.text);
-		for (const tok of tokens) {
-			if (tok.type === AntlrToken.EOF) continue;
-			jinjaTokens.push(mapMinijinjaToken(lexer, tok, seg.start, base));
+		const slice = tagTokens.get(seg) ?? [];
+		for (const tok of slice) {
+			if (tok.type === AntlrToken.EOF) continue; // shouldn't appear in a slice — defensive
+			jinjaTokens.push(mapSliceToken(tok));
 		}
 
-		const { tree, diagnostics } = parseMinijinjaTag(seg.text);
-		const node = tagNodesOf(seg, tree, base);
+		const { tree, diagnostics } = parseSliceTag(slice);
+		const node = tagNodesOf(seg, tree);
 		if (node) tags.push(node);
-		for (const d of diagnostics) jinjaDiagnostics.push(offsetDiagnostic(d, seg.start, base));
+		jinjaDiagnostics.push(...diagnostics);
 	}
 
 	// Step 5b (R3): rewrite templated FROM/JOIN sources onto first-class TableSource
@@ -258,8 +281,8 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 	// (stop as tiebreak) tiles the source.
 	const tokens = [...sqlTokens, ...jinjaTokens].sort((a, b) => a.start - b.start || a.stop - b.stop);
 
-	// Diagnostics: SQL (original coords) + jinja (offset into document coords),
-	// source-ordered so squiggles line up with the merged stream.
+	// Diagnostics: SQL + jinja, both already in document coordinates, source-ordered
+	// so squiggles line up with the merged stream.
 	const diagnostics = [...sql.diagnostics, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
 	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
@@ -271,10 +294,11 @@ function build(text: string, dialect: Dialect, shapeOf?: ShapeOf): TemplatedPars
 }
 
 /**
- * Parse raw jinja-SQL: segment over the outer jinja language, lex the placeholder
- * with the untouched SQL lexer, lex each tag with the jinja island lexer, and
- * merge one source-ordered token stream (SQL channel 0 + jinja channel 2). Total —
- * never throws on any input, including broken mid-edit jinja (R5).
+ * Parse raw jinja-SQL: one whole-document jinja lex (segment()), the untouched
+ * per-dialect SQL parse over the resulting placeholder, a per-tag jinja parse over
+ * each tag's document-native token slice, and a merged source-ordered token stream
+ * (SQL channel 0 + jinja channel 2). Total — never throws on any input, including
+ * broken mid-edit jinja (R5).
  */
 export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult {
 	try {

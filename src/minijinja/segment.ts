@@ -47,6 +47,16 @@ export interface SegmentResult {
 	segments: Segment[];
 	/** Same length + same newline positions as the input. */
 	placeholder: string;
+	/**
+	 * Pipeline-internal (parse.ts consumes it; NOT part of the placeholder/segments public
+	 * contract — the golden gate only serializes `segments`/`placeholder`). Every tag segment's
+	 * FULL token slice from the one whole-document tokenization: the OPEN token, every token
+	 * between it and the CLOSE (ALL channels, hidden JWS included), and the CLOSE token when
+	 * present (absent on an unterminated tag). Keyed by tag segment object IDENTITY, same pattern
+	 * as the internal `leadingByTag` map. Lets parse.ts build each tag's channel-2 token stream and
+	 * parse tree directly from this slice — already in document coordinates, no re-lex.
+	 */
+	tagTokens: ReadonlyMap<Segment, readonly AntlrToken[]>;
 }
 
 // ---------------------------------------------------------------------------
@@ -227,6 +237,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 
 	const segments: Segment[] = [];
 	const leadingByTag = new Map<Segment, LeadingInfo>();
+	const tagTokens = new Map<Segment, readonly AntlrToken[]>();
 	let sqlStart = 0;
 	let i = 0;
 	const n = tokens.length;
@@ -248,16 +259,20 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 		i += 1;
 
 		// Tokens between OPEN and CLOSE belong to the tag and never produce their own segments; the
-		// DEFAULT-channel ones among them feed leadingInfoOf for fillChar/shapedFill.
+		// DEFAULT-channel ones among them feed leadingInfoOf for fillChar/shapedFill, and EVERY one
+		// (all channels — hidden JWS included) feeds the full slice parse.ts consumes.
 		const interior: AntlrToken[] = [];
+		const slice: AntlrToken[] = [openTok];
 		let closeTok: AntlrToken | undefined;
 		while (i < n) {
 			const t = tokens[i];
 			i += 1;
 			if (closeTypes.has(t.type)) {
 				closeTok = t;
+				slice.push(t);
 				break;
 			}
+			slice.push(t);
 			if (t.channel === AntlrToken.DEFAULT_CHANNEL) interior.push(t);
 		}
 
@@ -265,6 +280,7 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 		const seg: Segment = { kind: "tag", tagKind, start: openTok.start, end, text: text.slice(openTok.start, end) };
 		segments.push(seg);
 		leadingByTag.set(seg, leadingInfoOf(interior));
+		tagTokens.set(seg, slice);
 		sqlStart = end;
 	}
 	pushSql(sqlStart, text.length);
@@ -304,5 +320,5 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 		}
 	}
 
-	return { segments, placeholder: chars.join("") };
+	return { segments, placeholder: chars.join(""), tagTokens };
 }

@@ -234,5 +234,22 @@ describe("tagNodesOf — R2 span contract", () => {
 			const { tags } = parseTemplated(text, "databricks");
 			expect(tags.map((t) => t.kind)).toEqual(["ref", "source"]);
 		});
+
+		it("a {% raw %}…{% endraw %} block's closer yields the same control node the pre-doc-native re-lex produced", () => {
+			// The `{% endraw %}` closer arrives via the lexer's RawBody-mode exit
+			// (ENDRAW_OPEN — a single token carrying `{% endraw` fused, not the ordinary
+			// STMT_OPEN+keyword shape a fresh lex of the same text would produce). The
+			// tag-AST node must still come out identical: kind "control", keyword
+			// "endraw", no declared name, no calls.
+			const text = "{% raw %}body{% endraw %} tail";
+			const { tags } = parseTemplated(text, "databricks");
+			expect(tags.map((t) => t.kind)).toEqual(["control", "control"]);
+			const [rawTag, endrawTag] = tags;
+			expect(rawTag).toMatchObject({ kind: "control", keyword: "raw" });
+			expect(endrawTag).toMatchObject({ kind: "control", keyword: "endraw", calls: [] });
+			if (endrawTag.kind !== "control") return;
+			expect(endrawTag.name).toBeUndefined();
+			expectSpan(text, endrawTag.tagSpan, "{% endraw %}");
+		});
 	});
 });

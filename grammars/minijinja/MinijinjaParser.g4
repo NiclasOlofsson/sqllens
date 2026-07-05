@@ -22,7 +22,7 @@ options {
 // Entry — a run of tags and/or literal text, EOF-anchored. Per-tag input is one
 // tag; the `*` + RAW_TEXT tolerance keeps it total on surrounding text too.
 tag
-	: ( expr_tag | stmt_tag | comment_tag | RAW_TEXT | STRAY )* EOF
+	: ( expr_tag | stmt_tag | comment_tag | endraw_tag | RAW_TEXT | STRAY )* EOF
 	;
 
 expr_tag
@@ -35,6 +35,17 @@ stmt_tag
 
 comment_tag
 	: COMMENT_OPEN COMMENT_TEXT? COMMENT_CLOSE
+	;
+
+// A `{% raw %} … {% endraw %}` block's CLOSING tag, as it arrives in a DOCUMENT-native token
+// slice: the lexer's RawBody mode recognizes the exact `endraw` closer as ONE token
+// (ENDRAW_OPEN carries `{%[-][ws]endraw` — see MinijinjaLexer.g4's RawBody section), so this
+// tag never goes through `stmt_tag`/`stmt`'s ordinary STMT_OPEN+keyword shape. Tolerant of
+// trailing junk before the close (`{% endraw x %}`, mirroring `stmt`'s `~STMT_CLOSE` loop) and,
+// via the parser's default recovering error strategy, of a missing close at EOF (same as every
+// other tag rule here — none of them mark their close token optional either).
+endraw_tag
+	: ENDRAW_OPEN ( ~STMT_CLOSE )* STMT_CLOSE
 	;
 
 // Statement body — recognize the leading keyword, then tokenize the rest

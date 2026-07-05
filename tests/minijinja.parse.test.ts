@@ -120,6 +120,27 @@ describe("parseTemplated — unified token stream", () => {
 		assertTiles(tokens, text);
 	});
 
+	it('an endraw tag\'s channel-2 tokens tile the tag span with role "minijinja" (RawBody-mode ENDRAW_OPEN is one token, not the old three-token re-lex shape)', () => {
+		const text = "{% raw %}body{% endraw %} tail";
+		const { tokens } = parseTemplated(text, "databricks");
+		const endrawStart = text.indexOf("{% endraw %}");
+		const endrawEnd = endrawStart + "{% endraw %}".length;
+		const jinja = tokens.filter((t) => t.start >= endrawStart && t.start < endrawEnd);
+
+		expect(jinja.length).toBeGreaterThan(0);
+		expect(jinja.every((t) => t.role === "minijinja")).toBe(true);
+		// Tiles the tag's own span exactly.
+		expect(jinja[0].start).toBe(endrawStart);
+		for (let i = 1; i < jinja.length; i++) expect(jinja[i].start).toBe(jinja[i - 1].stop + 1);
+		expect(jinja[jinja.length - 1].stop).toBe(endrawEnd - 1);
+
+		// The opener is now ONE token (ENDRAW_OPEN — `{% endraw` fused), not the
+		// three separate `{%` / `endraw` / `%}` tokens a fresh re-lex of the same
+		// text would produce.
+		expect(jinja[0].text).toBe("{% endraw");
+		expect(jinja[jinja.length - 1].text).toBe("%}");
+	});
+
 	describe("totality (R5) — never throws on broken input", () => {
 		for (const dialect of DIALECTS) {
 			it(`${dialect}: a half-typed {{ ref( returns`, () => {

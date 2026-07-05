@@ -1,4 +1,4 @@
-import { CharStream, CommonTokenStream, Token as AntlrToken, type ParserRuleContext } from "antlr4ng";
+import { CharStream, CommonTokenStream, type ParserRuleContext } from "antlr4ng";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
@@ -9,7 +9,11 @@ import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.
 // included) with the generated island grammar. Unlike the SQL wrappers this
 // uses the DEFAULT recovering error strategy (not BailErrorStrategy), so a
 // half-typed `{{ ref(` yields a best-effort tree plus positioned diagnostics
-// and never throws (R5 totality). Whole-document scanning is Task 2's job.
+// and never throws (R5 totality). Whole-document scanning is Task 2's job
+// (segment.ts); parse.ts's document pipeline now drives its OWN per-tag parse
+// over segment()'s document-native token slices rather than calling this — this
+// wrapper's re-lex-from-text `parseMinijinjaTag` stays for the grammar's own
+// standalone-tag tests (a lone tag is itself a valid one-token-longer document).
 // ---------------------------------------------------------------------------
 
 export interface MinijinjaTagParseResult {
@@ -39,26 +43,4 @@ export function parseMinijinjaTag(text: string): MinijinjaTagParseResult {
 		errors: collector.diagnostics.length,
 		diagnostics: collector.diagnostics,
 	};
-}
-
-/** The jinja lexer plus its full token list for one tag's text (delimiters included). */
-export interface MinijinjaLexResult {
-	/** The lexer instance — its `.vocabulary` names the tokens for the neutral mapping. */
-	lexer: MinijinjaLexer;
-	/** Every token (trivia on HIDDEN included, EOF excluded), tag-relative coordinates. */
-	tokens: AntlrToken[];
-}
-
-/**
- * Lex a single jinja tag's text into its token list — the LEXER-only view Task 3
- * needs for the unified token stream (parse.ts offsets these into document
- * coordinates and stamps channel 2 / role `"minijinja"`). Total: the island lexer
- * recovers via its STRAY / MINIJINJA_ANY / COMMENT_ANY fallbacks rather than throwing,
- * and no throwing error listener is attached, so this never throws. `getAllTokens`
- * returns default- and hidden-channel tokens and excludes the EOF sentinel.
- */
-export function lexMinijinjaTag(text: string): MinijinjaLexResult {
-	const lexer = new MinijinjaLexer(CharStream.fromString(text));
-	lexer.removeErrorListeners();
-	return { lexer, tokens: lexer.getAllTokens() };
 }
