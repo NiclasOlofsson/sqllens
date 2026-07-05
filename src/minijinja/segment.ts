@@ -329,9 +329,21 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 				chars[k] = rel < shaped.length ? shaped[rel] : " ";
 			}
 		} else {
+			// Positional char fill. The identifier fill (`"j"`) is placed on the tag's
+			// FIRST line only; every continuation line fills with spaces. A multi-line
+			// tag otherwise becomes a `j`-run PER LINE (the preserved `\n`s split it),
+			// which the SQL lexer reads as SEVERAL adjacent identifiers — a parse error
+			// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
+			// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
+			// before AND after a newline are identical); length + newline offsets hold.
 			const fill = fillChar(seg);
+			let seenNewline = false;
 			for (let k = seg.start; k < seg.end; k++) {
-				if (chars[k] !== "\n") chars[k] = fill;
+				if (chars[k] === "\n") {
+					seenNewline = true;
+					continue;
+				}
+				chars[k] = seenNewline ? " " : fill;
 			}
 		}
 	}

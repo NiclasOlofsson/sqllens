@@ -196,8 +196,11 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 		const text = "{{\n ref('x')\n}}";
 		const { placeholder } = segment(text);
 		expect(newlineOffsets(placeholder)).toEqual([2, 12]);
-		// Non-newline chars of a value tag become `j`; newlines stay.
-		expect(placeholder).toBe(text.replace(/[^\n]/g, "j"));
+		// The identifier fill lands on the tag's FIRST line only (`{{` → `jj`);
+		// continuation lines fill with spaces so the SQL lexer sees ONE identifier,
+		// not one `j`-run per line (which would read as adjacent identifiers). `\n`s
+		// stay at their offsets, length is unchanged.
+		expect(placeholder).toBe("jj\n         \n  ");
 	});
 
 	it("preserves newlines inside a multi-line no-output tag as spaces", () => {
