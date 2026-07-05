@@ -120,25 +120,20 @@ describe("parseTemplated — unified token stream", () => {
 		assertTiles(tokens, text);
 	});
 
-	it('an endraw tag\'s channel-2 tokens tile the tag span with role "minijinja" (RawBody-mode ENDRAW_OPEN is one token, not the old three-token re-lex shape)', () => {
+	it('raw-block delimiter tags are ONE channel-2 token each with role "minijinja" (RAW_TAG / ENDRAW_TAG carry the whole tag — no keyword-detection lexer state)', () => {
 		const text = "{% raw %}body{% endraw %} tail";
 		const { tokens } = parseTemplated(text, "databricks");
+
+		const rawTag = tokens.filter((t) => t.start >= 0 && t.stop < "{% raw %}".length && t.channel === 2);
+		expect(rawTag).toHaveLength(1);
+		expect(rawTag[0]).toMatchObject({ text: "{% raw %}", role: "minijinja", start: 0 });
+
 		const endrawStart = text.indexOf("{% endraw %}");
 		const endrawEnd = endrawStart + "{% endraw %}".length;
-		const jinja = tokens.filter((t) => t.start >= endrawStart && t.start < endrawEnd);
-
-		expect(jinja.length).toBeGreaterThan(0);
-		expect(jinja.every((t) => t.role === "minijinja")).toBe(true);
-		// Tiles the tag's own span exactly.
-		expect(jinja[0].start).toBe(endrawStart);
-		for (let i = 1; i < jinja.length; i++) expect(jinja[i].start).toBe(jinja[i - 1].stop + 1);
-		expect(jinja[jinja.length - 1].stop).toBe(endrawEnd - 1);
-
-		// The opener is now ONE token (ENDRAW_OPEN — `{% endraw` fused), not the
-		// three separate `{%` / `endraw` / `%}` tokens a fresh re-lex of the same
-		// text would produce.
-		expect(jinja[0].text).toBe("{% endraw");
-		expect(jinja[jinja.length - 1].text).toBe("%}");
+		const endrawTag = tokens.filter((t) => t.start >= endrawStart && t.start < endrawEnd);
+		expect(endrawTag).toHaveLength(1);
+		expect(endrawTag[0]).toMatchObject({ text: "{% endraw %}", role: "minijinja", start: endrawStart });
+		expect(endrawTag[0].stop).toBe(endrawEnd - 1);
 	});
 
 	describe("totality (R5) — never throws on broken input", () => {

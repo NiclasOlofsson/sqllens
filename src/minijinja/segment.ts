@@ -189,12 +189,11 @@ function shapedFill(
 	return fragment;
 }
 
-/** Tag-opening token type → its tag kind. `ENDRAW_OPEN` reads as a stmt tag, same as `STMT_OPEN`. */
+/** Tag-opening token type → its tag kind. */
 const OPEN_TAG_KIND: ReadonlyMap<number, Extract<Segment, { kind: "tag" }>["tagKind"]> = new Map([
 	[MinijinjaLexer.EXPR_OPEN, "expr"],
 	[MinijinjaLexer.STMT_OPEN, "stmt"],
 	[MinijinjaLexer.COMMENT_OPEN, "comment"],
-	[MinijinjaLexer.ENDRAW_OPEN, "stmt"],
 ]);
 
 /**
@@ -210,7 +209,16 @@ const CLOSES_FOR_OPEN: ReadonlyMap<number, ReadonlySet<number>> = new Map([
 	[MinijinjaLexer.EXPR_OPEN, INTERIOR_CLOSES],
 	[MinijinjaLexer.STMT_OPEN, INTERIOR_CLOSES],
 	[MinijinjaLexer.COMMENT_OPEN, new Set([MinijinjaLexer.COMMENT_CLOSE])],
-	[MinijinjaLexer.ENDRAW_OPEN, INTERIOR_CLOSES],
+]);
+
+/**
+ * The two raw-block delimiters lex as ONE self-contained token each (`{% raw %}` = RAW_TAG,
+ * `{% endraw %}` = ENDRAW_TAG — the whole tag, delimiters included), so they need no close hunt:
+ * the token IS the tag. Both read as stmt tags, `word` carrying the keyword.
+ */
+const SELF_CONTAINED_TAGS: ReadonlyMap<number, string> = new Map([
+	[MinijinjaLexer.RAW_TAG, "raw"],
+	[MinijinjaLexer.ENDRAW_TAG, "endraw"],
 ]);
 
 /**
@@ -248,6 +256,27 @@ export function segment(text: string, shapeOf?: ShapeOf): SegmentResult {
 
 	while (i < n) {
 		const openTok = tokens[i];
+
+		// `{% raw %}` / `{% endraw %}` — one self-contained token, the whole tag.
+		const selfWord = SELF_CONTAINED_TAGS.get(openTok.type);
+		if (selfWord !== undefined) {
+			pushSql(sqlStart, openTok.start);
+			const end = openTok.stop + 1;
+			const seg: Segment = {
+				kind: "tag",
+				tagKind: "stmt",
+				start: openTok.start,
+				end,
+				text: text.slice(openTok.start, end),
+			};
+			segments.push(seg);
+			leadingByTag.set(seg, { word: selfWord });
+			tagTokens.set(seg, [openTok]);
+			i += 1;
+			sqlStart = end;
+			continue;
+		}
+
 		const tagKind = OPEN_TAG_KIND.get(openTok.type);
 		if (tagKind === undefined) {
 			i += 1; // RAW_TEXT / STRAY / RAW_BODY / RAW_BODY_STRAY — sql text, merges into the current run

@@ -40,6 +40,7 @@ import {
 	Endraw_tagContext,
 	MemberExprContext,
 	NameExprContext,
+	Raw_tagContext,
 	StmtContext,
 } from "../generated/minijinja/MinijinjaParser.js";
 import type { PartSpan } from "../ir/part-span.js";
@@ -211,14 +212,16 @@ function findStmt(node: ParseTree | null | undefined): StmtContext | undefined {
 	return undefined;
 }
 
-/** The `endraw_tag` context of a `{% raw %}` block's closing tag (DFS, leftmost) — see
- *  MinijinjaParser.g4's `endraw_tag` rule. `null`/undefined for every other tag shape. */
-function findEndrawTag(node: ParseTree | null | undefined): Endraw_tagContext | undefined {
+/** The keyword of a self-contained raw-block delimiter tag (`raw_tag` / `endraw_tag` — each is ONE
+ *  lexer token carrying the whole `{% raw %}` / `{% endraw %}`, see MinijinjaParser.g4), or undefined
+ *  for every other tag shape (DFS, leftmost). */
+function selfContainedKeyword(node: ParseTree | null | undefined): "raw" | "endraw" | undefined {
 	if (!node) return undefined;
-	if (node instanceof Endraw_tagContext) return node;
+	if (node instanceof Raw_tagContext) return "raw";
+	if (node instanceof Endraw_tagContext) return "endraw";
 	if (node instanceof ParserRuleContext) {
 		for (let i = 0; i < node.getChildCount(); i++) {
-			const found = findEndrawTag(node.getChild(i));
+			const found = selfContainedKeyword(node.getChild(i));
 			if (found) return found;
 		}
 	}
@@ -456,15 +459,14 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | 
 	const tagSpan: PartSpan = { start: seg.start, end: seg.end, line: start?.line ?? 1, column: start?.column ?? 0 };
 
 	// Statement tags: classify as "control" and enrich with the lead keyword and,
-	// for the name-declaring keywords, the declared name + its span (R4). A
-	// `{% raw %}` block's `{% endraw %}` closer is its own grammar rule
-	// (`endraw_tag` — the RawBody-mode ENDRAW_OPEN token carries `endraw` fused
-	// into the opener itself, so there is no separate identifier token to read the
-	// keyword off): hardcode it, matching the shape a fresh re-lex of `{% endraw %}`
-	// produces via the ordinary stmt_tag path (kind control, keyword "endraw", no
-	// name, no calls).
+	// for the name-declaring keywords, the declared name + its span (R4). The two
+	// raw-block delimiters are self-contained lexer tokens (`{% raw %}` = RAW_TAG,
+	// `{% endraw %}` = ENDRAW_TAG — the whole tag as one token, keyword fused in, so
+	// there is no separate identifier token to read): hardcode their keywords,
+	// matching the control shape every other stmt keyword gets (no name, no calls).
 	if (seg.tagKind === "stmt") {
-		if (findEndrawTag(tree)) return { kind: "control", tagSpan, keyword: "endraw", calls: [] };
+		const selfKeyword = selfContainedKeyword(tree);
+		if (selfKeyword) return { kind: "control", tagSpan, keyword: selfKeyword, calls: [] };
 		return controlNode(tree, tagSpan);
 	}
 	if (seg.tagKind === "comment") return { kind: "other", tagSpan };

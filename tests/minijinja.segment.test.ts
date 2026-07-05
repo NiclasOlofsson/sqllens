@@ -158,6 +158,29 @@ describe("jinja segmenter — segment list", () => {
 		const tail = segments[2];
 		expect(text.slice(tail.start, tail.end)).toBe(" b }} from t");
 	});
+
+	// The raw-block delimiters are EXACT full-tag lexer rules (RAW_TAG / ENDRAW_TAG), so near-miss
+	// forms fail the rule and degrade sanely — no keyword-detection lexer state to fool (minijinja:
+	// raw/endraw take no arguments; a malformed delimiter is not a delimiter).
+
+	it("`{% raw x %}` does NOT open a raw block — it reads as an ordinary stmt tag", () => {
+		const text = "{% raw x %} {{ ref('m') }} {% endraw %}";
+		const { segments } = segment(text);
+		// The {{ ref }} inside is a REAL tag (no raw block opened); the trailing endraw, with no raw
+		// block to close, lexes via the ordinary STMT_OPEN path and stays a stmt tag.
+		const kinds = segments.filter((s) => s.kind === "tag").map((s) => (s.kind === "tag" ? s.tagKind : ""));
+		expect(kinds).toEqual(["stmt", "expr", "stmt"]);
+	});
+
+	it("`{% endraw x %}` and an unterminated `{% endraw` inside raw stay literal — only an exact endraw closes", () => {
+		const text = "{% raw %} {% endraw x %} still literal";
+		const { segments } = segment(text);
+		const tags = segments.filter((s) => s.kind === "tag");
+		expect(tags).toHaveLength(1); // just the {% raw %} opener; everything after is literal to EOF
+		expect(tags[0]).toMatchObject({ tagKind: "stmt", text: "{% raw %}" });
+		const body = segments.at(-1);
+		expect(body?.kind).toBe("sql");
+	});
 });
 
 describe("jinja segmenter — placeholder fill (no-output-aware default)", () => {

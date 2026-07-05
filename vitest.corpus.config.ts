@@ -12,11 +12,12 @@ export default defineConfig({
 		// Same threads pool as tier 1 — the forks pool intermittently dies importing the large generated
 		// parser modules on this toolchain (see vitest.config.ts). Each thread imports the big generated
 		// ANTLR modules, so worker count is a RAM multiplier — this tier parses thousands of files and is
-		// the heavy one. Capped to 4 (was 50% = 8 of 16): RAM is the constraint, and this tier must NEVER
-		// run concurrently with another corpus run (controller serializes it — one corpus run at a time,
-		// at merge, never per-implementer). Slower per run, but it doesn't flatten the machine.
+		// the heavy one. Capped to 2 (was 4; 4 hit worker DataCloneError OOMs twice on 2026-07-05 with
+		// ~7 GB free): RAM is the constraint, and this tier must NEVER run concurrently with another
+		// corpus run (controller serializes it — one corpus run at a time, at merge, never
+		// per-implementer). Slower per run, but it doesn't flatten the machine.
 		pool: "threads",
-		maxWorkers: 4,
+		maxWorkers: 2,
 		testTimeout: 1_800_000,
 	},
 });

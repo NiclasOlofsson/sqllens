@@ -22,63 +22,16 @@
  *
  * `{% raw %}` raw-block spanning: minijinja's raw blocks are literal — "the contents ... are not
  * interpreted as Jinja code" and the block ends at the FIRST `{% endraw %}`, full stop (reference
- * above, "Template Inheritance" § raw / "Whitespace Control"). The `@members` `nextToken()` override
- * below detects a `{% raw %}` stmt tag (RAW as its leading keyword) and pushes the `RawBody` mode,
- * whose only exit is `ENDRAW_OPEN` — an exact `{% endraw %}` (predicate-guarded so `{% endrawX %}`
- * stays literal). Everything else in RawBody, including text that LOOKS like a jinja tag or a quoted
+ * above, "Template Inheritance" § raw / "Whitespace Control"). Purely declarative: `RAW_TAG` lexes
+ * the ENTIRE `{% raw %}` opener as ONE token (maximal munch beats STMT_OPEN's bare `{%` wherever it
+ * matches) and pushes `RawBody`, whose only exit is `ENDRAW_TAG` — the entire `{% endraw %}` as one
+ * token. The full-tag shapes give exactness for free: `{% rawx %}` / `{% endrawX %}` / `{% raw x %}`
+ * simply fail the rules (no predicate, no lexer state), so they lex as ordinary stmt tags / literal
+ * raw text. Everything else in RawBody, including text that LOOKS like a jinja tag or a quoted
  * string, is opaque literal text.
  */
 
 lexer grammar MinijinjaLexer;
-
-@members {
-	// Raw-block ({% raw %} … {% endraw %}) detection state, consulted/reset by nextToken() below.
-	// `stmtOpened` is true only for the single token immediately following a STMT_OPEN — long enough
-	// to see whether RAW is that tag's leading keyword (a variable named `raw`, e.g. `{% set raw = 1
-	// %}`, must NOT trigger: SET consumes and clears `stmtOpened` before the RAW token arrives).
-	private stmtOpened = false;
-	// True once RAW has been seen as a stmt tag's leading keyword; consumed by that same tag's
-	// STMT_CLOSE, which pushes RawBody.
-	private rawPending = false;
-
-	/**
-	 * Semantic predicate for ENDRAW_OPEN: the next input char must not continue an identifier, so
-	 * `{% endrawX %}` stays literal RawBody text — only an EXACT `endraw` tag closes the block
-	 * (minijinja raw-block semantics, see the header above). LA(1) returns -1 at EOF, which is
-	 * correctly "not an identifier char".
-	 */
-	private laNotIdentifier(): boolean {
-		const c = this.inputStream.LA(1);
-		return !((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || c === 95 || (c >= 97 && c <= 122));
-	}
-
-	/**
-	 * Detects a `{% raw %}` stmt tag — STMT_OPEN, then RAW as the tag's very first token, then
-	 * STMT_CLOSE — and pushes RawBody so the literal block that follows is scanned as opaque text,
-	 * not re-segmented into further tags. The channel guard skips hidden JWS (whitespace) tokens so
-	 * whitespace between `{%` and `raw` doesn't defeat detection. `pushMode` (not `mode`) here because
-	 * RawBody must sit ON TOP of the pre-tag mode (DEFAULT) on the mode stack; ENDRAW_OPEN's own
-	 * `-> mode(Minijinja)` command (a plain mode-set, not push/pop) then leaves that stack entry
-	 * intact so the endraw tag's STMT_CLOSE `popMode` correctly returns to DEFAULT.
-	 */
-	public override nextToken(): Token {
-		const t = super.nextToken();
-		if (t.channel === Token.DEFAULT_CHANNEL && t.type !== Token.EOF) {
-			if (t.type === MinijinjaLexer.STMT_OPEN) {
-				this.stmtOpened = true;
-				this.rawPending = false;
-			} else {
-				if (t.type === MinijinjaLexer.RAW && this.stmtOpened) this.rawPending = true;
-				if (t.type === MinijinjaLexer.STMT_CLOSE && this.rawPending) {
-					this.rawPending = false;
-					this.pushMode(MinijinjaLexer.RawBody);
-				}
-				this.stmtOpened = false;
-			}
-		}
-		return t;
-	}
-}
 
 // ===========================================================================
 // DEFAULT mode — literal text and tag openings (minijinja: "Delimiters").
@@ -86,6 +39,15 @@ lexer grammar MinijinjaLexer;
 // four whitespace-control variants ({{- -}} etc.). The optional leading `-`
 // is whitespace control (minijinja "Whitespace Control").
 // ===========================================================================
+
+// The ENTIRE `{% raw %}` opener as one token (whitespace-control variants and
+// internal spacing included). Longest match wins over STMT_OPEN's bare `{%`, so
+// no lexer state is needed to detect the raw keyword; a near-miss (`{% rawx %}`,
+// `{% raw x %}` — minijinja: raw takes no arguments) fails this rule and lexes
+// as an ordinary stmt tag instead of opening a raw block.
+RAW_TAG
+	: '{%' '-'? [ \t\r\n]* 'raw' [ \t\r\n]* '-'? '%}' -> pushMode(RawBody)
+	;
 
 EXPR_OPEN
 	: '{{' '-'? -> pushMode(Minijinja)
@@ -272,17 +234,17 @@ COMMENT_ANY
 // RawBody mode — the literal interior of a `{% raw %} … {% endraw %}` block
 // (minijinja raw blocks: content is literal until the first `{% endraw %}`, no
 // interpretation of the body — see the header's raw-block citation). Entered
-// by the `nextToken()` override above, on top of DEFAULT on the mode stack.
+// by RAW_TAG's pushMode, on top of DEFAULT on the mode stack.
 // ===========================================================================
 
 mode RawBody;
 
-// Closes the raw block: an exact `endraw` keyword (optional whitespace-control
-// `-`, any run of intervening whitespace), guarded so the following char must
-// not continue an identifier (`{% endrawX %}` stays literal). `mode(Minijinja)`
-// is a plain mode-set (see the nextToken doc above), NOT popMode+pushMode.
-ENDRAW_OPEN
-	: '{%' '-'? [ \t\r\n]* 'endraw' {this.laNotIdentifier()}? -> mode(Minijinja)
+// The ENTIRE `{% endraw %}` closer as one token — the full-tag shape makes it
+// exact with no predicate and no lexer state: `{% endrawX %}`, `{% endraw x %}`
+// and an unterminated `{% endraw` all fail the rule and stay literal raw text
+// (only a real endraw tag ends a raw block — minijinja semantics, see header).
+ENDRAW_TAG
+	: '{%' '-'? [ \t\r\n]* 'endraw' [ \t\r\n]* '-'? '%}' -> popMode
 	;
 
 // Literal raw-block text: any run not starting a `{%` (mirrors RAW_TEXT's `{`
@@ -292,8 +254,8 @@ RAW_BODY
 	: ( '{' ~'%' | ~'{' )+
 	;
 
-// Totality fallback: a lone `{` before `%` that isn't `{% endraw ...%}` (the
-// ENDRAW_OPEN predicate failed, e.g. `{% if %}` or `{% endrawX %}` inside raw)
+// Totality fallback: a lone `{` before `%` that isn't a real `{% endraw %}`
+// (ENDRAW_TAG failed to match, e.g. `{% if %}` or `{% endrawX %}` inside raw)
 // resumes as RAW_BODY from the next char — one stray token, never throws.
 RAW_BODY_STRAY
 	: .
