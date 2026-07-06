@@ -254,14 +254,54 @@ function conjunctSlotAdmits(slot: string): boolean {
 }
 
 /**
- * The slot immediately preceding `start`: skip whitespace backward over `chars` (the placeholder
- * being built, so earlier tags read as their fills — a blanked `{{ config }}` reads as whitespace)
- * and return the preceding word (lowercased) or single character; "" at document start.
+ * The slot immediately preceding `start`: skip whitespace AND SQL comment trivia backward over
+ * `chars` (the placeholder being built, so earlier tags read as their fills — a blanked
+ * `{{ config }}` reads as whitespace) and return the preceding word (lowercased) or single
+ * character; "" at document start.
+ *
+ * Comment trivia is invisible to every fill guard (anvil torture-corpus finding, 2026-07-06:
+ * `-- header\n{{ whole_view(…) }}` read slot "header" instead of document start, defeating the
+ * statement fill): `--` line comments are skipped string-aware (a quoted `--` is not trivia),
+ * and `/*`-style block comments skip to before their opener (multi-line fine). Boundaries, both
+ * conservative degradations rather than corruptions: snowflake's `//` line comments are NOT
+ * skipped (the scan is dialect-blind and `//` elsewhere is division); nested block comments
+ * (postgres) match the nearest opener; a multi-line string whose body contains `--` can misread
+ * line-locally — each corner degrades to a word slot, i.e. today's fallback fill.
  */
 function precedingSlot(chars: readonly string[], start: number): string {
 	let k = start - 1;
-	while (k >= 0 && /[ \t\r\n]/.test(chars[k])) k -= 1;
-	if (k < 0) return "";
+	for (;;) {
+		while (k >= 0 && /[ \t\r\n]/.test(chars[k])) k -= 1;
+		if (k < 0) return "";
+		// A block comment closing at k: skip to before its opener.
+		if (chars[k] === "/" && k >= 1 && chars[k - 1] === "*") {
+			let open = -1;
+			for (let i = k - 3; i >= 0; i--) {
+				if (chars[i] === "/" && chars[i + 1] === "*") {
+					open = i;
+					break;
+				}
+			}
+			if (open === -1) return ""; // unterminated backward — conservative document start
+			k = open - 1;
+			continue;
+		}
+		// A `--` line comment on the line ending at k: everything from the first unquoted `--`
+		// on that line is trivia — resume the scan before it.
+		let lineStart = 0;
+		for (let i = k; i >= 0; i--) {
+			if (chars[i] === "\n") {
+				lineStart = i + 1;
+				break;
+			}
+		}
+		const dash = lineCommentStart(chars, lineStart, k);
+		if (dash !== -1) {
+			k = dash - 1;
+			continue;
+		}
+		break;
+	}
 	if (!/[A-Za-z0-9_]/.test(chars[k])) return chars[k];
 	let word = "";
 	while (k >= 0 && /[A-Za-z0-9_]/.test(chars[k])) {
@@ -269,6 +309,25 @@ function precedingSlot(chars: readonly string[], start: number): string {
 		k -= 1;
 	}
 	return word.toLowerCase();
+}
+
+/** The index of the first `--` at or before `end` on the line starting at `lineStart`, tracking
+ *  '…' / "…" / \`…\` quotes forward so a quoted `--` is never trivia; -1 when the line has none. */
+function lineCommentStart(chars: readonly string[], lineStart: number, end: number): number {
+	let quote: string | null = null;
+	for (let i = lineStart; i <= end; i++) {
+		const c = chars[i];
+		if (quote !== null) {
+			if (c === quote) quote = null;
+			continue;
+		}
+		if (c === "'" || c === '"' || c === "`") {
+			quote = c;
+			continue;
+		}
+		if (c === "-" && chars[i + 1] === "-") return i;
+	}
+	return -1;
 }
 
 /**
