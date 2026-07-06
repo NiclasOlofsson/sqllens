@@ -129,6 +129,8 @@ export type {
 	UnsupportedFlag,
 } from "./ir/ir.js";
 
+export { partSpanOf, partSpansOf } from "./ir/part-span.js";
+
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
 
 // The positioned syntax diagnostic carried on parse()/SqlDocument — surfaced here so the LSP

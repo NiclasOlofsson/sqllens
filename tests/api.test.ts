@@ -5,6 +5,8 @@ import {
 	formatType,
 	lineage,
 	parse,
+	partSpanOf,
+	partSpansOf,
 	qualify,
 	resolveScopes,
 	Schema,
@@ -222,5 +224,22 @@ describe("dialect rides on the IR (issue #7)", () => {
 			cst: null as never,
 		};
 		expect(() => toScopes(bare as never)).toThrow(/dialect/);
+	});
+});
+
+describe("PartSpan helpers are exported from the barrel", () => {
+	it("partSpanOf/partSpansOf are exported from the barrel", () => {
+		expect(typeof partSpanOf).toBe("function");
+		expect(typeof partSpansOf).toBe("function");
+	});
+
+	it("partSpanOf computes a real span from a Projection's aliasCst", () => {
+		const r = parse("select 1 as x", "databricks");
+		const body = r.ast.body as { projections: { aliasCst?: unknown }[] };
+		const aliasCst = body.projections[0]!.aliasCst;
+		expect(aliasCst).toBeDefined();
+		const span = partSpanOf(aliasCst as never);
+		expect(span).toBeDefined();
+		expect(span!.start).toBeLessThan(span!.end);
 	});
 });
