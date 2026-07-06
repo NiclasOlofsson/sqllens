@@ -280,7 +280,7 @@ function lowerStatement(stmt: StatementContext): QueryExpr {
 		const root = rq.rootQuery();
 		if (!root) return flagged(stmt, "query", "broken");
 		if (root.functionSpecification().length > 0) flags.push("inline-function");
-		const q = lowerQuery(root.query(), { windows: new Map() });
+		const q = lowerQuery(root.query(), { windows: new Map() }, root);
 		q.statement = "query";
 		q.dialect = "trino";
 		if (flags.length && q.body.kind === "select") q.body.unsupported = [...(q.body.unsupported ?? []), ...flags];
@@ -310,7 +310,7 @@ function lowerStatement(stmt: StatementContext): QueryExpr {
 
 function lowerRootQuery(root: RootQueryContext | null, cst: ParserRuleContext): QueryExpr {
 	if (!root) return flagged(cst, "other", "broken");
-	const q = lowerQuery(root.query(), { windows: new Map() });
+	const q = lowerQuery(root.query(), { windows: new Map() }, root);
 	if (root.functionSpecification().length > 0 && q.body.kind === "select")
 		q.body.unsupported = [...(q.body.unsupported ?? []), "inline-function"];
 	q.dialect = "trino";
@@ -322,11 +322,18 @@ function lowerRootQuery(root: RootQueryContext | null, cst: ParserRuleContext): 
 // Query layer
 // ---------------------------------------------------------------------------
 
-function lowerQuery(query: QueryContext, ctx: Ctx): QueryExpr {
+// `query`/`queryNoWith` are typed as required (non-null) children by the generated grammar
+// accessors, but under error recovery on truncated input (e.g. `CREATE VIEW v AS` with nothing
+// following, or a `WITH r AS (SELECT`/`WITH a AS (...), b AS (` with no trailing main query) the
+// accessor genuinely returns null at runtime despite its compile-time signature — the same class
+// of gap as applyFilter's booleanExpression() guard below. Every call site passes a non-null
+// `anchor` (the enclosing, already-live context) so the fallback still gets a real span.
+function lowerQuery(query: QueryContext | null, ctx: Ctx, anchor: ParserRuleContext): QueryExpr {
+	if (!query) return flagged(anchor, "other", "broken");
 	const ctes: CteDef[] = [];
 	const withCtx = query.with();
 	if (withCtx) for (const nq of withCtx.namedQuery()) ctes.push(lowerNamedQuery(nq, ctx));
-	const q = lowerQueryNoWith(query.queryNoWith(), ctx);
+	const q = lowerQueryNoWith(query.queryNoWith(), ctx, query);
 	q.ctes = ctes;
 	q.cst = query;
 	return q;
@@ -335,11 +342,14 @@ function lowerQuery(query: QueryContext, ctx: Ctx): QueryExpr {
 function lowerNamedQuery(nq: NamedQueryContext, ctx: Ctx): CteDef {
 	const name = nq._name ? idText(nq._name) : "";
 	const aliases = nq.columnAliases()?.identifier().map(idText);
-	return { name, columnAliases: aliases, body: lowerQuery(nq.query(), ctx), cst: nq };
+	return { name, columnAliases: aliases, body: lowerQuery(nq.query(), ctx, nq), cst: nq };
 }
 
-function lowerQueryNoWith(qnw: QueryNoWithContext, ctx: Ctx): QueryExpr {
-	const body = lowerQueryTerm(qnw.queryTerm(), ctx);
+function lowerQueryNoWith(qnw: QueryNoWithContext | null, ctx: Ctx, anchor: ParserRuleContext): QueryExpr {
+	if (!qnw) return flagged(anchor, "other", "broken");
+	const term = qnw.queryTerm();
+	if (!term) return flagged(qnw, "other", "broken");
+	const body = lowerQueryTerm(term, ctx);
 	const q: QueryExpr = { kind: "query", ctes: [], body, cst: qnw };
 	const ob = qnw.orderBy();
 	if (ob) {
@@ -411,7 +421,7 @@ function lowerQueryPrimary(prim: ParserRuleContext, holder: ParserRuleContext, c
 		return { kind: "select", projections, from: [], columns: [], aggregated: false, cst: node };
 	}
 	if (node instanceof SubqueryContext) {
-		const inner = lowerQueryNoWith(node.queryNoWith(), ctx);
+		const inner = lowerQueryNoWith(node.queryNoWith(), ctx, node);
 		// A parenthesized query nests orderBy/limit; keep it as the body when trivial, else subquery-wrap.
 		if (!inner.orderBy && !inner.limit && inner.ctes.length === 0) return inner.body;
 		return {
@@ -672,7 +682,7 @@ function lowerRelationPrimary(
 		return { kind: "table", name: nameParts(rp.qualifiedName()), cst: rp };
 	}
 	if (rp instanceof SubqueryRelationContext) {
-		return { kind: "subquery", query: lowerQuery(rp.query(), ctx), cst: rp };
+		return { kind: "subquery", query: lowerQuery(rp.query(), ctx, rp), cst: rp };
 	}
 	if (rp instanceof UnnestContext) {
 		// UNNEST(a, b) [WITH ORDINALITY] — a lateral relation; its output columns come from the
@@ -680,7 +690,7 @@ function lowerRelationPrimary(
 		return { kind: "lateral", columns: [], cst: rp };
 	}
 	if (rp instanceof LateralContext) {
-		return { kind: "subquery", query: lowerQuery(rp.query(), ctx), cst: rp };
+		return { kind: "subquery", query: lowerQuery(rp.query(), ctx, rp), cst: rp };
 	}
 	if (rp instanceof TableFunctionInvocationContext) {
 		// TABLE(tvf(…)) — an opaque source: columns come from the TVF's signature (unknown without
@@ -996,7 +1006,7 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 	}
 	if (pe instanceof SubqueryExpressionContext) return subqueryExpr(pe.query(), pe, ctx);
 	if (pe instanceof ExistsContext) {
-		return { kind: "exists", query: lowerQuery(pe.query(), ctx), cst: pe };
+		return { kind: "exists", query: lowerQuery(pe.query(), ctx, pe), cst: pe };
 	}
 	if (pe instanceof UniqueContext) {
 		return fn(pe, "unique", [subqueryExpr(pe.query(), pe, ctx)]);
@@ -1152,8 +1162,8 @@ function lowerArgument(a: ArgumentContext, ctx: Ctx): Expr {
 	return e ? lowerExpression(e, ctx) : other(a);
 }
 
-function subqueryExpr(query: QueryContext, cst: ParserRuleContext, ctx: Ctx): Expr {
-	return { kind: "subquery", query: lowerQuery(query, ctx), cst };
+function subqueryExpr(query: QueryContext | null, cst: ParserRuleContext, ctx: Ctx): Expr {
+	return { kind: "subquery", query: lowerQuery(query, ctx, cst), cst };
 }
 
 function fn(

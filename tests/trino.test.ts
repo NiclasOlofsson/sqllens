@@ -215,4 +215,84 @@ describe("trino — parse + lower onto the shared IR", () => {
 			expect(r.errors, sql).toBeGreaterThan(0);
 		}
 	});
+
+	// lowerQuery/lowerQueryNoWith's `query`/`queryNoWith`/`queryTerm` accessors are typed non-null
+	// by the generated grammar (`this.getRuleContext(0, …)!`), but ANTLR's error recovery can abort
+	// before reaching those children on truncated input — a `CREATE VIEW v AS`/`CREATE MATERIALIZED
+	// VIEW v AS` with nothing following (root.query() null), or a `WITH` clause with no trailing main
+	// query, e.g. `WITH r AS` / `WITH r AS (` / `WITH a AS (SELECT 1), b AS (` (query.queryNoWith()
+	// or qnw.queryTerm() null). Removing lower()'s blanket try/catch (the api-hack-eradication wave)
+	// surfaced these as real thrown TypeErrors through the public analyze()/parse() entry points —
+	// exactly the mid-keystroke shape the living-document/editor mandate exists to survive. Confirmed
+	// independently by QC review and reproduced directly; this pins the fix.
+	it("truncated CREATE VIEW / WITH-with-no-main-query never throws (totality — QC finding on lowerQuery/lowerQueryNoWith)", () => {
+		const broken = [
+			// The originally reported repro strings.
+			"WITH r AS (SELECT",
+			"CREATE VIEW v AS",
+			"CREATE MATERIALIZED VIEW v AS",
+			"WITH a AS (SELECT 1), b AS (",
+			// Closer truncation cuts of the same shape (found while sweeping — crashed pre-fix too).
+			"WITH r AS",
+			"WITH r AS (",
+			"CREATE OR REPLACE VIEW v AS",
+			"CREATE TABLE t AS",
+			"INSERT INTO t SELECT",
+			"WITH r AS (WITH x AS (SELECT",
+		];
+		for (const sql of broken) {
+			expect(() => analyze(sql, "trino"), sql).not.toThrow();
+			expect(() => parse(sql, "trino"), sql).not.toThrow();
+		}
+	});
+
+	// Broader sweep: systematically truncate a wide range of query/statement shapes at plausible
+	// mid-keystroke cut points. None of these are given repro cases — this is the "keep going and
+	// find more" pass the task called for. All must survive through analyze()'s full pipeline.
+	it("broad truncation sweep across query shapes never throws (totality)", () => {
+		const broken = [
+			"SELECT",
+			"SELECT *",
+			"SELECT * FROM",
+			"SELECT * FROM t WHERE",
+			"SELECT * FROM (SELECT",
+			"SELECT * FROM t WHERE EXISTS (SELECT",
+			"SELECT * FROM t WHERE x IN (SELECT",
+			"SELECT * FROM t WHERE x = (SELECT",
+			"SELECT * FROM t WHERE UNIQUE (SELECT",
+			"SELECT * FROM LATERAL (SELECT",
+			"WITH",
+			"WITH r(a, b) AS (SELECT",
+			"INSERT INTO t (a, b) SELECT",
+			"CREATE TABLE t AS SELECT",
+			"CREATE TABLE t AS WITH r AS (SELECT",
+			"CREATE VIEW v AS SELECT",
+			"CREATE VIEW v AS WITH r AS (SELECT",
+			"CREATE MATERIALIZED VIEW v AS WITH r AS (SELECT",
+			"SELECT 1 UNION",
+			"SELECT 1 UNION SELECT",
+			"(SELECT 1) UNION (SELECT",
+			"SELECT 1 EXCEPT",
+			"SELECT 1 INTERSECT",
+			"SELECT * FROM t ORDER BY",
+			"SELECT * FROM t LIMIT",
+			"SELECT * FROM t OFFSET",
+			"SELECT * FROM t FETCH FIRST",
+			"SELECT * FROM t GROUP BY",
+			"SELECT * FROM t HAVING",
+			"SELECT * FROM t1 JOIN",
+			"SELECT * FROM t1 JOIN t2 ON",
+			"EXPLAIN SELECT",
+			"EXPLAIN ANALYZE SELECT",
+			"TABLE",
+			"VALUES",
+			"VALUES (",
+			"WITH FUNCTION f() RETURNS int RETURN 1 SELECT",
+			"SELECT * FROM UNNEST(",
+			"",
+		];
+		for (const sql of broken) {
+			expect(() => analyze(sql, "trino"), sql).not.toThrow();
+		}
+	});
 });
