@@ -16,10 +16,11 @@ function walk(dir: string, out: string[] = []): string[] {
 }
 
 describe("source hygiene", () => {
-	test("no file under src/ contains raw control bytes", () => {
-		// src/ is the main source tree where control bytes are most dangerous to hide.
+	test("no file under src/, grammars/, or docs/ contains raw control bytes", () => {
+		// docs/ included deliberately: the plan file for THIS task briefly went binary by quoting
+		// the offending code — pasted invisible bytes travel anywhere text does.
 		const offenders: string[] = [];
-		for (const f of walk("src")) {
+		for (const f of [...walk("src"), ...walk("grammars"), ...walk("docs")]) {
 			const buf = readFileSync(f);
 			let found = false;
 			for (const b of buf) {

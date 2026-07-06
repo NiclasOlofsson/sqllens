@@ -556,9 +556,12 @@ UNCLOSED_ESCAPED_IDENTIFIER: BQTEXT_0;
 // separators ZetaSQL recognizes (googlesql.tm whitespace_character): no-break U+00A0, en/em/…
 // U+2000–U+200A, narrow-no-break U+202F, medium-mathematical U+205F, ideographic U+3000. Zero-width
 // spaces (U+200B/U+FEFF), OGHAM (U+1680) and MONGOLIAN VOWEL SEPARATOR (U+180E) are deliberately out.
+// 2026-07-06: this charset was previously double-encoded mojibake (bytes decoding to U+00C2 U+00A0 U+00E2
+// U+0080 U+0080 - U+00E2 U+0080 U+008A U+00E2 U+0080 U+00AF U+00E2 U+0081 U+009F U+00E3 U+0080 U+0080), which
+// wrongly hid the Latin-1 range U+0080-U+00E2 as whitespace while never matching the real Unicode spaces above;
+// repaired to pure-ASCII \u escapes matching the documented intent exactly.
 WHITESPACE:
-	[ 	
-  -   　] -> channel(HIDDEN);
+	[ \t\n\r\f\u0008\u000B\u00A0\u2000-\u200A\u202F\u205F\u3000] -> channel(HIDDEN);
 
 // Comments
 fragment BLOCK_COMMENT: ('/**/' | '/*' ~[!] .*? '*/');
@@ -573,5 +576,5 @@ COMMENT:
 // KW_UPDATE_AFTER_INSERT). These rules never match real input — the patterns are control characters
 // that cannot appear in SQL — they exist only to mint stable token types appended at the end (no
 // renumbering); the token-stream rewrite (src/bigquery/dot-path.ts) retypes REPLACE/UPDATE to them.
-KW_REPLACE_AFTER_INSERT: 'REPLACE_AFTER_INSERT';
-KW_UPDATE_AFTER_INSERT: 'UPDATE_AFTER_INSERT';
+KW_REPLACE_AFTER_INSERT: '\u0001\u0002REPLACE_AFTER_INSERT\u0002\u0001';
+KW_UPDATE_AFTER_INSERT: '\u0001\u0002UPDATE_AFTER_INSERT\u0002\u0001';
