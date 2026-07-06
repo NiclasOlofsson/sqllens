@@ -13,6 +13,7 @@ import type {
 	QueryExpr,
 	SelectExpr,
 	Source,
+	UnsupportedFlag,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
@@ -275,7 +276,7 @@ function duckdbCategory(stmt: ParserRuleContext): StatementCategory {
 	return keywordCategory(stmt.start?.text ?? "");
 }
 
-function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
+function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 	return {
 		kind: "query",
 		ctes: [],
@@ -480,7 +481,7 @@ function lowerSimpleSelectPramary(node: ParserRuleContext): QueryBody {
 }
 
 function buildSelect(node: ParserRuleContext): SelectExpr {
-	const unsupported: string[] = [];
+	const unsupported: UnsupportedFlag[] = [];
 
 	const targetList = firstShallow(node, P.RULE_target_list);
 	let projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
@@ -583,7 +584,7 @@ function collectTableRef(
 	from: Source[],
 	joinConditions: Expr[],
 	joins: Join[],
-	unsupported: string[],
+	unsupported: UnsupportedFlag[],
 ): void {
 	// FROM-level PIVOT/UNPIVOT reshape the source's output columns; flagged, not silently dropped.
 	if (directChildrenOfRule(tr, P.RULE_from_pivot_suffix).length) unsupported.push("pivot");
@@ -650,7 +651,7 @@ function usingColumns(qual: ParserRuleContext): string[] | undefined {
 	return cols.length ? cols : undefined;
 }
 
-function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Source {
+function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[]): Source {
 	const aliasNode = directChildrenOfRule(tr, P.RULE_opt_alias_clause)[0];
 	// A leading `alias:` prefix (select.md#prefix-aliases) is the alias when no AS clause is given.
 	const prefixAlias =

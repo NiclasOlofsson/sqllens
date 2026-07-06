@@ -21,6 +21,7 @@ import type {
 	SelectExpr,
 	Source,
 	UnpivotInfo,
+	UnsupportedFlag,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpanOf, partSpansOf } from "../ir/part-span.js";
@@ -270,7 +271,7 @@ function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 
 /** from_query: from_clause — a bare FROM (no SELECT), implicitly `SELECT * FROM …`. */
 function buildFromQuery(fromQuery: ParserRuleContext): SelectExpr {
-	const unsupported: string[] = [];
+	const unsupported: UnsupportedFlag[] = [];
 	const fromClause = directChildrenOfRule(fromQuery, P.RULE_from_clause)[0];
 	const fromContents = fromClause ? directChildrenOfRule(fromClause, P.RULE_from_clause_contents)[0] : undefined;
 	const from = fromContents ? buildSources(fromContents, unsupported) : [];
@@ -443,7 +444,7 @@ function lowerPipeAggregate(agg: ParserRuleContext, cst: ParserRuleContext): Pip
 
 /** pipe_join: opt_natural? join_type? join_hint? JOIN hint? table_primary on_or_using_clause? */
 function lowerPipeJoin(join: ParserRuleContext, cst: ParserRuleContext): PipeStage {
-	const unsupported: string[] = [];
+	const unsupported: UnsupportedFlag[] = [];
 	const out: Source[] = [];
 	const tp = directChildrenOfRule(join, P.RULE_table_primary)[0];
 	if (tp) collectTablePrimary(tp, out, unsupported);
@@ -763,7 +764,7 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 
 /** select: select_clause from_clause? opt_clauses_following_from? */
 function buildSelect(select: ParserRuleContext): SelectExpr {
-	const unsupported: string[] = [];
+	const unsupported: UnsupportedFlag[] = [];
 
 	const selectClause = directChildrenOfRule(select, P.RULE_select_clause)[0];
 	const projections = projectionsOfSelectClause(selectClause);
@@ -886,7 +887,7 @@ function lowerStar(node: ParserRuleContext, qualifier: string[] | undefined): Ex
 // --- sources ---------------------------------------------------------------------
 
 /** from_clause_contents: table_primary from_clause_contents_suffix* */
-function buildSources(contents: ParserRuleContext, unsupported: string[]): Source[] {
+function buildSources(contents: ParserRuleContext, unsupported: UnsupportedFlag[]): Source[] {
 	const out: Source[] = [];
 	const first = directChildrenOfRule(contents, P.RULE_table_primary)[0];
 	if (first) collectTablePrimary(first, out, unsupported);
@@ -898,7 +899,7 @@ function buildSources(contents: ParserRuleContext, unsupported: string[]): Sourc
 }
 
 /** A table_primary may wrap a parenthesized `join` (a nested join tree) — flatten it. */
-function collectTablePrimary(tp: ParserRuleContext, out: Source[], unsupported: string[]): void {
+function collectTablePrimary(tp: ParserRuleContext, out: Source[], unsupported: UnsupportedFlag[]): void {
 	const join = directChildrenOfRule(tp, P.RULE_join)[0];
 	if (join) {
 		const inner = directChildrenOfRule(join, P.RULE_table_primary)[0];
@@ -918,7 +919,7 @@ function collectTablePrimary(tp: ParserRuleContext, out: Source[], unsupported: 
 	out.push(buildSource(tp, unsupported));
 }
 
-function buildSource(tp: ParserRuleContext, unsupported: string[]): Source {
+function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Source {
 	// table_subquery: parenthesized_query opt_pivot_or_unpivot_clause_and_alias?
 	const subquery = directChildrenOfRule(tp, P.RULE_table_subquery)[0];
 	if (subquery) {
@@ -2132,10 +2133,10 @@ function optionalClauseExpr(clause: ParserRuleContext | undefined): Expr | undef
 	return e ? lowerExpr(e) : otherExpr(clause);
 }
 
-function emptyBody(cst: ParserRuleContext, reason: string): SelectExpr {
+function emptyBody(cst: ParserRuleContext, reason: UnsupportedFlag): SelectExpr {
 	return { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: [reason], cst };
 }
 
-function emptyQuery(cst: ParserRuleContext, reason: string): QueryExpr {
+function emptyQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 	return { kind: "query", ctes: [], body: emptyBody(cst, reason), cst };
 }

@@ -15,6 +15,7 @@ import type {
 	SelectExpr,
 	Source,
 	UnpivotInfo,
+	UnsupportedFlag,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
@@ -1298,7 +1299,7 @@ function otherExpr(node: ParserRuleContext): Expr {
 	return { kind: "other", text: node.getText(), cst: node };
 }
 
-function emptyBody(cst: ParserRuleContext, reason = "unparsed"): SelectExpr {
+function emptyBody(cst: ParserRuleContext, reason: UnsupportedFlag = "unparsed"): SelectExpr {
 	return {
 		kind: "select",
 		projections: [],
@@ -1310,6 +1311,6 @@ function emptyBody(cst: ParserRuleContext, reason = "unparsed"): SelectExpr {
 	};
 }
 
-function emptyQuery(cst: ParserRuleContext, reason?: string): QueryExpr {
+function emptyQuery(cst: ParserRuleContext, reason?: UnsupportedFlag): QueryExpr {
 	return { kind: "query", ctes: [], body: emptyBody(cst, reason), cst };
 }

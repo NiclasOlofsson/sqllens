@@ -126,6 +126,7 @@ export type {
 	TableSource,
 	TemplateExprInfo,
 	TemplateSourceInfo,
+	UnsupportedFlag,
 } from "./ir/ir.js";
 
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";

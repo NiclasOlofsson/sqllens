@@ -15,6 +15,7 @@ import type {
 	SelectExpr,
 	Source,
 	UnpivotInfo,
+	UnsupportedFlag,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
@@ -233,7 +234,7 @@ function redshiftCategory(stmt: ParserRuleContext): StatementCategory {
 	return keywordCategory(stmt.start?.text ?? "");
 }
 
-function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
+function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 	return {
 		kind: "query",
 		ctes: [],
@@ -396,7 +397,7 @@ function lowerSimpleSelectPramary(node: ParserRuleContext): QueryBody {
 }
 
 function buildSelect(node: ParserRuleContext): SelectExpr {
-	const unsupported: string[] = [];
+	const unsupported: UnsupportedFlag[] = [];
 
 	const targetList = firstShallow(node, P.RULE_target_list);
 	const projections = targetList ? directChildrenOfRule(targetList, P.RULE_target_el).map(buildProjection) : [];
@@ -516,7 +517,7 @@ function collectTableRef(
 	from: Source[],
 	joinConditions: Expr[],
 	joins: Join[],
-	unsupported: string[],
+	unsupported: UnsupportedFlag[],
 ): void {
 	from.push(buildPrimarySource(tr, unsupported));
 	for (const jt of directChildrenOfRule(tr, P.RULE_joined_table)) {
@@ -579,7 +580,7 @@ function usingColumns(qual: ParserRuleContext): string[] | undefined {
 }
 
 /** The primary of a table_ref: relation_expr | select_with_parens | func_table | LATERAL … | (join). */
-function buildPrimarySource(tr: ParserRuleContext, unsupported: string[]): Source {
+function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[]): Source {
 	const aliasNode = directChildrenOfRule(tr, P.RULE_opt_alias_clause)[0];
 	const alias = aliasNode ? aliasName(aliasNode) : undefined;
 	const aliasCst = aliasNode ? firstShallow(aliasNode, P.RULE_table_alias) : undefined;

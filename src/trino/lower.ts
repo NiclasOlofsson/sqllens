@@ -131,6 +131,7 @@ import type {
 	SelectExpr,
 	SetOpExpr,
 	Source,
+	UnsupportedFlag,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
@@ -252,7 +253,7 @@ function categoryOf(stmt: StatementContext): StatementCategory {
 	return keywordCategory(first);
 }
 
-function flagged(cst: ParserRuleContext, statement: StatementCategory, flag: string): QueryExpr {
+function flagged(cst: ParserRuleContext, statement: StatementCategory, flag: UnsupportedFlag): QueryExpr {
 	return {
 		kind: "query",
 		statement,
@@ -274,7 +275,7 @@ function flagged(cst: ParserRuleContext, statement: StatementCategory, flag: str
 function lowerStatement(stmt: StatementContext): QueryExpr {
 	if (stmt instanceof StatementDefaultContext) {
 		const rq = stmt.rootQueryWithSession();
-		const flags: string[] = [];
+		const flags: UnsupportedFlag[] = [];
 		if (rq.sessionProperty().length > 0) flags.push("session-properties");
 		const root = rq.rootQuery();
 		if (!root) return flagged(stmt, "query", "broken");
@@ -455,7 +456,7 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 	}
 
 	const select = emptySelect(spec);
-	const flags = new Set<string>();
+	const flags = new Set<UnsupportedFlag>();
 
 	for (const item of spec.selectItem()) select.projections.push(lowerSelectItem(item, local));
 
@@ -495,7 +496,7 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 	return select;
 }
 
-function lowerGroupingElement(ge: GroupingElementContext, out: Expr[], flags: Set<string>, ctx: Ctx): void {
+function lowerGroupingElement(ge: GroupingElementContext, out: Expr[], flags: Set<UnsupportedFlag>, ctx: Ctx): void {
 	// Every grouping key is captured, including each one inside ROLLUP/CUBE/GROUPING SETS.
 	if (ge instanceof AutoContext) {
 		// GROUP BY AUTO — keys inferred by the engine; nothing textual to capture.
@@ -543,7 +544,7 @@ function lowerRelation(
 	joinConditions: Expr[],
 	joins: Join[],
 	columns: ColumnRef[],
-	flags: Set<string>,
+	flags: Set<UnsupportedFlag>,
 	ctx: Ctx,
 ): void {
 	if (rel instanceof JoinRelationContext) {
@@ -606,12 +607,12 @@ function buildTrinoJoin(
 	return { kind, source, on, using, natural: natural || undefined, cst: j };
 }
 
-function lowerSampledRelation(sr: SampledRelationContext, out: Source[], flags: Set<string>, ctx: Ctx): void {
+function lowerSampledRelation(sr: SampledRelationContext, out: Source[], flags: Set<UnsupportedFlag>, ctx: Ctx): void {
 	const pr = sr.patternRecognition();
 	lowerPatternRecognition(pr, out, flags, ctx);
 }
 
-function lowerPatternRecognition(pr: PatternRecognitionContext, out: Source[], flags: Set<string>, ctx: Ctx): void {
+function lowerPatternRecognition(pr: PatternRecognitionContext, out: Source[], flags: Set<UnsupportedFlag>, ctx: Ctx): void {
 	const aliased = pr.aliasedRelation();
 	if (pr.MATCH_RECOGNIZE()) {
 		// MATCH_RECOGNIZE transforms the relation via row-pattern matching. The base relation stays
@@ -633,7 +634,7 @@ function lowerPatternRecognition(pr: PatternRecognitionContext, out: Source[], f
 	}
 }
 
-function lowerAliasedRelation(ar: AliasedRelationContext, out: Source[], flags: Set<string>, ctx: Ctx): void {
+function lowerAliasedRelation(ar: AliasedRelationContext, out: Source[], flags: Set<UnsupportedFlag>, ctx: Ctx): void {
 	const src = lowerRelationPrimary(ar.relationPrimary(), out, flags, ctx);
 	if (!src) return;
 	const alias = ar.identifier();
@@ -653,7 +654,7 @@ function lowerAliasedRelation(ar: AliasedRelationContext, out: Source[], flags: 
 function lowerRelationPrimary(
 	rp: RelationPrimaryContext,
 	out: Source[],
-	flags: Set<string>,
+	flags: Set<UnsupportedFlag>,
 	ctx: Ctx,
 ): (Source & { alias?: string }) | null {
 	if (rp instanceof TableNameContext) {

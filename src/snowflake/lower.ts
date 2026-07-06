@@ -15,6 +15,7 @@ import type {
 	SelectExpr,
 	Source,
 	UnpivotInfo,
+	UnsupportedFlag,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
@@ -196,7 +197,7 @@ function commandCategory(cmd: ParserRuleContext): StatementCategory {
 	return keywordCategory(cmd.start?.text ?? "");
 }
 
-function nonQuery(cst: ParserRuleContext, reason: string): QueryExpr {
+function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 	return {
 		kind: "query",
 		ctes: [],

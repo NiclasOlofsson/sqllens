@@ -60,6 +60,7 @@ import type {
 	SelectExpr,
 	Source,
 	UnpivotInfo,
+	UnsupportedFlag,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
@@ -145,15 +146,16 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 	return freezeIR(q);
 }
 
-/** An empty, flagged body — the stable non-throw shape for anything not modelled. */
-function flagged(cst: ParserRuleContext, reason: string, statement: StatementCategory): QueryExpr {
+/** An empty, flagged body — the stable non-throw shape for anything not modelled.
+ *  Parameter order unified with trino's `flagged()` (review finding 7): `(cst, statement, flag)`. */
+function flagged(cst: ParserRuleContext, statement: StatementCategory, flag: UnsupportedFlag): QueryExpr {
 	const body: SelectExpr = {
 		kind: "select",
 		projections: [],
 		from: [],
 		columns: [],
 		aggregated: false,
-		unsupported: [reason],
+		unsupported: [flag],
 		cst,
 	};
 	return { kind: "query", statement, ctes: [], body, cst };
@@ -175,16 +177,16 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	// statements 2..n (which carry none of their inner structure). Bounding to statement 1
 	// keeps the span honest — the "compound" statement kind + "multi-statement" flag already
 	// tell a consumer this is an unmodelled batch (issue #21).
-	if (elements.length + swallowed > 1) return flagged(elements[0] ?? tree, "multi-statement", "compound");
+	if (elements.length + swallowed > 1) return flagged(elements[0] ?? tree, "compound", "multi-statement");
 	if (elements.length === 0 && tree.ruleIndex === P.RULE_multiStatement)
-		return flagged(tree, swallowed > 0 ? "broken" : "empty", "other");
+		return flagged(tree, "other", swallowed > 0 ? "broken" : "empty");
 	const stmt = elements[0] ?? tree; // the single element, or a legacy single-statement root
 	const statement = statementCategory(stmt);
 	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
 	// whole thing rather than modelling whichever SELECT happens to come first inside it.
-	if (isCompound(stmt)) return flagged(stmt, "compound", statement);
+	if (isCompound(stmt)) return flagged(stmt, statement, "compound");
 	const query = firstOfRule(stmt, P.RULE_query);
-	if (!query) return flagged(stmt, "non-query", statement);
+	if (!query) return flagged(stmt, statement, "non-query");
 	const lowered = lowerQuery(query);
 	lowered.statement = statement;
 	return lowered;

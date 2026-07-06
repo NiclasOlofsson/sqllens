@@ -13,7 +13,7 @@
 // boundary in the swallowed tail) must NOT become a phantom batch.
 
 import { describe, expect, test } from "vitest";
-import { parse, type Dialect } from "../src/index.js";
+import { parse, type Dialect, type UnsupportedFlag } from "../src/index.js";
 import type { StatementCategory } from "../src/ir/statement.js";
 import type { ParserRuleContext } from "antlr4ng";
 import { statementCategories as databricksCats } from "../src/databricks/lower.js";
@@ -128,4 +128,15 @@ describe.each(DIALECTS)("broken-batch honesty — %s", (dialect) => {
 		expect(r.unsupported).toContain("multi-statement");
 		expect(r.cats).toEqual(["query", "query"]);
 	});
+});
+
+// UnsupportedFlag is a closed union exported from the public barrel (review finding 7) — a
+// typo'd flag string is now a compile error at every lower.ts push site, not just at runtime.
+// This is a compile-time pin: if the import or the literal ever stop type-checking, `npm run
+// typecheck` fails even though nothing here executes a meaningful runtime assertion.
+test("UnsupportedFlag is exported and the batch flags type-narrow", () => {
+	const multiStatement: UnsupportedFlag = "multi-statement";
+	const broken: UnsupportedFlag = "broken";
+	expect(multiStatement).toBe("multi-statement");
+	expect(broken).toBe("broken");
 });

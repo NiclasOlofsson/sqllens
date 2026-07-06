@@ -65,6 +65,35 @@ export interface LimitInfo {
 
 export type QueryBody = SelectExpr | SetOpExpr | PipeExpr;
 
+/**
+ * The closed vocabulary of `SelectExpr.unsupported` flags — every value any dialect's `lower()`
+ * pushes onto that field, enumerated by grepping all eight `src/<dialect>/lower.ts` (2026-07-06,
+ * review finding 7). A closed union catches a typo'd flag string at compile time; the field used
+ * to be `string[]`, letting any dialect push anything with no shared vocabulary.
+ */
+export type UnsupportedFlag =
+	| "multi-statement" // a `;`-batch (healthy or recovery-swallowed) — flagged stub body. All 8 dialects.
+	| "broken" // a wholly-unparsed statement (recovery consumed it; input was NOT empty). All 8 dialects.
+	| "empty" // genuinely empty input. databricks, snowflake, bigquery, redshift, postgres, duckdb, trino
+	// (T-SQL folds this case into "unparsed" instead — see that member).
+	| "compound" // a BEGIN…END scripting compound body. databricks only (`flagged(stmt, "compound", statement)`).
+	| "non-query" // a parsed statement with no query body (utility/DDL/DML/DCL/TCL, no SELECT).
+	// databricks, snowflake, bigquery, redshift, postgres, duckdb, trino (T-SQL uses "unparsed" for this case).
+	| "non-query-cte" // a CTE whose body has no inner SELECT to lower. postgres, redshift, duckdb only.
+	| "unparsed" // the generic unparseable-body fallback (T-SQL's default reason incl. empty input;
+	// also snowflake/postgres/redshift/duckdb's `emptyBody()`/`emptyQuery()` no-reason-given default).
+	| "query-body" // an inline table body (VALUES / INSERT…VALUES / TABLE t) not lowered into a real
+	// select body. databricks only.
+	| "session-properties" // a Trino `EXECUTE ... USING` / query with session-property overrides
+	// the IR doesn't model. trino only.
+	| "inline-function" // a Trino query carrying an inline `WITH FUNCTION` specification. trino only.
+	| "group-by-auto" // Trino's automatic/implicit GROUP BY grouping. trino only.
+	| "match_recognize" // a `MATCH_RECOGNIZE` clause (base relation stays visible, the pattern-match
+	// transform itself is not modelled). trino only.
+	| "pivot" // a FROM-level PIVOT reshape (suffix form) or a standalone PIVOT statement whose output
+	// columns the IR doesn't derive. duckdb only.
+	| "unpivot"; // the UNPIVOT counterpart of "pivot". duckdb only.
+
 export interface SelectExpr {
 	kind: "select";
 	projections: Projection[];
@@ -101,7 +130,7 @@ export interface SelectExpr {
 	unpivot?: UnpivotInfo;
 	/** Constructs present here that the IR still does not model — a flag so consumers
 	 *  know this block is incomplete rather than trusting it silently. Absent when none. */
-	unsupported?: string[];
+	unsupported?: UnsupportedFlag[];
 	cst: ParserRuleContext;
 }
 
