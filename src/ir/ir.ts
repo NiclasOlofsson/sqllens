@@ -76,7 +76,7 @@ export type UnsupportedFlag =
 	| "broken" // a wholly-unparsed statement (recovery consumed it; input was NOT empty). All 8 dialects.
 	| "empty" // genuinely empty input. databricks, snowflake, bigquery, redshift, postgres, duckdb, trino
 	// (T-SQL folds this case into "unparsed" instead — see that member).
-	| "compound" // a BEGIN…END scripting compound body. databricks only (`flagged(stmt, "compound", statement)`).
+	| "compound" // a BEGIN…END scripting compound body. databricks only (`flagged(stmt, statement, "compound")`).
 	| "non-query" // a parsed statement with no query body (utility/DDL/DML/DCL/TCL, no SELECT).
 	// databricks, snowflake, bigquery, redshift, postgres, duckdb, trino (T-SQL uses "unparsed" for this case).
 	| "non-query-cte" // a CTE whose body has no inner SELECT to lower. postgres, redshift, duckdb only.
