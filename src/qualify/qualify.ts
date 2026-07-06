@@ -262,7 +262,7 @@ function columnsOfSource(
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
 		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM) resolves its real columns through TemplateProvider.expansion().
-		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
+		if (src.source.template) return templateColumns(src.source.template, schema, dialect);
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
 			// Miss semantics are the provider's `world`: a CLOSED world declares completeness, so the
@@ -300,13 +300,8 @@ function known(r: string[] | "unknown" | undefined): string[] | undefined {
  * exemption must not fire merely because a plain Schema happens to declare the dbt-logical name —
  * the TYPE consumers add that fallback themselves (tableSourceColumns).
  */
-function templateColumns(
-	t: TemplateSourceInfo,
-	name: string[],
-	schema: SchemaProvider,
-	dialect?: string,
-): string[] | undefined {
-	return relationColumns(t, name, schema, dialect)?.map((c) => c.name);
+function templateColumns(t: TemplateSourceInfo, schema: SchemaProvider, dialect?: string): string[] | undefined {
+	return relationColumns(t, schema, dialect)?.map((c) => c.name);
 }
 
 /**
@@ -417,7 +412,7 @@ function sourceColumns(
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
 		// Templated source resolves its real columns through TemplateProvider.expansion().
-		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
+		if (src.source.template) return templateColumns(src.source.template, schema, dialect);
 		return schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}
 	if (src.kind === "cte") return src.ref.def.columnAliases ?? known(resolved.get(src.ref.scope));

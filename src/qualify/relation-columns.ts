@@ -42,12 +42,7 @@ function sourceCall(t: TemplateSourceInfo): TemplateCall | undefined {
  * (`columns: undefined` — the not-loaded sentinel) resolves through the physical-name
  * lookup; `columns: []` is a genuinely EMPTY relation.
  */
-export function relationColumns(
-	t: TemplateSourceInfo,
-	name: string[],
-	schema: SchemaProvider,
-	dialect?: string,
-): Column[] | undefined {
+export function relationColumns(t: TemplateSourceInfo, schema: SchemaProvider, dialect?: string): Column[] | undefined {
 	const provider = asProvider(schema);
 	const call = sourceCall(t);
 	if (!provider || !call) return undefined;
@@ -70,7 +65,7 @@ export function tableSourceColumns(
 	dialect?: string,
 ): Column[] | undefined {
 	if (template) {
-		const fromProvider = relationColumns(template, name, schema, dialect);
+		const fromProvider = relationColumns(template, schema, dialect);
 		if (fromProvider) return fromProvider;
 	}
 	return schema.columnsFor(name, dialect);
