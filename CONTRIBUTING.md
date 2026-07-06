@@ -72,5 +72,4 @@ touch a grammar:
   inside the codebase.
 - Generated TypeScript is build output; commit the `.g4` source, not the output.
 
-See [docs/PLAN.md](docs/PLAN.md) for the development plan and the tracked open
-gaps, and `CLAUDE.md` for the locked design decisions.
+See `CLAUDE.md` for the locked design decisions and conventions.

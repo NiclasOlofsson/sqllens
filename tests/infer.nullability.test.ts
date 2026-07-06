@@ -13,7 +13,7 @@ import { parseTSql } from "../src/tsql/parse.js";
 // computes "notnull" | "nullable" | "unknown" from expression shape + schema +
 // join shape. NEVER-WRONG: a definite verdict only when provable; "unknown" on
 // any doubt. No flow narrowing (WHERE x IS NOT NULL does not upgrade x) — an
-// inherent boundary of this stage, recorded in PLAN.md.
+// inherent boundary of this stage (a tracked open gap).
 // ---------------------------------------------------------------------------
 
 // A physical catalog with per-column NOT NULL-ness declared via the Task-9 leaf form.

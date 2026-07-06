@@ -12,7 +12,7 @@ import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes, type ScopeTree } from "../src/scope/scope.js";
 
 // ---------------------------------------------------------------------------
-// Per-hop lineage — the reference-spine DAG (docs/PLAN.md "Per-hop lineage — SPEC").
+// Per-hop lineage — the reference-spine DAG.
 //
 // Two suites:
 //   1. The SPEC's acceptance set (a)-(g) — the cursor-anchored spine, spans, fan-out,
@@ -440,7 +440,7 @@ describe("per-hop lineage — lineageOf programmatic entry", () => {
 describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are reportable)", () => {
 	// The trail rides the HOP (consumer-side): the ordered scopes the walk collapsed (pure renames)
 	// or descended (star/bare-source resolution) through while following that hop's refs. Absent
-	// when nothing was collapsed. Spec: docs/PLAN.md "via trail (Anvil ITEM 12)".
+	// when nothing was collapsed (the via-trail collapse case).
 
 	function cteScope(scopes: ScopeTree, name: string) {
 		// CTE keys are stored folded (snowflake UPPER, most others lower) — try both.

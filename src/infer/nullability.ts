@@ -19,7 +19,7 @@ import { resolveColumnSource } from "../sema/resolve.js";
 // Explicit boundary — NO FLOW NARROWING: `WHERE x IS NOT NULL` does NOT upgrade a
 // downstream `x` to notnull. That is dataflow analysis, a separable subsystem;
 // this stage ships expression-shape + schema + join-shape nullability, which is
-// complete for that scope. Recorded in docs/PLAN.md Open Gaps.
+// complete for that scope. Flow narrowing is a tracked open gap.
 // ---------------------------------------------------------------------------
 
 export type Nullability = "notnull" | "nullable" | "unknown";
@@ -199,8 +199,8 @@ function irSourceOf(src: ResolvedSource): Source | undefined {
 // --- outer-join null extension ---------------------------------------------
 // A source is null-extended when the join shape can produce NULL rows for it: LEFT extends the RIGHT
 // (joined) source, RIGHT extends the LEFT sources, FULL extends BOTH. Read off the first-class `joins`
-// array (each `join.source` is reference-identical to a `from` entry — the Join-node spec in
-// docs/PLAN.md). Comma-FROM sources (never in `joins`) are never null-extended.
+// array (each `join.source` is reference-identical to a `from` entry — the additive
+// Join-node model). Comma-FROM sources (never in `joins`) are never null-extended.
 
 /** Find the scope that owns `source` (walking outward for correlation) and test null extension there. */
 function nullExtendedColumn(scope: Scope, source: Source): boolean {

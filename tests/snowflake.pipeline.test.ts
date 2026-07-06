@@ -96,7 +96,7 @@ describe("Snowflake scope resolution", () => {
 
 // CREATE MATERIALIZED VIEW's `AS select_statement` (docs.snowflake.com/en/sql-reference/sql/
 // create-materialized-view) must route its body like the sibling CREATE forms (CREATE VIEW,
-// CTAS, CREATE TASK): a real select, not an opaque nonquery. PLAN.md Open Gaps.
+// CTAS, CREATE TASK): a real select, not an opaque nonquery. (A tracked open gap.)
 describe("Snowflake CREATE MATERIALIZED VIEW body routing", () => {
 	it("lowers the AS SELECT body like sibling CREATE forms (CREATE VIEW's convention)", () => {
 		const mv = lower(parseSnowflake("CREATE MATERIALIZED VIEW mv AS SELECT a, b FROM t").tree);

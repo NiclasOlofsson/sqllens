@@ -61,9 +61,8 @@ shared IR and runs unchanged on every dialect.
   (COPY INTO, table-maintenance commands, GRANT, UPDATE/DELETE/MERGE depth). These
   are tracked as Open Gaps, not cut.
 
-Anything not yet built is a **visible Open Gap** in [docs/PLAN.md](docs/PLAN.md),
-never a silent scope boundary. See PLAN.md for the full development plan and the
-tracked gaps — start there.
+Anything not yet built is a **visible Open Gap** — a tracked, known limitation,
+never a silent scope boundary.
 
 ## The eight dialects
 
@@ -228,7 +227,7 @@ codebase only through `src/api.ts` / `src/index.ts` (plus `vscode-languageserver
 - Match this file's decisions; if a decision turns out wrong, update this file in the
   same change that departs from it.
 - Don't silently narrow scope. Work that's too big to finish now stays a visible Open
-  Gap in [docs/PLAN.md](docs/PLAN.md) — incomplete is fine, silent is not.
+  Gap — incomplete is fine, silent is not.
 - The type-inference contract is **never a wrong type**. Where a documented return
   type is argument-value-dependent or unstated, the rule stays absent and the result
   is `unknown` — not a guess.

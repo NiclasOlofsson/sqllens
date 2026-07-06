@@ -169,7 +169,7 @@ describe("Join kind coverage", () => {
 	it("snowflake: left/cross/full/natural/asof", () => {
 		const d = DIALECTS.snowflake;
 		// Snowflake's as_alias is greedy: after a bare table `a LEFT JOIN b` reads LEFT as a's alias
-		// (a pre-existing grammar precision gap, tracked in PLAN.md). LEFT OUTER / an aliased left side
+		// (a pre-existing grammar precision gap, tracked as an open gap). LEFT OUTER / an aliased left side
 		// disambiguates, and the kind is then modelled faithfully.
 		expect(kindsOf(d, "SELECT * FROM a LEFT OUTER JOIN b ON a.x = b.x")).toEqual(["left"]);
 		expect(kindsOf(d, "SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x")).toEqual(["full"]);
@@ -206,7 +206,7 @@ describe("Join kind coverage", () => {
 		expect(kindsOf(d, "SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x")).toEqual(["full"]);
 		expect(kindsOf(d, "SELECT * FROM a CROSS JOIN b")).toEqual(["cross"]);
 		// SEMI/ANTI are non-reserved in the DuckDB grammar: after a BARE table `a SEMI JOIN b` reads SEMI
-		// as the alias of `a` (a pre-existing grammar precision gap, tracked in PLAN.md). With the left
+		// as the alias of `a` (a pre-existing grammar precision gap, tracked as an open gap). With the left
 		// side aliased, the SEMI/ANTI keyword lands in join_type and the kind is modelled faithfully.
 		expect(kindsOf(d, "SELECT * FROM a AS x SEMI JOIN b ON x.k = b.k")).toEqual(["semi"]);
 		expect(kindsOf(d, "SELECT * FROM a AS x ANTI JOIN b ON x.k = b.k")).toEqual(["anti"]);

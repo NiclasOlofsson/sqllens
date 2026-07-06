@@ -4405,7 +4405,7 @@ non_reserved_words
     // GROUP aggregate rule), and DEFAULT (the USE SECONDARY ROLES / column DEFAULT sentinel).
     // PIVOT/UNPIVOT are also held out here — not reserved, but the post-source `pivot_unpivot*` slot
     // makes a trailing PIVOT ambiguous with an id_ alias; the language-exact cure is a post-source-slot
-    // split, deferred (see docs/PLAN.md Open Gaps), so `SELECT pivot FROM t` is noparse for now.
+    // split, deferred (a tracked open gap), so `SELECT pivot FROM t` is noparse for now.
     // EXCEPT is held out for the same reason: the bare FROM-alias slot would grab the EXCEPT of
     // `SELECT * FROM t EXCEPT SELECT * FROM u` as an alias (t AS except), so the set-op reading loses
     // and the second select folds in as a bare, operator-less branch. The other three set-op words

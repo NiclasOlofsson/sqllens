@@ -1428,7 +1428,7 @@ describe("Snowflake keyword-token identifier holes (SHOW-object / option words a
 	// asc/desc = sort direction (ORDER BY x DESC); nextval = object_name DOT NEXTVAL; listagg = its
 	// WITHIN GROUP aggregate; default = the USE SECONDARY ROLES / column DEFAULT sentinel; pivot/unpivot
 	// = the post-source pivot clause a trailing PIVOT must resolve to (not reserved — an over-exclusion
-	// tracked as an Open Gap in docs/PLAN.md, kept out until the post-source-slot split lands). Not a
+	// tracked as an open gap, kept out until the post-source-slot split lands). Not a
 	// bare table name.
 	it.each(["asc", "desc", "nextval", "listagg", "default", "pivot", "unpivot"])(
 		"dedicated-role word `%s` is NOT usable as a bare table name",

@@ -6,7 +6,7 @@ Databricks, alias-visible in scope, conservation-gated), star modifiers
 (EXCLUDE/ILIKE/RENAME/REPLACE + Databricks `* EXCEPT`, expanded by the qualify pass),
 `UNION BY NAME` flag, the three-way `division` strategy (Snowflake decimal division),
 variant subscript typing, and the move of the Snowflake infer knowledge to
-`src/infer/snowflake.ts`. CLAUDE.md and PLAN.md were corrected (Snowflake is
+`src/infer/snowflake.ts`. CLAUDE.md was corrected (Snowflake is
 fork-and-clean, not hand-authored).
 
 Resolved 2026-06-10 (same day, second pass): star-REPLACE type threading (a column

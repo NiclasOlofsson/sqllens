@@ -219,7 +219,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | File operations (create / rename / delete) | ◻️ not yet |
 
 Legend: ✅ implemented · ◻️ not yet / deferred · — not applicable to SQL. The
-deferred items map to tracked drivers in [docs/PLAN.md](docs/PLAN.md): rename and
+deferred items are tracked work: rename and
 code actions are the next LSP phase, workspace symbols need the project model,
 and formatting is expected to wrap an existing external formatter.
 
@@ -240,8 +240,7 @@ npm test
 One folder per dialect; no shared "core" grammar and no grammar inheritance. Each
 dialect is a standalone pair of split `.g4` files (a lexer grammar + a parser
 grammar), forked from its best starting point and edited in place. Everything
-downstream of `lower` is shared and dialect-neutral. See [docs/PLAN.md](docs/PLAN.md)
-for the development plan and the tracked open gaps.
+downstream of `lower` is shared and dialect-neutral.
 
 ## Contributing
 

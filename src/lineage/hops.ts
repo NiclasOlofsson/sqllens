@@ -9,7 +9,7 @@ import { columnOrigins, originsOf, type Origin } from "./lineage.js";
 
 // ---------------------------------------------------------------------------
 // Per-hop lineage — a traversal-order SPINE of references into the frozen IR /
-// scope tree (docs/PLAN.md "Per-hop lineage — SPEC"). NOT a parallel node graph:
+// scope tree. NOT a parallel node graph:
 // every hop points at the pre-existing, span-carrying Projection / Expr / Scope the
 // walk visits, so navigation is span-jumping and nothing is kept in sync. It rides
 // the SAME shared binder as the flat origin walk (resolveColumnSource +

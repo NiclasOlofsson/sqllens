@@ -110,7 +110,7 @@ export interface SelectExpr {
 	 *  span-addressable view over the same objects (each `join.source` is reference-identical to its
 	 *  `from` entry, each `join.on` reference-equal to its `joinConditions` entry). Absent (undefined)
 	 *  when the select has no explicit JOIN — comma-separated sources are plain `from` entries, not joins.
-	 *  See the Join-node spec in docs/PLAN.md. */
+	 *  See the Join-node model documented below. */
 	joins?: Join[];
 	/** GROUP BY expressions, if present. */
 	groupBy?: Expr[];
@@ -162,8 +162,7 @@ export interface UnpivotInfo {
 // `from` + `joinConditions` (which stay exactly as before): `Join.source` is the SAME object as the
 // matching `from` entry, `Join.on` the SAME object as the matching `joinConditions` entry — a Join
 // carries no unique expr/source, only the kind + the full-construct span. The dbt Anvil formatter
-// tests span containment against it; the SQL debugger slices the query text at join boundaries. See
-// the Join-node spec in docs/PLAN.md. Semantics (scope/qualify/lineage/symbols) are NOT migrated onto
+// tests span containment against it; the SQL debugger slices the query text at join boundaries. Semantics (scope/qualify/lineage/symbols) are NOT migrated onto
 // `joins` in this task — they keep reading `from` + `joinConditions`.
 // ---------------------------------------------------------------------------
 
