@@ -25,3 +25,7 @@ harness/local/
 # internal working plan / roadmap (packaging, execution history, open-gap ledger)
 # — kept locally under .claude/, not published.
 .claude/PLAN.md
+
+# per-feature implementation plans (subagent-driven-development scratch) — same
+# reasoning as .claude/PLAN.md above, not project documentation.
+.claude/plans/
