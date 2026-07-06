@@ -74,6 +74,11 @@ export interface Sym {
 	 *  on the qualifier vs the column. Copied from the `ColumnRef.partSpans`; absent (all-or-nothing)
 	 *  when any part was synthesized. See src/ir/part-span.ts. */
 	partSpans?: PartSpan[];
+	/** For a column REFERENCE symbol resolved to a visible source, the relation-kind Sym it's bound
+	 *  to (table/cte/subquery/lateral) — mirrors `Qualification.bindingOf`'s resolution, object-
+	 *  identical to the Sym already emitted for that source (no separate id scheme needed). Absent
+	 *  when unresolved, ambiguous, or the reference doesn't bind to any source. */
+	source?: Sym;
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
@@ -83,11 +88,18 @@ export const MAIN_FRAME = "_main_";
  *  without one (the default), names + spans + frames + definitions are still produced. */
 export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = OPEN_PROVIDER): Sym[] {
 	const out: Sym[] = [];
-	walk(tree.root, MAIN_FRAME, out, schema);
+	const sourceSyms = new Map<ResolvedSource, Sym>();
+	walk(tree.root, MAIN_FRAME, out, schema, sourceSyms);
 	return out;
 }
 
-function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): void {
+function walk(
+	scope: Scope,
+	frame: string,
+	out: Sym[],
+	schema: SchemaProvider,
+	sourceSyms: Map<ResolvedSource, Sym>,
+): void {
 	const walked = new Set<Scope>();
 
 	// CTE declarations, and each CTE body as its own frame. The map key is the FOLDED identity;
@@ -95,22 +107,22 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): 
 	for (const [, cteRef] of scope.ctes) {
 		const name = displayName(cteRef.def.name, scope.dialect);
 		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.cst), frame });
-		walk(cteRef.scope, name, out, schema);
+		walk(cteRef.scope, name, out, schema, sourceSyms);
 		walked.add(cteRef.scope);
 	}
 	// Set-op branches share this scope's frame.
 	if (scope.branches) {
-		walk(scope.branches.left, frame, out, schema);
-		walk(scope.branches.right, frame, out, schema);
+		walk(scope.branches.left, frame, out, schema, sourceSyms);
+		walk(scope.branches.right, frame, out, schema, sourceSyms);
 		walked.add(scope.branches.left);
 		walked.add(scope.branches.right);
 	}
 	// A pipe's input + stages share this scope's frame — they are this query's stages, not subqueries.
 	if (scope.body.kind === "pipe" && scope.pipe) {
-		walk(scope.pipe.input, frame, out, schema);
+		walk(scope.pipe.input, frame, out, schema, sourceSyms);
 		walked.add(scope.pipe.input);
 		for (const st of scope.pipe.stages) {
-			walk(st, frame, out, schema);
+			walk(st, frame, out, schema, sourceSyms);
 			walked.add(st);
 		}
 	}
@@ -119,6 +131,7 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): 
 	for (const src of scope.sources.values()) {
 		if (src.kind === "relation") continue;
 		const relSym = relationSymbol(src, frame, scope.dialect);
+		sourceSyms.set(src, relSym); // record before recursing — a correlated ref inside sees it
 		const alias = aliasSymbol(src, frame, scope.dialect);
 		if (alias) relSym.alias = { name: alias.name, span: alias.span };
 		out.push(relSym);
@@ -129,19 +142,20 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): 
 				src.source.alias ? displayName(src.source.alias, scope.dialect) : "_subquery_",
 				out,
 				schema,
+				sourceSyms,
 			);
 			walked.add(src.scope);
 		} else if (src.kind === "graphtable") {
-			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema);
+			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema, sourceSyms);
 			walked.add(src.scope);
 		}
 	}
 	// Expression subqueries (scalar / IN / EXISTS) — the remaining children, each its own frame.
 	for (const child of scope.children) {
-		if (!walked.has(child)) walk(child, "_sub_", out, schema);
+		if (!walked.has(child)) walk(child, "_sub_", out, schema, sourceSyms);
 	}
 
-	emitColumns(scope, frame, out, schema);
+	emitColumns(scope, frame, out, schema, sourceSyms);
 	emitFunctions(scope, frame, out, schema);
 }
 
@@ -211,7 +225,13 @@ function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {
 }
 
 /** Column references in this frame, plus output declarations for aliased/computed projections. */
-function emitColumns(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): void {
+function emitColumns(
+	scope: Scope,
+	frame: string,
+	out: Sym[],
+	schema: SchemaProvider,
+	sourceSyms: Map<ResolvedSource, Sym>,
+): void {
 	const body = scope.body;
 	if (body.kind === "select") {
 		for (const p of body.projections) {
@@ -262,6 +282,7 @@ function emitColumns(scope: Scope, frame: string, out: Sym[], schema: SchemaProv
 			type: typeOrUndefined(inferType(colExpr, scope, schema)),
 			origins: originsOrUndefined(originsOf(colExpr, scope, schema)),
 			partSpans: ref.partSpans,
+			source: res.kind === "bound" ? sourceSyms.get(res.source) : undefined,
 		});
 	}
 }

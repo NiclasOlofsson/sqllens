@@ -66,6 +66,36 @@ describe("deriveSymbols — columns", () => {
 	});
 });
 
+describe("deriveSymbols — column source links", () => {
+	it("links a bound column Sym to its relation Sym, object-identical to the emitted one", () => {
+		const syms = symbolsOf("SELECT o.id FROM orders o");
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "orders");
+		const columnSym = syms.find(
+			(s) => s.kind === "column" && s.modifiers.includes("reference") && s.name === "o.id",
+		);
+		expect(tableSym).toBeDefined();
+		expect(columnSym).toBeDefined();
+		expect(columnSym!.source).toBe(tableSym); // object identity, not deep equality
+	});
+
+	it("links a correlated column Sym to the OUTER scope's relation Sym", () => {
+		const syms = symbolsOf("SELECT (SELECT max(x) FROM inner_t WHERE inner_t.k = o.id) FROM outer_t AS o");
+		const outerTable = syms.find((s) => s.kind === "table" && s.name === "outer_t");
+		const correlatedCol = syms.find((s) => s.kind === "column" && s.modifiers.includes("correlated"));
+		expect(outerTable).toBeDefined();
+		expect(correlatedCol).toBeDefined();
+		expect(correlatedCol!.source).toBe(outerTable);
+	});
+
+	it("has no source link for an unresolved column (schema-fed, no source owns it)", () => {
+		const tree = resolveScopes(lower(parseDatabricks("SELECT nonexistent_col FROM orders o").tree));
+		const syms = deriveSymbols(tree, new Schema({ orders: { id: "bigint" } }));
+		const colSym = syms.find((s) => s.kind === "column" && s.name === "nonexistent_col");
+		expect(colSym).toBeDefined();
+		expect(colSym!.source).toBeUndefined();
+	});
+});
+
 describe("deriveSymbols — aliases & definition links", () => {
 	it("emits a relation alias as an alias declaration", () => {
 		const x = symbolsOf("SELECT a FROM tbl AS x").find((s) => s.kind === "alias" && s.name === "x");

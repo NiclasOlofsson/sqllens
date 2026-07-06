@@ -407,7 +407,7 @@ export class SqlDocument {
 				cellQuals.push(ca.qualification);
 				const base = this.lines.positionAt(cells[i].span.start);
 				const off = cells[i].span.start;
-				for (const sym of ca.symbols) symbols.push(shiftSym(sym, base.line, base.column, off));
+				symbols.push(...shiftSymsForCell(ca.symbols, base.line, base.column, off));
 				for (const d of ca.qualification.diagnostics)
 					diagnostics.push(shiftSpanFields(d, base.line, base.column));
 			}
@@ -460,7 +460,9 @@ export class SqlDocument {
 
 /** Shift a symbol's every span (its own span, its declaration target, its per-part spans, its
  *  alias's span) from cell-relative to document coordinates. `baseLine`/`baseCol` are the cell
- *  start's 0-based line/column; `baseOffset` its char offset (for the offset-based part spans). */
+ *  start's 0-based line/column; `baseOffset` its char offset (for the offset-based part spans).
+ *  Does NOT fix up `.source` (an object reference to another Sym) — see `shiftSymsForCell`, which
+ *  wraps this per-Sym shift with the array-wide reference remap that a single Sym can't do alone. */
 function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: number): Sym {
 	return {
 		...sym,
@@ -473,6 +475,29 @@ function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: numbe
 			? { name: sym.alias.name, span: shiftSpanFields(sym.alias.span, baseLine, baseCol) }
 			: undefined,
 	};
+}
+
+/** Shift every Sym of ONE cell's `deriveSymbols()` output to document coordinates, preserving
+ *  `Sym.source` object-identity links across the shift. `walk()`/`emitColumns()` only ever point a
+ *  column Sym's `source` at a relation Sym built by the SAME `deriveSymbols()` call: the
+ *  `sourceSyms` map that backs it is created fresh per call and a correlated reference resolves by
+ *  walking `scope.parent`, which never leaves the ScopeTree of the statement cell that produced it
+ *  (each cell is parsed and scoped independently — see the file header). So `.source` never needs
+ *  to cross a cell boundary, and the remap below only has to cover this one cell's array.
+ *
+ *  Mapping `shiftSym` alone over the array (as before this fix) left `.source` pointing at the
+ *  STALE cell-relative Sym from `cellSyms` — `shiftSym`'s `{...sym}` spread copies the reference
+ *  as-is, and `.map()` allocates a NEW object per entry, so the old reference is never retargeted
+ *  at the new one. This two-pass version shifts every Sym first, then re-points each shifted Sym's
+ *  `source` at its shifted twin via an identity-keyed remap (old cell-relative Sym -> new
+ *  doc-relative Sym). Sym objects are plain, unfrozen data (only the SqlDocument instance itself is
+ *  frozen), so mutating `.source` in place on the freshly built copies is safe. */
+function shiftSymsForCell(cellSyms: readonly Sym[], baseLine: number, baseCol: number, baseOffset: number): Sym[] {
+	const shifted = cellSyms.map((sym) => shiftSym(sym, baseLine, baseCol, baseOffset));
+	const remap = new Map<Sym, Sym>();
+	cellSyms.forEach((sym, i) => remap.set(sym, shifted[i]));
+	for (const sym of shifted) if (sym.source) sym.source = remap.get(sym.source) ?? sym.source;
+	return shifted;
 }
 
 /** Build the whole-document compound facade for a multi-cell document — today's compound-flagged
