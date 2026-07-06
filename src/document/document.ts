@@ -458,9 +458,9 @@ export class SqlDocument {
 	}
 }
 
-/** Shift a symbol's every span (its own span, its declaration target, its per-part spans) from
- *  cell-relative to document coordinates. `baseLine`/`baseCol` are the cell start's 0-based line/
- *  column; `baseOffset` its char offset (for the offset-based part spans). */
+/** Shift a symbol's every span (its own span, its declaration target, its per-part spans, its
+ *  alias's span) from cell-relative to document coordinates. `baseLine`/`baseCol` are the cell
+ *  start's 0-based line/column; `baseOffset` its char offset (for the offset-based part spans). */
 function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: number): Sym {
 	return {
 		...sym,
@@ -468,6 +468,9 @@ function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: numbe
 		definition: sym.definition ? shiftSpanFields(sym.definition, baseLine, baseCol) : undefined,
 		partSpans: sym.partSpans
 			? sym.partSpans.map((p) => shiftPartSpan(p, baseLine, baseCol, baseOffset))
+			: undefined,
+		alias: sym.alias
+			? { name: sym.alias.name, span: shiftSpanFields(sym.alias.span, baseLine, baseCol) }
 			: undefined,
 	};
 }

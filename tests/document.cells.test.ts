@@ -218,6 +218,20 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		expect(a.diagnostics).toBe(a.qualification.diagnostics);
 	});
 
+	it("a relation Sym's alias span shifts to doc coordinates in a multi-statement document", () => {
+		const text = "SELECT amount AS a FROM sales;\nSELECT id AS b FROM sales x";
+		const doc = SqlDocument.create(text, "databricks");
+		const syms = doc.analyze(schema).symbols;
+		const tableSym = syms.find((s) => s.kind === "table" && s.alias?.name === "x")!;
+		expect(tableSym).toBeDefined();
+		const aliasSym = syms.find((s) => s.kind === "alias" && s.name === "x")!;
+		expect(aliasSym).toBeDefined();
+		// The alias span is on doc line 2, matching the separate alias Sym's (already-shifted) span —
+		// not the stale cell-relative coordinates a missed shift would leave behind.
+		expect(tableSym.alias!.span).toEqual(aliasSym.span);
+		expect(tableSym.alias!.span.line).toBe(2);
+	});
+
 	it("editing statement 2 reuses statement 1's cell analysis (no re-qualify of statement 1)", () => {
 		const d1 = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
 		const s1before = d1.analyze(schema).symbols.find((s) => s.name === "amount");
