@@ -73,6 +73,10 @@ The pipeline for `parseTemplated(text, dialect)`:
      whitespace** (vanishes cleanly, whatever the slot). Same set the extension's blanker special-cases.
    - `{{ expr }}` otherwise → a single **identifier-shaped** placeholder (keeps the SQL parse valid where
      an identifier/value can appear — the common case: `FROM {{ ref('x') }}`, `SELECT {{ var('c') }}`).
+     **Ordinal-headed since 2026-07-06 (fill uniqueness):** the fill is `j` + base35(tag ordinal) +
+     `j`-padding (the ordinal alphabet excludes `j`), so two same-length tags never fill
+     byte-identically — name-keyed consumers (projection names, alias resolution, variant merges)
+     used to collide on the old all-`j` fill.
    - `{% stmt %}` and `{# comment #}` → **newline-preserving whitespace** (no SQL output).
    The `NO_OUTPUT_BUILTINS` set is a small built-in DEFAULT (dbt-syntax-level: "these builtins produce no
    text"), the pre-catalog stand-in for inc3's `expansionShape → undefined`/no-output answer — optional

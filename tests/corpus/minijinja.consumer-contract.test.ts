@@ -33,7 +33,7 @@ import type { Dialect } from "../../src/api.js";
 // This gate exercises the DOWNSTREAM READS a consumer makes over
 // `parseTemplated(text, "databricks")` and asserts, for every ref/source-tagged
 // FROM source, that the REAL model name is what every consumer-visible read
-// returns — never the `^j+$` placeholder fill. It scans EVERY public name path:
+// returns — never the ordinal-headed placeholder fill. It scans EVERY public name path:
 //
 //   1. sql.ast source names   — the lowered IR (TableSource.name), walked.
 //   2. resolveScopes keys      — the scope binding keys + each ResolvedSource.name.
@@ -58,7 +58,10 @@ const FIXTURES_DIR = fileURLToPath(new URL("../fixtures/minijinja/", import.meta
 const DIALECT: Dialect = "databricks";
 
 /** A pure placeholder-fill run — one or more of the segmenter's `j` fill chars and nothing else. */
-const isPlaceholderRun = (s: string): boolean => /^j+$/.test(s);
+// Ordinal-aware since the fill-uniqueness change (2026-07-06): a fill is `j` + up to two
+// base35 ordinal chars (alphabet excludes `j`) + all-`j` padding. Matches the legacy pure
+// run too ({0,2} admits zero ordinal chars) — the detector must never go blind to a leak.
+const isPlaceholderRun = (s: string): boolean => /^j[0-9a-ik-z]{0,2}j*$/.test(s);
 
 interface Case {
 	name: string;

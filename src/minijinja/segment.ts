@@ -314,6 +314,23 @@ function fragmentFill(
 	return undefined;
 }
 
+/** Base-35 digits for the identifier fill's per-tag ordinal — the alphabet EXCLUDES `j`, so an
+ *  encoded ordinal can never rebuild the all-`j` padding (base36's 19 is `j`, which would make
+ *  tag 19 collide with a plain run), and it stays distinct under case-insensitive identifier
+ *  folding (an upper/lower trick would fold together). A 2-char first line (`{{` on its own
+ *  line) holds 35 ordinals; beyond the encodable window the head truncates — the documented
+ *  degenerate corner where a collision is still possible, never a length/newline break. */
+const ORDINAL_ALPHABET = "0123456789abcdefghiklmnopqrstuvwxyz";
+
+function ordinalFill(n: number): string {
+	let s = "";
+	do {
+		s = ORDINAL_ALPHABET[n % 35] + s;
+		n = Math.floor(n / 35);
+	} while (n > 0);
+	return s;
+}
+
 /** Tag-opening token type → its tag kind. */
 const OPEN_TAG_KIND: ReadonlyMap<number, Extract<Segment, { kind: "tag" }>["tagKind"]> = new Map([
 	[MinijinjaLexer.EXPR_OPEN, "expr"],
@@ -445,6 +462,7 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 	// carries every earlier fill — precedingSlot reads the placeholder-in-progress
 	// (a blanked config tag before this one reads as whitespace, as it should).
 	const chars = text.split(""); // UTF-16 units — indices align with tag offsets
+	let ordinal = 0; // per-identifier-fill counter, document order (fill uniqueness)
 	for (const seg of segments) {
 		if (seg.kind !== "tag") continue;
 		const info = callByTag.get(seg) ?? { isCall: false };
@@ -468,18 +486,16 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 			continue;
 		}
 
-		// Positional char fill. The identifier fill (`"j"`) is placed on the tag's
-		// FIRST line only; every continuation line fills with spaces. A multi-line
-		// tag otherwise becomes a `j`-run PER LINE (the preserved `\n`s split it),
-		// which the SQL lexer reads as SEVERAL adjacent identifiers — a parse error
-		// (`select jjjj jjjjjj … as x`). First-line-only yields ONE identifier
-		// followed by whitespace. The whitespace fill (`" "`) is unaffected (spaces
-		// before AND after a newline are identical); length + newline offsets hold.
-		let fill: string;
-		if (seg.tagKind !== "expr" || shape === "nothing") {
-			fill = " "; // stmt / comment / no-output call → whitespace to SQL
-		} else {
-			fill = "j";
+		// Positional char fill. The identifier fill is placed on the tag's FIRST line
+		// only; every continuation line fills with spaces. A multi-line tag otherwise
+		// becomes a run PER LINE (the preserved `\n`s split it), which the SQL lexer
+		// reads as SEVERAL adjacent identifiers — a parse error (`select jjjj jjjjjj …
+		// as x`). First-line-only yields ONE identifier followed by whitespace. The
+		// whitespace fill (`" "`) is unaffected (spaces before AND after a newline are
+		// identical); length + newline offsets hold.
+		let identifier = false;
+		if (seg.tagKind === "expr" && shape !== "nothing") {
+			identifier = true;
 			// Statement-slot default: a CALL with NO expansion answer at all sitting at a
 			// statement slot (BOF / after `;`) blanks instead of the identifier fill — a lone
 			// identifier is never a valid statement, so the identifier fill ALWAYS breaks there
@@ -487,15 +503,26 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 			// surrounding statements parse. Calls WITH an answer (ref/source → relation,
 			// var/env_var → value, a shaped macro whose fragment was slot-guarded away) keep
 			// the identifier fill.
-			if (info.isCall && exp === undefined && (slot === "" || slot === ";")) fill = " ";
+			if (info.isCall && exp === undefined && (slot === "" || slot === ";")) identifier = false;
 		}
+		// Uniqueness (Niclas's design review, 2026-07-06): each identifier fill encodes a
+		// per-tag ordinal so two same-length tags never fill byte-identically (name-keyed
+		// consumers — projection names, alias resolution, variant merges — collided on the
+		// old all-`j` fill). The head is built once here; the loop below places it on the
+		// tag's first line and pads the remainder with `j`.
+		const head = identifier ? `j${ordinalFill(ordinal++)}` : "";
 		let seenNewline = false;
 		for (let k = seg.start; k < seg.end; k++) {
 			if (chars[k] === "\n") {
 				seenNewline = true;
 				continue;
 			}
-			chars[k] = seenNewline ? " " : fill;
+			if (seenNewline || !identifier) {
+				chars[k] = " ";
+				continue;
+			}
+			const rel = k - seg.start;
+			chars[k] = rel < head.length ? head[rel] : "j";
 		}
 	}
 

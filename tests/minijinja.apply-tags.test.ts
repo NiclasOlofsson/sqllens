@@ -51,7 +51,7 @@ describe("R3 apply-tags", () => {
 		const scopes = resolveScopes(r.sql.ast);
 		const keys = [...scopes.root.sources.keys()];
 		expect(keys).toContain("orders");
-		expect(keys.some((k) => /^j+$/.test(k))).toBe(false);
+		expect(keys.some((k) => /^j[0-9a-ik-z]{0,2}j*$/.test(k))).toBe(false); // ordinal-aware fill pattern
 	});
 
 	it("single-line ref with a real user alias preserves it (fix must not drop real aliases)", () => {

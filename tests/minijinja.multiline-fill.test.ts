@@ -54,18 +54,21 @@ describe("minijinja multi-line fill — placeholder invariants", () => {
 		// then the rest of the first line (up to the first `\n`) is the j-run.
 		const firstNl = placeholder.indexOf("\n");
 		const firstLineTail = placeholder.slice(7, firstNl); // the tag's first line, from `{{`
-		expect(firstLineTail).toMatch(/^j+$/); // all identifier chars, one contiguous run
+		// Ordinal-headed since the fill-uniqueness change (2026-07-06): j + base35 ordinal + j-padding.
+	expect(firstLineTail).toMatch(/^j[0-9a-ik-z]?j*$/); // one identifier, one contiguous run
 		// Every continuation-line position that WAS tag interior is now whitespace: no `j` after the first newline.
 		const afterFirstNl = placeholder.slice(firstNl);
 		expect(afterFirstNl).not.toMatch(/j/);
 	});
 
-	it("single-line tag placeholder is byte-identical to the all-`j` fill (regression guard)", () => {
+	it("single-line tag placeholder is the ordinal-headed identifier fill (regression guard)", () => {
 		// A single-line macro tag has no interior newline, so first-line-only == full fill.
 		const text = "select {{ m() }} as x from t";
 		const { placeholder } = segment(text, DP);
 		// Reconstruct the expected: the whole tag range is `j`, non-tag SQL untouched.
-		const expected = "select jjjjjjjjj as x from t";
+		// Fill-uniqueness (2026-07-06): the fill carries a per-tag ordinal head (`j0…`), so two
+	// same-length tags never collide byte-identically on name-keyed consumers.
+	const expected = "select j0jjjjjjj as x from t";
 		expect(placeholder).toBe(expected);
 	});
 });

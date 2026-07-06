@@ -191,7 +191,8 @@ describe("jinja segmenter — placeholder fill (no-output-aware default)", () =>
 	it("fills an ordinary expr tag with the `j` identifier token (value slot)", () => {
 		const text = "select {{ x }} from t";
 		const { placeholder } = segment(text, DP);
-		expect(placeholder).toBe("select jjjjjjj from t");
+		// Ordinal-headed fill since the uniqueness change (2026-07-06).
+	expect(placeholder).toBe("select j0jjjjj from t");
 	});
 
 	it("a lone ref at document start fills SELECT 1 (the default provider knows ref is a relation)", () => {
@@ -229,9 +230,10 @@ describe("jinja segmenter — placeholder fill (no-output-aware default)", () =>
 
 	it("fills var()/ref() (value-producing) with `j` in value/relation slots", () => {
 		const varCase = segment("select {{ var('c') }} from t", DP);
-		expect(varCase.placeholder).toBe("select jjjjjjjjjjjjjj from t");
+		// Ordinal-headed fills since the uniqueness change (2026-07-06).
+	expect(varCase.placeholder).toBe("select j0jjjjjjjjjjjj from t");
 		const refCase = segment("select * from {{ ref('x') }}", DP);
-		expect(refCase.placeholder).toBe("select * from jjjjjjjjjjjjjj");
+		expect(refCase.placeholder).toBe("select * from j0jjjjjjjjjjjj");
 	});
 
 	it("a shapeless CALL alone at a statement slot blanks (a lone identifier is never a statement)", () => {
@@ -303,7 +305,7 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 		const text = "select {{\n my_helper('x')\n}} as c from t";
 		const { placeholder } = segment(text, DP);
 		expect(newlineOffsets(placeholder)).toEqual(newlineOffsets(text));
-		expect(placeholder.slice(7, 9)).toBe("jj");
+		expect(placeholder.slice(7, 9)).toBe("j0"); // ordinal head (fill uniqueness, 2026-07-06)
 	});
 
 	it("preserves newlines inside a multi-line no-output tag as spaces", () => {

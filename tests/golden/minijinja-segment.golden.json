@@ -36,7 +36,7 @@
 				"end": 114
 			}
 		],
-		"placeholder": "select\r\n    o.order_id,\r\n    o.customer_id,\r\n    o.amount\r\nfrom jjjjjjjjjjjjjjjjjjjjjjj as o\r\nwhere o.amount > 0\r\n"
+		"placeholder": "select\r\n    o.order_id,\r\n    o.customer_id,\r\n    o.amount\r\nfrom j0jjjjjjjjjjjjjjjjjjjjj as o\r\nwhere o.amount > 0\r\n"
 	},
 	"fixture:03_source_from.sql": {
 		"segments": [
@@ -58,7 +58,7 @@
 				"end": 103
 			}
 		],
-		"placeholder": "select\r\n    id,\r\n    created_at\r\nfrom jjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nwhere created_at >= '2020-01-01'\r\n"
+		"placeholder": "select\r\n    id,\r\n    created_at\r\nfrom j0jjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nwhere created_at >= '2020-01-01'\r\n"
 	},
 	"fixture:04_var_value.sql": {
 		"segments": [
@@ -92,7 +92,7 @@
 				"end": 123
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount * jjjjjjjjjjjjjjjjjjjj as amount_eur\r\nfrom orders\r\nwhere region = 'jjjjjjjjjjjjjjjjjjj'\r\n"
+		"placeholder": "select\r\n    order_id,\r\n    amount * j0jjjjjjjjjjjjjjjjjj as amount_eur\r\nfrom orders\r\nwhere region = 'j1jjjjjjjjjjjjjjjjj'\r\n"
 	},
 	"fixture:05_multiline_tag.sql": {
 		"segments": [
@@ -114,7 +114,7 @@
 				"end": 59
 			}
 		],
-		"placeholder": "select *\r\nfrom jjjjjjjjjjj\n           \n             \n    \r\n"
+		"placeholder": "select *\r\nfrom j0jjjjjjjjj\n           \n             \n    \r\n"
 	},
 	"fixture:06_whitespace_control.sql": {
 		"segments": [
@@ -160,7 +160,7 @@
 				"end": 85
 			}
 		],
-		"placeholder": "select\r\n    jjjjjjjjjjjjjj,\r\n    name\r\nfrom                 customers              \r\n"
+		"placeholder": "select\r\n    j0jjjjjjjjjjjj,\r\n    name\r\nfrom                 customers              \r\n"
 	},
 	"fixture:07_raw_block.sql": {
 		"segments": [
@@ -228,7 +228,7 @@
 				"end": 139
 			}
 		],
-		"placeholder": "select\r\n    jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as next_day,\r\n    jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as computed\r\nfrom orders\r\n"
+		"placeholder": "select\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as next_day,\r\n    j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as computed\r\nfrom orders\r\n"
 	},
 	"fixture:09_comment.sql": {
 		"segments": [
@@ -291,7 +291,7 @@
 				"end": 149
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount\r\nfrom orders\r\n                         \r\nwhere updated_at > (select max(updated_at) from jjjjjjjjjj)\r\n           \r\n"
+		"placeholder": "select\r\n    order_id,\r\n    amount\r\nfrom orders\r\n                         \r\nwhere updated_at > (select max(updated_at) from j0jjjjjjjj)\r\n           \r\n"
 	},
 	"fixture:11_for_block.sql": {
 		"segments": [
@@ -349,7 +349,7 @@
 				"end": 168
 			}
 		],
-		"placeholder": "select\r\n    id\r\n                                  \r\n    , sum(case when kind = 'jjjjjjj' then 1 else 0 end) as cnt_jjjjjjj\r\n                \r\nfrom events\r\ngroup by id\r\n"
+		"placeholder": "select\r\n    id\r\n                                  \r\n    , sum(case when kind = 'j0jjjjj' then 1 else 0 end) as cnt_j1jjjjj\r\n                \r\nfrom events\r\ngroup by id\r\n"
 	},
 	"fixture:12_broken_tag.sql": {
 		"segments": [
@@ -366,7 +366,7 @@
 				"text": "{{ ref(\r\n"
 			}
 		],
-		"placeholder": "select\r\n    customer_id\r\nfrom jjjjjjjj\n"
+		"placeholder": "select\r\n    customer_id\r\nfrom j0jjjjjj\n"
 	},
 	"fixture:13_dbt_utils_star.sql": {
 		"segments": [
@@ -400,7 +400,7 @@
 				"end": 88
 			}
 		],
-		"placeholder": "select\r\n    jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nfrom jjjjjjjjjjjjjjjjjjjjjjj\r\n"
+		"placeholder": "select\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nfrom j1jjjjjjjjjjjjjjjjjjjjj\r\n"
 	},
 	"fixture:14_config_cte_model.sql": {
 		"segments": [
@@ -441,7 +441,7 @@
 				"end": 350
 			}
 		],
-		"placeholder": "                                                               \r\n\r\nwith orders as (\r\n    select * from jjjjjjjjjjjjjjjjjjjjjjj\r\n),\r\n\r\ncustomers as (\r\n    select * from jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\n)\r\n\r\nselect\r\n    o.order_id,\r\n    c.customer_name,\r\n    o.amount\r\nfrom orders as o\r\nleft join customers as c\r\n    on o.customer_id = c.customer_id\r\n"
+		"placeholder": "                                                               \r\n\r\nwith orders as (\r\n    select * from j0jjjjjjjjjjjjjjjjjjjjj\r\n),\r\n\r\ncustomers as (\r\n    select * from j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\n)\r\n\r\nselect\r\n    o.order_id,\r\n    c.customer_name,\r\n    o.amount\r\nfrom orders as o\r\nleft join customers as c\r\n    on o.customer_id = c.customer_id\r\n"
 	},
 	"fixture:15_set_and_filter.sql": {
 		"segments": [
@@ -494,7 +494,7 @@
 				"end": 236
 			}
 		],
-		"placeholder": "                                            \r\n\r\nselect\r\n    order_id,\r\n    jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as due_date,\r\n    upper(status) as status\r\nfrom jjjjjjjjjjjjjjjjjjjjjjj\r\nwhere amount > jjjjjjjjjjjjjjjjjjjjjjj\r\n"
+		"placeholder": "                                            \r\n\r\nselect\r\n    order_id,\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as due_date,\r\n    upper(status) as status\r\nfrom j1jjjjjjjjjjjjjjjjjjjjj\r\nwhere amount > j2jjjjjjjjjjjjjjjjjjjjj\r\n"
 	},
 	"fixture:16_if_else_where.sql": {
 		"segments": [
@@ -552,7 +552,7 @@
 				"end": 191
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount,\r\n    status\r\nfrom jjjjjjjjjjjjjjjjjjjjjjj\r\n                              \r\nwhere status = 'complete'\r\n          \r\nwhere status <> 'cancelled'\r\n           \r\n"
+		"placeholder": "select\r\n    order_id,\r\n    amount,\r\n    status\r\nfrom j0jjjjjjjjjjjjjjjjjjjjj\r\n                              \r\nwhere status = 'complete'\r\n          \r\nwhere status <> 'cancelled'\r\n           \r\n"
 	},
 	"fixture:17_for_select_list.sql": {
 		"segments": [
@@ -607,7 +607,7 @@
 				"end": 103
 			}
 		],
-		"placeholder": "select\r\n                          jjjjjjj                      ,                        \r\nfrom events\r\n"
+		"placeholder": "select\r\n                          j0jjjjj                      ,                        \r\nfrom events\r\n"
 	},
 	"fixture:18_multiline_ref.sql": {
 		"segments": [
@@ -629,7 +629,7 @@
 				"end": 51
 			}
 		],
-		"placeholder": "select *\r\nfrom jjjjjjjj\n                    \n    \r\n"
+		"placeholder": "select *\r\nfrom j0jjjjjj\n                    \n    \r\n"
 	},
 	"fixture:19_macro_from.sql": {
 		"segments": [
@@ -651,7 +651,7 @@
 				"end": 59
 			}
 		],
-		"placeholder": "select\r\n    m.id,\r\n    m.name\r\nfrom jjjjjjjjjjjjjjjj as m\r\n"
+		"placeholder": "select\r\n    m.id,\r\n    m.name\r\nfrom j0jjjjjjjjjjjjjj as m\r\n"
 	},
 	"fixture:20_set_and_macro_block.sql": {
 		"segments": [
@@ -704,7 +704,7 @@
 				"end": 180
 			}
 		],
-		"placeholder": "                                            \r\n\r\n                         \r\n    jjjjjjjjj * 100\r\n              \r\n\r\nselect\r\n    order_id,\r\n    amount\r\nfrom orders\r\nwhere amount > 0\r\n"
+		"placeholder": "                                            \r\n\r\n                         \r\n    j0jjjjjjj * 100\r\n              \r\n\r\nselect\r\n    order_id,\r\n    amount\r\nfrom orders\r\nwhere amount > 0\r\n"
 	},
 	"syn:multiline-expr-macro": {
 		"segments": [
@@ -726,7 +726,7 @@
 				"end": 49
 			}
 		],
-		"placeholder": "select jjjjjjjjjjjj\n      \n     \n     as x from t"
+		"placeholder": "select j0jjjjjjjjjj\n      \n     \n     as x from t"
 	},
 	"syn:raw-block-with-tags": {
 		"segments": [
@@ -871,7 +871,7 @@
 				"text": "{%- endif -%}"
 			}
 		],
-		"placeholder": "jjjjjjjjj and             y             "
+		"placeholder": "j0jjjjjjj and             y             "
 	},
 	"syn:close-in-dquote-string": {
 		"segments": [
@@ -893,7 +893,7 @@
 				"end": 29
 			}
 		],
-		"placeholder": "WHERE n = 'jjjjjjjjjjjjjjjjj'"
+		"placeholder": "WHERE n = 'j0jjjjjjjjjjjjjjj'"
 	},
 	"syn:close-in-squote-string": {
 		"segments": [
@@ -1012,7 +1012,7 @@
 				"text": "{{ my_macro"
 			}
 		],
-		"placeholder": "select jjjjjjjjjjj"
+		"placeholder": "select j0jjjjjjjjj"
 	},
 	"syn:dotted-call": {
 		"segments": [
@@ -1041,7 +1041,7 @@
 				"text": "{{ ref('x') }}"
 			}
 		],
-		"placeholder": "select jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj from jjjjjjjjjjjjjj"
+		"placeholder": "select j0jjjjjjjjjjjjjjjjjjjjjjjjjjjj from j1jjjjjjjjjjjj"
 	},
 	"syn:lone-brace-eof": {
 		"segments": [
@@ -1113,7 +1113,7 @@
 				"text": "{# c #}"
 			}
 		],
-		"placeholder": "jjjjjjj                 "
+		"placeholder": "j0jjjjj                 "
 	},
 	"syn:shaped-statement": {
 		"segments": [
@@ -1181,7 +1181,7 @@
 				"text": "{{ ref('x') }}"
 			}
 		],
-		"placeholder": "select 1 from jjjjjjjjjjjjjj"
+		"placeholder": "select 1 from j0jjjjjjjjjjjj"
 	},
 	"syn:shaped-no-fit-multiline": {
 		"segments": [
@@ -1225,6 +1225,6 @@
 				"end": 30
 			}
 		],
-		"placeholder": "select jjjjjjjjjjjjjjjj from t"
+		"placeholder": "select j0jjjjjjjjjjjjjj from t"
 	}
 }
