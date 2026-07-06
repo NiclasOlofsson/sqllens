@@ -1,7 +1,7 @@
 {
 	"name": "sqllens",
 	"version": "1.0.0",
-	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across warehouse dialects (Databricks, T-SQL, Snowflake).",
+	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across eight SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino).",
 	"main": "index.js",
 	"directories": {
 		"doc": "docs",
@@ -10,17 +10,32 @@
 	"keywords": [
 		"sql",
 		"parser",
+		"sql-parser",
 		"analyzer",
 		"ast",
 		"lineage",
 		"type-inference",
 		"name-resolution",
+		"lsp",
 		"databricks",
 		"tsql",
 		"snowflake",
+		"bigquery",
+		"redshift",
+		"postgres",
+		"duckdb",
+		"trino",
 		"antlr"
 	],
 	"author": "Niclas Olofsson",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/NiclasOlofsson/sqllens.git"
+	},
+	"bugs": {
+		"url": "https://github.com/NiclasOlofsson/sqllens/issues"
+	},
+	"homepage": "https://github.com/NiclasOlofsson/sqllens#readme",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
 		"lsp": "node --import tsx src/lsp/main.ts",
@@ -31,7 +46,7 @@
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},
-	"license": "ISC",
+	"license": "MIT",
 	"type": "module",
 	"devDependencies": {
 		"@types/node": "^25.9.2",
