@@ -446,6 +446,9 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 
 	const segments: Segment[] = [];
 	const callByTag = new Map<Segment, TagCallInfo>();
+	// Interior DEFAULT-channel tokens per tag — the loop-realization post-pass reads stmt-tag
+	// conditions from these (same tokens tagCall consumed; stored, not re-derived).
+	const interiorByTag = new Map<Segment, AntlrToken[]>();
 	const tagTokens = new Map<Segment, readonly AntlrToken[]>();
 	let sqlStart = 0;
 	let i = 0;
@@ -510,6 +513,7 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		const seg: Segment = { kind: "tag", tagKind, start: openTok.start, end, text: text.slice(openTok.start, end) };
 		segments.push(seg);
 		callByTag.set(seg, tagCall(interior));
+		interiorByTag.set(seg, interior);
 		tagTokens.set(seg, slice);
 		sqlStart = end;
 	}
@@ -532,14 +536,30 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		const exp = seg.tagKind === "expr" && info.call ? provider.expansion(info.call) : undefined;
 		const shape = exp?.shape;
 
+		// Fusion boundary (anvil torture-corpus, 2026-07-06): a tag GLUED to a preceding SQL
+		// clause/operator keyword (`from{{ ref('x') }}` — dbt compiles it because the rendered
+		// relation opens with a quote char) must not fuse with the fill into one token: the old
+		// fill made `fromj0jjj…` — zero errors, no FROM clause at all. The fill's first char
+		// becomes a space ONLY in that case; `prefix_{{ var('x') }}` gluing is a legitimate dbt
+		// identifier-composition pattern (an underscore word is never a keyword) and keeps fusing.
+		const fusesWithKeyword =
+			seg.start > 0 && /[A-Za-z0-9_]/.test(chars[seg.start - 1]) && CONJUNCT_BLOCK_WORDS.has(slot);
+
 		const shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
 		if (shaped !== undefined) {
 			// Fragment fill: at the fit window's start (`at` — tag start for a one-line tag, the
 			// first fitting line for a multi-line one), spaces everywhere else, `\n` preserved.
-			// The window is newline-free by construction, so the fragment lands intact.
+			// The window is newline-free by construction, so the fragment lands intact. A glued
+			// SLOT WORD (`t{{ m() }}` with a conjunct answer → `tAND 1=1`) shifts the fragment one
+			// char right when the window allows — fragments fuse with ANY glued word, keyword or
+			// not, since they all start with a keyword letter.
+			const glued = seg.start > 0 && /[A-Za-z0-9_]/.test(chars[seg.start - 1]);
+			const fits = seg.text[shaped.at + shaped.fragment.length] !== "\n" &&
+				shaped.at + shaped.fragment.length < seg.end - seg.start;
+			const at = shaped.at === 0 && glued && fits ? 1 : shaped.at;
 			for (let k = seg.start; k < seg.end; k++) {
 				if (chars[k] === "\n") continue;
-				const rel = k - seg.start - shaped.at;
+				const rel = k - seg.start - at;
 				chars[k] = rel >= 0 && rel < shaped.fragment.length ? shaped.fragment[rel] : " ";
 			}
 			continue;
@@ -569,7 +589,7 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		// consumers — projection names, alias resolution, variant merges — collided on the
 		// old all-`j` fill). The head is built once here; the loop below places it on the
 		// tag's first line and pads the remainder with `j`.
-		const head = identifier ? `j${ordinalFill(ordinal++)}` : "";
+		const head = identifier ? `${fusesWithKeyword ? " " : ""}j${ordinalFill(ordinal++)}` : "";
 		let seenNewline = false;
 		for (let k = seg.start; k < seg.end; k++) {
 			if (chars[k] === "\n") {
@@ -585,5 +605,67 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		}
 	}
 
+	// Single-representative-iteration loop realization (anvil torture-corpus, 2026-07-06): in
+	// jinja itself a 1-length loop has loop.first = loop.last = true, so the primary realization
+	// models ONE representative iteration — inside a {% for %}, an {% if %} arm whose condition
+	// is a trivially-decidable loop-constant ("not loop.last" / "not loop.first") is statically
+	// DEAD and blanks (the dbt union-arm separator idiom used to leave a dangling `union all`).
+	// Anything the engine cannot decide structurally stays live (all-text-live holds); else/elif
+	// arms of a blanked if stay live (a false condition means the else runs). Pure jinja-core
+	// structural knowledge — no rendering, no provider consult.
+	blankDeadLoopArms(segments, callByTag, interiorByTag, chars);
+
 	return { segments, placeholder: chars.join(""), tagTokens };
+}
+
+/** True when a stmt-tag `if` condition is exactly `not loop.last` / `not loop.first` — false by
+ *  construction in the single representative iteration. Strict token-shape match (never-wrong:
+ *  anything else is undecidable and stays live). `interior` includes the leading `if` keyword. */
+function isLoopConstFalse(interior: readonly AntlrToken[]): boolean {
+	if (interior.length !== 5) return false;
+	const [kw, not, loop, dot, member] = interior.map(textOf);
+	return kw === "if" && not === "not" && loop === "loop" && dot === "." && (member === "last" || member === "first");
+}
+
+/** Blank (to spaces, `\n` preserved) the body of every statically-dead loop-constant `if` arm.
+ *  Depth-safe pairing over the stmt tags: a nested if inside a blanked arm blanks with it; an
+ *  `else`/`elif` at the blanked if's own depth ENDS the blank (its arm stays live); an unclosed
+ *  blanked if blanks nothing (tolerant — same spirit as the M1 region boundary). */
+function blankDeadLoopArms(
+	segments: readonly Segment[],
+	callByTag: ReadonlyMap<Segment, TagCallInfo>,
+	interiorByTag: ReadonlyMap<Segment, readonly AntlrToken[]>,
+	chars: string[],
+): void {
+	let forDepth = 0;
+	let ifDepth = 0;
+	let blankFrom = -1; // char offset where the current dead arm's body starts; -1 = not blanking
+	let blankAtIfDepth = -1;
+	const blank = (from: number, to: number): void => {
+		for (let k = from; k < to; k++) if (chars[k] !== "\n") chars[k] = " ";
+	};
+	for (const seg of segments) {
+		if (seg.kind !== "tag" || seg.tagKind !== "stmt") continue;
+		const kw = callByTag.get(seg)?.call?.name;
+		if (kw === "for") forDepth += 1;
+		else if (kw === "endfor") forDepth = Math.max(0, forDepth - 1);
+		else if (kw === "if") {
+			ifDepth += 1;
+			if (blankFrom === -1 && forDepth > 0 && isLoopConstFalse(interiorByTag.get(seg) ?? [])) {
+				blankFrom = seg.end;
+				blankAtIfDepth = ifDepth;
+			}
+		} else if (kw === "elif" || kw === "else") {
+			if (blankFrom !== -1 && ifDepth === blankAtIfDepth) {
+				blank(blankFrom, seg.start);
+				blankFrom = -1;
+			}
+		} else if (kw === "endif") {
+			if (blankFrom !== -1 && ifDepth === blankAtIfDepth) {
+				blank(blankFrom, seg.start);
+				blankFrom = -1;
+			}
+			ifDepth = Math.max(0, ifDepth - 1);
+		}
+	}
 }

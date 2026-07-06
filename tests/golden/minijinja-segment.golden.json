@@ -607,7 +607,7 @@
 				"end": 103
 			}
 		],
-		"placeholder": "select\r\n                          j0jjjjj                      ,                        \r\nfrom events\r\n"
+		"placeholder": "select\r\n                          j0jjjjj                                               \r\nfrom events\r\n"
 	},
 	"fixture:18_multiline_ref.sql": {
 		"segments": [

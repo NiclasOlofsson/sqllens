@@ -291,9 +291,20 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 
 	// Step 4a: clip the placeholder's filler tokens out of the tag regions (drop
 	// the parts inside a tag; keep any real SQL a token fused across the boundary).
+	// INVARIANT: an SQL-side token's text is ALWAYS the ORIGINAL document slice at its
+	// span — the placeholder is engine-internal. Normally identical, but a statically-dead
+	// loop arm (single-representative-iteration realization) is blanked in the placeholder
+	// while the stream must still reconstruct the source byte-for-byte: its content rides
+	// as hidden trivia carrying the true text (dead text as trivia — the honest model).
 	const sqlTokens: Token[] = [];
 	for (const t of sql.tokens) {
-		for (const clipped of clipToTagBoundaries(t, tagRanges, text)) sqlTokens.push(clipped);
+		for (const clipped of clipToTagBoundaries(t, tagRanges, text)) {
+			sqlTokens.push(
+				clipped.text === text.slice(clipped.start, clipped.stop + 1)
+					? clipped
+					: { ...clipped, text: text.slice(clipped.start, clipped.stop + 1) },
+			);
+		}
 	}
 
 	// Step 4b: map each tag's document-native token slice onto channel 2.
