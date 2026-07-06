@@ -1,11 +1,11 @@
 // ---------------------------------------------------------------------------
-// TemplateProvider Ã¢ÂÂ the ONE resolution seam for every template expression
+// TemplateProvider — the ONE resolution seam for every template expression
 // (the catalog-unification redesign, agreed with anvil on the channel
 // 2026-07-05; replaces template-catalog.ts's per-kind methods).
 //
 // The model: every jinja call/expression embedded in SQL is a hole with a
-// semantic identity. The engine asks ONE question about it Ã¢ÂÂ `expansion(call)`
-// Ã¢ÂÂ and the answer says whatever is known: the relation it produces, the value
+// semantic identity. The engine asks ONE question about it — `expansion(call)`
+// — and the answer says whatever is known: the relation it produces, the value
 // type it yields, the columns it emits, the collection it iterates, and/or the
 // syntactic shape of its rendered text. Every field is optional; `undefined`
 // anywhere degrades to the never-wrong floor (parse always works, meaning is
@@ -13,8 +13,8 @@
 //
 // DefaultTemplateProvider is a SHIPPED, CONCRETE default implementation
 // designed for inheritance (the C# base-class pattern): fully functional with
-// zero consumer input Ã¢ÂÂ it IS the zero-consumer strategy, in one readable,
-// unit-testable place Ã¢ÂÂ and composed of small overridable methods so a consumer
+// zero consumer input — it IS the zero-consumer strategy, in one readable,
+// unit-testable place — and composed of small overridable methods so a consumer
 // overrides only the parts it knows (manifest lookups, var values, shape
 // classification) and inherits the conservative default for the rest.
 //
@@ -24,13 +24,13 @@
 // `ref`/`source` produce a relation logically named by their literal args;
 // `env_var` produces a string. Domain knowledge lives in the provider; the
 // ENGINE keeps only the positional machinery (length-/newline-preserving
-// fills, slot guards, statement-slot handling) Ã¢ÂÂ non-overridable on purpose: a
+// fills, slot guards, statement-slot handling) — non-overridable on purpose: a
 // provider states WHAT a call produces, never how it is spliced, so a buggy
 // provider can make meanings unknown but can never corrupt a parse.
 //
 // Contract points (agreed on the channel):
 //   - SYNC-ONLY: every method answers from a warm cache; misses are recorded
-//     and an async `prime()` warms them (the CallbackSchema pattern) Ã¢ÂÂ the
+//     and an async `prime()` warms them (the CallbackSchema pattern) — the
 //     engine never awaits a provider.
 //   - PER-DOCUMENT instances: a provider may close over the document identity
 //     and its dialect (there is no dialect parameter on expansion()).
@@ -43,19 +43,19 @@ import type { Column } from "./schema.js";
 import type { SchemaProvider } from "./schema-provider.js";
 
 /**
- * The syntactic SLOT a call's rendered output occupies Ã¢ÂÂ the parse-time answer
+ * The syntactic SLOT a call's rendered output occupies — the parse-time answer
  * the placeholder mechanism needs:
- *   - `nothing`    Ã¢ÂÂ no output at all (config/docs/Ã¢ÂÂ¦): whitespace fill.
- *   - `statement`  Ã¢ÂÂ a whole statement / query body (also fits a `(Ã¢ÂÂ¦)` CTE/subquery body).
- *   - `relation`   Ã¢ÂÂ a relation in FROM (rendered as a query body Ã¢ÂÂ same `SELECT 1` fill as `statement`).
- *   - `predicate`  Ã¢ÂÂ a boolean expression (a WHERE/ON/HAVING slot).
- *   - `column-list`Ã¢ÂÂ one or more select items (the slot parses; the real column COUNT differs).
- *   - `conjunct`   Ã¢ÂÂ a TRAILING boolean conjunct (`and c = false`) appended to a complete ON/WHERE
- *                    expression (the dbt `is_deleted_filter`-family macro shape) Ã¢ÂÂ fills `AND 1=1`.
- *   - `where-clause` Ã¢ÂÂ a LEADING WHERE clause (`where c = false`) after a complete FROM/JOIN
- *                    context (the mode-as-argument macro family: `{{ m('col','where') }}` Ã¢ÂÂ the
- *                    2026-07-06 gold__vendor F5 finding) Ã¢ÂÂ fills `WHERE 1=1`.
- *   - `expr`       Ã¢ÂÂ a scalar expression (the identifier fill Ã¢ÂÂ the zero-knowledge default).
+ *   - `nothing`    — no output at all (config/docs/…): whitespace fill.
+ *   - `statement`  — a whole statement / query body (also fits a `(…)` CTE/subquery body).
+ *   - `relation`   — a relation in FROM (rendered as a query body — same `SELECT 1` fill as `statement`).
+ *   - `predicate`  — a boolean expression (a WHERE/ON/HAVING slot).
+ *   - `column-list`— one or more select items (the slot parses; the real column COUNT differs).
+ *   - `conjunct`   — a TRAILING boolean conjunct (`and c = false`) appended to a complete ON/WHERE
+ *                    expression (the dbt `is_deleted_filter`-family macro shape) — fills `AND 1=1`.
+ *   - `where-clause` — a LEADING WHERE clause (`where c = false`) after a complete FROM/JOIN
+ *                    context (the mode-as-argument macro family: `{{ m('col','where') }}` — the
+ *                    2026-07-06 gold__vendor F5 finding) — fills `WHERE 1=1`.
+ *   - `expr`       — a scalar expression (the identifier fill — the zero-knowledge default).
  */
 export type ExpansionShape =
 	| "expr"
@@ -68,13 +68,13 @@ export type ExpansionShape =
 	| "nothing";
 
 /** The NEUTRAL value-type vocabulary for `ResolvedExpansion.value` (the engine maps each to its
- *  per-dialect scalar type). Deliberately closed and small Ã¢ÂÂ a stringly-typed field with no
+ *  per-dialect scalar type). Deliberately closed and small — a stringly-typed field with no
  *  vocabulary drifts. */
 export type ValueType = "string" | "integer" | "float" | "boolean";
 
 /**
  * The identity of one template call, the `expansion()` key. Args are LITERAL
- * string values: quote-stripped, escapes NOT resolved Ã¢ÂÂ an argument whose
+ * string values: quote-stripped, escapes NOT resolved — an argument whose
  * literal contains an escape, or any computed argument, is `null` (never-wrong:
  * a fabricated literal is worse than an unknown one). Kwargs are carried, not
  * dropped, in source order; the provider interprets them (so
@@ -102,11 +102,11 @@ export interface ResolvedRelation {
 /** Everything known about one call's expansion. Every field optional; `undefined` = unknown. */
 export interface ResolvedExpansion {
 	/** Parse-time shape. When absent, derived from the strongest present field:
-	 *  relation Ã¢ÂÂ "relation", columns Ã¢ÂÂ "column-list", value Ã¢ÂÂ "expr" (an explicit shape always wins). */
+	 *  relation → "relation", columns → "column-list", value → "expr" (an explicit shape always wins). */
 	shape?: ExpansionShape;
 	/** A relation-producing call (ref, source, a TVF-like macro). */
 	relation?: ResolvedRelation;
-	/** A scalar value Ã¢ÂÂ `{{ var('x') }}`, `{{ env_var('Y') }}`, a scalar macro. */
+	/** A scalar value — `{{ var('x') }}`, `{{ env_var('Y') }}`, a scalar macro. */
 	value?: { type: ValueType };
 	/** A column-list-producing macro's output columns (dialect-native type text, like relation columns). */
 	columns?: Column[];
@@ -115,7 +115,7 @@ export interface ResolvedExpansion {
 	collection?: string[];
 }
 
-/** dbt builtins that render no output Ã¢ÂÂ knowledge of the DEFAULT provider (was a hardcoded set inside
+/** dbt builtins that render no output — knowledge of the DEFAULT provider (was a hardcoded set inside
  *  the segmenter). Exported for the tag-AST's syntactic kind labels, which share the same list. */
 export const NO_OUTPUT_BUILTINS: ReadonlySet<string> = new Set([
 	"config",
@@ -126,7 +126,7 @@ export const NO_OUTPUT_BUILTINS: ReadonlySet<string> = new Set([
 	"exceptions",
 ]);
 
-/** Miss-identity key for a call Ã¢ÂÂ package + name + args + kwargs, so two spellings of the same
+/** Miss-identity key for a call — package + name + args + kwargs, so two spellings of the same
  *  call coalesce and different args stay distinct. */
 function callKey(call: TemplateCall): string {
 	const pkg = call.packageParts?.join(".") ?? "";
@@ -153,7 +153,7 @@ function sourceParts(call: TemplateCall): (string | null)[] | undefined {
 }
 
 /**
- * The shipped default provider Ã¢ÂÂ concrete, fully functional with zero input,
+ * The shipped default provider — concrete, fully functional with zero input,
  * designed for inheritance. Override the granular methods (`relationOf`,
  * `valueOf`, `shapeOf`, `columnsOf`, `collectionOf`, and the SchemaProvider
  * methods `columnsFor`/`tables`) with what your host knows; call
@@ -166,7 +166,7 @@ function sourceParts(call: TemplateCall): (string | null)[] | undefined {
 export class DefaultTemplateProvider implements SchemaProvider {
 	// --- SchemaProvider (physical tables): conservative defaults, override in subclasses. ---
 
-	/** OPEN world by default: a `columnsFor` miss means "unknown Ã¢ÂÂ do not diagnose", which makes a
+	/** OPEN world by default: a `columnsFor` miss means "unknown — do not diagnose", which makes a
 	 *  bare instance the safe always-present default. A subclass whose cache is authoritative-and-
 	 *  self-healing (describe + prime/re-publish) may override to `"closed"` to get unknown-table. */
 	readonly world: "closed" | "open" = "open";
@@ -182,15 +182,15 @@ export class DefaultTemplateProvider implements SchemaProvider {
 		return [];
 	}
 
-	/** Monotonic invalidation signal Ã¢ÂÂ bumps when `prime()` warmed anything new. */
+	/** Monotonic invalidation signal — bumps when `prime()` warmed anything new. */
 	get version(): number {
 		return this._version;
 	}
 
-	// --- Granular expansion knowledge (the C#-style virtuals Ã¢ÂÂ override the parts you know). ---
+	// --- Granular expansion knowledge (the C#-style virtuals — override the parts you know). ---
 
-	/** The relation a call produces. Default knowledge: `ref(...)` Ã¢ÂÂ the dbt-LOGICAL model name,
-	 *  `source(a,b)` Ã¢ÂÂ the logical [source, table] Ã¢ÂÂ literal args only, never fabricated. An
+	/** The relation a call produces. Default knowledge: `ref(...)` → the dbt-LOGICAL model name,
+	 *  `source(a,b)` → the logical [source, table] — literal args only, never fabricated. An
 	 *  overriding provider answers the PHYSICAL relation (+columns) from its manifest/describe. */
 	relationOf(call: TemplateCall): ResolvedRelation | undefined {
 		if (call.packageParts !== undefined) return undefined;
@@ -214,7 +214,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 		return undefined;
 	}
 
-	/** The rendered-output shape of a call. Default knowledge: the no-output builtins Ã¢ÂÂ "nothing".
+	/** The rendered-output shape of a call. Default knowledge: the no-output builtins → "nothing".
 	 *  Everything else unknown (the engine derives a shape from stronger fields, or falls back to
 	 *  its positional fill). */
 	shapeOf(call: TemplateCall): ExpansionShape | undefined {
@@ -238,7 +238,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	/**
 	 * Everything known about `call`, composed from the granular methods. Field precedence for the
 	 * shape (channel-agreed): an EXPLICIT `shapeOf` answer always wins; absent, derived
-	 * strongest-first Ã¢ÂÂ relation Ã¢ÂÂ "relation", columns Ã¢ÂÂ "column-list", value Ã¢ÂÂ "expr". Returns
+	 * strongest-first — relation → "relation", columns → "column-list", value → "expr". Returns
 	 * undefined when nothing at all is known (the engine's zero-knowledge floor).
 	 */
 	expansion(call: TemplateCall): ResolvedExpansion | undefined {
@@ -268,13 +268,10 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	private readonly tableMissSeen = new Set<string>();
 	private inFlight: Promise<boolean> | null = null;
 
-	/** The recorded misses Ã¢ÂÂ table misses first (as folded parts), then call misses (as their
-	 *  key parts: [packageÃ¢ÂÂ¦, name]). Distinct, first-seen order. Drained by prime(). */
+	/** The recorded misses — table misses first (as folded parts), then call misses (as their
+	 *  key parts: [package…, name]). Distinct, first-seen order. Drained by prime(). */
 	get misses(): ReadonlyArray<string[]> {
-		return [
-			...this._tableMisses,
-			...this._misses.map((c) => [...(c.packageParts ?? []), c.name]),
-		];
+		return [...this._tableMisses, ...this._misses.map((c) => [...(c.packageParts ?? []), c.name])];
 	}
 
 	/** Record a cold `expansion` lookup (call from an overriding granular method). */
@@ -294,13 +291,13 @@ export class DefaultTemplateProvider implements SchemaProvider {
 		this._tableMisses.push([...foldedParts]);
 	}
 
-	/** Async warm-up for missed calls Ã¢ÂÂ populate the cache your granular overrides read. Default
+	/** Async warm-up for missed calls — populate the cache your granular overrides read. Default
 	 *  no-op (nothing ever warms). */
 	protected fetchExpansions(_missing: TemplateCall[]): Promise<void> {
 		return Promise.resolve();
 	}
 
-	/** Async warm-up for missed tables Ã¢ÂÂ populate the cache your `columnsFor` override reads. */
+	/** Async warm-up for missed tables — populate the cache your `columnsFor` override reads. */
 	protected fetchTables(_missing: string[][]): Promise<void> {
 		return Promise.resolve();
 	}
@@ -310,7 +307,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	 * `expansion()`, tables through `columnsFor()`), drop the ones that now resolve, and bump
 	 * `version` once when anything new arrived. Resolves true when it did (re-analyze). A second
 	 * prime() while one is in flight returns the SAME promise (coalescing); a miss recorded DURING
-	 * the in-flight fetch is re-recorded by the next analyze and warms one prime later Ã¢ÂÂ
+	 * the in-flight fetch is re-recorded by the next analyze and warms one prime later —
 	 * never-wrong holds throughout.
 	 */
 	prime(): Promise<boolean> {
@@ -348,7 +345,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	}
 }
 
-/** The provider type the engine consults Ã¢ÂÂ the shipped base (or any subclass of it). */
+/** The provider type the engine consults — the shipped base (or any subclass of it). */
 export type TemplateProvider = DefaultTemplateProvider;
 
 /**
