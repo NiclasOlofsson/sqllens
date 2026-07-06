@@ -6,6 +6,7 @@ import {
 	ArrayConstructorContext,
 	AtLocalContext,
 	AtTimeZoneContext,
+	AutoContext,
 	BetweenContext,
 	BooleanTestContext,
 	CastContext,
@@ -15,6 +16,14 @@ import {
 	CreateMaterializedViewContext,
 	CreateTableAsSelectContext,
 	CreateViewContext,
+	CurrentCatalogContext,
+	CurrentDateContext,
+	CurrentPathContext,
+	CurrentSchemaContext,
+	CurrentTimeContext,
+	CurrentTimestampContext,
+	CurrentUserContext,
+	DeleteContext,
 	DereferenceContext,
 	DistinctFromContext,
 	ExistsContext,
@@ -27,6 +36,7 @@ import {
 	InlineTableContext,
 	InSubqueryContext,
 	InsertIntoContext,
+	JoinRelationContext,
 	JsonArrayContext,
 	JsonExistsContext,
 	JsonObjectContext,
@@ -38,6 +48,8 @@ import {
 	LikeContext,
 	ListaggContext,
 	LiteralsContext,
+	LocalTimeContext,
+	LocalTimestampContext,
 	LogicalNotContext,
 	MatchContext,
 	MeasureContext,
@@ -49,6 +61,7 @@ import {
 	OrContext,
 	OrdinalityColumnContext,
 	OverlayContext,
+	ParameterContext,
 	ParenthesizedExpressionContext,
 	ParenthesizedRelationContext,
 	PositionContext,
@@ -64,6 +77,7 @@ import {
 	SetOperationContext,
 	SimpleCaseContext,
 	StatementDefaultContext,
+	StaticMethodCallContext,
 	SubqueryContext,
 	SubqueryExpressionContext,
 	SubqueryRelationContext,
@@ -82,10 +96,8 @@ import {
 	type AliasedRelationContext,
 	type ArgumentContext,
 	type BooleanExpressionContext,
-	type DeleteContext,
 	type ExpressionContext,
 	type GroupingElementContext,
-	type JoinRelationContext,
 	type JsonTableColumnContext,
 	type NamedQueryContext,
 	type OverContext,
@@ -192,14 +204,7 @@ interface Ctx {
 }
 
 export function lower(tree: ParserRuleContext): QueryExpr {
-	let q: QueryExpr;
-	try {
-		q = lowerRoot(tree);
-	} catch {
-		// Totality contract: broken/partial input yields a flagged query IR, never a throw.
-		q = flagged(tree, "other", "broken");
-	}
-	return freezeIR(q);
+	return freezeIR(lowerRoot(tree));
 }
 
 function lowerRoot(tree: ParserRuleContext): QueryExpr {
@@ -235,7 +240,7 @@ function categoryOf(stmt: StatementContext): StatementCategory {
 		stmt instanceof InsertIntoContext ||
 		stmt instanceof MergeContext ||
 		stmt instanceof UpdateContext ||
-		stmt.constructor.name === "DeleteContext"
+		stmt instanceof DeleteContext
 	)
 		return "dml";
 	// Everything else begins with its verb — the keyword is the authoritative signal
@@ -298,7 +303,8 @@ function lowerStatement(stmt: StatementContext): QueryExpr {
 		q.statement = "ddl";
 		return q;
 	}
-	return flagged(stmt, categoryOf(stmt), stmt.constructor.name.replace(/Context$/, "").toLowerCase());
+	// Unmodelled non-query statement: one closed flag, not a class-name-derived vocabulary.
+	return flagged(stmt, categoryOf(stmt), "non-query");
 }
 
 function lowerRootQuery(root: RootQueryContext | null, cst: ParserRuleContext): QueryExpr {
@@ -491,8 +497,7 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 
 function lowerGroupingElement(ge: GroupingElementContext, out: Expr[], flags: Set<string>, ctx: Ctx): void {
 	// Every grouping key is captured, including each one inside ROLLUP/CUBE/GROUPING SETS.
-	const name = ge.constructor.name;
-	if (name === "AutoContext") {
+	if (ge instanceof AutoContext) {
 		// GROUP BY AUTO — keys inferred by the engine; nothing textual to capture.
 		flags.add("group-by-auto");
 		return;
@@ -518,11 +523,14 @@ function lowerSelectItem(item: SelectItemContext, ctx: Ctx): Projection {
 		const name = alias ? idText(alias) : expr.kind === "column" ? expr.parts[expr.parts.length - 1] : undefined;
 		return { name, isStar: false, expr, cst: item, ...(alias ? { aliasCst: alias } : {}) } as Projection;
 	}
-	const all = item as SelectAllContext;
-	const qualExpr = all.primaryExpression();
-	let qualifier: string[] | undefined;
-	if (qualExpr) qualifier = pathParts(qualExpr) ?? [qualExpr.getText()];
-	return { isStar: true, expr: { kind: "star", qualifier, cst: item }, cst: item };
+	if (item instanceof SelectAllContext) {
+		const qualExpr = item.primaryExpression();
+		let qualifier: string[] | undefined;
+		if (qualExpr) qualifier = pathParts(qualExpr) ?? [qualExpr.getText()];
+		return { isStar: true, expr: { kind: "star", qualifier, cst: item }, cst: item };
+	}
+	// Broken/recovered input: neither labeled alternative matched (an error node) — never throw.
+	return { isStar: false, expr: other(item), cst: item };
 }
 
 // ---------------------------------------------------------------------------
@@ -538,8 +546,8 @@ function lowerRelation(
 	flags: Set<string>,
 	ctx: Ctx,
 ): void {
-	if (rel.constructor.name === "JoinRelationContext") {
-		const j = rel as JoinRelationContext;
+	if (rel instanceof JoinRelationContext) {
+		const j = rel;
 		if (j._left) lowerRelation(j._left, out, joinConditions, joins, columns, flags, ctx);
 		// The right operand's FIRST source is the join's right source (reference-identical to the from
 		// entry just pushed). `relation` is left-recursive, so `j`'s span includes the left input — the
@@ -898,7 +906,7 @@ function lowerValue(ve: ValueExpressionContext, ctx: Ctx): Expr {
 
 function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 	if (pe instanceof LiteralsContext) return { kind: "literal", text: pe.getText(), cst: pe };
-	if (pe.constructor.name === "ParameterContext") return { kind: "literal", text: "?", cst: pe };
+	if (pe instanceof ParameterContext) return { kind: "literal", text: "?", cst: pe };
 	if (pe instanceof PositionContext) {
 		return fn(
 			pe,
@@ -945,17 +953,12 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		applyFilter(call, pe.filter(), ctx);
 		return call;
 	}
-	if (pe.constructor.name === "StaticMethodCallContext") {
-		const c = pe as ParserRuleContext & {
-			qualifiedName(): ParserRuleContext;
-			methodName(): ParserRuleContext;
-			argument(): ArgumentContext[];
-		};
-		const name = `${c.qualifiedName().getText()}::${c.methodName().getText()}`.toLowerCase();
+	if (pe instanceof StaticMethodCallContext) {
+		const name = `${pe.qualifiedName().getText()}::${pe.methodName().getText()}`.toLowerCase();
 		return fn(
 			pe,
 			name,
-			c.argument().map((a) => lowerArgument(a as never, ctx)),
+			pe.argument().map((a) => lowerArgument(a, ctx)),
 		);
 	}
 	if (pe instanceof MethodCallContext) {
@@ -1048,19 +1051,18 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 			cst: pe,
 		};
 	}
-	const ctor = pe.constructor.name;
 	if (
-		ctor === "CurrentDateContext" ||
-		ctor === "CurrentTimeContext" ||
-		ctor === "CurrentTimestampContext" ||
-		ctor === "LocalTimeContext" ||
-		ctor === "LocalTimestampContext" ||
-		ctor === "CurrentUserContext" ||
-		ctor === "CurrentCatalogContext" ||
-		ctor === "CurrentSchemaContext" ||
-		ctor === "CurrentPathContext"
+		pe instanceof CurrentDateContext ||
+		pe instanceof CurrentTimeContext ||
+		pe instanceof CurrentTimestampContext ||
+		pe instanceof LocalTimeContext ||
+		pe instanceof LocalTimestampContext ||
+		pe instanceof CurrentUserContext ||
+		pe instanceof CurrentCatalogContext ||
+		pe instanceof CurrentSchemaContext ||
+		pe instanceof CurrentPathContext
 	) {
-		const name = (pe as ParserRuleContext & { _name?: { text?: string } })._name?.text ?? pe.getText();
+		const name = pe._name?.text ?? pe.getText();
 		return fn(pe, name.toLowerCase(), []);
 	}
 	if (pe instanceof TrimContext) {

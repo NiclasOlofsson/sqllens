@@ -1,4 +1,4 @@
-import type { ParserRuleContext } from "antlr4ng";
+import { ParserRuleContext, type ParseTree } from "antlr4ng";
 import {
 	Analyze_statementContext,
 	Braced_constructor_prefixContext,
@@ -83,13 +83,16 @@ function lambdaArgListValid(text: string): boolean {
 // Space-joined token text of a CST node — preserves the keyword boundaries that getText() loses.
 function spacedText(node: ParserRuleContext): string {
 	const parts: string[] = [];
-	const walk = (n: { getChildCount(): number; getChild(i: number): unknown; getText(): string }): void => {
+	const walk = (n: ParseTree): void => {
 		const c = n.getChildCount();
 		if (c === 0) {
 			parts.push(n.getText());
 			return;
 		}
-		for (let i = 0; i < c; i++) walk(n.getChild(i) as never);
+		for (let i = 0; i < c; i++) {
+			const child = n.getChild(i);
+			if (child) walk(child);
+		}
 	};
 	walk(node);
 	return parts.join(" ");
@@ -267,9 +270,7 @@ export function postParseDiagnostics(tree: ParserRuleContext): SyntaxDiagnostic[
 		const count = node.getChildCount();
 		for (let i = 0; i < count; i++) {
 			const child = node.getChild(i);
-			if (child instanceof Object && "getChildCount" in child && typeof child.getChildCount === "function") {
-				visit(child as ParserRuleContext);
-			}
+			if (child instanceof ParserRuleContext) visit(child);
 		}
 	};
 	visit(tree);

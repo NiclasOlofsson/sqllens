@@ -1,3 +1,4 @@
+import { ParserRuleContext, TerminalNode } from "antlr4ng";
 import { describe, expect, it } from "vitest";
 import { parseBigQuery } from "../src/bigquery/parse.js";
 import { GoogleSQLLexer } from "../src/generated/bigquery/GoogleSQLLexer.js";
@@ -607,5 +608,56 @@ describe("BigQuery constructors / WITH / REPLACE_FIELDS / parenthesized-AND lowe
 		]).toEqual([]);
 		const b = q("SELECT 1 FROM a JOIN b ON (a.x = b.x AND a.y = b.y)");
 		expect(b.joinConditions?.[0]).toMatchObject({ kind: "binary", op: "and" });
+	});
+});
+
+// Step 5 (task 4 de-hack): lowerExpr used to launder a missing node into `{ cst: node as never }` — a
+// fabricated, non-ParserRuleContext cst. The invariant restored: no Expr (or any other IR node) is ever
+// constructed with a falsy cst. A generic deep walk of the IR — rather than one hand-maintained per-kind
+// walker — is the honest check: it can't go stale as new Expr/IR shapes are added, and it also covers the
+// six `lowerExpr(directChildrenOfRule(x, RULE_expression)[0])` call sites that used to pass an
+// unguarded, possibly-absent node straight through on a broken/recovered parse.
+function assertRealCstEverywhere(value: unknown, path: string, seen: Set<object>): void {
+	if (value === null || typeof value !== "object") return;
+	if (value instanceof ParserRuleContext || value instanceof TerminalNode) return; // a cst leaf — don't descend
+	if (seen.has(value)) return; // guard cycles (none expected in a frozen IR, but stay defensive)
+	seen.add(value);
+	if (Array.isArray(value)) {
+		value.forEach((v, i) => assertRealCstEverywhere(v, `${path}[${i}]`, seen));
+		return;
+	}
+	for (const [key, v] of Object.entries(value)) {
+		if (key === "cst") {
+			// `cst` (exact key) is the one MANDATORY field the IR types require on every node — the
+			// invariant Step 5 restores. `aliasCst`/`variableCst`/… are optional (no alias in the source
+			// SQL is legitimate) and handled below.
+			expect(v, `${path}.cst`).toBeTruthy();
+			expect(v instanceof ParserRuleContext || v instanceof TerminalNode, `${path}.cst is a real CST node`).toBe(
+				true,
+			);
+			continue;
+		}
+		if (/Cst$/.test(key)) continue; // optional CST back-ref (aliasCst, variableCst, …) — never descend
+		assertRealCstEverywhere(v, `${path}.${key}`, seen);
+	}
+}
+
+describe("BigQuery lowerExpr cst invariant (task 4 Step 5)", () => {
+	it("a degenerate parse (`SELECT (`) never yields an Expr with a fabricated cst", () => {
+		const r = parseBigQuery("SELECT (");
+		const ir = lower(r.tree);
+		assertRealCstEverywhere(ir, "query", new Set());
+	});
+
+	it("a WHERE clause whose expression recovery dropped falls back to a real cst, not undefined", () => {
+		const r = parseBigQuery("SELECT 1 FROM t WHERE");
+		const ir = lower(r.tree);
+		assertRealCstEverywhere(ir, "query", new Set());
+	});
+
+	it("a pipe WHERE with no predicate falls back to a real cst", () => {
+		const r = parseBigQuery("FROM t |> WHERE");
+		const ir = lower(r.tree);
+		assertRealCstEverywhere(ir, "query", new Set());
 	});
 });

@@ -165,6 +165,14 @@ describe("trino — parse + lower onto the shared IR", () => {
 		}
 	});
 
+	it("an unmodelled non-query statement flags a closed 'non-query' vocabulary, not the ANTLR class name", () => {
+		// Step 3 de-hack: the fallthrough used to flag `stmt.constructor.name.replace(/Context$/,
+		// "").toLowerCase()` — a class-name-derived string (anvil externally-visible delta, approved).
+		const { ast } = parse("SHOW CATALOGS;", "trino");
+		expect(ast.body.kind === "select" && ast.body.unsupported).toContain("non-query");
+		expect(ast.body.kind === "select" && ast.body.unsupported).not.toContain("showcatalogs");
+	});
+
 	it("INSERT/CTAS lower their embedded query as the body", () => {
 		const ins = parse("INSERT INTO t SELECT a, b FROM u WHERE a > 0;", "trino").ast;
 		expect(ins.statement).toBe("dml");

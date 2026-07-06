@@ -614,7 +614,7 @@ function lowerPipeOperator(po: ParserRuleContext): PipeStage {
 	const where = directChildrenOfRule(po, P.RULE_pipe_where)[0];
 	if (where) {
 		const wc = directChildrenOfRule(where, P.RULE_where_clause)[0];
-		const predicate = wc ? lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]) : otherExpr(where);
+		const predicate = optionalClauseExpr(wc) ?? otherExpr(where);
 		const columns: ColumnRef[] = [];
 		columnsOf(predicate, columns, "where");
 		return { op: "where", predicate, columns, cst: po };
@@ -778,7 +778,7 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 
 	const following = directChildrenOfRule(select, P.RULE_opt_clauses_following_from)[0];
 	const whereClause = following ? firstShallow(following, P.RULE_where_clause) : undefined;
-	const where = whereClause ? lowerExpr(directChildrenOfRule(whereClause, P.RULE_expression)[0]) : undefined;
+	const where = optionalClauseExpr(whereClause);
 
 	const groupByClause = following ? firstShallow(following, P.RULE_group_by_clause) : undefined;
 	const groupBy = groupByClause ? extractGroupBy(groupByClause) : undefined;
@@ -786,10 +786,10 @@ function buildSelect(select: ParserRuleContext): SelectExpr {
 		groupByClause !== undefined && directChildrenOfRule(groupByClause, P.RULE_group_by_all).length > 0;
 
 	const havingClause = following ? firstShallow(following, P.RULE_having_clause) : undefined;
-	const having = havingClause ? lowerExpr(directChildrenOfRule(havingClause, P.RULE_expression)[0]) : undefined;
+	const having = optionalClauseExpr(havingClause);
 
 	const qualifyClause = following ? firstShallow(following, P.RULE_qualify_clause_nonreserved) : undefined;
-	const qualify = qualifyClause ? lowerExpr(directChildrenOfRule(qualifyClause, P.RULE_expression)[0]) : undefined;
+	const qualify = optionalClauseExpr(qualifyClause);
 
 	const subqueries = extractExpressionSubqueries(select, fromSubqueryNodes(from));
 
@@ -993,8 +993,8 @@ function buildGraphTableSource(graph: ParserRuleContext): GraphTableSource {
 		collectGraphElements(pattern, elements);
 		const wc = directChildrenOfRule(pattern, P.RULE_where_clause)[0];
 		if (wc) {
-			where = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
-			columnsOf(where, columnRefs, "where");
+			where = optionalClauseExpr(wc);
+			if (where) columnsOf(where, columnRefs, "where");
 		}
 	}
 	const shape = directChildrenOfRule(graph, P.RULE_graph_shape_clause)[0];
@@ -1008,9 +1008,11 @@ function buildGraphTableSource(graph: ParserRuleContext): GraphTableSource {
 			collectGraphElements(pat, elements);
 			const wc = directChildrenOfRule(pat, P.RULE_where_clause)[0];
 			if (wc) {
-				const w = lowerExpr(directChildrenOfRule(wc, P.RULE_expression)[0]);
-				columnsOf(w, columnRefs, "where");
-				where ??= w;
+				const w = optionalClauseExpr(wc);
+				if (w) {
+					columnsOf(w, columnRefs, "where");
+					where ??= w;
+				}
 			}
 		}
 		const retList = collectOfRule(opBlock, P.RULE_graph_return_item_list)[0];
@@ -1238,8 +1240,7 @@ function extractLimit(clause: ParserRuleContext): LimitInfo | undefined {
 
 // --- expressions -----------------------------------------------------------------
 
-function lowerExpr(node: ParserRuleContext | undefined): Expr {
-	if (!node) return { kind: "literal", text: "", cst: node as never };
+function lowerExpr(node: ParserRuleContext): Expr {
 	switch (node.ruleIndex) {
 		case P.RULE_expression:
 			return lowerExpression(node);
@@ -2119,6 +2120,16 @@ function leftmostToken(node: ParseTree): string | undefined {
 
 function otherExpr(node: ParserRuleContext): Expr {
 	return { kind: "other", text: node.getText(), cst: node };
+}
+
+/** A clause's single `expression` child, honestly: no clause at all -> undefined; a clause present but
+ *  recovery dropped its expression child -> otherExpr(clause) (a real cst, never a fabricated one);
+ *  clause + expression both present -> the real lowered Expr. Keeps lowerExpr's invariant — every Expr
+ *  it returns carries a genuine ParserRuleContext cst — without threading a parent through every call. */
+function optionalClauseExpr(clause: ParserRuleContext | undefined): Expr | undefined {
+	if (!clause) return undefined;
+	const e = directChildrenOfRule(clause, P.RULE_expression)[0];
+	return e ? lowerExpr(e) : otherExpr(clause);
 }
 
 function emptyBody(cst: ParserRuleContext, reason: string): SelectExpr {
