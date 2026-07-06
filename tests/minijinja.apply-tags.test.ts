@@ -124,6 +124,24 @@ describe("R3 apply-tags", () => {
 		expect(colRef).toBeDefined();
 		expect(colRef.template).toMatchObject({ call: { name: "m", args: [] } });
 	});
+
+	// Regression net (final-review finding, Task 3 of the anvil post-wave batch): markTemplateExprs's
+	// raw-CST-backref skip check used to be an enumerated key list (cst/aliasCst/nameCst) rather than a
+	// naming-convention match. GraphElement.variableCst (a fourth such field, pre-dating this fix) was
+	// never in that list — walking into it overflowed the stack, silently caught by the caller's own
+	// try/catch, reverting the WHOLE substitution to a no-op for any templated query that also contains
+	// a named GRAPH_TABLE element variable. The fix is now a suffix match (`k.endsWith("Cst")`), so this
+	// (and any future *Cst field) can never reintroduce the same silent failure.
+	it("a ref substitutes even alongside a GRAPH_TABLE element variable (variableCst) in the same query", () => {
+		const sql =
+			"SELECT * FROM {{ ref('a') }}, GRAPH_TABLE(fg MATCH (x:Person)-[e:Knows]->(y:Person) COLUMNS(x.name AS src, y.name AS dst))";
+		expect(() => parseTemplated(sql, "bigquery")).not.toThrow();
+		const r = parseTemplated(sql, "bigquery");
+		const from = (r.sql.ast as any).body.from;
+		const ref = from.find((s: any) => s.template?.kind === "ref");
+		expect(ref).toBeDefined();
+		expect(ref.name).toEqual(["a"]);
+	});
 });
 
 // ---------------------------------------------------------------------------
