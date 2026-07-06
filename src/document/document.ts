@@ -431,6 +431,14 @@ export class SqlDocument {
 					}
 					return undefined;
 				},
+				// Same per-cell fall-through: a Projection node is unique to the cell that produced it.
+				expandStarOf: (scope, projection) => {
+					for (const q of cellQuals) {
+						const r = q.expandStarOf(scope, projection);
+						if (r !== undefined) return r;
+					}
+					return undefined;
+				},
 			};
 			analysis = { qualification, types: new TypeInfo(s), symbols, diagnostics };
 		}

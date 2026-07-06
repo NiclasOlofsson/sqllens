@@ -1,10 +1,11 @@
 import type { ParserRuleContext } from "antlr4ng";
 import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
-import type { ColumnRef, TemplateSourceInfo } from "../ir/ir.js";
+import type { ColumnRef, Projection, TemplateSourceInfo } from "../ir/ir.js";
 import {
 	applyPivotCols,
 	applyStarModifiers,
 	applyUnpivotCols,
+	likePatternToRegExp,
 	mergeByName,
 	pivotSourceOutputs,
 	splitColumnRefInScope,
@@ -57,6 +58,11 @@ export interface Qualification {
 	 *  resolved name; `fields` is struct navigation after it. Wraps the shared binder `resolveColumnSource`
 	 *  (src/sema/resolve.ts), so infer / lineage / references and this all agree. */
 	bindingOf(scope: Scope, ref: ColumnRef): ColumnBinding | undefined;
+	/** The ordered {name, sourceKey} pairs a star projection expands to (star modifiers — EXCLUDE/
+	 *  ILIKE/RENAME — already applied), or `undefined` when `projection` isn't a star, or when any
+	 *  matched source's columns are unknown (never-wrong: no fabricated partial list). `sourceKey`
+	 *  is the same fold-normalized key `scope.sources` is keyed by (matches `bindingOf`'s `source`). */
+	expandStarOf(scope: Scope, projection: Projection): { name: string; sourceKey: string }[] | undefined;
 }
 
 /** The result of `Qualification.bindingOf` — a column reference's resolved source binding. Structurally
@@ -84,6 +90,13 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 		diagnostics,
 		columnsOf: (scope) => resolved.get(scope) ?? "unknown",
 		bindingOf: (scope, ref) => resolveColumnSource(scope, ref.parts, schema),
+		expandStarOf: (scope, projection) => {
+			if (!projection.isStar) return undefined;
+			const star = projection.expr.kind === "star" ? projection.expr : undefined;
+			const pairs = expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier);
+			if (pairs === undefined) return undefined;
+			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
+		},
 	};
 }
 
@@ -222,17 +235,20 @@ function resolvePipeStage(
 	}
 }
 
-function expandStar(
+/** Core star expansion: the ordered {name, sourceKey} pairs, keeping which source each column
+ *  came from (the public expandStarOf/applyStarModifiersToPairs need that; the plain-names
+ *  `expandStar` below is a thin projection over this for the existing internal call sites). */
+function expandStarPairs(
 	scope: Scope,
 	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
 	qualifier?: string[],
-): string[] | undefined {
+): { name: string; sourceKey: string }[] | undefined {
 	// A qualified star `t.*` expands only the source keyed by `t` (its last name part); a bare
 	// `*` expands every source in order.
 	const want = qualifier ? (qualifier[qualifier.length - 1] ?? "") : undefined;
-	const cols: string[] = [];
+	const cols: { name: string; sourceKey: string }[] = [];
 	let matched = false;
 	for (const [key, src] of scope.sources) {
 		if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
@@ -243,10 +259,47 @@ function expandStar(
 		matched = true;
 		const srcCols = columnsOfSource(src, schema, resolved, diagnostics, scope.dialect);
 		if (srcCols === undefined) return undefined;
-		cols.push(...srcCols);
+		cols.push(...srcCols.map((name) => ({ name, sourceKey: key })));
 	}
 	if (want !== undefined && !matched) return undefined; // qualified star naming no visible source
 	return cols;
+}
+
+function expandStar(
+	scope: Scope,
+	schema: SchemaProvider,
+	resolved: Map<Scope, string[] | "unknown">,
+	diagnostics: Diagnostic[],
+	qualifier?: string[],
+): string[] | undefined {
+	return expandStarPairs(scope, schema, resolved, diagnostics, qualifier)?.map((p) => p.name);
+}
+
+/** `applyStarModifiers` (scope.ts) over {name, sourceKey} pairs instead of bare strings — EXCLUDE/
+ *  ILIKE/RENAME must not lose which source a surviving/renamed column came from. A small deliberate
+ *  duplication of that function's logic rather than a generalization of it: `applyStarModifiers`
+ *  has its own established call sites (e.g. projectionColumns below) that don't need sourceKey and
+ *  whose signature this task leaves untouched. */
+function applyStarModifiersToPairs(
+	pairs: { name: string; sourceKey: string }[],
+	star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] },
+	dialect?: string,
+): { name: string; sourceKey: string }[] {
+	const fold = (n: string) => foldIdentifier(n, dialect);
+	let out = pairs;
+	if (star.exclude) {
+		const removed = new Set(star.exclude.map(fold));
+		out = out.filter((p) => !removed.has(fold(p.name)));
+	}
+	if (star.ilike !== undefined) {
+		const rx = likePatternToRegExp(star.ilike);
+		out = out.filter((p) => rx.test(fold(p.name)));
+	}
+	if (star.rename) {
+		const renames = new Map(star.rename.map((r) => [fold(r.from), r.to]));
+		out = out.map((p) => ({ ...p, name: renames.get(fold(p.name)) ?? p.name }));
+	}
+	return out;
 }
 
 /** The output column names of a source — schema for a table (reporting unknown-table if absent),
