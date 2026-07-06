@@ -26,11 +26,11 @@
 //
 // The merge (step 4): one source-ordered Token[] = SQL tokens (channel 0) + jinja
 // tokens (channel 2), sorted by start. The placeholder's FILLER tokens inside a
-// tag region (the `jjj` identifiers / whitespace the SQL lexer produced for the
-// placeholder) are GARBAGE — the jinja tokens replace them — so each SQL token is
-// CLIPPED to the parts OUTSIDE the tag regions: a token fully inside a tag drops,
-// one straddling a tag edge keeps only its outside remainder (a whitespace-fill
-// tag can fuse with an adjacent real newline into one WS token). The result tiles
+// tag region (PLACEHOLDER_CHAR-filled identifiers and whitespace from segment.ts)
+// are GARBAGE — the jinja tokens replace them — so each SQL token is CLIPPED to
+// the parts OUTSIDE the tag regions: a token fully inside a tag drops, one
+// straddling a tag edge keeps only its outside remainder (a whitespace-fill tag
+// can fuse with an adjacent real newline into one WS token). The result tiles
 // the source.
 //
 // Total (R5, step 6): the whole build is wrapped so no input — including a half-
@@ -333,7 +333,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// scope/qualify/lineage bind the real model rather than the `jjj…` placeholder.
 	// Total (returns the input ast on any surprise); the reassignment stays inside
 	// build()'s caller try/catch so parseTemplated's totality holds.
-	sql.ast = applyTemplateTags(sql.ast, tags, text);
+	const sqlResult = { ...sql, ast: applyTemplateTags(sql.ast, tags, text) };
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are
 	// disjoint (tag-contained SQL tokens were dropped), so a stable sort by start
@@ -349,8 +349,8 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// surface a consumer naturally reads — and the raw fill-quoting messages are
 	// engine-internal, never public (the gold__vendor F5 leak, 2026-07-06: the raw
 	// "mismatched input 'jjjj…'" reached a user's screen through sql.diagnostics).
-	const scrubbed = scrubPlaceholderDiagnostics(sql.diagnostics, tagRanges, text, placeholder);
-	sql.diagnostics = scrubbed;
+	const scrubbed = scrubPlaceholderDiagnostics(sqlResult.diagnostics, tagRanges, text, placeholder);
+	const finalSql = { ...sqlResult, diagnostics: scrubbed };
 	const diagnostics = [...scrubbed, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
 	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
@@ -358,7 +358,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	const regions = templateRegions(tags, text);
 	const symbols = templateSymbols(tags);
 
-	return { tokens, sql, tags, regions, symbols, diagnostics, placeholder };
+	return { tokens, sql: finalSql, tags, regions, symbols, diagnostics, placeholder };
 }
 
 /**

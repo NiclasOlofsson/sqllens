@@ -30,13 +30,10 @@ export function asProvider(schema: SchemaProvider): TemplateProvider | undefined
 	return schema && "expansion" in schema ? (schema as TemplateProvider) : undefined;
 }
 
-/** The provider key of a template SOURCE marker — the carried call, reconstructed for markers
- *  written before `call` existed (ref/source markers always know their literal names). */
-function sourceCall(t: TemplateSourceInfo, name: string[]): TemplateCall | undefined {
-	if (t.call) return t.call;
-	if (t.kind === "ref" && name.length >= 1) return { name: "ref", args: [name[name.length - 1]] };
-	if (t.kind === "source" && name.length === 2) return { name: "source", args: [name[0], name[1]] };
-	return undefined; // opaque expr marker — nothing to ask about
+/** The provider key of a template SOURCE marker — apply-tags always attaches `call` for
+ *  ref/source/macro, so this is a direct return. Expr markers carry none and correctly resolve nothing. */
+function sourceCall(t: TemplateSourceInfo): TemplateCall | undefined {
+	return t.call;
 }
 
 /**
@@ -52,7 +49,7 @@ export function relationColumns(
 	dialect?: string,
 ): Column[] | undefined {
 	const provider = asProvider(schema);
-	const call = sourceCall(t, name);
+	const call = sourceCall(t);
 	if (!provider || !call) return undefined;
 	const rel = provider.expansion(call)?.relation;
 	if (!rel) return undefined; // no/cold answer → exemption (warms on a later prime())

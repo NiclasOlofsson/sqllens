@@ -261,10 +261,7 @@ function columnsOfSource(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM). inc3.1 resolves
-		// its real columns through a TemplateCatalog when the active schema is one; a plain SchemaProvider
-		// (or a catalog miss / opaque tag) keeps the R3 exemption — undefined = unknown-but-not-wrong, NO
-		// unknown-table/-column against the dbt-logical name. (Scoped: only sources carrying `template`.)
+		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM) resolves its real columns through TemplateProvider.expansion().
 		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
@@ -419,10 +416,7 @@ function sourceColumns(
 ): string[] | undefined {
 	if (src.kind === "table") {
 		if (src.source.columnAliases) return src.source.columnAliases;
-		// Templated source — inc3.1 resolves its real columns through a TemplateCatalog (mirrors
-		// columnsOfSource); a plain SchemaProvider / catalog miss / opaque tag keeps the R3 exemption
-		// (undefined). checkColumn treats undefined as "might own it", so unknown-column fires only when
-		// the catalog POSITIVELY returned columns and this one is absent — never on the exemption.
+		// Templated source resolves its real columns through TemplateProvider.expansion().
 		if (src.source.template) return templateColumns(src.source.template, src.name, schema, dialect);
 		return schema.columnsFor(src.name, dialect)?.map((c) => c.name);
 	}

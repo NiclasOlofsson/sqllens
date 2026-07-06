@@ -244,6 +244,9 @@ const CONJUNCT_BLOCK_WORDS: ReadonlySet<string> = new Set([
 	"values",
 ]);
 
+/** The identifier-fill character — used in runs like `jjj…` when filling placeholder ranges. */
+const PLACEHOLDER_CHAR = "j";
+
 /** A conjunct fill is admitted only after an operand word (identifier / number / TRUE / FALSE / NULL
  *  — any word outside the block set), a closing paren/bracket, or a string / quoted-identifier
  *  terminator. BOF, `;`, `,`, `(`, operator chars and the clause keywords keep the identifier fill. */
@@ -588,8 +591,8 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		// per-tag ordinal so two same-length tags never fill byte-identically (name-keyed
 		// consumers — projection names, alias resolution, variant merges — collided on the
 		// old all-`j` fill). The head is built once here; the loop below places it on the
-		// tag's first line and pads the remainder with `j`.
-		const head = identifier ? `${fusesWithKeyword ? " " : ""}j${ordinalFill(ordinal++)}` : "";
+		// tag's first line and pads the remainder with PLACEHOLDER_CHAR.
+		const head = identifier ? `${fusesWithKeyword ? " " : ""}${PLACEHOLDER_CHAR}${ordinalFill(ordinal++)}` : "";
 		let seenNewline = false;
 		for (let k = seg.start; k < seg.end; k++) {
 			if (chars[k] === "\n") {
@@ -601,7 +604,7 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 				continue;
 			}
 			const rel = k - seg.start;
-			chars[k] = rel < head.length ? head[rel] : "j";
+			chars[k] = rel < head.length ? head[rel] : PLACEHOLDER_CHAR;
 		}
 	}
 
