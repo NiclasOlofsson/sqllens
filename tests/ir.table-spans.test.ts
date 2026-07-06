@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { parse } from "../src/index.js";
-import type { QueryExpr, SelectExpr, TableSource } from "../src/index.js";
+import type { SelectExpr, TableSource } from "../src/index.js";
 
 const DIALECTS = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"] as const;
 
