@@ -1167,7 +1167,11 @@ function other(cst: ParserRuleContext): Expr {
 function applyFilter(call: Expr, filter: ParserRuleContext | null, ctx: Ctx): void {
 	if (!filter || call.kind !== "function") return;
 	// FILTER (WHERE cond) — the predicate rides as a trailing arg so its columns resolve.
+	// booleanExpression() can be null on error-recovered/truncated input (e.g. a broken
+	// "FILTER (" at EOF) despite its non-null compile-time signature — guard like the
+	// joinCriteria() booleanExpression() site above.
 	const be = (filter as ParserRuleContext & { booleanExpression(): BooleanExpressionContext }).booleanExpression();
+	if (!be) return;
 	call.args.push(lowerBoolean(be, ctx));
 }
 

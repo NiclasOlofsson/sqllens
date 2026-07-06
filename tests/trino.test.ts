@@ -192,4 +192,27 @@ describe("trino — parse + lower onto the shared IR", () => {
 		ok("SELECT listagg(x, ',') WITHIN GROUP (ORDER BY x) FROM t;" /* the one WITHIN GROUP form */);
 		ok("SELECT * FROM (t1 CROSS JOIN t2) AS x (a, b);");
 	});
+
+	// applyFilter's booleanExpression() call is typed non-null by the generated
+	// FilterContext (`this.getRuleContext(0, BooleanExpressionContext)!`), but ANTLR's error
+	// recovery can still hand back a real FilterContext whose booleanExpression() is runtime-null
+	// when recovery aborts inside filter() before it reaches that child (e.g. a missing WHERE).
+	// Before the totality fix, that null flowed straight into lowerBoolean's `other()` fallback,
+	// which calls `be.getText()` and throws a TypeError on broken/truncated FILTER clauses.
+	// These truncations must never throw through the public parse() entry point, whatever shape
+	// recovery gives the tree.
+	it("truncated FILTER ( clause never throws (totality — reviewer finding on applyFilter)", () => {
+		const broken = [
+			"SELECT sum(x) FILTER (",
+			"SELECT sum(x) FILTER (WHERE",
+			"SELECT sum(x) FILTER () FROM t",
+			"SELECT sum(x) FILTER (WHERE) FROM t",
+			"SELECT sum(x) FILTER (WHERE x > 0",
+		];
+		for (const sql of broken) {
+			expect(() => parse(sql, "trino"), sql).not.toThrow();
+			const r = parse(sql, "trino");
+			expect(r.errors, sql).toBeGreaterThan(0);
+		}
+	});
 });
