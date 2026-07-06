@@ -97,10 +97,12 @@ kept) and BigQuery's `identText()` stripping backticks, `TableSource.alias` /
 
 The most likely source of the discrepancy: `src/ident/fold.ts` exports
 `displayName(raw, dialect)`, a presentation helper that strips a dialect's
-delimiters (unescaping the body) with no case change, used downstream of
-`lower()` by the scope/qualify/references layers for exactly snowflake and
-postgres among others. A consumer inspecting an already-folded/displayed value
+delimiters (unescaping the body) with no case change, called downstream of
+`lower()` by `src/symbols/symbols.ts`, `src/references/references.ts`, and
+`src/completion/complete.ts` — for every dialect, not only snowflake/postgres
+(scope.ts and qualify.ts do not import it). A consumer inspecting an
+already-folded/displayed value
 (rather than the raw `ColumnRef.parts` field straight off `lower()`) would see a
-quote-stripped string for those two dialects — which is a fold-layer view, not
+quote-stripped string regardless of dialect — which is a fold-layer view, not
 the IR field's own contract. This page is scoped to the raw field as `lower()`
 produces it, before any fold/display step.
