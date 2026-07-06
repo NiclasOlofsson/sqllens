@@ -203,6 +203,9 @@ export interface Join {
 export type Clause = "projection" | "where" | "join" | "groupBy" | "having" | "qualify" | "orderBy";
 
 export interface ColumnRef {
+	/** Discriminant tag — lets a consumer identify a bare ColumnRef record structurally
+	 *  (e.g. a template placeholder fill) without shape-sniffing `parts`/`clause`. */
+	kind: "columnref";
 	/** Reference parts as written: ["c"], ["t","c"], or ["a","b","c"]. */
 	parts: string[];
 	/** Present when this ref is a template tag's placeholder fill (see the column Expr's

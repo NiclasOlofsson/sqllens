@@ -1,8 +1,7 @@
 import { foldIdentifier } from "../ident/fold.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
-import { tableSourceColumns } from "../qualify/relation-columns.js";
-import type { TemplateProvider } from "../qualify/template-provider.js";
+import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
@@ -98,7 +97,7 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 	// name means nothing to the schema. No answer → unknown (never guessed).
 	if (col.template) {
 		const call = col.template.call;
-		const v = call && "expansion" in schema ? (schema as TemplateProvider).expansion(call)?.value : undefined;
+		const v = call ? asProvider(schema)?.expansion(call)?.value : undefined;
 		return v ? VALUE_TYPES[v.type] : UNKNOWN;
 	}
 	if (col.parts.length === 1) {

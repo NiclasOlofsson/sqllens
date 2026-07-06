@@ -1346,7 +1346,7 @@ function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
+			acc.push({ kind: "columnref", parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1406,7 +1406,7 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (child instanceof ColumnReferenceContext || child instanceof DereferenceContext) {
 			const parts = columnParts(child);
 			if (parts) {
-				acc.push({ parts, clause, cst: child, partSpans: columnPartSpans(child) });
+				acc.push({ kind: "columnref", parts, clause, cst: child, partSpans: columnPartSpans(child) });
 				continue;
 			}
 		}

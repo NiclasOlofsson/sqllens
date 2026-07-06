@@ -26,7 +26,7 @@ import type { SchemaProvider } from "./schema-provider.js";
 import type { TemplateCall, TemplateProvider } from "./template-provider.js";
 
 /** The schema as a TemplateProvider when it is one (structural — the shipped base or a subclass). */
-function asProvider(schema: SchemaProvider): TemplateProvider | undefined {
+export function asProvider(schema: SchemaProvider): TemplateProvider | undefined {
 	return schema && "expansion" in schema ? (schema as TemplateProvider) : undefined;
 }
 

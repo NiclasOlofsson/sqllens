@@ -147,7 +147,7 @@ select * from r`;
 		const sql = `with stg as ( select * from phys_address )
 select nope from stg`;
 		const scopes = resolveScopes(parse(sql, "duckdb").ast, "duckdb");
-		const ref: ColumnRef = { parts: ["nope"], clause: "projection", cst: {} as never };
+		const ref: ColumnRef = { kind: "columnref", parts: ["nope"], clause: "projection", cst: {} as never };
 		// schema-free resolveColumn: stg's columns ARE known (schema-fed elsewhere), but schema-free
 		// they are "unknown" — so it needs a schema, never a false bind.
 		const r = resolveColumnRef(scopes.root, ref);

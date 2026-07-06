@@ -77,7 +77,7 @@ function compute(scopes: ScopeTree, offset: number, schema: SchemaProvider, ast?
 	// 1. Prefer a column Expr under the cursor (an actual reference node).
 	const hit = nodeAt(scopes, offset, ast);
 	if (hit && hit.expr.kind === "column") {
-		const ref: ColumnRef = { parts: hit.expr.parts, clause: "projection", cst: hit.expr.cst };
+		const ref: ColumnRef = { kind: "columnref", parts: hit.expr.parts, clause: "projection", cst: hit.expr.cst };
 		const id = columnIdentity(hit.scope, ref, schema);
 		const raw = hit.expr.parts[hit.expr.parts.length - 1] ?? "";
 		if (id) return collectColumn(scopes, id, schema, displayName(raw, scopes.root.dialect));
@@ -189,7 +189,7 @@ function projectionMatches(id: Identity, scope: Scope, expr: Expr, schema: Schem
 		// match (its source is the CTE/subquery itself), but cannot carry a base-table origin link here.
 		return id.tag === "source";
 	}
-	const ref: ColumnRef = { parts: expr.parts, clause: "projection", cst: expr.cst };
+	const ref: ColumnRef = { kind: "columnref", parts: expr.parts, clause: "projection", cst: expr.cst };
 	return columnMatches(id, scope, ref, schema);
 }
 

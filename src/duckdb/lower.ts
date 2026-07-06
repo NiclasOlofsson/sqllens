@@ -1552,7 +1552,7 @@ function extractExpressionSubqueries(node: ParserRuleContext, fromQueries: Set<P
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
+			acc.push({ kind: "columnref", parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1600,8 +1600,9 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 			// Route through lowerColumnref so parts + partSpans stay aligned (partSpans present only for a
 			// pure dotted column; a star/method/subscript columnref keeps its fused single part, no spans).
 			const e = lowerColumnref(child);
-			if (e.kind === "column") acc.push({ parts: e.parts, clause, cst: child, partSpans: e.partSpans });
-			else acc.push({ parts: [child.getText()], clause, cst: child });
+			if (e.kind === "column")
+				acc.push({ kind: "columnref", parts: e.parts, clause, cst: child, partSpans: e.partSpans });
+			else acc.push({ kind: "columnref", parts: [child.getText()], clause, cst: child });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);

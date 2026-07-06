@@ -108,6 +108,22 @@ describe("R3 apply-tags", () => {
 			.map((rs) => rs.name.join("."));
 		expect(names).toContain("raw_orders");
 	});
+
+	// Regression net for the ColumnRef.kind tag swap: markTemplateExprs used to identify a scope
+	// ColumnRef record by shape-sniffing (`kind === undefined && parts + clause`); it now checks
+	// `kind === "columnref"`. A scalar-slot placeholder fill (an identifier-shaped column reference)
+	// lowers to BOTH a column Expr (in the projection) AND a parallel ColumnRef record (in
+	// `body.columns`, same `cst`) — both must still get `.template` attached.
+	it("a scalar-slot placeholder fill marks BOTH the column Expr and its parallel ColumnRef record", () => {
+		const r = parseTemplated("select {{ m() }} as x from t", "databricks");
+		const body = r.sql.ast.body as any;
+		const projExpr = body.projections[0].expr;
+		expect(projExpr.kind).toBe("column");
+		expect(projExpr.template).toMatchObject({ call: { name: "m", args: [] } });
+		const colRef = body.columns.find((c: any) => c.cst === projExpr.cst);
+		expect(colRef).toBeDefined();
+		expect(colRef.template).toMatchObject({ call: { name: "m", args: [] } });
+	});
 });
 
 // ---------------------------------------------------------------------------

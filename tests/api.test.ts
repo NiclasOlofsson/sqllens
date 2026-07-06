@@ -95,6 +95,12 @@ describe("public API — lift helpers are idempotent", () => {
 		expect(fromString.root.dialect).toBe("tsql");
 	});
 
+	it("toScopes(resolveScopes(...)) is identity (idempotent lift through the ScopeTree.kind tag)", () => {
+		const scopes = resolveScopes(toAst("SELECT a FROM t", "databricks"), "databricks");
+		expect(scopes.kind).toBe("scopes");
+		expect(toScopes(scopes)).toBe(scopes);
+	});
+
 	it("semantic methods accept a string, an IR, or a ScopeTree via the lift", () => {
 		const schema = new Schema({ t: { a: "int" } });
 		const ast: QueryExpr = toAst("SELECT a FROM t", "snowflake");

@@ -1046,7 +1046,7 @@ function lowerSubquery(sub: ParserRuleContext): QueryExpr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
+			acc.push({ kind: "columnref", parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1092,7 +1092,7 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_subquery || child.ruleIndex === P.RULE_select_statement) continue;
 		if (child.ruleIndex === P.RULE_full_column_name) {
-			acc.push({ parts: nameParts(child), clause, cst: child, partSpans: columnPartSpans(child) });
+			acc.push({ kind: "columnref", parts: nameParts(child), clause, cst: child, partSpans: columnPartSpans(child) });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);

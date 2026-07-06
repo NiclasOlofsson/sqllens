@@ -570,7 +570,7 @@ function lowerRelation(
 			const ids = crit.identifier();
 			if (ids.length) using = ids.map((id) => idText(id));
 			for (const id of ids)
-				columns.push({ parts: [idText(id)], clause: "join", cst: id, partSpans: partSpansOf([id]) });
+				columns.push({ kind: "columnref", parts: [idText(id)], clause: "join", cst: id, partSpans: partSpansOf([id]) });
 		}
 		if (source) joins.push(buildTrinoJoin(j, source, on, using));
 		return;
@@ -1269,7 +1269,7 @@ function pathPartNodes(pe: ParserRuleContext): ParseTree[] | null {
 function collectColumns(e: Expr, clause: Clause, out: ColumnRef[]): void {
 	switch (e.kind) {
 		case "column":
-			out.push({ parts: e.parts, clause, cst: e.cst, partSpans: e.partSpans });
+			out.push({ kind: "columnref", parts: e.parts, clause, cst: e.cst, partSpans: e.partSpans });
 			return;
 		case "star":
 			return;

@@ -1797,7 +1797,7 @@ function lowerWithExpression(node: ParserRuleContext): Expr {
 function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 	switch (expr.kind) {
 		case "column":
-			acc.push({ parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
+			acc.push({ kind: "columnref", parts: expr.parts, clause, cst: expr.cst, partSpans: expr.partSpans });
 			break;
 		case "binary":
 			columnsOf(expr.left, acc, clause);
@@ -1852,11 +1852,11 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_parenthesized_query) continue; // its own scope
 		if (child.ruleIndex === P.RULE_path_expression) {
-			acc.push({ parts: pathParts(child), clause, cst: child, partSpans: pathPartSpans(child) });
+			acc.push({ kind: "columnref", parts: pathParts(child), clause, cst: child, partSpans: pathPartSpans(child) });
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_identifier) {
-			acc.push({ parts: [identText(child)], clause, cst: child, partSpans: partSpansOf([child]) });
+			acc.push({ kind: "columnref", parts: [identText(child)], clause, cst: child, partSpans: partSpansOf([child]) });
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);

@@ -185,7 +185,7 @@ export function toScopes(x: string | QueryExpr | ScopeTree, opts: DialectOpts = 
 }
 
 function isScopeTree(x: unknown): x is ScopeTree {
-	return typeof x === "object" && x !== null && "root" in x && "statement" in x;
+	return typeof x === "object" && x !== null && (x as { kind?: unknown }).kind === "scopes";
 }
 
 // ---------------------------------------------------------------------------

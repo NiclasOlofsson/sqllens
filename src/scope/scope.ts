@@ -26,6 +26,9 @@ import { foldIdentifier } from "../ident/fold.js";
 // ---------------------------------------------------------------------------
 
 export interface ScopeTree {
+	/** Discriminant tag — lets api.ts's `isScopeTree` identify a ScopeTree structurally
+	 *  instead of shape-sniffing `root`/`statement`. */
+	kind: "scopes";
 	root: Scope;
 	/** The statement category the dialect's lower() reported (query / dml / ddl / dcl / tcl /
 	 *  utility / compound / other). "other" when the lowered query carried none. */
@@ -83,7 +86,7 @@ export type ResolvedSource =
 export function resolveScopes(query: QueryExpr, dialect?: string): ScopeTree {
 	const d = dialect ?? query.dialect;
 	if (!d) throw new Error("resolveScopes: no dialect — pass one, or use an IR produced by a dialect's lower()");
-	return { root: buildQueryScope(query, undefined, d), statement: query.statement ?? "other" };
+	return { kind: "scopes", root: buildQueryScope(query, undefined, d), statement: query.statement ?? "other" };
 }
 
 export type ColumnResolution =
@@ -274,7 +277,7 @@ function fillPipeScope(scope: Scope, body: PipeExpr): void {
  *  empty: the stage's relations live on the scope's `sources`, not in a FROM clause. */
 function stageBody(stage: PipeStage): SelectExpr {
 	const projections = projectionsOfStage(stage);
-	const columns = "columns" in stage ? stage.columns : [];
+	const columns = columnsOfStage(stage);
 	return { kind: "select", projections, from: [], columns, aggregated: stage.op === "aggregate", cst: stage.cst };
 }
 
@@ -282,6 +285,28 @@ function projectionsOfStage(stage: PipeStage): Projection[] {
 	if (stage.op === "select" || stage.op === "extend" || stage.op === "window") return stage.projections;
 	if (stage.op === "aggregate") return stage.aggregates;
 	return [];
+}
+
+/** The stage's own column references (for qualify to check) — only the ops whose `PipeStage`
+ *  variant carries a `columns` field. */
+function columnsOfStage(stage: PipeStage): ColumnRef[] {
+	switch (stage.op) {
+		case "where":
+		case "select":
+		case "extend":
+		case "set":
+		case "aggregate":
+		case "orderBy":
+		case "join":
+		case "window":
+		case "call":
+		case "assert":
+		case "if":
+		case "matchRecognize":
+			return stage.columns;
+		default:
+			return [];
+	}
 }
 
 function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): Scope {

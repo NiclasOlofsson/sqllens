@@ -29,7 +29,7 @@ function findColumnRef(node: unknown, name: string, seen = new Set<unknown>()): 
 	if (!node || typeof node !== "object" || seen.has(node)) return undefined;
 	seen.add(node);
 	const n = node as Record<string, unknown>;
-	if (Array.isArray((n as { parts?: unknown }).parts) && (n as { kind?: unknown }).kind === undefined) {
+	if (Array.isArray((n as { parts?: unknown }).parts) && (n as { kind?: unknown }).kind === "columnref") {
 		const parts = n.parts as string[];
 		if (parts[parts.length - 1]?.toLowerCase() === name) return n as unknown as ColumnRef;
 	}
