@@ -3,11 +3,11 @@
 //
 // `{{ ref('x') }}` / `{{ source('a','b') }}` in a FROM/JOIN slot lowers, via the
 // placeholder mechanism, to an ordinary `TableSource` whose `name` is the raw
-// placeholder identifier (a `jjj…` run). This POST-LOWER transform rewrites those
-// sources so `name` carries the dbt-logical model/source names, and attaches a
-// `template` marker — so scope/qualify/lineage see the model, not the placeholder
-// (scope binds a TableSource purely by `name`, so the whole downstream pipeline
-// works UNCHANGED).
+// placeholder identifier (PLACEHOLDER_CHAR-filled runs like `jjj…` from segment.ts).
+// This POST-LOWER transform rewrites those sources so `name` carries the dbt-logical
+// model/source names, and attaches a `template` marker — so scope/qualify/lineage
+// see the model, not the placeholder (scope binds a TableSource purely by `name`,
+// so the whole downstream pipeline works UNCHANGED).
 //
 // Correlation is by CONTAINMENT, not equality: a `TableSource` correlates with a
 // tag when the char offset of its FIRST NAME TOKEN (`cst.start.start`) lies inside
