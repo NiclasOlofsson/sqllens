@@ -117,6 +117,13 @@ export function parse(sql: string, dialect: Dialect): ParseResultIR {
 export interface Analysis {
 	ast: QueryExpr;
 	errors: number;
+	/** The parse tier's positioned SYNTAX diagnostics (line/column/offset/length) — the same array
+	 *  parse() returns; `diagnostics` (below) is the SEMANTIC set from qualify. Two tiers, two fields. */
+	syntaxDiagnostics: SyntaxDiagnostic[];
+	/** The parse tier's first-class token stream (always present, even on broken input). */
+	tokens: Token[];
+	/** Raw-CST escape hatch, same object parse() returns. */
+	cst: ParserRuleContext;
 	scopes: ScopeTree;
 	/** Schema-fed diagnostics (unknown table/column/field). Empty without a schema. */
 	diagnostics: Qualification["diagnostics"];
@@ -137,12 +144,15 @@ export interface Analysis {
  */
 export function analyze(sql: string, dialect: Dialect, opts: { schema?: SchemaProvider } = {}): Analysis {
 	const schema = opts.schema ?? OPEN_DEFAULT;
-	const { ast, errors } = parse(sql, dialect);
-	const scopes = resolveScopes(ast, dialect);
+	const parsed = parse(sql, dialect);
+	const scopes = resolveScopes(parsed.ast, dialect);
 	const qualification = qualifyScopes(scopes, schema);
 	return {
-		ast,
-		errors,
+		ast: parsed.ast,
+		errors: parsed.errors,
+		syntaxDiagnostics: parsed.diagnostics,
+		tokens: parsed.tokens,
+		cst: parsed.cst,
 		scopes,
 		diagnostics: qualification.diagnostics,
 		qualification,

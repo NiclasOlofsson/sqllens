@@ -61,6 +61,18 @@ describe("public API — uniform entry", () => {
 		// no schema → no diagnostics about unknown columns it cannot check
 		expect(a.diagnostics).toEqual([]);
 	});
+
+	it("analyze() carries the parse tier: positioned syntax diagnostics, tokens, cst", () => {
+		const a = analyze("select a fromm t", "databricks");
+		expect(a.errors).toBeGreaterThan(0);
+		// The syntax error is retrievable WITHOUT a second parse() call, with position:
+		expect(a.syntaxDiagnostics.length).toBeGreaterThan(0);
+		expect(a.syntaxDiagnostics[0]).toMatchObject({ line: 1 });
+		expect(a.tokens.length).toBeGreaterThan(0);
+		expect(a.cst).toBeDefined();
+		// Semantic diagnostics keep their own field and shape:
+		expect(Array.isArray(a.diagnostics)).toBe(true);
+	});
 });
 
 describe("public API — lift helpers are idempotent", () => {
