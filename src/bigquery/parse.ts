@@ -40,7 +40,7 @@ export function parseBigQuery(sql: string): ParseResult {
 
 	const lexer = new GoogleSQLLexer(CharStream.fromString(sql));
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(collector.listener as never);
+	lexer.addErrorListener(collector.listener);
 	const { source, escapeDiagnostics } = dotPathTokenSource(sql, lexer);
 	const tokens = new CommonTokenStream(source);
 	// Escape diagnostics are token-derived, so (like lexer diagnostics) they are stable across the
@@ -70,7 +70,7 @@ export function parseBigQuery(sql: string): ParseResult {
 	const parser = new GoogleSQLParser(tokens);
 	const sim = parser.interpreter as ParserATNSimulator;
 	parser.removeErrorListeners();
-	parser.addErrorListener(collector.listener as never);
+	parser.addErrorListener(collector.listener);
 
 	const defaultErrorHandler = parser.errorHandler;
 	parser.errorHandler = new BailErrorStrategy();
@@ -87,7 +87,7 @@ export function parseBigQuery(sql: string): ParseResult {
 		collector.reset(); // discount the SLL attempt's parser diagnostics
 		collector.diagnostics.push(...lexDiags); // restore lexer diagnostics (not re-emitted on the LL path)
 		parser.removeErrorListeners();
-		parser.addErrorListener(collector.listener as never);
+		parser.addErrorListener(collector.listener);
 		const tree = parser.root();
 		const diagnostics = [...collector.diagnostics, ...escapeDiagnostics, ...postParseDiagnostics(tree)];
 		return withTokens({ tree, errors: diagnostics.length, diagnostics, sllFallback: true });

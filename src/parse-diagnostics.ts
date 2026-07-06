@@ -1,5 +1,5 @@
 // src/parse-diagnostics.ts
-import type { Token } from "antlr4ng";
+import type { ANTLRErrorListener, Token } from "antlr4ng";
 
 // ---------------------------------------------------------------------------
 // Shared syntax-diagnostic capture for the per-dialect parse wrappers. The antlr
@@ -29,7 +29,7 @@ export interface SyntaxDiagnostic {
 
 export interface ErrorCollector {
 	/** Attach to both the lexer and the parser via addErrorListener. */
-	listener: object;
+	listener: ANTLRErrorListener;
 	/** Captured diagnostics, in report order. */
 	readonly diagnostics: SyntaxDiagnostic[];
 	/** Clear captured diagnostics — called before the LL retry to discount the SLL attempt. */

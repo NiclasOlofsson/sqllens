@@ -1,4 +1,5 @@
 import {
+	type ANTLRErrorListener,
 	BailErrorStrategy,
 	CharStream,
 	CommonTokenStream,
@@ -88,9 +89,9 @@ export function parseSnowflake(sql: string): ParseResult {
 	}
 }
 
-function attachErrorCounter(lexer: Lexer, parser: SnowflakeParser, listener: object): void {
+function attachErrorCounter(lexer: Lexer, parser: SnowflakeParser, listener: ANTLRErrorListener): void {
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
+	lexer.addErrorListener(listener);
 	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
+	parser.addErrorListener(listener);
 }

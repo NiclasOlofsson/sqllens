@@ -247,7 +247,7 @@ function parseSliceTag(slice: readonly AntlrToken[]): { tree: ParserRuleContext;
 
 	const collector = makeErrorCollector();
 	parser.removeErrorListeners();
-	parser.addErrorListener(collector.listener as never);
+	parser.addErrorListener(collector.listener);
 
 	const tree = parser.tag();
 	return { tree, diagnostics: collector.diagnostics };

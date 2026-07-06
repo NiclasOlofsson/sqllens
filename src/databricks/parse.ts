@@ -1,4 +1,5 @@
 import {
+	type ANTLRErrorListener,
 	BailErrorStrategy,
 	CharStream,
 	CommonTokenStream,
@@ -92,9 +93,9 @@ export function parseDatabricks(sql: string): ParseResult {
 	}
 }
 
-function attachErrorCounter(lexer: Lexer, parser: DatabricksParser, listener: object): void {
+function attachErrorCounter(lexer: Lexer, parser: DatabricksParser, listener: ANTLRErrorListener): void {
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(listener as never);
+	lexer.addErrorListener(listener);
 	parser.removeErrorListeners();
-	parser.addErrorListener(listener as never);
+	parser.addErrorListener(listener);
 }

@@ -33,9 +33,9 @@ export function parseMinijinjaTag(text: string): MinijinjaTagParseResult {
 
 	const collector = makeErrorCollector();
 	lexer.removeErrorListeners();
-	lexer.addErrorListener(collector.listener as never);
+	lexer.addErrorListener(collector.listener);
 	parser.removeErrorListeners();
-	parser.addErrorListener(collector.listener as never);
+	parser.addErrorListener(collector.listener);
 
 	const tree = parser.tag();
 	return {
