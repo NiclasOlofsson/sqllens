@@ -1431,7 +1431,13 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_subquery || child.ruleIndex === P.RULE_select_statement) continue;
 		if (child.ruleIndex === P.RULE_full_column_name) {
-			acc.push({ kind: "columnref", parts: nameParts(child), clause, cst: child, partSpans: namePartSpans(child) });
+			acc.push({
+				kind: "columnref",
+				parts: nameParts(child),
+				clause,
+				cst: child,
+				partSpans: namePartSpans(child),
+			});
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_primitive_expression) {

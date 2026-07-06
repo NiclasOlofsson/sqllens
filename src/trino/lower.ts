@@ -570,7 +570,13 @@ function lowerRelation(
 			const ids = crit.identifier();
 			if (ids.length) using = ids.map((id) => idText(id));
 			for (const id of ids)
-				columns.push({ kind: "columnref", parts: [idText(id)], clause: "join", cst: id, partSpans: partSpansOf([id]) });
+				columns.push({
+					kind: "columnref",
+					parts: [idText(id)],
+					clause: "join",
+					cst: id,
+					partSpans: partSpansOf([id]),
+				});
 		}
 		if (source) joins.push(buildTrinoJoin(j, source, on, using));
 		return;
@@ -612,7 +618,12 @@ function lowerSampledRelation(sr: SampledRelationContext, out: Source[], flags: 
 	lowerPatternRecognition(pr, out, flags, ctx);
 }
 
-function lowerPatternRecognition(pr: PatternRecognitionContext, out: Source[], flags: Set<UnsupportedFlag>, ctx: Ctx): void {
+function lowerPatternRecognition(
+	pr: PatternRecognitionContext,
+	out: Source[],
+	flags: Set<UnsupportedFlag>,
+	ctx: Ctx,
+): void {
 	const aliased = pr.aliasedRelation();
 	if (pr.MATCH_RECOGNIZE()) {
 		// MATCH_RECOGNIZE transforms the relation via row-pattern matching. The base relation stays

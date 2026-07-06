@@ -1852,11 +1852,23 @@ function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void 
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === P.RULE_parenthesized_query) continue; // its own scope
 		if (child.ruleIndex === P.RULE_path_expression) {
-			acc.push({ kind: "columnref", parts: pathParts(child), clause, cst: child, partSpans: pathPartSpans(child) });
+			acc.push({
+				kind: "columnref",
+				parts: pathParts(child),
+				clause,
+				cst: child,
+				partSpans: pathPartSpans(child),
+			});
 			continue;
 		}
 		if (child.ruleIndex === P.RULE_identifier) {
-			acc.push({ kind: "columnref", parts: [identText(child)], clause, cst: child, partSpans: partSpansOf([child]) });
+			acc.push({
+				kind: "columnref",
+				parts: [identText(child)],
+				clause,
+				cst: child,
+				partSpans: partSpansOf([child]),
+			});
 			continue;
 		}
 		cstColumnRefs(child, acc, clause);
