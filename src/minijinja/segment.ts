@@ -173,6 +173,8 @@ const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr" | "nothing">, string
 	predicate: "1=1",
 	"column-list": "1",
 	conjunct: "AND 1=1",
+	// Valid in both live where-mode slots: `from t WHERE 1=1` and `on (...) WHERE 1=1 union all`.
+	"where-clause": "WHERE 1=1",
 };
 
 /**
@@ -270,36 +272,46 @@ function precedingSlot(chars: readonly string[], start: number): string {
 }
 
 /**
- * The shaped fill fragment for a tag, or undefined to fall back to the positional
- * char fill. Applies a fragment ONLY for a real CALL whose shape admits one, whose
- * slot admits it (the guards above), and for which the fragment FITS: no longer
- * than the tag and no `\n` in its placement window (the fit guard — a shaped fill
- * is strictly an improvement, never a regression on a tag it can't shape). The
- * caller places the fragment at the tag start and pads the rest with spaces,
- * preserving every original `\n`.
+ * The shaped fill fragment for a tag — the fragment text plus its placement offset
+ * WITHIN the tag — or undefined to fall back to the positional char fill. Applies a
+ * fragment ONLY for a real CALL whose shape admits one, whose slot admits it (the
+ * guards above), and for which a fit WINDOW exists: the first newline-free run
+ * inside the tag long enough to hold the fragment. A one-line tag places at its
+ * start as before; a multi-line tag (the whole-model `{{\n  macro(…)\n}}` pattern —
+ * 490/1525 Oatly models, the 2026-07-06 F5 finding) places on its first line that
+ * fits, with every other tag char whitespace — so the fragment is still the fill's
+ * first non-whitespace content and the pre-tag slot logic is unchanged. No window →
+ * fall back (a shaped fill is strictly an improvement, never a regression). Length
+ * and every original `\n` offset are preserved by the caller's placement loop.
  */
 function fragmentFill(
 	seg: Extract<Segment, { kind: "tag" }>,
 	shape: ExpansionShape,
 	isCall: boolean,
 	slot: string,
-): string | undefined {
+): { fragment: string; at: number } | undefined {
 	if (shape === "expr" || shape === "nothing") return undefined; // positional fills, not fragments
 	if (!isCall) return undefined; // fragments only for a real macro CALL (bare words keep the char fill)
 	if ((shape === "statement" || shape === "relation") && !STATEMENT_SLOTS.has(slot)) {
 		return undefined; // slot guard: SELECT 1 is a statement/body — only where a body can START
 	}
-	if (shape === "conjunct" && !conjunctSlotAdmits(slot)) {
-		return undefined; // conjunct guard: AND 1=1 is valid only after a complete expression
+	if ((shape === "conjunct" || shape === "where-clause") && !conjunctSlotAdmits(slot)) {
+		// Same admission polarity for both trailing-clause fills: `AND 1=1` needs a complete
+		// expression just ended; `WHERE 1=1` needs a complete FROM/JOIN context just ended —
+		// the admitting slots coincide (an operand word, `)`, a string/quoted-ident close),
+		// and the blocked slots (BOF, `;`, `(`, clause/operator keywords) break both.
+		return undefined;
 	}
 	const fragment = SHAPE_FRAGMENT[shape];
-	// Fit guard: the fragment must fit within the tag AND before its first `\n`. seg.text[k] is the
-	// document char at seg.start + k, so a `\n` at any k < fragment.length would land inside the fragment.
-	if (fragment.length > seg.end - seg.start) return undefined;
-	for (let k = 0; k < fragment.length; k++) {
-		if (seg.text[k] === "\n") return undefined;
+	// Fit-window guard: the first newline-free run inside the tag that holds the fragment.
+	let lineStart = 0;
+	for (let k = 0; k <= seg.text.length; k++) {
+		if (k === seg.text.length || seg.text[k] === "\n") {
+			if (k - lineStart >= fragment.length) return { fragment, at: lineStart };
+			lineStart = k + 1;
+		}
 	}
-	return fragment;
+	return undefined;
 }
 
 /** Tag-opening token type → its tag kind. */
@@ -443,14 +455,15 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		const exp = seg.tagKind === "expr" && info.call ? provider.expansion(info.call) : undefined;
 		const shape = exp?.shape;
 
-		const fragment = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
-		if (fragment !== undefined) {
-			// Fragment fill: at the tag start, spaces for the rest, `\n` preserved. The fit guard
-			// guaranteed no `\n` sits inside [start, start+fragment.length), so the fragment lands intact.
+		const shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
+		if (shaped !== undefined) {
+			// Fragment fill: at the fit window's start (`at` — tag start for a one-line tag, the
+			// first fitting line for a multi-line one), spaces everywhere else, `\n` preserved.
+			// The window is newline-free by construction, so the fragment lands intact.
 			for (let k = seg.start; k < seg.end; k++) {
 				if (chars[k] === "\n") continue;
-				const rel = k - seg.start;
-				chars[k] = rel < fragment.length ? fragment[rel] : " ";
+				const rel = k - seg.start - shaped.at;
+				chars[k] = rel >= 0 && rel < shaped.fragment.length ? shaped.fragment[rel] : " ";
 			}
 			continue;
 		}

@@ -221,6 +221,16 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 					expect(isPlaceholderRun(tok.text), `token text "${tok.text}" @${tok.start}`).toBe(false);
 				}
 			});
+
+			it("6) diagnostics — no message on EITHER public surface quotes placeholder fill text", () => {
+				// The gold__vendor F5 leak (2026-07-06): a raw "mismatched input 'jjjj…'" reached a
+				// user's screen through the embedded sql.diagnostics while the merged top-level set
+				// was scrubbed. Both surfaces must quote raw source, never the fill.
+				const r = parseTemplated(text, DIALECT);
+				for (const d of [...r.diagnostics, ...r.sql.diagnostics]) {
+					expect(d.message, `diagnostic @${d.offset}`).not.toMatch(/j{4,}/);
+				}
+			});
 		});
 	}
 });

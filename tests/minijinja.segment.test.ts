@@ -287,11 +287,23 @@ describe("jinja segmenter — length + newline preservation (property)", () => {
 		const text = "{{\n ref('x')\n}}";
 		const { placeholder } = segment(text, DP);
 		expect(newlineOffsets(placeholder)).toEqual([2, 12]);
-		// The identifier fill lands on the tag's FIRST line only (`{{` → `jj`);
-		// continuation lines fill with spaces so the SQL lexer sees ONE identifier,
-		// not one `j`-run per line (which would read as adjacent identifiers). `\n`s
-		// stay at their offsets, length is unchanged.
-		expect(placeholder).toBe("jj\n         \n  ");
+		// RE-PINNED for the multi-line fit window (F5 finding 4, 2026-07-06): the default
+		// provider derives shape "relation" for ref, and the fragment now places in the tag's
+		// first newline-free window that FITS it (line 2 — `{{` on line 1 is too short), the
+		// rest whitespace. Before the fix the fragment was rejected outright on any multi-line
+		// tag (fit-before-first-`\n` guard) and the identifier fill landed first-line-only
+		// (`jj\n         \n  `). `\n`s stay at their offsets, length is unchanged.
+		expect(placeholder).toBe("  \nSELECT 1 \n  ");
+	});
+
+	it("keeps the first-line-only identifier fill when the tag has no shape answer", () => {
+		// An UNSHAPED call (no provider answer) on a multi-line tag: the positional identifier
+		// fill still lands on the tag's FIRST line only; continuation lines fill with spaces so
+		// the SQL lexer sees ONE identifier, not one `j`-run per line.
+		const text = "select {{\n my_helper('x')\n}} as c from t";
+		const { placeholder } = segment(text, DP);
+		expect(newlineOffsets(placeholder)).toEqual(newlineOffsets(text));
+		expect(placeholder.slice(7, 9)).toBe("jj");
 	});
 
 	it("preserves newlines inside a multi-line no-output tag as spaces", () => {

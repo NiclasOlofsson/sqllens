@@ -396,7 +396,7 @@ nullability (`tableColumnNullability`) and sema-resolve (`columnNamesOf`) route 
 so `{{ ref('orders') }}.total` types (and carries nullability) from a warm catalog's `relation` columns —
 hover/inlay-hints included. Catalog misses recorded by the type path warm on `prime()` like every other
 lookup. `value`/`loopCollection` remain spec (the full `TemplateCatalog` above); `expansionShape` shipped
-(statement/relation/predicate/column-list/conjunct + slot guards).
+(statement/relation/predicate/column-list/conjunct/where-clause + slot guards; fragments place into the tag's first fitting newline-free window, so multi-line whole-model tags shape too — F5 fixes, 2026-07-06).
 
 ## Variant expansion (Q3 — resolved: it is parsing → sqllens's, inc2)
 
@@ -440,7 +440,7 @@ on the R4 control-flow regions.)
     drives `CallbackTemplateCatalog.prime()`); a zero-catalog run is byte-identical to R3.
   - **inc3.2 — type slice + expansionShape — BUILT 2026-07-05.** Relation-resolved column TYPES thread
     through infer/nullability/resolve (§ the seam — the CLOSED block above), and `expansionShape` is live
-    (statement/relation/predicate/column-list/conjunct, slot-guarded, statement-slot blank default).
+    (statement/relation/predicate/column-list/conjunct/where-clause, slot-guarded, statement-slot blank default, multi-line fit-window placement).
   - **inc3.3+ — spec:** `value` (var/env_var → Type), `loopCollection`.
 
 Each increment is independently shippable to master with a channel ship note; the extension consumes per

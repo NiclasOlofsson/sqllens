@@ -333,8 +333,13 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// so squiggles line up with the merged stream. SQL diagnostics whose offending
 	// token is a placeholder fill are scrubbed first — the message quotes the ORIGINAL
 	// tag text (never `jjj…` gibberish) and the span widens to the whole tag, which is
-	// the true offending unit the user can act on.
+	// the true offending unit the user can act on. The scrubbed set ALSO replaces the
+	// embedded sql result's own diagnostics: that object is ParseResultIR-shaped — the
+	// surface a consumer naturally reads — and the raw fill-quoting messages are
+	// engine-internal, never public (the gold__vendor F5 leak, 2026-07-06: the raw
+	// "mismatched input 'jjjj…'" reached a user's screen through sql.diagnostics).
 	const scrubbed = scrubPlaceholderDiagnostics(sql.diagnostics, tagRanges, text, placeholder);
+	sql.diagnostics = scrubbed;
 	const diagnostics = [...scrubbed, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
 	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
