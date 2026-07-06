@@ -4,7 +4,7 @@ import { displayName, foldIdentifier, foldTableName } from "../ident/fold.js";
 import { endPosition } from "../ir/span.js";
 import type { ColumnRef, Expr, QueryExpr } from "../ir/ir.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
-import { Schema } from "../qualify/schema.js";
+import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { resolveColumnRef, resolveColumnSource } from "../sema/resolve.js";
@@ -67,7 +67,7 @@ export function referencesAt(
 	ast?: QueryExpr,
 ): Occurrences | null {
 	try {
-		return compute(scopes, offset, schema ?? new Schema({}), ast);
+		return compute(scopes, offset, schema ?? OPEN_PROVIDER, ast);
 	} catch {
 		return null; // total: any internal failure degrades to "no result", never a throw
 	}

@@ -1,6 +1,6 @@
 import { foldIdentifier, foldTableName } from "../ident/fold.js";
 import type { Expr, Projection } from "../ir/ir.js";
-import { Schema } from "../qualify/schema.js";
+import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { nodeAt } from "../document/node-at.js";
 import { findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
@@ -94,7 +94,7 @@ interface Walk {
 }
 
 function newWalk(schema: SchemaProvider | undefined): Walk {
-	return { schema: schema ?? new Schema({}), memo: new Map(), seen: new Set(), activeCtes: new Set() };
+	return { schema: schema ?? OPEN_PROVIDER, memo: new Map(), seen: new Set(), activeCtes: new Set() };
 }
 
 // ---------------------------------------------------------------------------

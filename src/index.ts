@@ -149,6 +149,7 @@ export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qual
 // instance to parseTemplated (fills) and qualify/analyze (semantics).
 export {
 	DefaultTemplateProvider,
+	OPEN_PROVIDER,
 	NO_OUTPUT_BUILTINS,
 	type TemplateProvider,
 	type TemplateCall,

@@ -54,7 +54,7 @@ import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
 import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
-import { DefaultTemplateProvider, type TemplateProvider } from "../qualify/template-provider.js";
+import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
 
@@ -370,7 +370,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
  */
 export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult {
 	try {
-		return build(text, dialect, opts?.provider ?? new DefaultTemplateProvider());
+		return build(text, dialect, opts?.provider ?? OPEN_PROVIDER);
 	} catch {
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.

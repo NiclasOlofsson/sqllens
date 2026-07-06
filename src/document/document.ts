@@ -39,7 +39,7 @@ import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
-import { DefaultTemplateProvider } from "../qualify/template-provider.js";
+import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
@@ -48,11 +48,10 @@ import { splitStatements, type StatementCellSpan } from "./split.js";
 import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan } from "./shift.js";
 
 // A single stable OPEN-WORLD default, used by analyze() when no catalog is configured.
-// Sharing ONE instance keeps the schema-keyed analyze() memo working for schema-free
-// calls (cache key = schema ?? EMPTY_SCHEMA). Open world: every lookup answers unknown
-// and NO miss-driven diagnostics fire — an empty CLOSED Schema here would unknown-table
+// Sharing ONE instance (OPEN_PROVIDER) keeps the schema-keyed analyze() memo working for
+// schema-free calls (cache key = schema ?? OPEN_PROVIDER). Open world: every lookup answers
+// unknown and NO miss-driven diagnostics fire — an empty CLOSED Schema here would unknown-table
 // every `select * from t` in a schema-free document.
-const EMPTY_SCHEMA = new DefaultTemplateProvider();
 
 /** A memo entry stamped with the SchemaProvider `version` it was computed for. */
 interface Versioned<T> {
@@ -379,9 +378,9 @@ export class SqlDocument {
 	 *  expensive per-cell work is memoized on each CachedCell, so an edit that touches only one
 	 *  statement re-qualifies only that statement; the cheap merge (concat + shift) redoes per version.
 	 *  With no schema the symbols/scopes still resolve structurally and types come back `unknown` where
-	 *  a catalog would be needed (the stable EMPTY_SCHEMA keeps the memo working). */
+	 *  a catalog would be needed (the stable OPEN_PROVIDER keeps the memo working). */
 	analyze(schema?: SchemaProvider): DocumentAnalysis {
-		const s = schema ?? EMPTY_SCHEMA;
+		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._analysisCache, s, () => this.buildAnalysis(s));
 	}
 

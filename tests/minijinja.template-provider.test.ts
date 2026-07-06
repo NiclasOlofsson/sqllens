@@ -14,6 +14,21 @@ import { TestRelationProvider, relKey } from "./helpers/providers.js";
 //      version bump, with in-flight coalescing).
 // ---------------------------------------------------------------------------
 
+describe("DefaultTemplateProvider — statelessness (safe to share as OPEN_PROVIDER)", () => {
+	it("the bare base provider is STATELESS: safe to share as the no-schema default", async () => {
+		const p = new DefaultTemplateProvider();
+		// Consult unknown calls + tables heavily:
+		for (let i = 0; i < 50; i++) {
+			p.expansion({ name: `m${i}`, args: [] });
+			p.columnsFor([`t${i}`]);
+		}
+		// The BASE records nothing (only subclass overrides call recordMiss/recordTableMiss):
+		expect(p.misses).toEqual([]);
+		expect(p.version).toBe(0);
+		expect(await p.prime()).toBe(false);
+	});
+});
+
 const call = (name: string, args: (string | null)[] = [], extra?: Partial<TemplateCall>): TemplateCall => ({
 	name,
 	args,

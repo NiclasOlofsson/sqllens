@@ -350,3 +350,12 @@ export class DefaultTemplateProvider implements SchemaProvider {
 
 /** The provider type the engine consults Ã¢ÂÂ the shipped base (or any subclass of it). */
 export type TemplateProvider = DefaultTemplateProvider;
+
+/**
+ * The ONE shared no-configuration default — an OPEN world that answers nothing and diagnoses
+ * nothing. Sharing a single instance across documents/calls is safe ONLY because the bare base
+ * is stateless (its granular defaults never record misses — pinned by the statelessness test in
+ * tests/minijinja.template-provider.test.ts). A CONFIGURED provider must stay per-document per
+ * the contract above; this constant is exclusively the "nothing configured" value.
+ */
+export const OPEN_PROVIDER: TemplateProvider = new DefaultTemplateProvider();

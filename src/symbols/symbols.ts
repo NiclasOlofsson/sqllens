@@ -5,7 +5,7 @@ import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
-import { Schema } from "../qualify/schema.js";
+import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { type ColumnResolution, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { resolveColumnRef } from "../sema/resolve.js";
@@ -76,7 +76,7 @@ export const MAIN_FRAME = "_main_";
 
 /** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
  *  without one (the default), names + spans + frames + definitions are still produced. */
-export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = new Schema({})): Sym[] {
+export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = OPEN_PROVIDER): Sym[] {
 	const out: Sym[] = [];
 	walk(tree.root, MAIN_FRAME, out, schema);
 	return out;
