@@ -540,14 +540,14 @@ function buildInlineTable(inlineTable: ParserRuleContext): SelectExpr {
 /** `TABLE t` — shorthand for `SELECT * FROM t`. */
 function buildTableShorthand(queryPrimary: ParserRuleContext): SelectExpr {
 	const multipart = firstOfRule(queryPrimary, P.RULE_multipartIdentifier);
-	const name = multipart
-		? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier).map((p) => p.getText())
-		: [];
+	const partNodes = multipart ? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier) : [];
+	const name = partNodes.length ? partNodes.map((p) => p.getText()) : [];
+	const namePartSpans = partNodes.length ? partSpansOf(partNodes) : undefined;
 	const star: Expr = { kind: "star", cst: queryPrimary };
 	return {
 		kind: "select",
 		projections: [{ isStar: true, expr: star, cst: queryPrimary }],
-		from: [{ kind: "table", name, cst: queryPrimary }],
+		from: [{ kind: "table", name, namePartSpans, cst: queryPrimary }],
 		columns: [],
 		aggregated: false,
 		cst: queryPrimary,
@@ -1486,12 +1486,13 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
 	}
 
 	const multipart = firstOfRule(relationPrimary, P.RULE_multipartIdentifier);
-	const parts = multipart
-		? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier).map((p) => p.getText())
-		: [];
+	const partNodes = multipart ? directChildrenOfRule(multipart, P.RULE_errorCapturingIdentifier) : [];
+	const parts = partNodes.length ? partNodes.map((p) => p.getText()) : multipart ? [multipart.getText()] : [];
+	const namePartSpans = partNodes.length ? partSpansOf(partNodes) : multipart ? partSpansOf([multipart]) : undefined;
 	return {
 		kind: "table",
-		name: parts.length ? parts : multipart ? [multipart.getText()] : [],
+		name: parts,
+		namePartSpans,
 		alias,
 		aliasCst,
 		columnAliases,

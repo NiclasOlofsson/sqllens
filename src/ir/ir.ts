@@ -568,6 +568,11 @@ export interface TableSource {
 	kind: "table";
 	/** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
 	name: string[];
+	/** Per-part spans PARALLEL to `name`, one per multipart segment — same all-or-nothing convention
+	 *  as `ColumnRef.partSpans` (absent when any part lacks a real token). Lets a consumer hit-test a
+	 *  cursor on `catalog` vs `schema` vs `t` in `catalog.schema.t`, and recover each part's raw
+	 *  (delimiter-included) source text via span + document text without re-scanning the token stream. */
+	namePartSpans?: PartSpan[];
 	alias?: string;
 	/** The alias identifier's own CST node (for its precise span), when aliased. */
 	aliasCst?: ParserRuleContext;

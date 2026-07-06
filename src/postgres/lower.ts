@@ -678,7 +678,8 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
-	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
+	const namePartSpans = qn ? columnPartSpans(qn) : undefined;
+	return { kind: "table", name: parts, namePartSpans, alias, aliasCst, columnAliases, cst: rel };
 }
 
 function aliasName(aliasClause: ParserRuleContext): string | undefined {

@@ -560,7 +560,8 @@ function buildSource(item: ParserRuleContext): Source {
 
 	const full = directChildrenOfRule(item, P.RULE_full_table_name)[0];
 	const parts = full ? nameParts(full) : [item.getText()];
-	return { kind: "table", name: parts, alias: alias?.text, aliasCst: alias?.cst, cst: item };
+	const namePartSpans = full ? columnPartSpans(full) : undefined;
+	return { kind: "table", name: parts, namePartSpans, alias: alias?.text, aliasCst: alias?.cst, cst: item };
 }
 
 /** The as_table_alias nested inside an open_json/open_xml node (not a direct child of the item). */

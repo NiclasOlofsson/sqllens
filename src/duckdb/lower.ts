@@ -291,7 +291,7 @@ function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
 	const kind = stmt.ruleIndex === P.RULE_pivotstmt ? "pivot" : "unpivot";
 	const from: Source[] = [];
 	const qn = directChildrenOfRule(stmt, P.RULE_qualified_name)[0];
-	if (qn) from.push({ kind: "table", name: nameParts(qn), cst: qn });
+	if (qn) from.push({ kind: "table", name: nameParts(qn), namePartSpans: columnPartSpans(qn), cst: qn });
 	const sw = directChildrenOfRule(stmt, P.RULE_select_with_parens)[0];
 	if (sw) {
 		const inner = innerSelect(sw);
@@ -669,7 +669,15 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	// FROM 'file.parquet' — a string-literal relation (replacement scan, data/overview.md).
 	const fileRel = directChildrenOfRule(tr, P.RULE_sconst)[0];
 	if (fileRel) {
-		return { kind: "table", name: [stripStringQuotes(fileRel.getText())], alias, aliasCst, columnAliases, cst: tr };
+		return {
+			kind: "table",
+			name: [stripStringQuotes(fileRel.getText())],
+			namePartSpans: partSpansOf([fileRel]),
+			alias,
+			aliasCst,
+			columnAliases,
+			cst: tr,
+		};
 	}
 
 	const sub = directChildrenOfRule(tr, P.RULE_select_with_parens)[0];
@@ -733,7 +741,8 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
-	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
+	const namePartSpans = qn ? columnPartSpans(qn) : undefined;
+	return { kind: "table", name: parts, namePartSpans, alias, aliasCst, columnAliases, cst: rel };
 }
 
 /** The alias identifier node — under table_alias (AS slot) or bare_table_alias (AS-less slot). */

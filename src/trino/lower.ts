@@ -402,7 +402,8 @@ function lowerQueryPrimary(prim: ParserRuleContext, holder: ParserRuleContext, c
 	if (node instanceof QueryPrimaryDefaultContext) return lowerQuerySpecification(node.querySpecification(), ctx);
 	if (node instanceof TableContext) {
 		// TABLE t — equivalent to SELECT * FROM t (modelled, not flagged).
-		const src: Source = { kind: "table", name: nameParts(node.qualifiedName()), cst: node };
+		const qn = node.qualifiedName();
+		const src: Source = { kind: "table", name: nameParts(qn), namePartSpans: namePartSpans(qn), cst: node };
 		return {
 			kind: "select",
 			projections: [{ isStar: true, expr: { kind: "star", cst: node }, cst: node }],
@@ -679,7 +680,8 @@ function lowerRelationPrimary(
 	ctx: Ctx,
 ): (Source & { alias?: string }) | null {
 	if (rp instanceof TableNameContext) {
-		return { kind: "table", name: nameParts(rp.qualifiedName()), cst: rp };
+		const qn = rp.qualifiedName();
+		return { kind: "table", name: nameParts(qn), namePartSpans: namePartSpans(qn), cst: rp };
 	}
 	if (rp instanceof SubqueryRelationContext) {
 		return { kind: "subquery", query: lowerQuery(rp.query(), ctx, rp), cst: rp };
@@ -697,8 +699,9 @@ function lowerRelationPrimary(
 		// a catalog — the never-wrong contract). Embedded TABLE(name/query) arguments stay visible
 		// as additional sources so their columns resolve.
 		const call = rp.tableFunctionCall();
-		const name = call ? nameParts(call.qualifiedName()) : ["table_function"];
-		return { kind: "table", name, cst: rp };
+		const qn = call?.qualifiedName();
+		const name = qn ? nameParts(qn) : ["table_function"];
+		return { kind: "table", name, namePartSpans: qn ? namePartSpans(qn) : undefined, cst: rp };
 	}
 	if (rp instanceof ParenthesizedRelationContext) {
 		const inner: Source[] = [];

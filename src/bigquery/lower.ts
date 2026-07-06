@@ -260,7 +260,7 @@ function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 		return {
 			kind: "select",
 			projections: [implicitStar(primary)],
-			from: [{ kind: "table", name: pathParts(path), cst: path }],
+			from: [{ kind: "table", name: pathParts(path), namePartSpans: pathPartSpans(path), cst: path }],
 			columns: [],
 			aggregated: false,
 			cst: primary,
@@ -412,7 +412,7 @@ function lowerPipeSetOperand(operand: ParserRuleContext): QueryExpr {
 		const body: SelectExpr = {
 			kind: "select",
 			projections: path ? [implicitStar(tc)] : [],
-			from: path ? [{ kind: "table", name: pathParts(path), cst: path }] : [],
+			from: path ? [{ kind: "table", name: pathParts(path), namePartSpans: pathPartSpans(path), cst: path }] : [],
 			columns: [],
 			aggregated: false,
 			cst: tc,
@@ -950,6 +950,7 @@ function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Sou
 		return {
 			kind: "table",
 			name: path ? pathParts(path) : [tp.getText()],
+			namePartSpans: path ? pathPartSpans(path) : undefined,
 			alias: aliasInfo?.alias,
 			aliasCst: aliasInfo?.cst,
 			cst: tp,
@@ -1108,7 +1109,8 @@ function buildPathSource(pathExpr: ParserRuleContext): Source {
 
 	const path = base ? firstOfRule(base, P.RULE_path_expression) : undefined;
 	const name = path ? pathParts(path) : base ? dashedPathParts(base) : [stripBackticks(pathExpr.getText())];
-	return { kind: "table", name, alias: aliasInfo?.alias, aliasCst: aliasInfo?.cst, cst: pathExpr };
+	const namePartSpans = path ? pathPartSpans(path) : undefined;
+	return { kind: "table", name, namePartSpans, alias: aliasInfo?.alias, aliasCst: aliasInfo?.cst, cst: pathExpr };
 }
 
 /** table_path_alias_or_qualify / table_path_pivot_suffix / pivot_or_unpivot_clause_and_aliases → its leading identifier. */

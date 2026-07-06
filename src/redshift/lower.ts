@@ -655,23 +655,32 @@ function buildTableFromRelation(
 ): Source {
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
+	// Parallel node list for namePartSpans (all-or-nothing, see src/ir/part-span.ts): same shape as
+	// nameParts's own colid + indirection.attr_name walk, kept alongside it so a catalog-path or
+	// synthesized part correctly voids the whole array.
+	const nameNodes: (ParseTree | undefined)[] = qn ? qualifiedNamePartNodes(qn) : [];
 	// Redshift catalog path database@namespace[/cluster].schema.table: the @namespace, optional
 	// /cluster, and trailing .schema.table sit beside the qualified_name in relation_expr. Fold them
 	// in so the source name isn't silently truncated to just the database
 	// (docs.aws.amazon.com/redshift/latest/dg/iceberg-integration-querying.html).
 	if (hasDirectToken(rel, P.AT_SIGN)) {
-		for (const cid of directChildrenOfRule(rel, P.RULE_colid)) parts.push(textOf(cid));
+		for (const cid of directChildrenOfRule(rel, P.RULE_colid)) {
+			parts.push(textOf(cid));
+			nameNodes.push(cid);
+		}
 		const ind = directChildrenOfRule(rel, P.RULE_indirection)[0];
 		if (ind) {
 			for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
 				if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) {
 					const attr = firstShallow(el, P.RULE_attr_name);
 					parts.push(attr ? textOf(attr) : el.getText().replace(/^\./, ""));
+					nameNodes.push(attr);
 				}
 			}
 		}
 	}
-	return { kind: "table", name: parts, alias, aliasCst, columnAliases, cst: rel };
+	const namePartSpans = qn ? partSpansOf(nameNodes) : undefined;
+	return { kind: "table", name: parts, namePartSpans, alias, aliasCst, columnAliases, cst: rel };
 }
 
 function aliasName(aliasClause: ParserRuleContext): string | undefined {
@@ -1694,6 +1703,23 @@ function leftmostToken(node: ParseTree): string | undefined {
 		n = first;
 	}
 	return undefined;
+}
+
+/** Per-part CST nodes PARALLEL to nameParts's colid+indirection walk (before its getText-split
+ *  fallback) — mirrors columnPartSpans's shape for the qualified_name/columnref rule. An empty result
+ *  here means nameParts fell back to splitting getText(), so the caller's partSpansOf([]) correctly
+ *  yields undefined (no per-part tokens to span). */
+function qualifiedNamePartNodes(node: ParserRuleContext): (ParseTree | undefined)[] {
+	const nodes: (ParseTree | undefined)[] = [];
+	const colid = directChildrenOfRule(node, P.RULE_colid)[0];
+	if (colid) nodes.push(colid);
+	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
+	if (ind) {
+		for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
+			if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) nodes.push(firstShallow(el, P.RULE_attr_name));
+		}
+	}
+	return nodes;
 }
 
 /** The dotted name parts of a qualified_name / columnref (colid + indirection attrs). */

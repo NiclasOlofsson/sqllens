@@ -861,6 +861,7 @@ function buildSource(ref: ParserRuleContext): Source {
 	return {
 		kind: "table",
 		name: parts,
+		namePartSpans: objectName ? namePartSpans(objectName) : undefined,
 		alias,
 		aliasCst,
 		columnAliases: columnListAliases(ref),
