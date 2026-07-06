@@ -54,6 +54,11 @@ export interface Sym {
 	span: Span;
 	/** The frame the symbol lives in: a CTE's name, a subquery alias, or "_main_". */
 	frame: string;
+	/** For a relation-kind Sym (table/cte/subquery/lateral), its alias declaration — the SAME value
+	 *  the separate alias-kind Sym below carries, attached here directly so a consumer doesn't need
+	 *  array-adjacency (an implementation detail, not a contract) to find "this table's alias".
+	 *  Absent when the source has no explicit alias. */
+	alias?: { name: string; span: Span };
 	/** For a reference, the span of the in-query declaration it resolves to (a CTE, or the
 	 *  projection in a CTE/subquery that produces a column). Absent for a catalog table/column
 	 *  whose declaration is not in the query — go-to-definition there needs the catalog. */
@@ -113,8 +118,10 @@ function walk(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): 
 	// implicit "relation" source of a pipe stage (the incoming relation) has no name — skip it.
 	for (const src of scope.sources.values()) {
 		if (src.kind === "relation") continue;
-		out.push(relationSymbol(src, frame, scope.dialect));
+		const relSym = relationSymbol(src, frame, scope.dialect);
 		const alias = aliasSymbol(src, frame, scope.dialect);
+		if (alias) relSym.alias = { name: alias.name, span: alias.span };
+		out.push(relSym);
 		if (alias) out.push(alias);
 		if (src.kind === "subquery") {
 			walk(

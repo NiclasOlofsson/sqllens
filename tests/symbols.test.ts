@@ -90,6 +90,24 @@ describe("deriveSymbols — aliases & definition links", () => {
 		const ref = symbolsOf("SELECT a FROM t").find((s) => s.kind === "column" && s.name === "a");
 		expect(ref?.definition).toBeUndefined();
 	});
+
+	it("attaches the alias directly to the relation Sym, in addition to the separate alias Sym", () => {
+		const syms = symbolsOf("SELECT o.id FROM orders o");
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "orders");
+		expect(tableSym).toBeDefined();
+		expect(tableSym!.alias).toBeDefined();
+		expect(tableSym!.alias!.name).toBe("o");
+		// The separate alias-kind Sym still exists too — additive, not a replacement:
+		const aliasSym = syms.find((s) => s.kind === "alias" && s.name === "o");
+		expect(aliasSym).toBeDefined();
+		expect(tableSym!.alias!.span).toEqual(aliasSym!.span);
+	});
+
+	it("has no alias field on an unaliased relation Sym", () => {
+		const tableSym = symbolsOf("SELECT id FROM orders").find((s) => s.kind === "table" && s.name === "orders");
+		expect(tableSym).toBeDefined();
+		expect(tableSym!.alias).toBeUndefined();
+	});
 });
 
 describe("deriveSymbols — functions", () => {
