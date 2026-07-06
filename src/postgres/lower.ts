@@ -339,6 +339,7 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 	const inner = prep ? directChildrenOfRule(prep, P.RULE_selectstmt)[0] : undefined;
 	return {
 		name: name ? textOf(name) : "",
+		nameCst: name,
 		columnAliases: cols.length ? cols : undefined,
 		body: inner ? lowerSelectStmt(inner) : nonQuery(cte, "non-query-cte"),
 		cst: cte,

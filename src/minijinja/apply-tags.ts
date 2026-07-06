@@ -133,7 +133,7 @@ const VALUE_CALL_TAG = /^\{\{-?\s*(var|env_var)\s*\(\s*(['"])([^'"\\]*)\2\s*(,[\
  * Rebuild (with structural sharing) marking every column-shaped node — a column Expr
  * (`kind: "column"`) or a scope ColumnRef record (`kind: "columnref"`) — whose
  * first token sits inside a tag span. The walk is generic over plain objects/arrays,
- * never descends through the foreign antlr back-refs (`cst`/`aliasCst` keys), and
+ * never descends through the foreign antlr back-refs (`cst`/`aliasCst`/`nameCst` keys), and
  * returns the SAME reference on unchanged subtrees. Total under the caller's try/catch.
  */
 function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
@@ -163,7 +163,7 @@ function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
 	const out: Record<string, unknown> = {};
 	for (const k of Object.keys(rec)) {
 		const v = rec[k];
-		if (k === "cst" || k === "aliasCst") {
+		if (k === "cst" || k === "aliasCst" || k === "nameCst") {
 			out[k] = v;
 			continue;
 		}

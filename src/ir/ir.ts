@@ -602,6 +602,10 @@ export interface SubquerySource {
 
 export interface CteDef {
 	name: string;
+	/** The CTE name identifier's own CST node (for its precise span) — same convention as
+	 *  `TableSource.aliasCst`/`Projection.aliasCst`. Absent only when the name itself has no real
+	 *  token (a genuinely broken/nameless CTE on mid-edit input). */
+	nameCst?: ParserRuleContext;
 	/** Declared column aliases, e.g. `WITH c (x, y) AS (…)` → ["x","y"]; these rename the CTE's outputs. */
 	columnAliases?: string[];
 	body: QueryExpr;

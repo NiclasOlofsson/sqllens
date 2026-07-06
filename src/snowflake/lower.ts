@@ -226,7 +226,8 @@ function lowerQueryStatement(qs: ParserRuleContext): QueryExpr {
 
 function lowerCte(cte: ParserRuleContext): CteDef {
 	// common_table_expression: id_ ('(' column_list ')')? AS select_statement_in_parentheses
-	const name = directChildrenOfRule(cte, P.RULE_id_)[0]?.getText() ?? "";
+	const nameNode = directChildrenOfRule(cte, P.RULE_id_)[0];
+	const name = nameNode?.getText() ?? "";
 	const colList = directChildrenOfRule(cte, P.RULE_column_list_in_parentheses)[0];
 	const cols = colList
 		? collectOfRule(colList, P.RULE_column_name).map((c) => c.getText())
@@ -236,6 +237,7 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 	const ssip = directChildrenOfRule(cte, P.RULE_select_statement_in_parentheses)[0];
 	return {
 		name,
+		nameCst: nameNode,
 		columnAliases: cols.length ? cols : undefined,
 		body: ssip ? ssipToQuery(ssip) : emptyQuery(cte),
 		cst: cte,

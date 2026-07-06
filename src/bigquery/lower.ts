@@ -236,6 +236,7 @@ function lowerCte(aq: ParserRuleContext): CteDef {
 	const paren = directChildrenOfRule(aq, P.RULE_parenthesized_query)[0];
 	return {
 		name: name ? identText(name) : "",
+		nameCst: name,
 		body: paren ? lowerParenthesizedQuery(paren) : emptyQuery(aq, "non-query"),
 		cst: aq,
 	};

@@ -567,7 +567,8 @@ function hasAllQuantifier(queryTerm: ParserRuleContext): boolean {
 }
 
 function lowerNamedQuery(namedQuery: ParserRuleContext): CteDef {
-	const name = directChildrenOfRule(namedQuery, P.RULE_errorCapturingIdentifier)[0]?.getText() ?? "";
+	const nameNode = directChildrenOfRule(namedQuery, P.RULE_errorCapturingIdentifier)[0];
+	const name = nameNode?.getText() ?? "";
 	const innerQuery = firstOfRule(namedQuery, P.RULE_query);
 	// A broken / partial CTE may have no query body (e.g. "WITH x AS ( SELECT" mid-edit). Emit the CTE
 	// with a flagged empty body so the enclosing query still lowers — lower() never throws.
@@ -589,6 +590,7 @@ function lowerNamedQuery(namedQuery: ParserRuleContext): CteDef {
 			};
 	return {
 		name,
+		nameCst: nameNode,
 		columnAliases: columnAliasList(namedQuery),
 		body,
 		cst: namedQuery,

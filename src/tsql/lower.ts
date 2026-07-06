@@ -200,12 +200,14 @@ function lowerStandalone(tree: ParserRuleContext): QueryExpr {
 
 function lowerCte(cte: ParserRuleContext): CteDef {
 	// common_table_expression: id_ ('(' column_name_list ')')? AS '(' select_statement ')'
-	const name = directChildrenOfRule(cte, P.RULE_id_)[0]?.getText() ?? "";
+	const nameNode = directChildrenOfRule(cte, P.RULE_id_)[0];
+	const name = nameNode?.getText() ?? "";
 	const inner = directChildrenOfRule(cte, P.RULE_select_statement)[0];
 	const colList = directChildrenOfRule(cte, P.RULE_column_name_list)[0];
 	const columnAliases = colList ? directChildrenOfRule(colList, P.RULE_id_).map((i) => i.getText()) : undefined;
 	return {
 		name,
+		nameCst: nameNode,
 		columnAliases: columnAliases?.length ? columnAliases : undefined,
 		body: inner ? lowerSelect(inner) : emptyQuery(cte),
 		cst: cte,

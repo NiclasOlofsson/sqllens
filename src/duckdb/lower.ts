@@ -378,6 +378,7 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 		: undefined;
 	return {
 		name: name ? textOf(name) : "",
+		nameCst: name,
 		columnAliases: cols.length ? cols : undefined,
 		body: inner ? lowerSelectStmt(inner) : pivot ? lowerPivotStmt(pivot) : nonQuery(cte, "non-query-cte"),
 		cst: cte,

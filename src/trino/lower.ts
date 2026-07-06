@@ -342,7 +342,7 @@ function lowerQuery(query: QueryContext | null, ctx: Ctx, anchor: ParserRuleCont
 function lowerNamedQuery(nq: NamedQueryContext, ctx: Ctx): CteDef {
 	const name = nq._name ? idText(nq._name) : "";
 	const aliases = nq.columnAliases()?.identifier().map(idText);
-	return { name, columnAliases: aliases, body: lowerQuery(nq.query(), ctx, nq), cst: nq };
+	return { name, nameCst: nq._name, columnAliases: aliases, body: lowerQuery(nq.query(), ctx, nq), cst: nq };
 }
 
 function lowerQueryNoWith(qnw: QueryNoWithContext | null, ctx: Ctx, anchor: ParserRuleContext): QueryExpr {
