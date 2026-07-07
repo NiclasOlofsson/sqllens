@@ -232,6 +232,21 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		expect(tableSym.alias!.span.line).toBe(2);
 	});
 
+	it("a column Sym's .source link is remapped to the SHIFTED relation Sym in a multi-statement document", () => {
+		const text = "SELECT 1;\nSELECT o.id FROM orders o";
+		const doc = SqlDocument.create(text, "databricks");
+		const syms = doc.analyze(schema).symbols;
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "orders")!;
+		expect(tableSym).toBeDefined();
+		const colSym = syms.find((s) => s.kind === "column" && s.modifiers.includes("reference") && s.name === "o.id")!;
+		expect(colSym).toBeDefined();
+		// Object identity with the ARRAY'S OWN table Sym, not a stale pre-shift copy — a naive
+		// per-Sym shift (map without a re-pointing pass) would leave .source pointing at the
+		// original cell-relative object, which is no longer reachable from the returned array.
+		expect(colSym.source).toBe(tableSym);
+		expect(colSym.source!.span.line).toBe(2); // doc coordinates, not cell-relative
+	});
+
 	it("editing statement 2 reuses statement 1's cell analysis (no re-qualify of statement 1)", () => {
 		const d1 = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
 		const s1before = d1.analyze(schema).symbols.find((s) => s.name === "amount");
