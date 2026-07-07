@@ -55,6 +55,12 @@ import type { SchemaProvider } from "./schema-provider.js";
  *   - `where-clause` — a LEADING WHERE clause (`where c = false`) after a complete FROM/JOIN
  *                    context (the mode-as-argument macro family: `{{ m('col','where') }}` — the
  *                    2026-07-06 gold__vendor F5 finding) — fills `WHERE 1=1`.
+ *   - `cte-definition` — one or more complete WITH-clause CTE definitions + trailing comma
+ *                    (a macro whose whole body is `name as (...),`  — the anvil real-model
+ *                    finding, 2026-07-07): admitted ONLY immediately after a `,` that follows a
+ *                    completed prior CTE clause; fills a PER-TAG-UNIQUE synthetic `name as (...)`
+ *                    (the fill introduces a name into the WITH list's namespace, so — unlike
+ *                    every other shape's fixed fragment — it can't repeat verbatim across tags).
  *   - `expr`       — a scalar expression (the identifier fill — the zero-knowledge default).
  */
 export type ExpansionShape =
@@ -65,6 +71,7 @@ export type ExpansionShape =
 	| "statement"
 	| "conjunct"
 	| "where-clause"
+	| "cte-definition"
 	| "nothing";
 
 /** The NEUTRAL value-type vocabulary for `ResolvedExpansion.value` (the engine maps each to its

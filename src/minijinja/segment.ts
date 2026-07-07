@@ -166,8 +166,11 @@ function textOf(t: AntlrToken): string {
 
 /** Shape → the minimal shape-valid SQL fragment. `SELECT 1` is valid across all eight dialects both as a
  *  standalone statement AND as a `(…)` CTE/subquery body (verified), so `statement`/`relation` share it;
- *  `expr` (identifier fill) and `nothing` (whitespace fill) are handled before this table is consulted. */
-const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr" | "nothing">, string> = {
+ *  `expr` (identifier fill) and `nothing` (whitespace fill) are handled before this table is consulted.
+ *  `cte-definition` is ALSO excluded: unlike every other shape, its fragment introduces a NAME into the
+ *  enclosing WITH list's namespace, so it can't be a fixed literal (two tags would collide) — it is built
+ *  per-tag from the same base-35 ordinal scheme the identifier fill uses (see the main placeholder loop). */
+const SHAPE_FRAGMENT: Record<Exclude<ExpansionShape, "expr" | "nothing" | "cte-definition">, string> = {
 	statement: "SELECT 1",
 	relation: "SELECT 1",
 	predicate: "1=1",
@@ -257,6 +260,18 @@ function conjunctSlotAdmits(slot: string): boolean {
 }
 
 /**
+ * cte-definition slot guard — a shape of admission no prior shape needed: not a body-start
+ * allowlist (`STATEMENT_SLOTS`) and not a trailing-expression allowlist (`conjunctSlotAdmits`),
+ * but admission INSIDE an already-open WITH list, between two CTE clauses. That position is
+ * always immediately after the `,` that closes a prior clause's `(...)` — so admit ONLY
+ * `slot === ","` (conservative by construction, matching anvil's stated case; broaden only if a
+ * real corpus case needs more).
+ */
+function cteDefinitionSlotAdmits(slot: string): boolean {
+	return slot === ",";
+}
+
+/**
  * The slot immediately preceding `start`: skip whitespace AND SQL comment trivia backward over
  * `chars` (the placeholder being built, so earlier tags read as their fills — a blanked
  * `{{ config }}` reads as whitespace) and return the preceding word (lowercased) or single
@@ -334,17 +349,36 @@ function lineCommentStart(chars: readonly string[], lineStart: number, end: numb
 }
 
 /**
+ * Fit-window guard shared by every fragment fill (static or dynamic): the first newline-free
+ * run inside the tag long enough to hold `fragment`. A one-line tag places at its start as
+ * before; a multi-line tag (the whole-model `{{\n  macro(…)\n}}` pattern — 490/1525 Oatly
+ * models, the 2026-07-06 F5 finding) places on its first line that fits, with every other tag
+ * char whitespace — so the fragment is still the fill's first non-whitespace content and the
+ * pre-tag slot logic is unchanged. No window → undefined (a shaped fill is strictly an
+ * improvement, never a regression). Length and every original `\n` offset are preserved by the
+ * caller's placement loop.
+ */
+function fitWindow(
+	seg: Extract<Segment, { kind: "tag" }>,
+	fragment: string,
+): { fragment: string; at: number } | undefined {
+	let lineStart = 0;
+	for (let k = 0; k <= seg.text.length; k++) {
+		if (k === seg.text.length || seg.text[k] === "\n") {
+			if (k - lineStart >= fragment.length) return { fragment, at: lineStart };
+			lineStart = k + 1;
+		}
+	}
+	return undefined;
+}
+
+/**
  * The shaped fill fragment for a tag — the fragment text plus its placement offset
  * WITHIN the tag — or undefined to fall back to the positional char fill. Applies a
- * fragment ONLY for a real CALL whose shape admits one, whose slot admits it (the
- * guards above), and for which a fit WINDOW exists: the first newline-free run
- * inside the tag long enough to hold the fragment. A one-line tag places at its
- * start as before; a multi-line tag (the whole-model `{{\n  macro(…)\n}}` pattern —
- * 490/1525 Oatly models, the 2026-07-06 F5 finding) places on its first line that
- * fits, with every other tag char whitespace — so the fragment is still the fill's
- * first non-whitespace content and the pre-tag slot logic is unchanged. No window →
- * fall back (a shaped fill is strictly an improvement, never a regression). Length
- * and every original `\n` offset are preserved by the caller's placement loop.
+ * fragment ONLY for a real CALL whose shape admits one and whose slot admits it (the
+ * guards above), fit-windowed via `fitWindow`. `cte-definition` is handled separately
+ * by the caller (its fragment is dynamic, built from the live `ordinal` counter — see
+ * the main placeholder loop), so it never reaches `SHAPE_FRAGMENT` here.
  */
 function fragmentFill(
 	seg: Extract<Segment, { kind: "tag" }>,
@@ -352,7 +386,7 @@ function fragmentFill(
 	isCall: boolean,
 	slot: string,
 ): { fragment: string; at: number } | undefined {
-	if (shape === "expr" || shape === "nothing") return undefined; // positional fills, not fragments
+	if (shape === "expr" || shape === "nothing" || shape === "cte-definition") return undefined; // positional/dynamic fills, not this table
 	if (!isCall) return undefined; // fragments only for a real macro CALL (bare words keep the char fill)
 	if ((shape === "statement" || shape === "relation") && !STATEMENT_SLOTS.has(slot)) {
 		return undefined; // slot guard: SELECT 1 is a statement/body — only where a body can START
@@ -364,16 +398,7 @@ function fragmentFill(
 		// and the blocked slots (BOF, `;`, `(`, clause/operator keywords) break both.
 		return undefined;
 	}
-	const fragment = SHAPE_FRAGMENT[shape];
-	// Fit-window guard: the first newline-free run inside the tag that holds the fragment.
-	let lineStart = 0;
-	for (let k = 0; k <= seg.text.length; k++) {
-		if (k === seg.text.length || seg.text[k] === "\n") {
-			if (k - lineStart >= fragment.length) return { fragment, at: lineStart };
-			lineStart = k + 1;
-		}
-	}
-	return undefined;
+	return fitWindow(seg, SHAPE_FRAGMENT[shape]);
 }
 
 /** Base-35 digits for the identifier fill's per-tag ordinal — the alphabet EXCLUDES `j`, so an
@@ -548,7 +573,24 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		const fusesWithKeyword =
 			seg.start > 0 && /[A-Za-z0-9_]/.test(chars[seg.start - 1]) && CONJUNCT_BLOCK_WORDS.has(slot);
 
-		const shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
+		// cte-definition's fragment is DYNAMIC (Design — per-tag uniqueness): the synthetic CTE's
+		// name must never collide with another tag's in the same WITH list, so it is built here,
+		// per-tag, from the SAME base-35 ordinal counter the identifier fill uses below (`ordinal`,
+		// `PLACEHOLDER_CHAR`/`ordinalFill`) — never a fixed literal like every other shape's
+		// `SHAPE_FRAGMENT` entry. The counter is consumed (incremented) ONLY when the fragment
+		// actually fires; an admission failure falls through to the identifier fill, which
+		// consumes the ordinal itself (`ordinalFill(ordinal++)` below) — so ordinals stay in sync
+		// and no two tags in the document, cte-definition or identifier-fill, ever collide.
+		let shaped: { fragment: string; at: number } | undefined;
+		if (shape === "cte-definition") {
+			shaped =
+				info.isCall && cteDefinitionSlotAdmits(slot)
+					? fitWindow(seg, `${PLACEHOLDER_CHAR}${ordinalFill(ordinal)} as (select 1),`)
+					: undefined;
+			if (shaped !== undefined) ordinal += 1;
+		} else {
+			shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
+		}
 		if (shaped !== undefined) {
 			// Fragment fill: at the fit window's start (`at` — tag start for a one-line tag, the
 			// first fitting line for a multi-line one), spaces everywhere else, `\n` preserved.
@@ -586,6 +628,14 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 			// var/env_var → value, a shaped macro whose fragment was slot-guarded away) keep
 			// the identifier fill.
 			if (info.isCall && exp === undefined && (slot === "" || slot === ";")) identifier = false;
+			// cte-definition slot-admitted-but-no-fit default: unlike every other shape, the
+			// identifier fill is NEVER safe here even when it's the only option left — a bare
+			// identifier right after the `,` inside an already-open WITH list is exactly the
+			// anvil-repro failure mode (`with base as (...), jjj final as (...)` — a parse
+			// error) whether the break is "no shape at all" or "shape known, fragment too long
+			// for this tag's span." Blank instead: the list's own real comma (from the
+			// surrounding text, not this tag) chains straight to whatever follows.
+			if (shape === "cte-definition" && cteDefinitionSlotAdmits(slot)) identifier = false;
 		}
 		// Uniqueness (Niclas's design review, 2026-07-06): each identifier fill encodes a
 		// per-tag ordinal so two same-length tags never fill byte-identically (name-keyed
