@@ -47,7 +47,8 @@ describe("cte-definition ExpansionShape", () => {
 	});
 
 	test("length and newlines preserved through a cte-definition fill", () => {
-		const text = "with base as (select 1),\n{{ make_extra_ctes() }}\nfinal as (select * from base)\nselect * from final\n";
+		const text =
+			"with base as (select 1),\n{{ make_extra_ctes() }}\nfinal as (select * from base)\nselect * from final\n";
 		const r = parseTemplated(text, "databricks", {
 			provider: new NamedShapeProvider({ make_extra_ctes: "cte-definition" }),
 		});
@@ -73,10 +74,79 @@ describe("cte-definition ExpansionShape", () => {
 		// fill is a SAFE default at their admitted slots. It is NOT safe here — a bare identifier
 		// right after a WITH-list comma is exactly the original anvil-repro parse error — so this
 		// shape blanks instead when admitted-but-too-short, never falling through to identifier fill.
-		const text = "with base as (select 1),\n{{ a() }}\n{{ b() }}\nfinal as (select * from base)\nselect * from final\n";
+		const text =
+			"with base as (select 1),\n{{ a() }}\n{{ b() }}\nfinal as (select * from base)\nselect * from final\n";
 		const r = parseTemplated(text, "databricks", {
 			provider: new NamedShapeProvider({ a: "cte-definition", b: "cte-definition" }),
 		});
 		expect(r.sql.errors).toBe(0);
+	});
+
+	// --- Review finding, Task 8 follow-up ---------------------------------------------------
+	// Anvil's original filing (quoted in the follow-up brief) admits this shape "after
+	// `WITH <name> AS (...),` or another cte-definition fill; before another CTE name OR THE MAIN
+	// QUERY KEYWORD" — the last-CTE-in-the-list placement was always in scope, but the fragment's
+	// hardcoded trailing comma (`...(select 1),`) only works for the "another CTE follows" half.
+	// When this tag's synthetic CTE is the LAST one, immediately before the main query, that
+	// trailing comma has nothing after it: `with base as (...), j0 as (select 1), select * ...`
+	// is a real parse error (confirmed by the reviewer, reproduced independently).
+
+	test("cte-definition as the LAST CTE before the main query omits its trailing comma", () => {
+		const text = "with base as (select 1),\n{{ make_extra_ctes() }}\nselect * from base\n";
+		const r = parseTemplated(text, "databricks", {
+			provider: new NamedShapeProvider({ make_extra_ctes: "cte-definition" }),
+		});
+		expect(r.sql.errors).toBe(0);
+		// The fragment landed (not blanked) — and with NO trailing comma, unlike the non-last case.
+		expect(r.placeholder).toMatch(/j[0-9a-z]+ as \(select 1\)/);
+		expect(r.placeholder).not.toMatch(/j[0-9a-z]+ as \(select 1\),/);
+	});
+
+	test("length and newlines are preserved when the last-CTE fragment omits its comma", () => {
+		const text = "with base as (select 1),\n{{ make_extra_ctes() }}\nselect * from base\n";
+		const r = parseTemplated(text, "databricks", {
+			provider: new NamedShapeProvider({ make_extra_ctes: "cte-definition" }),
+		});
+		expect(r.placeholder.length).toBe(text.length);
+		for (let i = 0; i < text.length; i++) {
+			if (text[i] === "\n") expect(r.placeholder[i], `newline @${i}`).toBe("\n");
+		}
+	});
+
+	test("cte-definition as a NON-last CTE still gets its trailing comma (regression guard — the last-CTE fix must not regress the already-working case)", () => {
+		const text =
+			"with base as (select 1),\n{{ make_extra_ctes() }}\nfinal as (select * from base)\nselect * from final\n";
+		const r = parseTemplated(text, "databricks", {
+			provider: new NamedShapeProvider({ make_extra_ctes: "cte-definition" }),
+		});
+		expect(r.sql.errors).toBe(0);
+		expect(r.placeholder).toMatch(/j[0-9a-z]+ as \(select 1\),/);
+		expect(r.placeholder.length).toBe(text.length);
+		for (let i = 0; i < text.length; i++) {
+			if (text[i] === "\n") expect(r.placeholder[i], `newline @${i}`).toBe("\n");
+		}
+	});
+
+	test("a cte-definition tag immediately followed by another (not-yet-filled) jinja tag conservatively keeps its trailing comma (ambiguous lookahead degrades safe, never guesses toward removal)", () => {
+		// The forward lookahead can't see through a LATER tag's raw `{{`/`{%`/`{#` delimiters — that
+		// tag hasn't been filled yet when THIS one is decided (segments fill in source order), so
+		// `followingSlot` reads a `{` and returns it as-is: not a word, not in `QUERY_START_WORDS`,
+		// so the caller keeps the comma — the pre-existing, already-proven-safe default — rather
+		// than guessing that the intervening tag renders to nothing and the main query follows.
+		//
+		// Residual known limitation (unchanged by this fix, not a regression): if the intervening
+		// tag blanks to whitespace (as `config(...)` does here) AND is itself immediately followed
+		// by the main query, the kept comma has nothing after it and the overall SQL still fails to
+		// parse — the same composed case was already unparseable before this fix (every
+		// cte-definition fragment always carried an unconditional trailing comma). Closing that
+		// would need a lookahead that sees THROUGH a not-yet-classified tag's eventual shape, which
+		// is out of scope here; this test only proves the comma decision itself never guesses wrong
+		// in the ambiguous direction.
+		const text =
+			"with base as (select 1),\n{{ make_extra_ctes() }}\n{{ config(materialized='table') }}\nselect * from base\n";
+		const r = parseTemplated(text, "databricks", {
+			provider: new NamedShapeProvider({ make_extra_ctes: "cte-definition" }),
+		});
+		expect(r.placeholder).toMatch(/j[0-9a-z]+ as \(select 1\),/);
 	});
 });

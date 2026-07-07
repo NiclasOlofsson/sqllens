@@ -272,6 +272,20 @@ function cteDefinitionSlotAdmits(slot: string): boolean {
 }
 
 /**
+ * Query-starting keywords — the words that can open the MAIN query body immediately after a
+ * WITH list's last CTE-closing comma. Feeds the cte-definition fragment's trailing-comma
+ * decision (review finding, Task 8 follow-up — see `followingSlot` and its call site in the
+ * main placeholder loop): membership here means "the main query follows, no more CTEs" (the
+ * fragment must NOT add its own trailing comma); anything else — including "" (ambiguous) —
+ * is presumed to be another CTE name, since after a WITH-list comma the ONLY two grammatically
+ * valid things are another CTE name or the main query (keep the comma, the already-working
+ * default). `with` covers a nested `WITH …` main query (rare but legal); `insert`/`update`/
+ * `delete`/`merge` are the DML statements a WITH clause can prefix across the eight dialects,
+ * alongside `select`.
+ */
+const QUERY_START_WORDS: ReadonlySet<string> = new Set(["select", "with", "insert", "update", "delete", "merge"]);
+
+/**
  * The slot immediately preceding `start`: skip whitespace AND SQL comment trivia backward over
  * `chars` (the placeholder being built, so earlier tags read as their fills — a blanked
  * `{{ config }}` reads as whitespace) and return the preceding word (lowercased) or single
@@ -346,6 +360,61 @@ function lineCommentStart(chars: readonly string[], lineStart: number, end: numb
 		if (c === "-" && chars[i + 1] === "-") return i;
 	}
 	return -1;
+}
+
+/**
+ * The word immediately following `end` — the forward mirror of `precedingSlot`, needed only by
+ * the `cte-definition` shape's last-CTE-in-the-list check (review finding, Task 8 follow-up):
+ * is this tag's synthetic CTE followed by another CTE name, or by the main query? Skips
+ * whitespace and SQL comment trivia FORWARD (the same `--` / `/* *\/` shapes `precedingSlot`
+ * skips backward) and returns the next word (lowercased) or single character; "" at document
+ * end. Forward comment detection needs no quote-awareness (unlike `precedingSlot`'s backward
+ * scan): a `--`/`/*` found here is the FIRST thing after the skipped whitespace, so it can never
+ * sit inside a string that started earlier — a string starts with a quote char, which this
+ * function would already have returned as its answer instead of continuing.
+ *
+ * Degrades to "" (ambiguous) rather than guessing whenever it cannot cheaply tell: an
+ * unterminated forward block comment (mirrors `precedingSlot`'s own unterminated-backward
+ * conservatism), OR the very next thing is another jinja tag's opening delimiter (`{{`/`{%`/
+ * `{#`) — that tag's own text is still RAW at this point in the main loop (segments fill in
+ * source order, so a LATER tag hasn't been filled yet while THIS tag is being decided), and `{`
+ * fails the identifier-start test below, so it falls out to the same "" answer with no special
+ * casing needed. The caller (the cte-definition fragment build) treats "" as "not a
+ * query-starting keyword" — i.e. keep the trailing comma, never assume the main query follows.
+ */
+function followingSlot(chars: readonly string[], end: number): string {
+	let k = end;
+	const len = chars.length;
+	for (;;) {
+		while (k < len && /[ \t\r\n]/.test(chars[k])) k += 1;
+		if (k >= len) return "";
+		// A `--` line comment opening at k: skip to (not past) the line's end.
+		if (chars[k] === "-" && chars[k + 1] === "-") {
+			while (k < len && chars[k] !== "\n") k += 1;
+			continue;
+		}
+		// A `/*` block comment opening at k: skip to just past its closer.
+		if (chars[k] === "/" && chars[k + 1] === "*") {
+			let close = -1;
+			for (let i = k + 2; i < len - 1; i++) {
+				if (chars[i] === "*" && chars[i + 1] === "/") {
+					close = i;
+					break;
+				}
+			}
+			if (close === -1) return ""; // unterminated forward — conservative: ambiguous
+			k = close + 2;
+			continue;
+		}
+		break;
+	}
+	if (!/[A-Za-z0-9_]/.test(chars[k])) return chars[k];
+	let word = "";
+	while (k < len && /[A-Za-z0-9_]/.test(chars[k])) {
+		word += chars[k];
+		k += 1;
+	}
+	return word.toLowerCase();
 }
 
 /**
@@ -581,12 +650,27 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		// actually fires; an admission failure falls through to the identifier fill, which
 		// consumes the ordinal itself (`ordinalFill(ordinal++)` below) — so ordinals stay in sync
 		// and no two tags in the document, cte-definition or identifier-fill, ever collide.
+		//
+		// The trailing comma is CONDITIONAL (review finding, Task 8 follow-up): the original
+		// fragment always ended in `,` because anvil's reported case always sat between two OTHER
+		// named CTEs — but the shape is also admitted when this tag's CTE is the LAST one in the
+		// WITH list, immediately before the main query, where a hardcoded trailing comma has
+		// nothing after it (`with base as (...), j0 as (select 1), select * from base` — a parse
+		// error). `followingSlot` looks forward past the tag for the next real word; a
+		// query-starting keyword there (`QUERY_START_WORDS`) means the main query follows, so the
+		// comma is omitted. Anything else — another CTE name, or "" (ambiguous) — keeps it, which
+		// is exactly the already-working "another CTE follows" behavior, unchanged.
 		let shaped: { fragment: string; at: number } | undefined;
 		if (shape === "cte-definition") {
-			shaped =
-				info.isCall && cteDefinitionSlotAdmits(slot)
-					? fitWindow(seg, `${PLACEHOLDER_CHAR}${ordinalFill(ordinal)} as (select 1),`)
-					: undefined;
+			if (info.isCall && cteDefinitionSlotAdmits(slot)) {
+				const needsComma = !QUERY_START_WORDS.has(followingSlot(chars, seg.end));
+				shaped = fitWindow(
+					seg,
+					`${PLACEHOLDER_CHAR}${ordinalFill(ordinal)} as (select 1)${needsComma ? "," : ""}`,
+				);
+			} else {
+				shaped = undefined;
+			}
 			if (shaped !== undefined) ordinal += 1;
 		} else {
 			shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
@@ -599,7 +683,8 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 			// char right when the window allows — fragments fuse with ANY glued word, keyword or
 			// not, since they all start with a keyword letter.
 			const glued = seg.start > 0 && /[A-Za-z0-9_]/.test(chars[seg.start - 1]);
-			const fits = seg.text[shaped.at + shaped.fragment.length] !== "\n" &&
+			const fits =
+				seg.text[shaped.at + shaped.fragment.length] !== "\n" &&
 				shaped.at + shaped.fragment.length < seg.end - seg.start;
 			const at = shaped.at === 0 && glued && fits ? 1 : shaped.at;
 			for (let k = seg.start; k < seg.end; k++) {
