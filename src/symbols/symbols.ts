@@ -267,7 +267,7 @@ function emitColumns(
 	}
 	if (body.kind === "pipe") return; // a pipe scope's refs live in its per-stage child scopes
 	for (const ref of body.columns) {
-		const res = resolveColumnRef(scope, ref);
+		const res = resolveColumnRef(scope, ref, schema);
 		const modifiers: SymbolModifier[] = ["reference"];
 		// A reference that binds to a source outside this scope is correlated.
 		if (res.kind === "bound" && !isLocalSource(scope, res.source)) modifiers.push("correlated");

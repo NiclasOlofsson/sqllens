@@ -94,6 +94,16 @@ describe("deriveSymbols — column source links", () => {
 		expect(colSym).toBeDefined();
 		expect(colSym!.source).toBeUndefined();
 	});
+
+	it("links a bare unqualified column against a physical table when a schema is supplied", () => {
+		const tree = resolveScopes(lower(parseDatabricks("SELECT id FROM orders").tree));
+		const syms = deriveSymbols(tree, new Schema({ orders: { id: "bigint" } }));
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "orders");
+		const columnSym = syms.find((s) => s.kind === "column" && s.modifiers.includes("reference") && s.name === "id");
+		expect(tableSym).toBeDefined();
+		expect(columnSym).toBeDefined();
+		expect(columnSym!.source).toBe(tableSym);
+	});
 });
 
 describe("deriveSymbols — aliases & definition links", () => {
