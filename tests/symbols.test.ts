@@ -66,6 +66,30 @@ describe("deriveSymbols — columns", () => {
 	});
 });
 
+describe("deriveSymbols — declaration spans (narrow, not whole-clause)", () => {
+	it("spans only the alias identifier for a computed column declaration, not the whole projection", () => {
+		const x = symbolsOf("SELECT foo AS bar FROM t").find((s) => s.name === "bar" && s.modifiers.includes("declaration"));
+		expect(x).toBeDefined();
+		expect(x!.span.endColumn - x!.span.column).toBe("bar".length);
+	});
+
+	it("spans only the (quoted) alias identifier, delimiters included, not the whole projection", () => {
+		const x = symbolsOf("SELECT foo AS `bar` FROM t").find(
+			(s) => s.modifiers.includes("declaration") && s.kind === "column",
+		);
+		expect(x).toBeDefined();
+		expect(x!.span.endColumn - x!.span.column).toBe("`bar`".length);
+	});
+
+	it("spans only the CTE name, not the whole `name AS (body)` clause", () => {
+		const c = symbolsOf("WITH mycte AS (SELECT 1 AS id) SELECT id FROM mycte").find(
+			(s) => s.kind === "cte" && s.modifiers.includes("declaration"),
+		);
+		expect(c).toBeDefined();
+		expect(c!.span.endColumn - c!.span.column).toBe("mycte".length);
+	});
+});
+
 describe("deriveSymbols — column source links", () => {
 	it("links a bound column Sym to its relation Sym, object-identical to the emitted one", () => {
 		const syms = symbolsOf("SELECT o.id FROM orders o");
@@ -124,6 +148,14 @@ describe("deriveSymbols — aliases & definition links", () => {
 			(s) => s.kind === "column" && s.name === "a" && s.modifiers.includes("reference"),
 		);
 		expect(ref?.definition).toBeDefined();
+	});
+
+	it("narrows a column reference's producing-projection definition to the alias, not the whole projection", () => {
+		const ref = symbolsOf("WITH c AS (SELECT x AS a FROM t) SELECT a FROM c").find(
+			(s) => s.kind === "column" && s.name === "a" && s.modifiers.includes("reference"),
+		);
+		expect(ref?.definition).toBeDefined();
+		expect(ref!.definition!.endColumn - ref!.definition!.column).toBe("a".length);
 	});
 
 	it("has no in-query definition for a catalog-table column", () => {

@@ -106,7 +106,7 @@ function walk(
 	// the symbol (and frame label) shows the display form of the declared name.
 	for (const [, cteRef] of scope.ctes) {
 		const name = displayName(cteRef.def.name, scope.dialect);
-		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.cst), frame });
+		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.nameCst ?? cteRef.def.cst), frame });
 		walk(cteRef.scope, name, out, schema, sourceSyms);
 		walked.add(cteRef.scope);
 	}
@@ -257,7 +257,7 @@ function emitColumns(
 					kind: "column",
 					modifiers: ["declaration", "output"],
 					name: displayName(p.name, scope.dialect),
-					span: spanOf(p.cst),
+					span: spanOf(p.aliasCst ?? p.cst),
 					frame,
 					type: typeOrUndefined(inferType(p.expr, scope, schema)),
 					origins: originsOrUndefined(originsOf(p.expr, scope, schema)),
@@ -349,7 +349,7 @@ function projectionSpan(scope: Scope, column: string, aliases: string[] | undefi
 	} else {
 		p = projs.find((pp) => pp.name !== undefined && foldIdentifier(pp.name, scope.dialect) === c);
 	}
-	return p ? spanOf(p.cst) : undefined;
+	return p ? spanOf(p.aliasCst ?? p.cst) : undefined;
 }
 
 function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym {
@@ -384,7 +384,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 			name: show(src.ref.def.name),
 			span: spanOf(src.source.cst),
 			frame,
-			definition: spanOf(src.ref.def.cst),
+			definition: spanOf(src.ref.def.nameCst ?? src.ref.def.cst),
 		};
 	}
 	if (src.kind === "lateral") {
