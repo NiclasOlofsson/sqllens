@@ -26,6 +26,11 @@ function corpusDir(): string {
 	return resolve(dir);
 }
 
-const ROOT = corpusDir();
+// Lazy + memoized: resolved on the FIRST real corpusPath() call, not at module import. A file whose
+// only corpusPath() calls live inside an it()/beforeAll() callback gated by describe.skipIf(...)
+// (e.g. tools/organize-corpus.test.ts's ORGANIZE=1 guard) can then import cleanly with no
+// SQL_CORPUS_DIR at all — vitest still runs a describe() body to collect its tests, but never calls
+// a skipped it()'s own callback, so the throw genuinely never fires unless the gate actually runs.
+let root: string | undefined;
 
-export const corpusPath = (rel: string): string => resolve(ROOT, rel);
+export const corpusPath = (rel: string): string => resolve((root ??= corpusDir()), rel);

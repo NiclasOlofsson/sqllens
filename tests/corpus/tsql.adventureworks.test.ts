@@ -1,15 +1,15 @@
 import { existsSync } from "node:fs";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { displayName, foldIdentifier } from "../src/ident/fold.js";
-import { inferType } from "../src/infer/infer.js";
-import { lineage } from "../src/lineage/lineage.js";
-import { qualify } from "../src/qualify/qualify.js";
-import { Schema } from "../src/qualify/schema.js";
-import { resolveScopes } from "../src/scope/scope.js";
-import { lower } from "../src/tsql/lower.js";
-import { parseTSql } from "../src/tsql/parse.js";
-import { parseAdventureWorks } from "./helpers/adventureworks.js";
+import { displayName, foldIdentifier } from "../../src/ident/fold.js";
+import { inferType } from "../../src/infer/infer.js";
+import { lineage } from "../../src/lineage/lineage.js";
+import { qualify } from "../../src/qualify/qualify.js";
+import { Schema } from "../../src/qualify/schema.js";
+import { resolveScopes } from "../../src/scope/scope.js";
+import { lower } from "../../src/tsql/lower.js";
+import { parseTSql } from "../../src/tsql/parse.js";
+import { parseAdventureWorks } from "../helpers/adventureworks.js";
 
 // Microsoft AdventureWorks (vendor/adventureworks/instawdb.sql — a gitignored download; see
 // tests/helpers/adventureworks.ts) is the first T-SQL corpus that pairs a real schema with real

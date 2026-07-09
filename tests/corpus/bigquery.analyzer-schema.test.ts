@@ -1,12 +1,12 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
-import { corpusPath } from "./helpers/corpus.js";
+import { corpusPath } from "../helpers/corpus.js";
 import { describe, expect, it } from "vitest";
-import { lower } from "../src/bigquery/lower.js";
-import { parseBigQuery } from "../src/bigquery/parse.js";
-import { qualify } from "../src/qualify/qualify.js";
-import { Schema } from "../src/qualify/schema.js";
-import { resolveScopes } from "../src/scope/scope.js";
+import { lower } from "../../src/bigquery/lower.js";
+import { parseBigQuery } from "../../src/bigquery/parse.js";
+import { qualify } from "../../src/qualify/qualify.js";
+import { Schema } from "../../src/qualify/schema.js";
+import { resolveScopes } from "../../src/scope/scope.js";
 
 // The FIRST external check on the semantic layer: drive our resolver with a schema HARVESTED from
 // ZetaSQL's own analyzer goldens (tools/harvest-googlesql-schema.mjs → harness/local/googlesql-schema.json,
