@@ -1,8 +1,7 @@
 name: Release
 
 on:
-  push:
-    branches: [master]
+  workflow_dispatch: # manual: trigger from the Actions tab, or `gh workflow run release.yml`
 
 permissions:
   contents: write # semantic-release pushes the version bump, CHANGELOG.md, and the tag

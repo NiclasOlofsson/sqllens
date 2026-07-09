@@ -53,7 +53,7 @@
 	"homepage": "https://github.com/NiclasOlofsson/sqllens#readme",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
-		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino",
+		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino && npm run gen -- minijinja",
 		"build": "npm run gen:all && tsc -p tsconfig.build.json",
 		"prepublishOnly": "npm run build",
 		"lsp": "node --import tsx src/lsp/main.ts",
