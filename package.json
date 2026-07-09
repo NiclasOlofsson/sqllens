@@ -1,8 +1,23 @@
 {
 	"name": "sqllens",
-	"version": "1.0.0",
+	"version": "0.1.0",
 	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across eight SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino).",
-	"main": "index.js",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"default": "./dist/index.js"
+		}
+	},
+	"files": [
+		"dist",
+		"LICENSE",
+		"THIRD-PARTY-NOTICES.md"
+	],
+	"engines": {
+		"node": ">=20.11"
+	},
 	"directories": {
 		"doc": "docs",
 		"test": "tests"
@@ -38,6 +53,9 @@
 	"homepage": "https://github.com/NiclasOlofsson/sqllens#readme",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
+		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino",
+		"build": "npm run gen:all && tsc -p tsconfig.build.json",
+		"prepublishOnly": "npm run build",
 		"lsp": "node --import tsx src/lsp/main.ts",
 		"typecheck": "tsgo -p tsconfig.json",
 		"test": "vitest run",
@@ -49,20 +67,25 @@
 	"license": "MIT",
 	"type": "module",
 	"devDependencies": {
+		"@semantic-release/changelog": "^6.0.3",
+		"@semantic-release/git": "^10.0.1",
+		"@semantic-release/github": "^12.0.9",
+		"@semantic-release/npm": "^13.1.5",
 		"@types/node": "^25.9.2",
 		"@typescript/native-preview": "^7.0.0-dev.20260605.1",
 		"antlr-ng": "^1.0.10",
+		"minimatch": "^10.2.5",
 		"prettier": "^3.8.3",
+		"semantic-release": "^25.0.5",
 		"tsx": "^4.22.4",
 		"typescript": "^6.0.3",
-		"vitest": "^4.1.8"
-	},
-	"dependencies": {
-		"antlr4ng": "^3.0.16",
-		"minimatch": "^10.2.5",
+		"vitest": "^4.1.8",
 		"vscode-languageserver": "^10.0.1",
 		"vscode-languageserver-protocol": "^3.18.1",
 		"vscode-languageserver-textdocument": "^1.0.12",
 		"vscode-languageserver-types": "^3.18.0"
+	},
+	"dependencies": {
+		"antlr4ng": "^3.0.16"
 	}
 }

@@ -1,10 +1,8 @@
 # Jinja-SQL front end — design spec (ITEM 10 / 11 / 14)
 
-The sqllens-side counterpart to the extension's `JINJA-CONSUMPTION-PLAN.md`. This spec is the grammar +
-front-end design that makes sqllens parse **raw jinja-SQL** (dbt templates) natively — one unified token
-stream, first-class jinja tag nodes, macro expansions as typed holes — replacing the extension's
-~2,571-LOC blank-and-render workaround. It realizes the LOCKED requirements stance from
-`docs/anvil/CHANNEL.md` ITEM 14 (Niclas, 2026-07-04) and the Q1/Q3 resolutions.
+This spec is the grammar + front-end design that makes sqllens parse **raw jinja-SQL** (dbt templates)
+natively — one unified token stream, first-class jinja tag nodes, macro expansions as typed holes —
+replacing a downstream consumer's ~2,571-LOC blank-and-render workaround.
 
 Grammar oracle: **minijinja** (the Rust engine dbt Fusion uses — NOT Jinja2; they differ on division
 semantics, import caching, and a few edges). Its syntax reference is authoritative for what we accept.

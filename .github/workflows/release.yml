@@ -1,0 +1,42 @@
+name: Release
+
+on:
+  push:
+    branches: [master]
+
+permissions:
+  contents: write # semantic-release pushes the version bump, CHANGELOG.md, and the tag
+  issues: write # semantic-release comments on issues/PRs referenced by a release
+  pull-requests: write
+  id-token: write # OIDC npm trusted publishing — no NPM_TOKEN secret needed
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # semantic-release needs full tag history
+
+      # Deliberately no `registry-url` here: actions/setup-node writes an
+      # .npmrc when registry-url is set, which conflicts with npm's OIDC
+      # trusted-publishing auth (EINVALIDNPMTOKEN). npm CLI >=11.5.1 detects
+      # the GitHub Actions OIDC environment on its own.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: lts/*
+          cache: npm
+
+      - run: npm ci
+
+      - run: npm run build
+
+      - run: npm test
+
+      - run: npx semantic-release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GIT_AUTHOR_NAME: github-actions[bot]
+          GIT_AUTHOR_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com
+          GIT_COMMITTER_NAME: github-actions[bot]
+          GIT_COMMITTER_EMAIL: 41898282+github-actions[bot]@users.noreply.github.com

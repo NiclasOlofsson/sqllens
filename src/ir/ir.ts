@@ -161,7 +161,7 @@ export interface UnpivotInfo {
 // Join — a first-class, span-addressable model of one FROM-clause JOIN operation. ADDITIVE over
 // `from` + `joinConditions` (which stay exactly as before): `Join.source` is the SAME object as the
 // matching `from` entry, `Join.on` the SAME object as the matching `joinConditions` entry — a Join
-// carries no unique expr/source, only the kind + the full-construct span. The dbt Anvil formatter
+// carries no unique expr/source, only the kind + the full-construct span. A formatter consumer
 // tests span containment against it; the SQL debugger slices the query text at join boundaries. Semantics (scope/qualify/lineage/symbols) are NOT migrated onto
 // `joins` in this task — they keep reading `from` + `joinConditions`.
 // ---------------------------------------------------------------------------
