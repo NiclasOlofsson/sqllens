@@ -247,6 +247,21 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		expect(colSym.source!.span.line).toBe(2); // doc coordinates, not cell-relative
 	});
 
+	it("expanded star column Syms shift to doc coordinates and keep their zero-width span + .source remap", () => {
+		const text = "SELECT 1;\nSELECT * FROM sales";
+		const doc = SqlDocument.create(text, "databricks");
+		const syms = doc.analyze(schema).symbols;
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "sales")!;
+		expect(tableSym).toBeDefined();
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded.map((s) => s.name).sort()).toEqual(["amount", "id"]);
+		for (const e of expanded) {
+			expect(e.span.line).toBe(2); // shifted to doc coordinates, not cell-relative
+			expect(e.span.column).toBe(e.span.endColumn); // still zero-width after the shift
+			expect(e.source).toBe(tableSym); // remapped to the SHIFTED relation Sym
+		}
+	});
+
 	it("editing statement 2 reuses statement 1's cell analysis (no re-qualify of statement 1)", () => {
 		const d1 = SqlDocument.create("SELECT amount FROM sales;\nSELECT id FROM sales", "databricks");
 		const s1before = d1.analyze(schema).symbols.find((s) => s.name === "amount");

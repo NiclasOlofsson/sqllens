@@ -72,12 +72,19 @@ export type ColumnBinding = ResolvedColumn;
 export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification {
 	const diagnostics: Diagnostic[] = [];
 	const resolved = new Map<Scope, string[] | "unknown">();
+	// Every star projection's RAW (pre-modifier) expansion, captured once during the eager walk below
+	// (`projectionColumns` already expands every star to compute `columnsOf`). `expandStarOf` reads
+	// from here instead of re-running `expandStarPairs` — that call pushes diagnostics as a side
+	// effect (e.g. an unknown-table miss), so a second live call for the same projection would
+	// double-diagnose. A cache miss (a projection this pass never visited) still falls back to a
+	// live call, so `expandStarOf` stays correct for a projection from outside this scope tree.
+	const starPairs = new Map<Projection, { name: string; sourceKey: string }[] | undefined>();
 
 	// Post-order: a scope's columns (and their types) may depend on its CTE/subquery children. A pipe
 	// stage depends on the scope of the relation entering it (a sibling), also visited first by order.
 	const visit = (scope: Scope): void => {
 		for (const child of scope.children) visit(child);
-		resolved.set(scope, resolveColumns(scope, schema, resolved, diagnostics));
+		resolved.set(scope, resolveColumns(scope, schema, resolved, diagnostics, starPairs));
 		for (const ref of bodyColumns(scope)) checkColumn(scope, ref, schema, resolved, diagnostics);
 	};
 	visit(tree.root);
@@ -93,7 +100,9 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 		expandStarOf: (scope, projection) => {
 			if (!projection.isStar) return undefined;
 			const star = projection.expr.kind === "star" ? projection.expr : undefined;
-			const pairs = expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier);
+			const pairs = starPairs.has(projection)
+				? starPairs.get(projection)
+				: expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier);
 			if (pairs === undefined) return undefined;
 			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
 		},
@@ -113,8 +122,9 @@ function resolveColumns(
 	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
+	starPairs: Map<Projection, { name: string; sourceKey: string }[] | undefined>,
 ): string[] | "unknown" {
-	if (scope.pipeStage) return resolvePipeStage(scope, schema, resolved, diagnostics);
+	if (scope.pipeStage) return resolvePipeStage(scope, schema, resolved, diagnostics, starPairs);
 	const body = scope.body;
 	if (body.kind === "pipe") {
 		const last = scope.pipe?.stages.at(-1) ?? scope.pipe?.input;
@@ -128,7 +138,9 @@ function resolveColumns(
 	}
 	// A PIVOT/UNPIVOT that transforms the select directly (Spark/BigQuery — no result alias) reshapes the
 	// FROM relation's columns: expand the sources, then apply the transform. (The T-SQL aliased form is a
-	// synthetic source registered in scope; it expands via the normal star path.)
+	// synthetic source registered in scope; it expands via the normal star path.) Neither carries a
+	// `Projection` node, so there is nothing to key `starPairs` by here — `expandStarOf` is never called
+	// against a headless pivot/unpivot transform.
 	if (body.pivot && !body.pivot.alias) {
 		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
 		return base === undefined ? "unknown" : applyPivotCols(base, body.pivot, scope.dialect);
@@ -137,24 +149,29 @@ function resolveColumns(
 		const base = expandStar(scope, schema, resolved, diagnostics, undefined);
 		return base === undefined ? "unknown" : applyUnpivotCols(base, body.unpivot, scope.dialect);
 	}
-	return projectionColumns(scope, body.projections, schema, resolved, diagnostics);
+	return projectionColumns(scope, body.projections, schema, resolved, diagnostics, starPairs);
 }
 
 /** Resolve a projection list to output names: a star expands against the scope's sources (its modifiers
- *  applied), a named/aliased item keeps its name, an anonymous expression makes the set "unknown". */
+ *  applied), a named/aliased item keeps its name, an anonymous expression makes the set "unknown".
+ *  Every star's RAW pairs are recorded into `starPairs`, keyed by its own `Projection` node, so
+ *  `expandStarOf` can reuse this pass's expansion instead of re-diagnosing on a second live call. */
 function projectionColumns(
 	scope: Scope,
-	projections: import("../ir/ir.js").Projection[],
+	projections: Projection[],
 	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
+	starPairs: Map<Projection, { name: string; sourceKey: string }[] | undefined>,
 ): string[] | "unknown" {
 	const out: string[] = [];
 	for (const p of projections) {
 		if (p.isStar) {
 			const star = p.expr.kind === "star" ? p.expr : undefined;
-			let cols = expandStar(scope, schema, resolved, diagnostics, star?.qualifier);
-			if (cols === undefined) return "unknown";
+			const pairs = expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier);
+			starPairs.set(p, pairs);
+			if (pairs === undefined) return "unknown";
+			let cols = pairs.map((pr) => pr.name);
 			if (star) cols = applyStarModifiers(cols, star, scope.dialect);
 			out.push(...cols);
 		} else if (p.name !== undefined) {
@@ -173,20 +190,21 @@ function resolvePipeStage(
 	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
 	diagnostics: Diagnostic[],
+	starPairs: Map<Projection, { name: string; sourceKey: string }[] | undefined>,
 ): string[] | "unknown" {
 	const stage = scope.pipeStage!;
 	const incoming = scope.pipeIncoming ? (resolved.get(scope.pipeIncoming) ?? "unknown") : "unknown";
 	switch (stage.op) {
 		case "select":
-			return projectionColumns(scope, stage.projections, schema, resolved, diagnostics);
+			return projectionColumns(scope, stage.projections, schema, resolved, diagnostics, starPairs);
 		case "extend":
 		case "window": {
 			if (incoming === "unknown") return "unknown";
-			const added = projectionColumns(scope, stage.projections, schema, resolved, diagnostics);
+			const added = projectionColumns(scope, stage.projections, schema, resolved, diagnostics, starPairs);
 			return added === "unknown" ? "unknown" : [...incoming, ...added];
 		}
 		case "aggregate": {
-			const aggs = projectionColumns(scope, stage.aggregates, schema, resolved, diagnostics);
+			const aggs = projectionColumns(scope, stage.aggregates, schema, resolved, diagnostics, starPairs);
 			if (aggs === "unknown") return "unknown";
 			const keys: string[] = [];
 			for (const g of stage.groupBy) {

@@ -161,7 +161,14 @@ export {
 	type ExpansionShape,
 } from "./qualify/template-provider.js";
 
-export { MAIN_FRAME, type Span, type Sym, type SymbolKind, type SymbolModifier } from "./symbols/symbols.js";
+export {
+	MAIN_FRAME,
+	type Span,
+	type StarExpansion,
+	type Sym,
+	type SymbolKind,
+	type SymbolModifier,
+} from "./symbols/symbols.js";
 
 export { inferType } from "./infer/infer.js";
 export { parseType, formatType, type Type } from "./infer/types.js";

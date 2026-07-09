@@ -1,12 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
+import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 
 function symbolsOf(sql: string) {
 	return deriveSymbols(resolveScopes(lower(parseDatabricks(sql).tree)));
+}
+
+function symbolsWithSchema(sql: string, schema: Schema) {
+	const tree = resolveScopes(lower(parseDatabricks(sql).tree));
+	const q = qualify(tree, schema);
+	return deriveSymbols(tree, schema, q.expandStarOf);
 }
 
 describe("deriveSymbols — relations", () => {
@@ -63,6 +70,60 @@ describe("deriveSymbols — columns", () => {
 			(s) => s.name === "o.id",
 		);
 		expect(oid?.modifiers).toContain("correlated");
+	});
+});
+
+describe("deriveSymbols — star expansion", () => {
+	const schema = new Schema({ orders: { id: "bigint", total: "double" } });
+
+	it("does not expand a star without an expandStarOf function, even with a schema", () => {
+		const tree = resolveScopes(lower(parseDatabricks("SELECT * FROM orders").tree));
+		const syms = deriveSymbols(tree, schema); // no 3rd arg
+		expect(syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"))).toHaveLength(0);
+		expect(syms.some((s) => s.kind === "column" && s.modifiers.length === 1 && s.modifiers[0] === "star")).toBe(true);
+	});
+
+	it("expands a resolvable star into one additional column Sym per source column, ADDITIVE to the opaque star Sym", () => {
+		const syms = symbolsWithSchema("SELECT * FROM orders", schema);
+		const opaqueStar = syms.find((s) => s.kind === "column" && s.modifiers.length === 1 && s.modifiers[0] === "star");
+		expect(opaqueStar).toBeDefined();
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded.map((s) => s.name).sort()).toEqual(["id", "total"]);
+	});
+
+	it("links each expanded column Sym to the owning relation Sym, object-identical to the emitted one", () => {
+		const syms = symbolsWithSchema("SELECT * FROM orders", schema);
+		const tableSym = syms.find((s) => s.kind === "table" && s.name === "orders");
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded).toHaveLength(2);
+		for (const e of expanded) expect(e.source).toBe(tableSym);
+	});
+
+	it("gives every expanded column Sym a ZERO-WIDTH span at the star token's own position", () => {
+		const syms = symbolsWithSchema("SELECT * FROM orders", schema);
+		const starSym = syms.find((s) => s.kind === "column" && s.modifiers.length === 1 && s.modifiers[0] === "star");
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded).toHaveLength(2);
+		for (const e of expanded) {
+			expect(e.span.column).toBe(e.span.endColumn);
+			expect(e.span.line).toBe(e.span.endLine);
+			expect(e.span.line).toBe(starSym!.span.line);
+			expect(e.span.column).toBe(starSym!.span.column);
+		}
+	});
+
+	it("expands only the qualified source's columns for a qualified star (t.*)", () => {
+		const s2 = new Schema({ orders: { id: "bigint" }, customers: { id: "bigint", name: "string" } });
+		const syms = symbolsWithSchema("SELECT o.* FROM orders o, customers c", s2);
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded.map((s) => s.name)).toEqual(["id"]);
+	});
+
+	it("does not expand when the source's columns are unresolvable (no schema entry for the table)", () => {
+		const syms = symbolsWithSchema("SELECT * FROM nonexistent_table", schema);
+		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(expanded).toHaveLength(0);
+		expect(syms.some((s) => s.kind === "column" && s.modifiers.length === 1 && s.modifiers[0] === "star")).toBe(true);
 	});
 });
 

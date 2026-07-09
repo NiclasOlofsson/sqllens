@@ -61,4 +61,21 @@ describe("Qualification.expandStarOf", () => {
 		const body = ast.body as SelectExpr;
 		expect(q.expandStarOf(scopes.root, body.projections[0]!)).toBeUndefined();
 	});
+
+	test("calling expandStarOf again for the same projection does not duplicate its diagnostics", () => {
+		// `qualify()`'s own construction already expands every star once internally (to compute
+		// `columnsOf`) — an unknown table there already pushed an unknown-table diagnostic before
+		// this test calls anything. A caller invoking expandStarOf for the SAME projection must reuse
+		// that expansion, not re-run it and push the same diagnostic again.
+		const ast = parse("select * from unknown_table", "databricks").ast;
+		const scopes = resolveScopes(ast, "databricks");
+		const q = qualify(scopes, schema); // `schema` only knows orders/customers — unknown_table misses (closed world)
+		const body = ast.body as SelectExpr;
+		const star = body.projections[0]!;
+		const before = q.diagnostics.filter((d) => d.kind === "unknown-table").length;
+		expect(before).toBe(1);
+		q.expandStarOf(scopes.root, star);
+		q.expandStarOf(scopes.root, star);
+		expect(q.diagnostics.filter((d) => d.kind === "unknown-table").length).toBe(before);
+	});
 });

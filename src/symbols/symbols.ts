@@ -39,6 +39,12 @@ export type SymbolKind =
 
 export type SymbolModifier = "declaration" | "reference" | "output" | "aggregate" | "window" | "correlated" | "star";
 
+/** Resolves a star projection to its expanded `{name, sourceKey}` pairs (star modifiers already
+ *  applied), or `undefined` when unresolvable — the same shape as `Qualification.expandStarOf`.
+ *  `deriveSymbols` takes this as a plain function rather than a `Qualification` so it stays free
+ *  of a dependency on `qualify.ts` (it shares only the low-level `resolveColumnRef` primitive). */
+export type StarExpansion = (scope: Scope, projection: Projection) => { name: string; sourceKey: string }[] | undefined;
+
 export interface Span {
 	line: number;
 	column: number;
@@ -85,11 +91,14 @@ export interface Sym {
 export const MAIN_FRAME = "_main_";
 
 /** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
- *  without one (the default), names + spans + frames + definitions are still produced. */
-export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = OPEN_PROVIDER): Sym[] {
+ *  without one (the default), names + spans + frames + definitions are still produced.
+ *  `expandStarOf` (typically `Qualification.expandStarOf`) additionally expands a resolvable
+ *  `SELECT *`/`t.*` into one extra column Sym per source column, alongside the opaque star Sym
+ *  it already emits — absent (the default), stars stay opaque as before. */
+export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = OPEN_PROVIDER, expandStarOf?: StarExpansion): Sym[] {
 	const out: Sym[] = [];
 	const sourceSyms = new Map<ResolvedSource, Sym>();
-	walk(tree.root, MAIN_FRAME, out, schema, sourceSyms);
+	walk(tree.root, MAIN_FRAME, out, schema, sourceSyms, expandStarOf);
 	return out;
 }
 
@@ -99,6 +108,7 @@ function walk(
 	out: Sym[],
 	schema: SchemaProvider,
 	sourceSyms: Map<ResolvedSource, Sym>,
+	expandStarOf: StarExpansion | undefined,
 ): void {
 	const walked = new Set<Scope>();
 
@@ -107,22 +117,22 @@ function walk(
 	for (const [, cteRef] of scope.ctes) {
 		const name = displayName(cteRef.def.name, scope.dialect);
 		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.nameCst ?? cteRef.def.cst), frame });
-		walk(cteRef.scope, name, out, schema, sourceSyms);
+		walk(cteRef.scope, name, out, schema, sourceSyms, expandStarOf);
 		walked.add(cteRef.scope);
 	}
 	// Set-op branches share this scope's frame.
 	if (scope.branches) {
-		walk(scope.branches.left, frame, out, schema, sourceSyms);
-		walk(scope.branches.right, frame, out, schema, sourceSyms);
+		walk(scope.branches.left, frame, out, schema, sourceSyms, expandStarOf);
+		walk(scope.branches.right, frame, out, schema, sourceSyms, expandStarOf);
 		walked.add(scope.branches.left);
 		walked.add(scope.branches.right);
 	}
 	// A pipe's input + stages share this scope's frame — they are this query's stages, not subqueries.
 	if (scope.body.kind === "pipe" && scope.pipe) {
-		walk(scope.pipe.input, frame, out, schema, sourceSyms);
+		walk(scope.pipe.input, frame, out, schema, sourceSyms, expandStarOf);
 		walked.add(scope.pipe.input);
 		for (const st of scope.pipe.stages) {
-			walk(st, frame, out, schema, sourceSyms);
+			walk(st, frame, out, schema, sourceSyms, expandStarOf);
 			walked.add(st);
 		}
 	}
@@ -143,19 +153,20 @@ function walk(
 				out,
 				schema,
 				sourceSyms,
+				expandStarOf,
 			);
 			walked.add(src.scope);
 		} else if (src.kind === "graphtable") {
-			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema, sourceSyms);
+			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema, sourceSyms, expandStarOf);
 			walked.add(src.scope);
 		}
 	}
 	// Expression subqueries (scalar / IN / EXISTS) — the remaining children, each its own frame.
 	for (const child of scope.children) {
-		if (!walked.has(child)) walk(child, "_sub_", out, schema, sourceSyms);
+		if (!walked.has(child)) walk(child, "_sub_", out, schema, sourceSyms, expandStarOf);
 	}
 
-	emitColumns(scope, frame, out, schema, sourceSyms);
+	emitColumns(scope, frame, out, schema, sourceSyms, expandStarOf);
 	emitFunctions(scope, frame, out, schema);
 }
 
@@ -231,19 +242,39 @@ function emitColumns(
 	out: Sym[],
 	schema: SchemaProvider,
 	sourceSyms: Map<ResolvedSource, Sym>,
+	expandStarOf: StarExpansion | undefined,
 ): void {
 	const body = scope.body;
 	if (body.kind === "select") {
 		for (const p of body.projections) {
 			if (p.isStar) {
 				const q = p.expr.kind === "star" ? p.expr.qualifier : undefined;
+				const starSpan = spanOf(p.cst);
 				out.push({
 					kind: "column",
 					modifiers: ["star"],
 					name: q ? `${q.join(".")}.*` : "*",
-					span: spanOf(p.cst),
+					span: starSpan,
 					frame,
 				});
+				const pairs = expandStarOf?.(scope, p);
+				if (pairs) {
+					// No separate source token exists per implied column, so every expanded Sym shares
+					// a ZERO-WIDTH span at the star's own start — deliberate (anvil-negotiated): it must
+					// never be a cursor hit-test target, only usable for name/source enumeration.
+					const point: Span = { line: starSpan.line, column: starSpan.column, endLine: starSpan.line, endColumn: starSpan.column };
+					for (const pair of pairs) {
+						const resolvedSource = scope.sources.get(pair.sourceKey);
+						out.push({
+							kind: "column",
+							modifiers: ["reference", "star"],
+							name: pair.name,
+							span: point,
+							frame,
+							source: resolvedSource ? sourceSyms.get(resolvedSource) : undefined,
+						});
+					}
+				}
 				continue;
 			}
 			// A bare column projection (`a`) is just a reference — the output name echoes the column,

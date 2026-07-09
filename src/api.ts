@@ -47,7 +47,7 @@ import {
 	type ColumnLineage,
 	type Origin,
 } from "./lineage/lineage.js";
-import { deriveSymbols as deriveSymbolsScopes, type Sym } from "./symbols/symbols.js";
+import { deriveSymbols as deriveSymbolsScopes, type StarExpansion, type Sym } from "./symbols/symbols.js";
 import type { Token } from "./token/token.js";
 
 /** The dialects reachable through the unified surface. Each has its own grammar/CST and a
@@ -155,7 +155,7 @@ export function analyze(sql: string, dialect: Dialect, opts: { schema?: SchemaPr
 		qualification,
 		types: new TypeInfo(schema),
 		lineage: new Lineage(lineageScopes(scopes, schema)),
-		symbols: deriveSymbolsScopes(scopes, schema),
+		symbols: deriveSymbolsScopes(scopes, schema, qualification.expandStarOf),
 	};
 }
 
@@ -208,9 +208,18 @@ export function lineage(x: string | QueryExpr | ScopeTree, schema: SchemaProvide
 	return new Lineage(lineageScopes(toScopes(x, opts), schema));
 }
 
-/** Symbol model. Accepts a ScopeTree (no rework), an IR, or a raw string. Schema is optional. */
-export function deriveSymbols(x: string | QueryExpr | ScopeTree, schema?: SchemaProvider, opts: DialectOpts = {}): Sym[] {
-	return deriveSymbolsScopes(toScopes(x, opts), schema);
+/** Symbol model. Accepts a ScopeTree (no rework), an IR, or a raw string. Schema is optional.
+ *  `expandStarOf` (typically the `expandStarOf` of a `Qualification` already built over the same
+ *  scopes) additionally expands a resolvable star projection into per-column Syms — a separate
+ *  trailing param, not folded into `opts`, since it is a resolved callback tied to a specific
+ *  schema-fed pass, not a static dialect option. */
+export function deriveSymbols(
+	x: string | QueryExpr | ScopeTree,
+	schema?: SchemaProvider,
+	opts: DialectOpts = {},
+	expandStarOf?: StarExpansion,
+): Sym[] {
+	return deriveSymbolsScopes(toScopes(x, opts), schema, expandStarOf);
 }
 
 // ---------------------------------------------------------------------------

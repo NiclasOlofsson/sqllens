@@ -453,7 +453,10 @@ export class SqlDocument {
 		return memoByVersion(cached.analysis, s, () => {
 			const scopes = this.statements[i].scopes;
 			const qualification = qualify(scopes, s, { dialect: this.dialect });
-			return { qualification, symbols: deriveSymbols(scopes, s, { dialect: this.dialect }) };
+			return {
+				qualification,
+				symbols: deriveSymbols(scopes, s, { dialect: this.dialect }, qualification.expandStarOf),
+			};
 		});
 	}
 }
