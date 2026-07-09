@@ -100,9 +100,14 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 		expandStarOf: (scope, projection) => {
 			if (!projection.isStar) return undefined;
 			const star = projection.expr.kind === "star" ? projection.expr : undefined;
-			const pairs = starPairs.has(projection)
-				? starPairs.get(projection)
-				: expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier);
+			if (!starPairs.has(projection)) {
+				// True memoization, not just a read of the internal walk's cache: a projection this pass
+				// never visited (e.g. handed in from outside the tree) still gets computed exactly once —
+				// the result is cached here too, so a second call for the SAME projection is always a
+				// pure read, regardless of how the first call happened to be reached.
+				starPairs.set(projection, expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier));
+			}
+			const pairs = starPairs.get(projection);
 			if (pairs === undefined) return undefined;
 			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
 		},

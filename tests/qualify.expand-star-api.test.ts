@@ -78,4 +78,26 @@ describe("Qualification.expandStarOf", () => {
 		q.expandStarOf(scopes.root, star);
 		expect(q.diagnostics.filter((d) => d.kind === "unknown-table").length).toBe(before);
 	});
+
+	test("expandStarOf memoizes even a projection qualify()'s own walk never visited", () => {
+		// Every real star projection IS visited internally (qualify() must expand it to compute
+		// columnsOf), so this exercises the defensive fallback branch directly: a synthetic star
+		// projection, structurally valid but absent from the cache the internal walk populates.
+		const ast = parse("select * from unknown_table", "databricks").ast;
+		const scopes = resolveScopes(ast, "databricks");
+		const q = qualify(scopes, schema);
+		const body = ast.body as SelectExpr;
+		const real = body.projections[0]!;
+		const synthetic: SelectExpr["projections"][number] = {
+			isStar: true,
+			expr: { kind: "star", qualifier: undefined, cst: real.cst },
+			cst: real.cst,
+		};
+		const before = q.diagnostics.filter((d) => d.kind === "unknown-table").length;
+		q.expandStarOf(scopes.root, synthetic);
+		q.expandStarOf(scopes.root, synthetic);
+		// Exactly ONE more than before: the first call computes + diagnoses + caches; the second is a
+		// pure read of that cache, not a second live (and second-diagnosing) call.
+		expect(q.diagnostics.filter((d) => d.kind === "unknown-table").length).toBe(before + 1);
+	});
 });
