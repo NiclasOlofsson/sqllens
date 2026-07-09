@@ -11,224 +11,224 @@
 			{
 				"kind": "sql",
 				"start": 34,
-				"end": 128
+				"end": 121
 			}
 		],
-		"placeholder": "                                  \r\n\r\nselect\r\n    customer_id,\r\n    count(*) as order_count\r\nfrom orders\r\ngroup by customer_id\r\n"
+		"placeholder": "                                  \n\nselect\n    customer_id,\n    count(*) as order_count\nfrom orders\ngroup by customer_id\n"
 	},
 	"fixture:02_ref_from.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 64
+				"end": 60
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 64,
-				"end": 87,
+				"start": 60,
+				"end": 83,
 				"text": "{{ ref('stg_orders') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 87,
-				"end": 114
+				"start": 83,
+				"end": 108
 			}
 		],
-		"placeholder": "select\r\n    o.order_id,\r\n    o.customer_id,\r\n    o.amount\r\nfrom j0jjjjjjjjjjjjjjjjjjjjj as o\r\nwhere o.amount > 0\r\n"
+		"placeholder": "select\n    o.order_id,\n    o.customer_id,\n    o.amount\nfrom j0jjjjjjjjjjjjjjjjjjjjj as o\nwhere o.amount > 0\n"
 	},
 	"fixture:03_source_from.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 38
+				"end": 35
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 38,
-				"end": 67,
+				"start": 35,
+				"end": 64,
 				"text": "{{ source('raw', 'events') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 67,
-				"end": 103
+				"start": 64,
+				"end": 98
 			}
 		],
-		"placeholder": "select\r\n    id,\r\n    created_at\r\nfrom j0jjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nwhere created_at >= '2020-01-01'\r\n"
+		"placeholder": "select\n    id,\n    created_at\nfrom j0jjjjjjjjjjjjjjjjjjjjjjjjjjj\nwhere created_at >= '2020-01-01'\n"
 	},
 	"fixture:04_var_value.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 36
+				"end": 34
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 36,
-				"end": 56,
+				"start": 34,
+				"end": 54,
 				"text": "{{ var('fx_rate') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 56,
-				"end": 101
+				"start": 54,
+				"end": 97
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 101,
-				"end": 120,
+				"start": 97,
+				"end": 116,
 				"text": "{{ var(\"region\") }}"
 			},
 			{
 				"kind": "sql",
-				"start": 120,
-				"end": 123
+				"start": 116,
+				"end": 118
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount * j0jjjjjjjjjjjjjjjjjj as amount_eur\r\nfrom orders\r\nwhere region = 'j1jjjjjjjjjjjjjjjjj'\r\n"
+		"placeholder": "select\n    order_id,\n    amount * j0jjjjjjjjjjjjjjjjjj as amount_eur\nfrom orders\nwhere region = 'j1jjjjjjjjjjjjjjjjj'\n"
 	},
 	"fixture:05_multiline_tag.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 15
+				"end": 14
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 15,
-				"end": 57,
-				"text": "{{ source(\r\n    'raw',\r\n    'orders'\r\n) }}"
+				"start": 14,
+				"end": 53,
+				"text": "{{ source(\n    'raw',\n    'orders'\n) }}"
 			},
 			{
 				"kind": "sql",
-				"start": 57,
-				"end": 59
+				"start": 53,
+				"end": 54
 			}
 		],
-		"placeholder": "select *\r\nfrom j0jjjjjjjjj\n           \n             \n    \r\n"
+		"placeholder": "select *\nfrom j0jjjjjjjj\n          \n            \n    \n"
 	},
 	"fixture:06_whitespace_control.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 12
+				"end": 11
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 12,
-				"end": 26,
+				"start": 11,
+				"end": 25,
 				"text": "{{- ' id ' -}}"
 			},
 			{
 				"kind": "sql",
-				"start": 26,
-				"end": 44
+				"start": 25,
+				"end": 41
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 44,
-				"end": 59,
+				"start": 41,
+				"end": 56,
 				"text": "{%- if true -%}"
 			},
 			{
 				"kind": "sql",
-				"start": 59,
-				"end": 70
+				"start": 56,
+				"end": 67
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 70,
-				"end": 83,
+				"start": 67,
+				"end": 80,
 				"text": "{%- endif -%}"
 			},
 			{
 				"kind": "sql",
-				"start": 83,
-				"end": 85
+				"start": 80,
+				"end": 81
 			}
 		],
-		"placeholder": "select\r\n    j0jjjjjjjjjjjj,\r\n    name\r\nfrom                 customers              \r\n"
+		"placeholder": "select\n    j0jjjjjjjjjjjj,\n    name\nfrom                 customers              \n"
 	},
 	"fixture:07_raw_block.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 12
+				"end": 11
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 12,
-				"end": 21,
+				"start": 11,
+				"end": 20,
 				"text": "{% raw %}"
 			},
 			{
 				"kind": "sql",
-				"start": 21,
-				"end": 58
+				"start": 20,
+				"end": 57
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 58,
-				"end": 70,
+				"start": 57,
+				"end": 69,
 				"text": "{% endraw %}"
 			},
 			{
 				"kind": "sql",
-				"start": 70,
-				"end": 109
+				"start": 69,
+				"end": 105
 			}
 		],
-		"placeholder": "select\r\n             {{ this_is_literal }} {% not_a_tag %}             as literal_col,\r\n    id\r\nfrom things\r\n"
+		"placeholder": "select\n             {{ this_is_literal }} {% not_a_tag %}             as literal_col,\n    id\nfrom things\n"
 	},
 	"fixture:08_nested_call.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 12
+				"end": 11
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 12,
-				"end": 57,
+				"start": 11,
+				"end": 56,
 				"text": "{{ dbt_utils.dateadd('day', 1, order_date) }}"
 			},
 			{
 				"kind": "sql",
-				"start": 57,
-				"end": 76
+				"start": 56,
+				"end": 74
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 76,
-				"end": 112,
+				"start": 74,
+				"end": 110,
 				"text": "{{ pkg.macro(a, nested(b), 'lit') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 112,
-				"end": 139
+				"start": 110,
+				"end": 135
 			}
 		],
-		"placeholder": "select\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as next_day,\r\n    j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as computed\r\nfrom orders\r\n"
+		"placeholder": "select\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as next_day,\n    j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as computed\nfrom orders\n"
 	},
 	"fixture:09_comment.sql": {
 		"segments": [
@@ -242,165 +242,165 @@
 			{
 				"kind": "sql",
 				"start": 54,
-				"end": 143
+				"end": 137
 			}
 		],
-		"placeholder": "                                                      \r\nselect\r\n    customer_id,\r\n    sum(amount) as total\r\nfrom orders\r\ngroup by customer_id\r\n"
+		"placeholder": "                                                      \nselect\n    customer_id,\n    sum(amount) as total\nfrom orders\ngroup by customer_id\n"
 	},
 	"fixture:10_if_block.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 48
+				"end": 44
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 48,
-				"end": 73,
+				"start": 44,
+				"end": 69,
 				"text": "{% if is_incremental() %}"
 			},
 			{
 				"kind": "sql",
-				"start": 73,
-				"end": 123
+				"start": 69,
+				"end": 118
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 123,
-				"end": 133,
+				"start": 118,
+				"end": 128,
 				"text": "{{ this }}"
 			},
 			{
 				"kind": "sql",
-				"start": 133,
-				"end": 136
+				"start": 128,
+				"end": 130
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 136,
-				"end": 147,
+				"start": 130,
+				"end": 141,
 				"text": "{% endif %}"
 			},
 			{
 				"kind": "sql",
-				"start": 147,
-				"end": 149
+				"start": 141,
+				"end": 142
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount\r\nfrom orders\r\n                         \r\nwhere updated_at > (select max(updated_at) from j0jjjjjjjj)\r\n           \r\n"
+		"placeholder": "select\n    order_id,\n    amount\nfrom orders\n                         \nwhere updated_at > (select max(updated_at) from j0jjjjjjjj)\n           \n"
 	},
 	"fixture:11_for_block.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 20
+				"end": 18
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 20,
-				"end": 50,
+				"start": 18,
+				"end": 48,
 				"text": "{% for c in ['a', 'b', 'c'] %}"
 			},
 			{
 				"kind": "sql",
-				"start": 50,
-				"end": 80
+				"start": 48,
+				"end": 77
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 80,
-				"end": 87,
+				"start": 77,
+				"end": 84,
 				"text": "{{ c }}"
 			},
 			{
 				"kind": "sql",
-				"start": 87,
-				"end": 115
+				"start": 84,
+				"end": 112
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 115,
-				"end": 122,
+				"start": 112,
+				"end": 119,
 				"text": "{{ c }}"
 			},
 			{
 				"kind": "sql",
-				"start": 122,
-				"end": 128
+				"start": 119,
+				"end": 124
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 128,
-				"end": 140,
+				"start": 124,
+				"end": 136,
 				"text": "{% endfor %}"
 			},
 			{
 				"kind": "sql",
-				"start": 140,
-				"end": 168
+				"start": 136,
+				"end": 161
 			}
 		],
-		"placeholder": "select\r\n    id\r\n                                  \r\n    , sum(case when kind = 'j0jjjjj' then 1 else 0 end) as cnt_j1jjjjj\r\n                \r\nfrom events\r\ngroup by id\r\n"
+		"placeholder": "select\n    id\n                                  \n    , sum(case when kind = 'j0jjjjj' then 1 else 0 end) as cnt_j1jjjjj\n                \nfrom events\ngroup by id\n"
 	},
 	"fixture:12_broken_tag.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 30
+				"end": 28
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 30,
-				"end": 39,
-				"text": "{{ ref(\r\n"
+				"start": 28,
+				"end": 36,
+				"text": "{{ ref(\n"
 			}
 		],
-		"placeholder": "select\r\n    customer_id\r\nfrom j0jjjjjj\n"
+		"placeholder": "select\n    customer_id\nfrom j0jjjjj\n"
 	},
 	"fixture:13_dbt_utils_star.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 12
+				"end": 11
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 12,
-				"end": 56,
+				"start": 11,
+				"end": 55,
 				"text": "{{ dbt_utils.star(from=ref('stg_orders')) }}"
 			},
 			{
 				"kind": "sql",
-				"start": 56,
-				"end": 63
+				"start": 55,
+				"end": 61
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 63,
-				"end": 86,
+				"start": 61,
+				"end": 84,
 				"text": "{{ ref('stg_orders') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 86,
-				"end": 88
+				"start": 84,
+				"end": 85
 			}
 		],
-		"placeholder": "select\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\nfrom j1jjjjjjjjjjjjjjjjjjjjj\r\n"
+		"placeholder": "select\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\nfrom j1jjjjjjjjjjjjjjjjjjjjj\n"
 	},
 	"fixture:14_config_cte_model.sql": {
 		"segments": [
@@ -414,34 +414,34 @@
 			{
 				"kind": "sql",
 				"start": 63,
-				"end": 103
+				"end": 100
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 103,
-				"end": 126,
+				"start": 100,
+				"end": 123,
 				"text": "{{ ref('stg_orders') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 126,
-				"end": 168
+				"start": 123,
+				"end": 161
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 168,
-				"end": 200,
+				"start": 161,
+				"end": 193,
 				"text": "{{ source('raw', 'customers') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 200,
-				"end": 350
+				"start": 193,
+				"end": 333
 			}
 		],
-		"placeholder": "                                                               \r\n\r\nwith orders as (\r\n    select * from j0jjjjjjjjjjjjjjjjjjjjj\r\n),\r\n\r\ncustomers as (\r\n    select * from j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\r\n)\r\n\r\nselect\r\n    o.order_id,\r\n    c.customer_name,\r\n    o.amount\r\nfrom orders as o\r\nleft join customers as c\r\n    on o.customer_id = c.customer_id\r\n"
+		"placeholder": "                                                               \n\nwith orders as (\n    select * from j0jjjjjjjjjjjjjjjjjjjjj\n),\n\ncustomers as (\n    select * from j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjj\n)\n\nselect\n    o.order_id,\n    c.customer_name,\n    o.amount\nfrom orders as o\nleft join customers as c\n    on o.customer_id = c.customer_id\n"
 	},
 	"fixture:15_set_and_filter.sql": {
 		"segments": [
@@ -455,203 +455,203 @@
 			{
 				"kind": "sql",
 				"start": 44,
-				"end": 75
+				"end": 71
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 75,
-				"end": 122,
+				"start": 71,
+				"end": 118,
 				"text": "{{ dbt_utils.dateadd('day', 7, 'order_date') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 122,
-				"end": 171
+				"start": 118,
+				"end": 165
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 171,
-				"end": 194,
+				"start": 165,
+				"end": 188,
 				"text": "{{ ref('stg_orders') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 194,
-				"end": 211
+				"start": 188,
+				"end": 204
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 211,
-				"end": 234,
+				"start": 204,
+				"end": 227,
 				"text": "{{ var('min_amount') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 234,
-				"end": 236
+				"start": 227,
+				"end": 228
 			}
 		],
-		"placeholder": "                                            \r\n\r\nselect\r\n    order_id,\r\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as due_date,\r\n    upper(status) as status\r\nfrom j1jjjjjjjjjjjjjjjjjjjjj\r\nwhere amount > j2jjjjjjjjjjjjjjjjjjjjj\r\n"
+		"placeholder": "                                            \n\nselect\n    order_id,\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as due_date,\n    upper(status) as status\nfrom j1jjjjjjjjjjjjjjjjjjjjj\nwhere amount > j2jjjjjjjjjjjjjjjjjjjjj\n"
 	},
 	"fixture:16_if_else_where.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 53
+				"end": 49
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 53,
-				"end": 76,
+				"start": 49,
+				"end": 72,
 				"text": "{{ ref('stg_orders') }}"
 			},
 			{
 				"kind": "sql",
-				"start": 76,
-				"end": 78
+				"start": 72,
+				"end": 73
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 78,
-				"end": 108,
+				"start": 73,
+				"end": 103,
 				"text": "{% if target.name == 'prod' %}"
 			},
 			{
 				"kind": "sql",
-				"start": 108,
-				"end": 137
+				"start": 103,
+				"end": 130
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 137,
-				"end": 147,
+				"start": 130,
+				"end": 140,
 				"text": "{% else %}"
 			},
 			{
 				"kind": "sql",
-				"start": 147,
-				"end": 178
+				"start": 140,
+				"end": 169
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 178,
-				"end": 189,
+				"start": 169,
+				"end": 180,
 				"text": "{% endif %}"
 			},
 			{
 				"kind": "sql",
-				"start": 189,
-				"end": 191
+				"start": 180,
+				"end": 181
 			}
 		],
-		"placeholder": "select\r\n    order_id,\r\n    amount,\r\n    status\r\nfrom j0jjjjjjjjjjjjjjjjjjjjj\r\n                              \r\nwhere status = 'complete'\r\n          \r\nwhere status <> 'cancelled'\r\n           \r\n"
+		"placeholder": "select\n    order_id,\n    amount,\n    status\nfrom j0jjjjjjjjjjjjjjjjjjjjj\n                              \nwhere status = 'complete'\n          \nwhere status <> 'cancelled'\n           \n"
 	},
 	"fixture:17_for_select_list.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 12
+				"end": 11
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 12,
-				"end": 34,
+				"start": 11,
+				"end": 33,
 				"text": "{% for c in columns %}"
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 34,
-				"end": 41,
+				"start": 33,
+				"end": 40,
 				"text": "{{ c }}"
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 41,
-				"end": 63,
+				"start": 40,
+				"end": 62,
 				"text": "{% if not loop.last %}"
 			},
 			{
 				"kind": "sql",
-				"start": 63,
-				"end": 65
+				"start": 62,
+				"end": 64
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 65,
-				"end": 76,
+				"start": 64,
+				"end": 75,
 				"text": "{% endif %}"
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 76,
-				"end": 88,
+				"start": 75,
+				"end": 87,
 				"text": "{% endfor %}"
 			},
 			{
 				"kind": "sql",
-				"start": 88,
-				"end": 103
+				"start": 87,
+				"end": 100
 			}
 		],
-		"placeholder": "select\r\n                          j0jjjjj                                               \r\nfrom events\r\n"
+		"placeholder": "select\n                          j0jjjjj                                               \nfrom events\n"
 	},
 	"fixture:18_multiline_ref.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 15
+				"end": 14
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 15,
-				"end": 49,
-				"text": "{{ ref(\r\n    'dim_customers'\r\n) }}"
+				"start": 14,
+				"end": 46,
+				"text": "{{ ref(\n    'dim_customers'\n) }}"
 			},
 			{
 				"kind": "sql",
-				"start": 49,
-				"end": 51
+				"start": 46,
+				"end": 47
 			}
 		],
-		"placeholder": "select *\r\nfrom j0jjjjjj\n                    \n    \r\n"
+		"placeholder": "select *\nfrom j0jjjjj\n                   \n    \n"
 	},
 	"fixture:19_macro_from.sql": {
 		"segments": [
 			{
 				"kind": "sql",
 				"start": 0,
-				"end": 36
+				"end": 33
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 36,
-				"end": 52,
+				"start": 33,
+				"end": 49,
 				"text": "{{ my_macro() }}"
 			},
 			{
 				"kind": "sql",
-				"start": 52,
-				"end": 59
+				"start": 49,
+				"end": 55
 			}
 		],
-		"placeholder": "select\r\n    m.id,\r\n    m.name\r\nfrom j0jjjjjjjjjjjjjj as m\r\n"
+		"placeholder": "select\n    m.id,\n    m.name\nfrom j0jjjjjjjjjjjjjj as m\n"
 	},
 	"fixture:20_set_and_macro_block.sql": {
 		"segments": [
@@ -665,46 +665,46 @@
 			{
 				"kind": "sql",
 				"start": 44,
-				"end": 48
+				"end": 46
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 48,
-				"end": 73,
+				"start": 46,
+				"end": 71,
 				"text": "{% macro to_cents(col) %}"
 			},
 			{
 				"kind": "sql",
-				"start": 73,
-				"end": 79
+				"start": 71,
+				"end": 76
 			},
 			{
 				"kind": "tag",
 				"tagKind": "expr",
-				"start": 79,
-				"end": 88,
+				"start": 76,
+				"end": 85,
 				"text": "{{ col }}"
 			},
 			{
 				"kind": "sql",
-				"start": 88,
-				"end": 96
+				"start": 85,
+				"end": 92
 			},
 			{
 				"kind": "tag",
 				"tagKind": "stmt",
-				"start": 96,
-				"end": 110,
+				"start": 92,
+				"end": 106,
 				"text": "{% endmacro %}"
 			},
 			{
 				"kind": "sql",
-				"start": 110,
-				"end": 180
+				"start": 106,
+				"end": 169
 			}
 		],
-		"placeholder": "                                            \r\n\r\n                         \r\n    j0jjjjjjj * 100\r\n              \r\n\r\nselect\r\n    order_id,\r\n    amount\r\nfrom orders\r\nwhere amount > 0\r\n"
+		"placeholder": "                                            \n\n                         \n    j0jjjjjjj * 100\n              \n\nselect\n    order_id,\n    amount\nfrom orders\nwhere amount > 0\n"
 	},
 	"syn:multiline-expr-macro": {
 		"segments": [

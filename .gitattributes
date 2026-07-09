@@ -3,3 +3,13 @@
 # (CRLF on Windows, LF on macOS/Linux). This is independent of each developer's
 # core.autocrlf setting, so checkouts are deterministic.
 * text=auto
+
+# Exception: the minijinja segmenter golden gate (tests/minijinja.segment-golden.test.ts) locks
+# segment()'s exact output byte-for-byte, and segment()'s own contract is to PRESERVE whatever
+# newline convention its input uses — so the platform's native-EOL checkout above makes these
+# fixtures (and the golden values recorded from them) genuinely different strings on Windows vs
+# Linux/macOS, and the golden comparison fails on whichever platform didn't generate it. Pinned to
+# LF unconditionally so the checked-out bytes — and therefore segment()'s output — are identical on
+# every platform. Not a workaround: this is what a byte-exact golden test requires from its input.
+tests/fixtures/minijinja/*.sql text eol=lf
+tests/golden/minijinja-segment.golden.json text eol=lf
