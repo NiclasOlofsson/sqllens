@@ -1,28 +1,37 @@
 # sqllens
 
 A TypeScript SQL parser and static analyzer. It parses SQL into a tree, lowers it
-to a dialect-neutral IR, and runs a semantic layer over that IR: name resolution
-(scope), schema-fed qualification, type inference, and column lineage. Give it a
+to a dialect-neutral intermediate representation (IR), and runs a semantic layer
+over that IR: name resolution (scope), schema-fed qualification, type inference,
+and column lineage. Give it a
 query and it tells you the query's sources, its output columns, their types, and
 where each column comes from. The parsers are generated TypeScript on the
 [antlr4ng](https://github.com/mike-lischke/antlr4ng) runtime.
 
 The front end is error-tolerant and token-first, so the same library powers
-editor tooling — an LSP and a SQL debugger — over incomplete, mid-edit text. See
+editor tooling — an LSP (Language Server Protocol) server and a SQL debugger —
+over incomplete, mid-edit text. See
 [Editor / language tooling](#editor--language-tooling).
 
 ## Dialects
 
-| Dialect | Parse + lower | Semantic layer | Notes |
-|---|---|---|---|
-| Databricks (Spark SQL) | yes | yes | grammar forked from apache/spark |
-| T-SQL | yes | yes | grammar forked from grammars-v4 `sql/tsql` |
-| Snowflake | yes | yes | grammar forked from grammars-v4 `sql/snowflake` |
-| BigQuery (GoogleSQL) | yes | yes | grammar forked from `bytebase/parser` `googlesql/`; gated against ZetaSQL's `.test` corpus |
-| Redshift | yes | yes | grammar forked from Bytebase's Postgres-derived Redshift grammar (BSD-3) |
-| PostgreSQL | yes | yes | grammar forked from `bytebase/parser` `postgresql/` (BSD-3, PG18 keywords) |
-| DuckDB | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
-| Trino | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split; covers dbt-trino + dbt-athena |
+| Dialect | Derived dialects | Parse + lower | Semantic layer | Notes |
+|---|---|---|---|---|
+| Databricks (Spark SQL) | Apache Spark, AWS Glue | yes | yes | grammar forked from apache/spark |
+| T-SQL | SQL Server, Microsoft Fabric, Azure Synapse | yes | yes | grammar forked from grammars-v4 `sql/tsql` |
+| Snowflake | — | yes | yes | grammar forked from grammars-v4 `sql/snowflake` |
+| BigQuery (GoogleSQL) | — | yes | yes | grammar forked from `bytebase/parser` `googlesql/`; gated against ZetaSQL's `.test` corpus |
+| Redshift | — | yes | yes | grammar forked from Bytebase's Postgres-derived Redshift grammar (BSD-3) |
+| PostgreSQL | — | yes | yes | grammar forked from `bytebase/parser` `postgresql/` (BSD-3, PG18 keywords) |
+| DuckDB | — | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
+| Trino | Presto, Amazon Athena | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split |
+
+A **derived dialect** is an engine with no grammar of its own: its SQL surface is
+a subset of — or identical to — the primary dialect's, so the same grammar parses
+it. Microsoft Fabric runs a restricted subset of T-SQL; Amazon Athena's query
+engine *is* Trino; AWS Glue runs Spark. The set is corpus-gated, not inferred — an
+engine appears only where the conformance gate proves the coverage, so it is a
+floor, not a guess.
 
 The semantic layer is dialect-agnostic: it operates on the shared IR and runs
 unchanged on every dialect. Only the parse and lower stages are dialect-specific.
@@ -33,15 +42,55 @@ unchanged on every dialect. Only the parse and lower stages are dialect-specific
 parse → lower → resolveScopes → qualify → infer / lineage / symbols
 ```
 
-- **parse** — text → concrete syntax tree (CST), with a syntax-error count.
-- **lower** — CST → a dialect-neutral IR (`QueryExpr` / `SelectExpr` / `Expr` …);
-  also reports the statement kind (query / dml / ddl / …).
-- **resolveScopes** — a schema-free symbol table: visible sources, CTE
-  resolution, output columns.
-- **qualify** — with a schema: `*` expansion, unknown-table/column diagnostics,
-  column types.
-- **infer / lineage / symbols** — type inference, base-table lineage per output
-  column, and a kind×modifier symbol model.
+Each stage produces one value, and that value is what a specific editor feature
+reads from. Only the first two stages — **parse** and **lower** — are
+dialect-specific; everything after them is shared and runs unchanged across all
+eight dialects.
+
+**parse** turns SQL text into a *concrete syntax tree* (CST): the full parse tree,
+every token and grammar node exactly as written, nothing dropped or simplified. It
+also hands back the token stream and a syntax-error count. The CST is faithful but
+verbose and dialect-shaped, so nothing downstream reads it directly — it backs
+**syntax squiggles** (the underline under a parse error) and **semantic tokens**
+(dialect-aware highlighting).
+
+**lower** walks the CST into an *intermediate representation* (IR): a small,
+dialect-neutral tree of nodes such as `QueryExpr`, `SelectExpr`, and `Expr` that
+mean the same thing whether the SQL came from Snowflake or T-SQL. (In the API this
+value is the `ast` field — *abstract syntax tree*, the cleaned-up counterpart to
+the CST.) It also tags each statement with its kind: a query, **DML**
+(data-manipulation — `INSERT` / `UPDATE` / `DELETE`), or **DDL** (data-definition —
+`CREATE` / `ALTER` / `DROP`). lower never throws, so even half-typed, broken SQL
+still yields an IR the rest of the pipeline can run on.
+
+**resolveScopes** builds a symbol table over the IR with no schema required. For
+each query scope it works out the visible sources — tables, subqueries, and CTEs
+(a *common table expression* is the `WITH name AS (…)` temporary result set) —
+resolves names against them, and computes the query's output columns. Needing no
+catalog, the features it powers work on any file with zero configuration:
+**go-to-definition**, **find-references**, and **document highlight**.
+
+**qualify** is the first stage that takes a *schema* — the catalog of tables and
+their column types. With it, it expands `SELECT *` into the real column list,
+raises unknown-table and unknown-column diagnostics, and binds each column
+reference to the source it comes from, carrying the column's type. This is what
+turns on the schema-dependent **semantic squiggles** (an unknown column can only be
+flagged once the schema is known) and answers **`bindingOf`** — which source a
+given column resolves to.
+
+**infer** computes the type and nullability of every expression, from a bare
+column to `a + b`, `COALESCE(…)`, a `CASE`, or a function call. It powers **hover**
+(the type shown when you point at an expression) and **inlay hints** (inline type
+annotations).
+
+**lineage** traces each output column back to the base-table columns it derives
+from — through CTEs, subqueries, and joins — recording every hop on the way. It
+powers the **lineage panel** and **go-to-origin** (jump from an output column to
+the physical column it ultimately reads).
+
+**symbols** derives a `Sym` model: every named thing — source, column, CTE —
+classified by kind and modifier. It backs the editor **outline / document
+symbols** list and **code-lens** annotations.
 
 ## Status
 
@@ -56,24 +105,25 @@ exported as lower-level building blocks. The editor-facing surface — `tokenize
 
 `dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`.
 
-Those eight grammars serve more dbt adapters than that, because several adapters
-are SQL front ends over an engine already covered. `adapterDialect` resolves a
-profiles.yml `type:` value (or a dialect name) to the dialect that parses its
-SQL — so consumers don't re-derive the family knowledge:
+Those eight grammars cover more than eight engines — the **derived dialects**
+above — because several engines share the SQL surface of one we already parse.
+`resolveDialect` maps an engine or product name (or a dialect name) to the dialect
+that parses its SQL, so consumers don't re-derive the family knowledge:
 
 ```ts
-import { adapterDialect, ADAPTER_DIALECTS } from "sqllens";
+import { resolveDialect, DERIVED_DIALECTS } from "sqllens";
 
-adapterDialect("athena");    // "trino"      — Athena engine v3 executes on Trino
-adapterDialect("glue");      // "databricks" — AWS Glue runs Spark; Databricks SQL = Spark SQL
-adapterDialect("fabric");    // "tsql"       — same for "synapse" and "sqlserver"
-adapterDialect("presto");    // "trino"      — the pre-rename Trino adapter
-adapterDialect("oracle");    // undefined    — not served; never a guess
+resolveDialect("athena");    // "trino"      — Athena engine v3 executes on Trino
+resolveDialect("glue");      // "databricks" — AWS Glue runs Spark; Databricks SQL = Spark SQL
+resolveDialect("fabric");    // "tsql"       — same for "synapse" and "sqlserver"
+resolveDialect("presto");    // "trino"      — Trino's predecessor
+resolveDialect("oracle");    // undefined    — not served; never a guess
 ```
 
-The map is exact by contract: only adapters whose SQL surface the corpus gates
-genuinely represent are listed. The LSP's `.sqllens.json` accepts adapter types
-through the same map, so `{ "dialect": "athena" }` works in rules and `default`.
+The map is exact by contract: only engines whose SQL surface the corpus gates
+genuinely represent are listed. The LSP's `.sqllens.json` accepts these engine
+names through the same map, so `{ "dialect": "athena" }` works in rules and
+`default`.
 
 The surface is
 **layered** — each tier is a terminal value you can stop at — and **composable**:
@@ -133,8 +183,9 @@ that run on incomplete, mid-edit text — they never need a clean parse:
   caches the result, and answers `tokenAt` / `nodeAt`. An edit yields a new
   document; an O(log n) `LineIndex` maps positions ↔ offsets.
 - **`complete(doc, offset, schema?)`** — scope-aware completion (keywords,
-  columns, tables, functions) from an ATN candidate walk over the grammar (our
-  own, no third-party dependency).
+  columns, tables, functions) from an ATN (Augmented Transition Network — the
+  grammar's state-machine form) candidate walk over the grammar, our own, with no
+  third-party dependency.
 - **`signatureAt(doc, offset)`** — parameter hints from a curated per-dialect
   function-signature table; the long tail degrades to name + active-argument.
 - **`referencesAt(scopes, offset, schema?)`** — every occurrence (plus the
@@ -185,7 +236,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | Go to declaration | ◻️ not yet |
 | Go to type definition | ◻️ not yet |
 | Go to implementation | ◻️ not yet — name → its defining query (view / model); needs the project model |
-| Call hierarchy | ◻️ not yet — the CTE / dbt-model dependency graph |
+| Call hierarchy | ◻️ not yet — the CTE / view / model dependency graph |
 | Document link | ◻️ not yet |
 | Linked editing range | ◻️ not yet — live alias / name sync-edit |
 | Code action (quick fixes) | ◻️ next phase |

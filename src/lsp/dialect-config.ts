@@ -2,13 +2,13 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { minimatch } from "minimatch";
-import { Schema, adapterDialect, type Dialect, type SchemaMapping } from "../index.js";
+import { Schema, resolveDialect, type Dialect, type SchemaMapping } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // Dialect resolution: a document's dialect is configured, never guessed. Reads
 // <root>/.sqllens.json — ordered glob rules, first match wins, else `default`.
-// A rule's `dialect` value is resolved through the library's adapter map, so it
-// accepts a dialect name OR a dbt adapter type (`athena` → trino, `fabric` →
+// A rule's `dialect` value is resolved through the library's derived-dialect map,
+// so it accepts a dialect name OR an engine name (`athena` → trino, `fabric` →
 // tsql, …). An optional `schema` key points at a JSON catalog (a SchemaMapping)
 // used by the semantic-diagnostics and hover tiers. A missing/malformed config
 // falls back to the "databricks" default and records a warning (surfaced over
@@ -50,7 +50,7 @@ export function loadDialectConfig(rootDir: string): DialectConfig {
 				schema?: string;
 			};
 			for (const r of parsed.dialects ?? []) {
-				const dialect = adapterDialect(r.dialect);
+				const dialect = resolveDialect(r.dialect);
 				if (dialect === undefined) {
 					warnings.push(
 						`Unknown dialect "${r.dialect}" in .sqllens.json rule for "${r.files}"; rule ignored.`,
@@ -60,7 +60,7 @@ export function loadDialectConfig(rootDir: string): DialectConfig {
 				rules.push({ files: r.files, dialect });
 			}
 			if (parsed.default !== undefined) {
-				const dialect = adapterDialect(parsed.default);
+				const dialect = resolveDialect(parsed.default);
 				if (dialect !== undefined) fallback = dialect;
 				else warnings.push(`Unknown default dialect "${parsed.default}" in .sqllens.json; using databricks.`);
 			}

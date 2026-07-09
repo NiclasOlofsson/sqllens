@@ -110,8 +110,8 @@ describe("loadDialectConfig", () => {
 		rmSync(eight, { recursive: true, force: true });
 	});
 
-	it("a dbt adapter type resolves through the adapter map (athena → trino, fabric → tsql)", () => {
-		const ad = mkdtempSync(join(tmpdir(), "sqllens-adapter-"));
+	it("an engine name resolves through the derived-dialect map (athena → trino, fabric → tsql)", () => {
+		const ad = mkdtempSync(join(tmpdir(), "sqllens-derived-"));
 		writeFileSync(
 			join(ad, ".sqllens.json"),
 			JSON.stringify({

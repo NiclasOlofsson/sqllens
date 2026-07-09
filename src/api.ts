@@ -319,9 +319,9 @@ export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
 // lazy resolver whose prime() bumps a version to invalidate SqlDocument.analyze's memo) both
 // satisfy `SchemaProvider`; every analysis entry point accepts the interface.
 export { CallbackSchema, type SchemaProvider, type TableResolver } from "./qualify/schema-provider.js";
-// The dbt-adapter → dialect map: resolve a profiles.yml `type:` value (athena, glue, fabric,
-// spark, …) to the dialect that parses its SQL, so consumers don't re-derive the family knowledge.
-export { ADAPTER_DIALECTS, adapterDialect } from "./adapters.js";
+// The derived-dialect → dialect map: resolve an engine name (athena, glue, fabric, spark, …) to the
+// dialect that parses its SQL, so consumers don't re-derive the family knowledge.
+export { DERIVED_DIALECTS, resolveDialect } from "./derived-dialects.js";
 // The dialect-true identifier fold — the identity key for name comparison (unquote + case-fold per
 // the dialect's documented rules) and its display twin (unquote only). Exported so an embedding
 // consumer comparing names against IR/scope output folds the same way the pipeline does.
