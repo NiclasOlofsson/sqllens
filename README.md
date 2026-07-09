@@ -94,8 +94,11 @@ symbols** list and **code-lens** annotations.
 
 ## Status
 
-Pre-release, and not yet published to npm. The library is consumed as TypeScript
-(no build emit yet — packaging is a later step). The public API (`src/index.ts`)
+Published to npm as [`sqllens`](https://www.npmjs.com/package/sqllens); still
+0.x, so the public API is settling and can change between minor versions (this
+release renamed `adapterDialect` → `resolveDialect`). `npm run build` compiles the
+library with `tsc` to JavaScript + `.d.ts` in `dist/`, which is what the package
+ships; in-repo it is consumed directly as TypeScript. The public API (`src/index.ts`)
 is uniform across all eight dialects: `parse` and `analyze` take the dialect as a
 parameter, and every per-dialect `parse*` / `lower` plus the shared passes stay
 exported as lower-level building blocks. The editor-facing surface — `tokenize`,

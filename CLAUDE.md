@@ -115,10 +115,11 @@ not Jinja2). See [docs/minijinja-front-end.md](docs/minijinja-front-end.md).
   `npx antlr-ng -D language=TypeScript -o src/generated/<dialect> grammars/<dialect>/*.g4`
   (antlr-ng defaults to a Java target, so `-D language=TypeScript` is required).
   Generated `.ts` uses `.js` ESM imports and runs under `moduleResolution: Bundler`.
-- **Build / typecheck compiler:** the TS7 native compiler (`tsgo`,
-  `@typescript/native-preview`); `npm run typecheck` runs it. `tsc` stays installed
-  as the fallback. Revisit at packaging time: validate `.d.ts` emit from `tsgo`
-  before shipping, and fall back to `tsc` for the declaration step if it differs.
+- **Typecheck vs. build compiler:** `npm run typecheck` uses the TS7 native
+  compiler (`tsgo`, `@typescript/native-preview`, `noEmit`). Emit is a separate
+  step: `npm run build` (`gen:all` + `tsc -p tsconfig.build.json`) shipped the
+  published package's JS + `.d.ts` to `dist/`, and it uses **`tsc`**, not `tsgo`,
+  for the declaration output. `prepublishOnly` runs the build.
 - **Validation:** a conformance harness parses per-dialect known-good corpora and
   requires the generated parser to parse them with **zero syntax errors**. No Python
   and no external oracle in the dev/CI loop.
@@ -154,8 +155,9 @@ npm run format                       # prettier --write . (format:check for a CI
 The suite is split into two tiers by path. `npm test` (tier 1) is the inner loop and
 excludes `tests/corpus/**`. The corpus conformance gates live in `tests/corpus/` and
 run as `npm run test:corpus` (tier 2, `vitest.corpus.config.ts`); each corpus file is
-parsed once, at the highest pipeline level. There is no `build` script (the library is
-consumed as TypeScript; emit is a packaging-phase question). `src/generated/` is
+parsed once, at the highest pipeline level. `npm run build` (`gen:all` + `tsc -p
+tsconfig.build.json`) emits the published package to `dist/` (JS + `.d.ts`); in-repo
+the library is consumed directly as TypeScript. `src/generated/` is
 gitignored: run `npm run gen -- <dialect>` for each dialect after a fresh clone or any
 `.g4` edit, or every test fails at import.
 
