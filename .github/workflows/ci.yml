@@ -29,9 +29,11 @@ jobs:
       #
       # Excluded, tracked pre-existing gaps (not packaging-related, found by
       # this being the first-ever non-Windows run of the suite):
-      #  - bigquery.analyzer-schema / organize-corpus: hard-require
-      #    SQL_CORPUS_DIR instead of skipIf-ing its absence like the rest of
-      #    the corpus-gated tests do.
+      #  - bigquery.analyzer-schema / tsql.adventureworks / organize-corpus:
+      #    hard-require SQL_CORPUS_DIR instead of skipIf-ing its absence like
+      #    the rest of the corpus-gated tests do (verified exhaustively via
+      #    `grep -rl helpers/corpus tests tools`, outside tests/corpus/ —
+      #    these three are the only ones).
       #  - minijinja.segment-golden: golden expected-values are multi-line
       #    template literals with physical CRLF embedded in the .ts source,
       #    so `.gitattributes`' platform-native checkout (CRLF on Windows, LF
@@ -39,5 +41,6 @@ jobs:
       - run: >-
           npx vitest run
           --exclude tests/bigquery.analyzer-schema.test.ts
+          --exclude tests/tsql.adventureworks.test.ts
           --exclude tools/organize-corpus.test.ts
           --exclude tests/minijinja.segment-golden.test.ts
