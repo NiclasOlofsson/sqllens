@@ -27,20 +27,14 @@ jobs:
       # SQL_CORPUS_DIR, a proprietary corpus that isn't published — the gate
       # self-skips without it, so it isn't run here.
       #
-      # Excluded, tracked pre-existing gaps (not packaging-related, found by
-      # this being the first-ever non-Windows run of the suite):
-      #  - bigquery.analyzer-schema / tsql.adventureworks / organize-corpus:
-      #    hard-require SQL_CORPUS_DIR instead of skipIf-ing its absence like
-      #    the rest of the corpus-gated tests do (verified exhaustively via
-      #    `grep -rl helpers/corpus tests tools`, outside tests/corpus/ —
-      #    these three are the only ones).
-      #  - minijinja.segment-golden: golden expected-values are multi-line
-      #    template literals with physical CRLF embedded in the .ts source,
-      #    so `.gitattributes`' platform-native checkout (CRLF on Windows, LF
-      #    on Linux) changes the golden string itself.
-      - run: >-
-          npx vitest run
-          --exclude tests/bigquery.analyzer-schema.test.ts
-          --exclude tests/tsql.adventureworks.test.ts
-          --exclude tools/organize-corpus.test.ts
-          --exclude tests/minijinja.segment-golden.test.ts
+      # No exclusions: the four tests that hard-failed here (first-ever
+      # non-Windows run of the suite) are fixed at the root, not worked
+      # around — bigquery.analyzer-schema / tsql.adventureworks relocated
+      # into tests/corpus/ (already tier-2-only by the existing vitest
+      # config); organize-corpus's corpus-path resolution made lazy so its
+      # own describe.skipIf(!ORGANIZE) actually protects it; the minijinja
+      # golden gate's fixtures pinned to `eol=lf` in .gitattributes so the
+      # checked-out bytes (and its byte-exact comparison) are platform-
+      # identical. Verified by running with SQL_CORPUS_DIR and .env both
+      # absent, matching this runner's environment exactly.
+      - run: npm test
