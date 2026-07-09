@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import { parse, resolveScopes, qualify, Schema, OPEN_PROVIDER } from "../src/index.js";
-import type { SelectExpr } from "../src/index.js";
+import type { Diagnostic, SelectExpr } from "../src/index.js";
 
 const schema = new Schema({
 	orders: { id: { type: "bigint", nullable: false }, amount: { type: "double", nullable: true } },
@@ -79,10 +79,11 @@ describe("Qualification.expandStarOf", () => {
 		expect(q.diagnostics.filter((d) => d.kind === "unknown-table").length).toBe(before);
 	});
 
-	test("expandStarOf memoizes even a projection qualify()'s own walk never visited", () => {
+	test("expandStarOf answers undefined for a projection qualify()'s own walk never visited — never computes live", () => {
 		// Every real star projection IS visited internally (qualify() must expand it to compute
-		// columnsOf), so this exercises the defensive fallback branch directly: a synthetic star
-		// projection, structurally valid but absent from the cache the internal walk populates.
+		// columnsOf), so a synthetic projection outside that walk has no cache entry. expandStarOf is
+		// a pure cache read (no live fallback), so this must answer undefined without diagnosing —
+		// and without throwing, even though `diagnostics` is frozen by the time any caller reaches it.
 		const ast = parse("select * from unknown_table", "databricks").ast;
 		const scopes = resolveScopes(ast, "databricks");
 		const q = qualify(scopes, schema);
@@ -93,11 +94,18 @@ describe("Qualification.expandStarOf", () => {
 			expr: { kind: "star", qualifier: undefined, cst: real.cst },
 			cst: real.cst,
 		};
-		const before = q.diagnostics.filter((d) => d.kind === "unknown-table").length;
-		q.expandStarOf(scopes.root, synthetic);
-		q.expandStarOf(scopes.root, synthetic);
-		// Exactly ONE more than before: the first call computes + diagnoses + caches; the second is a
-		// pure read of that cache, not a second live (and second-diagnosing) call.
-		expect(q.diagnostics.filter((d) => d.kind === "unknown-table").length).toBe(before + 1);
+		const before = q.diagnostics.length;
+		expect(q.expandStarOf(scopes.root, synthetic)).toBeUndefined();
+		expect(q.expandStarOf(scopes.root, synthetic)).toBeUndefined();
+		expect(q.diagnostics.length).toBe(before);
+	});
+
+	test("diagnostics is frozen once qualify() returns — a push throws instead of silently corrupting it", () => {
+		const ast = parse("select * from unknown_table", "databricks").ast;
+		const scopes = resolveScopes(ast, "databricks");
+		const q = qualify(scopes, schema);
+		expect(Object.isFrozen(q.diagnostics)).toBe(true);
+		expect(() => (q.diagnostics as Diagnostic[]).push({ kind: "unknown-table", message: "x", line: 1, column: 0, endLine: 1, endColumn: 1 })).toThrow(TypeError);
+		expect(Object.isFrozen(q.diagnostics[0])).toBe(true);
 	});
 });

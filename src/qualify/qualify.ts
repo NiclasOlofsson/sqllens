@@ -73,11 +73,11 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 	const diagnostics: Diagnostic[] = [];
 	const resolved = new Map<Scope, string[] | "unknown">();
 	// Every star projection's RAW (pre-modifier) expansion, captured once during the eager walk below
-	// (`projectionColumns` already expands every star to compute `columnsOf`). `expandStarOf` reads
-	// from here instead of re-running `expandStarPairs` — that call pushes diagnostics as a side
-	// effect (e.g. an unknown-table miss), so a second live call for the same projection would
-	// double-diagnose. A cache miss (a projection this pass never visited) still falls back to a
-	// live call, so `expandStarOf` stays correct for a projection from outside this scope tree.
+	// (`projectionColumns` already expands every star to compute `columnsOf`). `expandStarOf` is a
+	// PURE read of this map — never a live `expandStarPairs` call — so it can never push a diagnostic
+	// after `qualify()` returns (diagnostics is frozen below) and never double-diagnoses a repeat call.
+	// A projection this pass never visited (outside the tree `qualify()` was built from) has no entry
+	// and `expandStarOf` answers `undefined` for it — never fabricated, same policy as the resolver.
 	const starPairs = new Map<Projection, { name: string; sourceKey: string }[] | undefined>();
 
 	// Post-order: a scope's columns (and their types) may depend on its CTE/subquery children. A pipe
@@ -93,6 +93,13 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 	// calls, emitting into the same diagnostics list. Never-wrong; curated-only. See check-calls.ts.
 	checkCalls(tree, schema, diagnostics);
 
+	// Finished being built: freeze the array itself (each Diagnostic is already frozen at its own
+	// construction site — columnDiag/unknownTable/callDiag). A later live call into `expandStarOf`
+	// can only ever read `diagnostics` from here on, never push into it — the exact mutation that
+	// caused the double-diagnosis bug this closure used to have is now a thrown TypeError, not a
+	// silent duplicate, if it were ever reintroduced.
+	Object.freeze(diagnostics);
+
 	return {
 		diagnostics,
 		columnsOf: (scope) => resolved.get(scope) ?? "unknown",
@@ -100,13 +107,7 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 		expandStarOf: (scope, projection) => {
 			if (!projection.isStar) return undefined;
 			const star = projection.expr.kind === "star" ? projection.expr : undefined;
-			if (!starPairs.has(projection)) {
-				// True memoization, not just a read of the internal walk's cache: a projection this pass
-				// never visited (e.g. handed in from outside the tree) still gets computed exactly once —
-				// the result is cached here too, so a second call for the SAME projection is always a
-				// pure read, regardless of how the first call happened to be reached.
-				starPairs.set(projection, expandStarPairs(scope, schema, resolved, diagnostics, star?.qualifier));
-			}
+			// A pure cache read — never computes live. See the `starPairs` comment above.
 			const pairs = starPairs.get(projection);
 			if (pairs === undefined) return undefined;
 			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
@@ -517,9 +518,9 @@ function spanOf(cst: ParserRuleContext): { line: number; column: number; endLine
 }
 
 function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): Diagnostic {
-	return { kind, message, ...spanOf(ref.cst) };
+	return Object.freeze({ kind, message, ...spanOf(ref.cst) });
 }
 
 function unknownTable(name: string[], cst: ParserRuleContext): Diagnostic {
-	return { kind: "unknown-table", message: `Unknown table: ${name.join(".")}`, ...spanOf(cst) };
+	return Object.freeze({ kind: "unknown-table", message: `Unknown table: ${name.join(".")}`, ...spanOf(cst) });
 }

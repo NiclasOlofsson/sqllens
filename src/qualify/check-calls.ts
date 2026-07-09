@@ -362,12 +362,12 @@ function callDiag(kind: Diagnostic["kind"], cst: ParserRuleContext, message: str
 	const s = cst.start;
 	const e = cst.stop ?? cst.start;
 	const end = endPosition(e?.line ?? s?.line ?? 0, e?.column ?? 0, e?.text ?? "");
-	return {
+	return Object.freeze({
 		kind,
 		message,
 		line: s?.line ?? 0,
 		column: s?.column ?? 0,
 		endLine: end.endLine,
 		endColumn: end.endColumn,
-	};
+	});
 }
