@@ -205,10 +205,7 @@ describe("provider-seam contract — builtins under a shape-forcing provider", (
 		// Under the provider contract an EXPLICIT shape wins — the old SHAPE_EXCLUDED name list is
 		// gone. What protects `from {{ ref('x') }}` from a buggy forced shape is the positional slot
 		// guard (engine-side, non-overridable), and these pin exactly that.
-		for (const text of [
-			"select * from {{ ref('orders') }}",
-			"select * from {{ source('raw', 'events') }}",
-		]) {
+		for (const text of ["select * from {{ ref('orders') }}", "select * from {{ source('raw', 'events') }}"]) {
 			const forced = parseTemplated(text, DIALECT, shaped("statement"));
 			const plain = parseTemplated(text, DIALECT);
 			expect(
@@ -239,11 +236,9 @@ describe("provider-seam contract — builtins under a shape-forcing provider", (
 				return undefined;
 			}
 		}
-		parseTemplated(
-			"select {{ dbt_utils.star(ref('x'), quote=true) }} from {{ ref(model='orders') }}",
-			DIALECT,
-			{ provider: new Spy() },
-		);
+		parseTemplated("select {{ dbt_utils.star(ref('x'), quote=true) }} from {{ ref(model='orders') }}", DIALECT, {
+			provider: new Spy(),
+		});
 		const star = seen.find((c) => c.name === "star");
 		expect(star?.packageParts).toEqual(["dbt_utils"]);
 		expect(star?.args).toEqual([null]); // ref('x') is computed → null, never fabricated
@@ -262,7 +257,6 @@ describe("provider-seam contract — builtins under a shape-forcing provider", (
 // identifier fill stays.
 // ---------------------------------------------------------------------------
 describe("conjunct shape", () => {
-
 	it("after a complete ON expression: parses clean, fill is AND 1=1", () => {
 		const text = "select * from a join b on a.id = b.id\n  {{ isdel(col) }}\nunion all\nselect * from c";
 		const r = parseTemplated(text, "databricks", shaped("conjunct"));

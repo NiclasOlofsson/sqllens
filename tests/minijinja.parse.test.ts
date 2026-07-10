@@ -161,7 +161,8 @@ describe("parseTemplated — unified token stream", () => {
 // ---------------------------------------------------------------------------
 describe("TemplatedParseResult.placeholder — the SQL parser's actual input", () => {
 	it("length-/newline-preserving, byte-identical outside tags, no jinja delimiters", () => {
-		const text = "select a,\n  {{ ref('stg_orders') }}.b\nfrom {{ source('raw', 'orders') }}\n{% if x %}where a > 1{% endif %}";
+		const text =
+			"select a,\n  {{ ref('stg_orders') }}.b\nfrom {{ source('raw', 'orders') }}\n{% if x %}where a > 1{% endif %}";
 		const result = parseTemplated(text, "databricks");
 		const p = result.placeholder;
 

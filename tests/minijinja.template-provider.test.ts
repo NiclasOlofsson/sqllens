@@ -64,9 +64,9 @@ describe("DefaultTemplateProvider — builtin knowledge", () => {
 		for (const name of ["config", "docs", "print", "log", "return"]) {
 			expect(dp.expansion(call(name))?.shape).toBe("nothing");
 		}
-		expect(
-			dp.expansion(call("raise_compiler_error", ["x"], { packageParts: ["exceptions"] }))?.shape,
-		).toBe("nothing");
+		expect(dp.expansion(call("raise_compiler_error", ["x"], { packageParts: ["exceptions"] }))?.shape).toBe(
+			"nothing",
+		);
 	});
 
 	it("an unknown macro has NO expansion at all (the zero-knowledge floor)", () => {

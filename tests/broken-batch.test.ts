@@ -90,15 +90,12 @@ describe.each(DIALECTS)("broken-batch honesty — %s", (dialect) => {
 	// validly parsed content. Those dialects may over-report a broken single statement as a
 	// compound (over-report on broken input, never an under-report).
 	const RECOVERY_SPLIT = ["tsql", "redshift", "postgres", "duckdb"];
-	test.skipIf(RECOVERY_SPLIT.includes(dialect))(
-		"single broken statement is NOT a phantom batch",
-		() => {
-			const r = flagsOf("select ((( from");
-			expect(r.errors).toBeGreaterThan(0);
-			expect(r.statement).not.toBe("compound");
-			expect(r.unsupported).not.toContain("multi-statement");
-		},
-	);
+	test.skipIf(RECOVERY_SPLIT.includes(dialect))("single broken statement is NOT a phantom batch", () => {
+		const r = flagsOf("select ((( from");
+		expect(r.errors).toBeGreaterThan(0);
+		expect(r.statement).not.toBe("compound");
+		expect(r.unsupported).not.toContain("multi-statement");
+	});
 
 	test("wholly-unparsed single statement flags broken, not empty, not compound", () => {
 		const r = flagsOf("group by");

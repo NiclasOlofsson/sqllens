@@ -192,7 +192,7 @@ describe("jinja segmenter — placeholder fill (no-output-aware default)", () =>
 		const text = "select {{ x }} from t";
 		const { placeholder } = segment(text, DP);
 		// Ordinal-headed fill since the uniqueness change (2026-07-06).
-	expect(placeholder).toBe("select j0jjjjj from t");
+		expect(placeholder).toBe("select j0jjjjj from t");
 	});
 
 	it("a lone ref at document start fills SELECT 1 (the default provider knows ref is a relation)", () => {
@@ -231,7 +231,7 @@ describe("jinja segmenter — placeholder fill (no-output-aware default)", () =>
 	it("fills var()/ref() (value-producing) with `j` in value/relation slots", () => {
 		const varCase = segment("select {{ var('c') }} from t", DP);
 		// Ordinal-headed fills since the uniqueness change (2026-07-06).
-	expect(varCase.placeholder).toBe("select j0jjjjjjjjjjjj from t");
+		expect(varCase.placeholder).toBe("select j0jjjjjjjjjjjj from t");
 		const refCase = segment("select * from {{ ref('x') }}", DP);
 		expect(refCase.placeholder).toBe("select * from j0jjjjjjjjjjjj");
 	});

@@ -47,12 +47,7 @@ import {
 } from "vscode-languageserver-protocol/node";
 import { SEMANTIC_LEGEND } from "../src/lsp/features/semantic-tokens.js";
 import { startServer } from "../src/lsp/server.js";
-import {
-	SqlDocument,
-	CallbackSchema,
-	DefaultTemplateProvider,
-	type TableResolver,
-} from "../src/index.js";
+import { SqlDocument, CallbackSchema, DefaultTemplateProvider, type TableResolver } from "../src/index.js";
 
 // Diagnostic.message is typed `string | MarkupContent` in this version; coerce.
 const msg = (m: string | { value: string }): string => (typeof m === "string" ? m : m.value);

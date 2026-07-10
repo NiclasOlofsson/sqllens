@@ -105,7 +105,16 @@ describe("Qualification.expandStarOf", () => {
 		const scopes = resolveScopes(ast, "databricks");
 		const q = qualify(scopes, schema);
 		expect(Object.isFrozen(q.diagnostics)).toBe(true);
-		expect(() => (q.diagnostics as Diagnostic[]).push({ kind: "unknown-table", message: "x", line: 1, column: 0, endLine: 1, endColumn: 1 })).toThrow(TypeError);
+		expect(() =>
+			(q.diagnostics as Diagnostic[]).push({
+				kind: "unknown-table",
+				message: "x",
+				line: 1,
+				column: 0,
+				endLine: 1,
+				endColumn: 1,
+			}),
+		).toThrow(TypeError);
 		expect(Object.isFrozen(q.diagnostics[0])).toBe(true);
 	});
 });
