@@ -46,6 +46,8 @@ import { parseTrino } from "../src/trino/parse.js";
 import { statementCategories as trinoCategories } from "../src/trino/lower.js";
 import { parseSqlite } from "../src/sqlite/parse.js";
 import { statementCategories as sqliteCategories } from "../src/sqlite/lower.js";
+import { parseMysql } from "../src/mysql/parse.js";
+import { statementCategories as mysqlCategories } from "../src/mysql/lower.js";
 
 type Dialect =
 	| "databricks"
@@ -56,7 +58,8 @@ type Dialect =
 	| "postgres"
 	| "duckdb"
 	| "trino"
-	| "sqlite";
+	| "sqlite"
+	| "mysql";
 
 const PARSERS: Record<
 	Dialect,
@@ -71,6 +74,7 @@ const PARSERS: Record<
 	duckdb: { parse: parseDuckdb, categories: duckdbCategories },
 	trino: { parse: parseTrino, categories: trinoCategories },
 	sqlite: { parse: parseSqlite, categories: sqliteCategories },
+	mysql: { parse: parseMysql, categories: mysqlCategories },
 };
 
 /** The gate's bucket over the current parse: query | dml | ddl, or "unparsed" when the parser
@@ -115,6 +119,7 @@ const CORPORA: Corpus[] = [
 	{ rootRel: "trino/bytebase", dialect: "trino" },
 	{ rootRel: "sqlite/grammars-v4", dialect: "sqlite" },
 	{ rootRel: "sqlite/docs", dialect: "sqlite" },
+	{ rootRel: "mysql/grammars-v4", dialect: "mysql" },
 ];
 
 function sqlFiles(root: string): string[] {

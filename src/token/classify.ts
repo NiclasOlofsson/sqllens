@@ -110,9 +110,21 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
 	],
 
-	// MySQL (grammars-v4 mysql/Positive-Technologies): probed empty first (R4.6) — see the probe
-	// output before assuming a gap; overrides added below only where the probe/tests proved one.
-	mysql: [],
+	// MySQL (grammars-v4 mysql/Positive-Technologies): two corrections the R6.5 probe proved.
+	mysql: [
+		// SPEC_MYSQL_COMMENT (`/*! ... */`, the version-conditional executable comment,
+		// dev.mysql.com/doc/refman/8.4/en/comments.html) is a comment, but the default string rule grabs
+		// it first — its symbolic name contains "SQ" (from "MY-SQ-L"). Reclassify to comment.
+		{ role: "comment", pattern: /^SPEC_MYSQL_COMMENT$/ },
+		// FILESIZE_LITERAL (`10M` / `4G` = DEC_DIGIT+ ('K'|'M'|'G'|'T'), the tablespace/logfile size
+		// literal, dev.mysql.com/doc/refman/8.4/en/create-tablespace.html) is a numeric literal, but its
+		// symbolic name matches none of the default number substrings, so it falls through to "other".
+		{ role: "number", pattern: /^FILESIZE_LITERAL$/ },
+		// STRING_CHARSET_NAME (`_utf8` / `_binary`, the character-set introducer that always immediately
+		// precedes a STRING/HEX literal, dev.mysql.com/doc/refman/8.4/en/charset-introducer.html) is left
+		// as the default "string": it binds to and renders with the string constant it introduces, so no
+		// override is warranted. (Recorded here as the deliberate R6.5 decision, not an oversight.)
+	],
 
 	// SQLite (grammars-v4 SqliteLexer): two corrections to the defaults.
 	sqlite: [
