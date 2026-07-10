@@ -17,6 +17,10 @@ import type { TemplateProvider } from "../qualify/template-provider.js";
 import type { TagNode } from "../minijinja/tag-ast.js";
 import type { TemplateRegion, TemplateSymbol } from "../minijinja/regions.js";
 import type { TemplateVariant } from "../minijinja/variants.js";
+// Re-exported type-only so a consumer (src/document/document.ts) can reference TemplateVariant
+// without importing ../minijinja directly (the layering gate: document.ts imports no minijinja
+// module at all — only this neutral contract). Same type-only exception the file header documents.
+export type { TemplateVariant } from "../minijinja/variants.js";
 
 /** Options for a templated parse: the knowledge seam. The provider is a
  *  semantic-layer citizen (per-document lifecycle, prime()/version) — the

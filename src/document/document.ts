@@ -45,7 +45,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
-import type { TemplateEngine, TemplatedParseResult } from "../template/engine.js";
+import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
@@ -176,6 +176,22 @@ export interface DocumentAnalysis {
 	diagnostics: Diagnostic[];
 }
 
+/** One coherent arm realization of a templated document. Lazy: nothing parses until doc() or
+ *  text() is first touched. A variant IS a document — everything a plain SqlDocument exposes
+ *  (ast/tokens/scopes/templated/analyze/cursor members) is available per arm through doc(). */
+export interface DocumentVariant {
+	/** The arm this variant activates (undefined = variant 0, all defaults). Mirrors
+	 *  TemplateVariant.active, including the synthetic-empty marker from Task 1. */
+	readonly active?: TemplateVariant["active"];
+	/** The realized text: original text with inactive arms whitespace-blanked —
+	 *  length- and newline-preserving (spans stay document-true). Memoized. */
+	text(): string;
+	/** The arm's own SqlDocument: same dialect, SAME engine, SAME provider, SHARING the parent's
+	 *  content-addressed cell-cache family (an arm whose text an edit didn't change is a cache hit).
+	 *  Memoized per variant. */
+	doc(): SqlDocument;
+}
+
 export class SqlDocument {
 	readonly uri?: string;
 	readonly version: number;
@@ -226,6 +242,9 @@ export class SqlDocument {
 	 *  building through the same door its parent used. Undefined on a plain document. */
 	private readonly _templating?: TemplateEngine;
 	private readonly _provider?: TemplateProvider;
+	/** Memo box for the `variants` getter (frozen instance, mutable memo — the `_analysisCache`
+	 *  precedent: the box reference is frozen with the instance, but its `.value` stays settable). */
+	private readonly _variantsMemo: { value?: readonly DocumentVariant[] } = {};
 
 	private constructor(
 		text: string,
@@ -494,6 +513,49 @@ export class SqlDocument {
 		const cell = this.cellAt(offset);
 		if (!cell) return lineageAtScopes(this.scopes, offset, schema);
 		return lineageAtScopes(cell.scopes, offset - cell.span.start, schema);
+	}
+
+	/** The coherent per-arm variants of a templated document (engine.variants() consumed). `[]` on
+	 *  plain documents and on templated documents with no control-flow regions. Lazy at every level:
+	 *  enumeration on first read, realization+parse per variant on first doc()/text(). Memoized on
+	 *  the instance (frozen instance, mutable memo box — see `_variantsMemo`). */
+	get variants(): readonly DocumentVariant[] {
+		return (this._variantsMemo.value ??= this.buildVariants());
+	}
+
+	/** Compute (no memo) the variant list: absent `variants` hook, a plain document, or a templated
+	 *  document with no control-flow regions all answer `[]`. Otherwise consults the engine, wrapped
+	 *  defensively (degrade to `[]`, never throw — engine.variants may throw only on engine bugs, the
+	 *  same posture parseTemplated's own catch uses). */
+	private buildVariants(): readonly DocumentVariant[] {
+		if (!this._templating?.variants || !this.templated || this.templated.regions.length === 0) return [];
+		let raw: TemplateVariant[];
+		try {
+			raw = this._templating.variants(this.text, this.dialect);
+		} catch {
+			return [];
+		}
+		return raw.map((v) => this.wrapVariant(v));
+	}
+
+	/** Wrap one engine-produced TemplateVariant as a DocumentVariant: `text()` delegates straight to
+	 *  the engine variant's own memoized realization (never re-realized here); `doc()` builds — once,
+	 *  memoized — the arm's own SqlDocument through the PRIVATE constructor, carrying this document's
+	 *  `_cellCache` (the exact carry `withText` uses, NOT the public `create`'s fresh cache) plus the
+	 *  same templating engine + provider, so an unchanged arm across an edit is a cache hit. */
+	private wrapVariant(v: TemplateVariant): DocumentVariant {
+		let doc: SqlDocument | undefined;
+		return {
+			active: v.active,
+			text: () => v.text(),
+			doc: () =>
+				(doc ??= new SqlDocument(
+					v.text(),
+					this.dialect,
+					{ templating: this._templating, provider: this._provider },
+					this._cellCache,
+				)),
+		};
 	}
 
 	/** The schema-dependent tiers, over the cached per-cell scopes/ast (no re-parse). Memoized by

@@ -63,6 +63,7 @@ export {
 	type DocumentAnalysis,
 	type StatementCell,
 	type StatementCellSpan,
+	type DocumentVariant,
 } from "./api.js";
 
 // SqlSession — the verb-shaped facade over one SqlDocument (offset in, answer out; pure delegation).
