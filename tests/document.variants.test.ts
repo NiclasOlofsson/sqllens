@@ -12,6 +12,8 @@ describe("doc.variants — per-arm sub-documents", () => {
 			SqlDocument.create("select * from {{ ref('t') }}", "duckdb", { templating: minijinja() }).variants,
 		).toEqual([]);
 	});
+	// Development pin — the canonical acceptance version of this A3 assertion lives in
+	// tests/variant-acceptance.test.ts's "A3 — coordinate preservation outside arms".
 	it("each arm is a full document; coordinates are document-true (A3 anchor)", () => {
 		const doc = SqlDocument.create(A3, "duckdb", { templating: minijinja() });
 		expect(doc.variants.length).toBe(2);
@@ -54,6 +56,8 @@ describe("doc.variants — per-arm sub-documents", () => {
 });
 
 describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOutputColumns", () => {
+	// Development pin — the canonical acceptance version of this A4 (and its A3 anchor re-check)
+	// lives in tests/variant-acceptance.test.ts's "A3"/"A4" describes.
 	it("unionSymbols carries arm-local symbols, deduped (A4)", () => {
 		const doc = SqlDocument.create(A3, "duckdb", { templating: minijinja() });
 		const syms = doc.unionSymbols();
@@ -66,6 +70,8 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect([anchor.span.start, anchor.span.end]).toEqual([57, 69]); // A3 anchor holds in the union
 	});
 
+	// Development pin — the canonical acceptance version of this A5 assertion lives in
+	// tests/variant-acceptance.test.ts's "A5 — zero-width star-Sym expansion survives the union key".
 	it("zero-width star-Sym expansion survives the union key (A5)", async () => {
 		// Brief adjustment point, resolved: the plan's own filter (`.includes("star")` alone) also
 		// matches the ALWAYS-emitted opaque `*` Sym (symbols.ts emitColumns pushes it unconditionally,
@@ -88,6 +94,9 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(cols.map((s) => s.name).sort()).toEqual(["a", "b", "c"]); // span-only key would collapse to one
 	});
 
+	// Development pin — the canonical acceptance version of this A6 half (plus the brief's OTHER
+	// half — same-position, both arms -> one entry) lives in tests/variant-acceptance.test.ts's
+	// "A6 — diagnostics union: span+identity, not message text".
 	it("diagnostics dedup by position+identity, not message (A6)", () => {
 		const SQL = "{% if v %}select x.nope1 from t x{% else %}select  x.nope1 from t x{% endif %}";
 		const doc = SqlDocument.create(SQL, "duckdb", { templating: minijinja() });
@@ -128,6 +137,8 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(noRegion.unionSymbols()).toEqual(noRegion.analyze().symbols);
 	});
 
+	// Development pin (smoke only) — the exact-line acceptance version lives in
+	// tests/variant-acceptance.test.ts's "A8a — column union with shared-column dedup".
 	it("unionCtes unions one CTE's columns across arms by name (A8a smoke)", () => {
 		const SQL =
 			"with data as (\n" +
