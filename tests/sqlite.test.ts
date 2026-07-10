@@ -181,6 +181,30 @@ describe("Sqlite lower -> IR", () => {
 		expect(q.body.unsupported).toContain("multi-statement");
 	});
 
+	it("collects IN / EXISTS / scalar expression subqueries into body.subqueries", () => {
+		const inq = selectBody("SELECT a FROM t WHERE a IN (SELECT b FROM u)").body;
+		expect(inq.subqueries).toHaveLength(1);
+		expect(inq.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+
+		const ex = selectBody("SELECT a FROM t WHERE EXISTS (SELECT 1 FROM u)").body;
+		expect(ex.subqueries).toHaveLength(1);
+		expect(ex.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+
+		const scalar = selectBody("SELECT (SELECT max(b) FROM u) AS m, a FROM t").body;
+		expect(scalar.subqueries).toHaveLength(1);
+		expect(scalar.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+	});
+
+	it("does not duplicate FROM subqueries into body.subqueries", () => {
+		const plain = selectBody("SELECT s.a FROM (SELECT a FROM t) s").body;
+		expect(plain.subqueries).toBeUndefined();
+
+		// Mixed: the FROM subquery stays a Source; only the WHERE IN subquery lands in subqueries.
+		const mixed = selectBody("SELECT s.a FROM (SELECT a FROM t) s WHERE s.a IN (SELECT b FROM u)").body;
+		expect(mixed.subqueries).toHaveLength(1);
+		expect(mixed.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+	});
+
 	// lower() is TOTAL — never throws, even on the broken/partial input the editor feeds it.
 	it("never throws on deliberately broken input", () => {
 		for (const sql of ["SELECT", "SELECT FROM WHERE", "SELECT a FROM", "WITH x AS (", ")(;;", ""]) {

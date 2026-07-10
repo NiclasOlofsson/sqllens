@@ -242,6 +242,8 @@ function buildSelectCore(core: ParserRuleContext): SelectExpr {
 	for (const g of groupBy ?? []) columnsOf(g, columns, "groupBy");
 	if (having) columnsOf(having, columns, "having");
 
+	const subqueries = extractExpressionSubqueries(core);
+
 	return {
 		kind: "select",
 		projections,
@@ -253,8 +255,34 @@ function buildSelectCore(core: ParserRuleContext): SelectExpr {
 		groupBy,
 		having,
 		aggregated,
+		subqueries: subqueries.length ? subqueries : undefined,
 		cst: core,
 	};
+}
+
+// --- expression subqueries (scalar / IN / EXISTS) --------------------------------
+
+/** Expression subqueries appearing in this select's expressions (SELECT list, WHERE, GROUP BY,
+ *  HAVING, JOIN ON, TVF args) — every `select_stmt` reachable without crossing another select_stmt,
+ *  EXCLUDING the FROM subqueries (a `table_or_subquery`'s direct select_stmt child is a Source,
+ *  scoped separately by buildSource). Mirrors snowflake's extractExpressionSubqueries: the scope
+ *  pass discovers expression-nested subqueries ONLY through `SelectExpr.subqueries`, so their
+ *  (possibly correlated) columns resolve as children of this scope. */
+function extractExpressionSubqueries(core: ParserRuleContext): QueryExpr[] {
+	const out: QueryExpr[] = [];
+	const walk = (n: ParseTree): void => {
+		for (const child of kidsOf(n)) {
+			if (!(child instanceof ParserRuleContext)) continue;
+			if (child.ruleIndex === P.RULE_select_stmt) {
+				// A table_or_subquery's select_stmt is a FROM source, not an expression subquery.
+				if (!isRule(child.parent ?? undefined, P.RULE_table_or_subquery)) out.push(lowerSelectStmt(child));
+				continue; // its own scope — don't descend
+			}
+			walk(child);
+		}
+	};
+	walk(core);
+	return out;
 }
 
 /** The WHERE / GROUP BY / HAVING exprs of a select_core. They are all direct `expr` children of
@@ -298,7 +326,16 @@ function buildValues(values: ParserRuleContext): SelectExpr {
 	}));
 	const columns: ColumnRef[] = [];
 	for (const p of projections) columnsOf(p.expr, columns, "projection");
-	return { kind: "select", projections, from: [], columns, aggregated: false, cst: values };
+	const subqueries = extractExpressionSubqueries(values);
+	return {
+		kind: "select",
+		projections,
+		from: [],
+		columns,
+		aggregated: false,
+		subqueries: subqueries.length ? subqueries : undefined,
+		cst: values,
+	};
 }
 
 // --- projections ---------------------------------------------------------------
