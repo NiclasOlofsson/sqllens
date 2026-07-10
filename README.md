@@ -32,9 +32,9 @@ q.lineage.originsOf("total");  // → orders.total
 
 ## Dialects
 
-sqllens implements eight SQL dialects directly, each with its own grammar. Seven
+sqllens implements nine SQL dialects directly, each with its own grammar. Seven
 more engines are covered as *derived dialects*: their SQL is already parsed by one
-of those eight grammars, for 15 engines in total.
+of those nine grammars, for 16 engines in total.
 
 | Dialect | Derived dialects | Parse + lower | Semantic layer | Notes |
 |---|---|---|---|---|
@@ -46,6 +46,7 @@ of those eight grammars, for 15 engines in total.
 | PostgreSQL | — | yes | yes | grammar forked from `bytebase/parser` `postgresql/` (BSD-3, PG18 keywords) |
 | DuckDB | — | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
 | Trino | Presto, Amazon Athena | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split |
+| SQLite | — | yes | yes | grammar forked from grammars-v4 `sql/sqlite` (MIT); entry rule `parse` |
 
 Each grammar began as a fork of the upstream noted above, but most are now far from
 verbatim copies. They've had substantial extension and correction, driven by a full
@@ -58,7 +59,7 @@ the primary dialect's. Microsoft Fabric runs a restricted subset of T-SQL, Amazo
 Athena's engine is Trino, and AWS Glue runs Spark. Each one is checked against real
 SQL from that engine before it goes on the list.
 
-In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`. `resolveDialect` turns an
+In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino" | "sqlite"`. `resolveDialect` turns an
 engine name (or a dialect name) into the one that parses it: `resolveDialect("athena")`
 returns `"trino"`.
 
@@ -73,7 +74,7 @@ parse → lower → resolveScopes → qualify → infer / lineage / symbols
 
 Each stage produces one value, and that value is what a specific editor feature
 reads from. Only the first two stages, parse and lower, are dialect-specific;
-everything after them is shared and runs unchanged across all eight dialects.
+everything after them is shared and runs unchanged across all nine dialects.
 
 **parse** turns SQL text into a *concrete syntax tree* (CST): the full parse tree,
 every token and grammar node exactly as written, nothing dropped or simplified. It

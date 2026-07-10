@@ -63,7 +63,7 @@ or malformed config is non-fatal: every file falls back to the `databricks` dial
 and a warning is logged over the LSP `window/logMessage` channel.
 
 Supported dialects: `databricks`, `tsql`, `snowflake`, `bigquery`, `redshift`, `postgres`,
-`duckdb`, `trino`.
+`duckdb`, `trino`, `sqlite`.
 
 Example `.sqllens.json`:
 

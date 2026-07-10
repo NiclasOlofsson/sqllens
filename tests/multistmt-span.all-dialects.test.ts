@@ -9,6 +9,7 @@ import {
 	parsePostgres,
 	parseDuckdb,
 	parseTrino,
+	parseSqlite,
 	lowerDatabricks,
 	lowerTSql,
 	lowerSnowflake,
@@ -17,12 +18,13 @@ import {
 	lowerPostgres,
 	lowerDuckdb,
 	lowerTrino,
+	lowerSqlite,
 } from "../src/index.js";
 
 // Issue #21 (generalized) — a multi-statement batch (`a; b; c`) must NOT lower statement 1's IR
 // with the CST span stretched to EOF. The flagged compound body's span must be BOUNDED to the first
 // top-level statement, not the whole-file batch container (which reaches EOF). #21 fixed this for
-// databricks; it was wrongly assumed generalized. This proves ALL EIGHT dialects, so it cannot
+// databricks; it was wrongly assumed generalized. This proves ALL NINE dialects, so it cannot
 // regress to "fixed for one" again.
 
 const BATCH = `SELECT 1 AS a;\nSELECT 2 AS b;\nSELECT 3 AS c;`;
@@ -51,6 +53,7 @@ const CASES: Case[] = [
 	{ dialect: "postgres", parse: parsePostgres, lower: lowerPostgres as Case["lower"] },
 	{ dialect: "duckdb", parse: parseDuckdb, lower: lowerDuckdb as Case["lower"] },
 	{ dialect: "trino", parse: parseTrino, lower: lowerTrino as Case["lower"] },
+	{ dialect: "sqlite", parse: parseSqlite, lower: lowerSqlite as Case["lower"] },
 ];
 
 describe("multi-statement batch span is bounded to statement 1 (all dialects, #21)", () => {

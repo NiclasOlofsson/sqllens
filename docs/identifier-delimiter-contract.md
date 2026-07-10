@@ -6,7 +6,8 @@ Five IR string fields carry identifier text read straight from the parse tree:
 text keeps its quoting delimiters (backticks, double quotes, `[brackets]`) or
 strips them. This page records the CURRENT answer for all 40 (field × dialect)
 cells, verified against HEAD `6eb49cb` by reading each dialect's identifier-text
-helper and by parsing a probe query per dialect.
+helper and by parsing a probe query per dialect. (SQLite was added later and is
+verified separately, below.)
 
 The inconsistency below is real and intentionally NOT unified: normalizing
 it would change what existing consumers already see in these fields, risking a
@@ -22,13 +23,13 @@ string.
 
 ## The contract
 
-| IR field            | databricks | tsql   | snowflake | bigquery       | redshift | postgres | duckdb | trino  |
-| -------------------- | ---------- | ------ | --------- | -------------- | -------- | -------- | ------ | ------ |
-| `ColumnRef.parts`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   |
-| `TableSource.name`    | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   |
-| `TableSource.alias`   | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   |
-| `CteDef.name`         | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   |
-| `Projection.name`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   |
+| IR field            | databricks | tsql   | snowflake | bigquery       | redshift | postgres | duckdb | trino  | sqlite |
+| -------------------- | ---------- | ------ | --------- | -------------- | -------- | -------- | ------ | ------ | ------ |
+| `ColumnRef.parts`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
+| `TableSource.name`    | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
+| `TableSource.alias`   | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
+| `CteDef.name`         | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
+| `Projection.name`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
 
 "Kept" means `` `col` ``/`"col"`/`[col]` arrives in the string with its delimiters
 still on it. "Stripped" means the delimiters are gone and the string is the bare
@@ -53,7 +54,18 @@ text, RAW — delimiters intact (quotedness must survive into the IR; comparison
 fold via `foldIdentifier`, display via `displayName`)."* Case-folding and
 delimiter-stripping for identity/display purposes happen downstream, in
 `src/ident/fold.ts`'s `foldIdentifier`/`displayName`, never inside `lower()`
-itself for these seven dialects.
+itself for these eight dialects.
+
+SQLite (added after the original eight-dialect audit) follows the same "keep
+raw" pattern: its `lower.ts` reads identifier text through plain `.getText()`,
+kept intact across all five fields. Its quoting styles are `"double-quoted"`,
+`[bracketed]`, and `` `backtick-quoted` `` — SQLite accepts all three as
+identifier delimiters (plus `'single-quoted'` in string-literal-fallback
+contexts). The SQLite-specific quirk lives downstream in `foldIdentifier`
+(`src/ident/fold.ts`), not in this raw-field contract: unlike Postgres, SQLite
+folds a *quoted* identifier case-insensitively too (`"Foo"` and `"foo"` name
+the same column) — quoting suppresses SQLite's normal keyword handling, not its
+case-insensitivity.
 
 ## Recovering the raw form regardless of a field's own stripping
 

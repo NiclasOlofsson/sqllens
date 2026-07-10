@@ -205,10 +205,12 @@ src/lsp/                   the LSP server (an application, not the library) — 
 tools/gen.mjs              generation driver (sorts .g4 so the lexer generates before the parser — tokenVocab)
 ```
 
-Adding a dialect touches four places: `grammars/<dialect>/`, `src/<dialect>/parse.ts`
-+ `lower.ts`, and one entry in `src/infer/dialect.ts`. A missing function rule in a
-registry yields `unknown`, never a wrong type — that's the contract; don't guess
-return types.
+Adding a dialect is not a four-file change: the real surface is ~22 touchpoints —
+the compile-enforced `Dialect`-union maps the TypeScript compiler catches, plus a
+longer tail of silent-gap registries and test/tool matrices it doesn't. See
+`docs/superpowers/plans/2026-07-10-mysql-sqlite-dialects.md` for the itemized
+routine. A missing function rule in a registry yields `unknown`, never a wrong
+type — that's the contract; don't guess return types.
 
 **Public-API-only seam.** Everything under `src/` except `src/lsp/` imports only
 `antlr4ng`. The LSP layer is the one editor consumer and reaches the rest of the

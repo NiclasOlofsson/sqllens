@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// Derived-dialect → dialect map. The eight grammars parse more than eight
+// Derived-dialect → dialect map. The nine grammars parse more than nine
 // engines: a *derived dialect* is an engine with no grammar of its own whose
 // SQL surface is a subset of — or identical to — one we already parse (Amazon
 // Athena's engine is Trino, AWS Glue runs Spark, Microsoft Fabric / Azure
