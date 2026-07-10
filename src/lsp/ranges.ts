@@ -1,6 +1,6 @@
-import type { ParserRuleContext, Token } from "antlr4ng";
+import type { Token } from "antlr4ng";
 import type { Position, Range } from "vscode-languageserver-types";
-import type { Span, SqlDocument, StatementCell, SyntaxDiagnostic } from "../index.js";
+import type { ParserRuleContext, Span, SqlDocument, StatementCell, SyntaxDiagnostic } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // The ONE place that converts library positions to LSP positions. The library

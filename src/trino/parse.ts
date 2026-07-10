@@ -10,22 +10,14 @@ import {
 } from "antlr4ng";
 import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { TrinoParser } from "../generated/trino/TrinoParser.js";
-import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { makeErrorCollector } from "../parse-diagnostics.js";
+import type { ParseResult } from "../parse-result.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
-export interface ParseResult {
-	/** The CST rooted at `root` (a `;`-separated batch of statements + EOF). */
-	tree: ParserRuleContext;
-	/** Count of lexer + parser syntax errors. */
-	errors: number;
-	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
-	diagnostics: SyntaxDiagnostic[];
-	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans. */
-	tokens: Token[];
-	/** True when the SLL fast path failed and the full-LL retry (stage 2) produced this result. */
-	sllFallback: boolean;
-}
+/** The CST rooted at `root` (a `;`-separated batch of statements + EOF); see `ParseResult` for
+ *  the full result shape. */
+export type { ParseResult } from "../parse-result.js";
 
 /**
  * Lex + parse Trino SQL (one statement or a `;`-separated batch). Two-stage parsing:

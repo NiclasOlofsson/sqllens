@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "../src/api.js";
 import { resolveScopes } from "../src/scope/scope.js";
-import { nodeAt } from "../src/lsp/node-at.js";
+import { nodeAt } from "../src/index.js";
 
 function scopesFor(sql: string) {
 	return resolveScopes(parse(sql, "databricks").ast, "databricks");

@@ -1,6 +1,5 @@
-import type { ParserRuleContext } from "antlr4ng";
 import type { Position, Range, SelectionRange } from "vscode-languageserver-types";
-import type { SqlDocument } from "../../index.js";
+import type { ParserRuleContext, SqlDocument } from "../../index.js";
 import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------

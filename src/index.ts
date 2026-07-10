@@ -84,7 +84,7 @@ export { lower as lowerRedshift } from "./redshift/lower.js";
 export { lower as lowerPostgres } from "./postgres/lower.js";
 export { lower as lowerDuckdb } from "./duckdb/lower.js";
 export { lower as lowerTrino } from "./trino/lower.js";
-export type { ParseResult } from "./databricks/parse.js";
+export type { ParseResult } from "./parse-result.js";
 
 // --- Minijinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
 //     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
@@ -110,12 +110,22 @@ export { templateVariants, type TemplateVariant } from "./minijinja/variants.js"
 
 // --- The IR ---
 export type {
+	Clause,
 	ColumnRef,
 	CteDef,
 	Expr,
+	GraphElement,
+	GraphTableSource,
 	Join,
 	JoinKind,
+	LateralViewSource,
+	LimitInfo,
 	PartSpan,
+	PipeBranch,
+	PipeExpr,
+	PipeSetItem,
+	PipeStage,
+	PivotInfo,
 	Projection,
 	QueryBody,
 	QueryExpr,
@@ -126,10 +136,21 @@ export type {
 	TableSource,
 	TemplateExprInfo,
 	TemplateSourceInfo,
+	UnpivotInfo,
 	UnsupportedFlag,
+	WindowSpec,
 } from "./ir/ir.js";
 
 export { partSpanOf, partSpansOf } from "./ir/part-span.js";
+
+export { endPosition } from "./ir/span.js";
+
+// The CST node-at-offset walk — the one genuinely LSP-shaped capability that lives outside
+// src/lsp/: given an offset, the smallest IR Expr (+ owning Scope) that covers it. Backs hover.
+export { nodeAt, type NodeHit } from "./document/node-at.js";
+
+// The antlr CST escape hatch every IR node's `.cst` back-ref carries the type of.
+export type { ParserRuleContext } from "antlr4ng";
 
 export { coarseKind, type StatementCategory, type StatementKind } from "./ir/statement.js";
 

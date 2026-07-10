@@ -10,25 +10,15 @@ import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";
 import { postParseDiagnostics } from "./post-validate.js";
-import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { makeErrorCollector } from "../parse-diagnostics.js";
+import type { ParseResult } from "../parse-result.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
-export interface ParseResult {
-	/** The CST rooted at `root` (`stmts EOF`). */
-	tree: ParserRuleContext;
-	/** Count of lexer + parser + escape + post-parse syntax errors; equals `diagnostics.length`. */
-	errors: number;
-	/** Positioned syntax diagnostics — lexer/parser (listener-captured) plus escape and post-parse
-	 *  errors, all carrying a source span. `errors === diagnostics.length`. */
-	diagnostics: SyntaxDiagnostic[];
-	/** Every token the parser consumed (trivia included, EOF excluded), as neutral `Token`s. Built
-	 *  from the dot-path-rewritten stream, so spans match the consumed source. */
-	tokens: Token[];
-	/** True when the fast SLL prediction pass bailed and the parse re-ran under full LL. Same result
-	 *  either way — this just says which path produced it, for perf profiling (tools/profile-sll.ts). */
-	sllFallback: boolean;
-}
+/** The CST rooted at `root` (`stmts EOF`); errors count lexer + parser + escape + post-parse
+ *  diagnostics (`errors === diagnostics.length`); tokens are built from the dot-path-rewritten
+ *  stream. See `ParseResult` for the full result shape. */
+export type { ParseResult } from "../parse-result.js";
 
 /**
  * Lex + parse BigQuery / GoogleSQL (one statement or a `;`-separated batch). Two-stage parsing:

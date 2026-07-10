@@ -10,23 +10,14 @@ import {
 } from "antlr4ng";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { TSqlParser } from "../generated/tsql/TSqlParser.js";
-import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
+import { makeErrorCollector } from "../parse-diagnostics.js";
+import type { ParseResult } from "../parse-result.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
-export interface ParseResult {
-	/** The CST rooted at `tsql_file` (`batch* EOF` — the full statement range). */
-	tree: ParserRuleContext;
-	/** Count of lexer + parser syntax errors. */
-	errors: number;
-	/** Positioned syntax diagnostics (message + line/column/offset/length), in report order. */
-	diagnostics: SyntaxDiagnostic[];
-	/** Every lexer token (trivia included, EOF excluded), as neutral `Token`s with exact spans. */
-	tokens: Token[];
-	/** True when the fast SLL prediction pass bailed and the parse re-ran under full LL. Same result
-	 *  either way — this just says which path produced it, for perf profiling (tools/profile-sll.ts). */
-	sllFallback: boolean;
-}
+/** The CST rooted at `tsql_file` (`batch* EOF` — the full statement range); see `ParseResult` for
+ *  the full result shape. */
+export type { ParseResult } from "../parse-result.js";
 
 /**
  * Lex + parse a T-SQL input via the grammar's full-file rule (`tsql_file` — `batch* EOF`), the same
