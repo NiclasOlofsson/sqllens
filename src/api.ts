@@ -29,7 +29,7 @@ import { parseDuckdb } from "./duckdb/parse.js";
 import { lower as lowerDuckdb } from "./duckdb/lower.js";
 import { parseTrino } from "./trino/parse.js";
 import { lower as lowerTrino } from "./trino/lower.js";
-import type { Expr, QueryExpr } from "./ir/ir.js";
+import type { Expr, Projection, QueryExpr } from "./ir/ir.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
 import { qualify as qualifyScopes, type Qualification } from "./qualify/qualify.js";
@@ -249,16 +249,26 @@ export class Lineage {
 	/** Per output column: the base-table columns it derives from. */
 	readonly all: readonly ColumnLineage[];
 	private readonly byOutput: Map<string, Origin[]>;
+	private readonly byNode: WeakMap<Projection, Origin[]>;
 
 	constructor(columns: ColumnLineage[]) {
 		this.all = columns;
 		this.byOutput = new Map();
-		for (const c of columns) this.byOutput.set(c.output, c.origins);
+		this.byNode = new WeakMap();
+		for (const c of columns) {
+			this.byOutput.set(c.output, c.origins);
+			if (c.projection) this.byNode.set(c.projection, c.origins);
+		}
 	}
 
 	/** The base-table origins of a named output column, or [] if there is no such output. */
 	originsOf(column: string): Origin[] {
 		return this.byOutput.get(column) ?? [];
+	}
+
+	/** Origins keyed by the producing Projection node — unambiguous under duplicate output names. */
+	originsOfNode(projection: Projection): Origin[] {
+		return this.byNode.get(projection) ?? [];
 	}
 }
 

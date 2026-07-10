@@ -180,7 +180,7 @@ describe("public API — immutable IR + independent passes", () => {
 
 			// independence: identical results regardless of order
 			expect(qA.columnsOf(scopes.root)).toEqual(qB.columnsOf(scopes.root));
-			expect(JSON.stringify(lA.all)).toEqual(JSON.stringify(lB.all));
+			expect(JSON.stringify(lA.all, irReplacer)).toEqual(JSON.stringify(lB.all, irReplacer));
 			expect(sA.length).toEqual(sB.length);
 
 			// the shared IR was not mutated by any pass

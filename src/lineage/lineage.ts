@@ -1,5 +1,5 @@
 import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
-import type { Expr, QueryExpr } from "../ir/ir.js";
+import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { columnNamesOf, findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
@@ -27,6 +27,9 @@ export interface ColumnLineage {
 	output: string;
 	/** The base-table columns it derives from, deduped. Empty for a pure literal/constant. */
 	origins: Origin[];
+	/** The projection that produced this output, when one exists (reference into the frozen IR).
+	 *  Absent for schema-expanded star outputs with no projection node. */
+	projection?: Projection;
 }
 
 /** Lineage of a query's output columns: each output → the base-table columns it derives from. */
@@ -71,7 +74,11 @@ function projectionLineage(
 			const qualifier = p.expr.kind === "star" ? p.expr.qualifier : undefined;
 			out.push(...starLineage(scope, qualifier, schema, seen));
 		} else if (p.name !== undefined) {
-			out.push({ output: p.name, origins: dedup(exprOrigins(p.expr, scope, schema, seen), scope.dialect) });
+			out.push({
+				output: p.name,
+				origins: dedup(exprOrigins(p.expr, scope, schema, seen), scope.dialect),
+				projection: p,
+			});
 		}
 		// anonymous projection → no nameable output, skip
 	}
