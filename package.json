@@ -8,6 +8,10 @@
 		".": {
 			"types": "./dist/index.d.ts",
 			"default": "./dist/index.js"
+		},
+		"./minijinja": {
+			"types": "./dist/minijinja/index.d.ts",
+			"default": "./dist/minijinja/index.js"
 		}
 	},
 	"files": [
