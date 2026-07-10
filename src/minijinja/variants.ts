@@ -60,11 +60,13 @@ import { templateRegions, type TemplateRegion } from "./regions.js";
 export interface TemplateVariant {
 	/**
 	 * The one non-default arm this variant activates; undefined for variant 0 (all
-	 * defaults). For a synthetic empty-else variant (an else-less if-region blanked in
-	 * its entirety — see file header), `syntheticEmpty` is `true` and no single arm is
-	 * "the" active one, so `armIndex` is absent.
+	 * defaults). `syntheticEmpty`: the region's body is wholly absent in this
+	 * realization (the synthetic empty-else arm — see file header); `armIndex` is 0 as
+	 * a type-stable placeholder — the discriminator is `syntheticEmpty`, never the
+	 * index. (0 collides with nothing: real non-default arms start at 1, and keeping
+	 * `armIndex` REQUIRED keeps the anvil channel contract additive.)
 	 */
-	active?: { region: TemplateRegion; armIndex?: number; syntheticEmpty?: true };
+	active?: { region: TemplateRegion; armIndex: number; syntheticEmpty?: true };
 	/**
 	 * This variant's realized source: the ORIGINAL text with every inactive arm's body
 	 * whitespace-blanked (identical length, newlines at identical offsets). Lazy + memoized
@@ -160,7 +162,8 @@ function realize(
 /** Build a lazy, memoized variant over the shared flattened region list. `varied` is the
  *  region entry this variant activates (with `armIndex`); undefined for variant 0.
  *  `syntheticEmpty` (Stage-5 Task 1): `varied` is an else-less if-region blanked whole —
- *  no arm is active, so `active.armIndex` is omitted and `active.syntheticEmpty` is set. */
+ *  no arm is active; `active.syntheticEmpty` is the discriminator and `active.armIndex`
+ *  is 0 as a type-stable placeholder (never emitted for a real non-default arm). */
 function makeVariant(
 	text: string,
 	dialect: Dialect,
@@ -175,7 +178,7 @@ function makeVariant(
 	return {
 		active: varied
 			? syntheticEmpty
-				? { region: varied.region, syntheticEmpty: true }
+				? { region: varied.region, armIndex: 0, syntheticEmpty: true }
 				: { region: varied.region, armIndex }
 			: undefined,
 		text: textOf,

@@ -238,4 +238,28 @@ describe("templateVariants — synthetic empty-else arm (Stage-5 Task 1, A8b/A8c
 			).toBe(true);
 		expect(vs.length).toBeLessThanOrEqual(5); // linear (1 + Σ(arms−1) + else-less ifs), never the product
 	});
+	it("nested ELSE-LESS inner region: the synthetic variant blanks the inner body inside the pinned containing arm", () => {
+		// The inner if is else-less and sits inside the OUTER region's arm 0 — its
+		// synthetic variant must blank the inner body while ancestor-path activation
+		// pins the outer region to the CONTAINING arm (arm 0), never the else.
+		const SQL =
+			"with data as (\n    SELECT base_col{% if outer %}, extra_col{% if inner %}, col_a{% endif %}{% else %}, col_c{% endif %} FROM raw_table\n)\nSELECT * FROM data";
+		const vs = templateVariants(SQL, "duckdb");
+		// Law: 1 + Σ(arms−1) + #(else-less ifs) = 1 + (2−1) + (1−1) + 1 = 3.
+		expect(vs.length).toBe(3);
+		const synthetic = vs.find((v) => v.active?.syntheticEmpty === true)!;
+		expect(synthetic).toBeDefined();
+		// armIndex stays REQUIRED (anvil contract is additive): 0 is a type-stable
+		// placeholder — the discriminator is syntheticEmpty, never the index.
+		expect(synthetic.active?.armIndex).toBe(0);
+		const t = synthetic.text();
+		expect(t).not.toContain("col_a"); // the else-less inner body is wholly absent
+		expect(t).not.toContain("col_c"); // the outer region is pinned to the containing arm, not the else
+		expect(t).toContain("extra_col"); // the containing arm's surrounding text stays live
+		expect(t.length).toBe(SQL.length); // length-preserving
+		// The existing coverage guarantee is untouched: each leaf live in exactly one variant.
+		const texts = vs.map((v) => v.text());
+		expect(texts.filter((x) => x.includes("col_a")).length).toBe(1);
+		expect(texts.filter((x) => x.includes("col_c")).length).toBe(1);
+	});
 });
