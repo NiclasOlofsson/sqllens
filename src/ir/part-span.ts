@@ -79,3 +79,29 @@ export function partSpansOf(nodes: (ParseTree | null | undefined)[]): PartSpan[]
 	}
 	return out;
 }
+
+/** The literal `*` terminal within a star projection's CST subtree — the star's OWN span, excluding
+ *  any qualifier (`t.` in `t.*`) and any trailing modifier clause (`EXCEPT (...)`/`EXCLUDE (...)`/
+ *  `REPLACE (...)`). Every dialect's star `Expr.cst` covers, at most, qualifier + `*` + modifiers —
+ *  never just the `*` alone (see docs/identifier-delimiter-contract.md's sibling concern for column
+ *  text; this is the span analogue for stars) — and there is no shared per-dialect token-type constant
+ *  to key on at this dialect-agnostic layer. So this walks the subtree pre-order (left to right) and
+ *  returns the FIRST terminal whose text is exactly "*": the projection's own star always precedes any
+ *  modifier clause in source order, so "first" finds it unambiguously even when a `REPLACE (a * 2 AS
+ *  c)` modifier's own expression contains a `*` multiplication operator later in the same subtree.
+ *  `undefined` only if the subtree genuinely carries no `*` token (a broken/synthesized star). */
+export function starSpanOf(node: ParseTree | null | undefined): PartSpan | undefined {
+	return partSpanOf(findStarTerminal(node));
+}
+
+function findStarTerminal(node: ParseTree | null | undefined): TerminalNode | undefined {
+	if (!node) return undefined;
+	if (node instanceof TerminalNode) return node.getText() === "*" ? node : undefined;
+	if (node instanceof ParserRuleContext) {
+		for (let i = 0; i < node.getChildCount(); i++) {
+			const hit = findStarTerminal(node.getChild(i));
+			if (hit) return hit;
+		}
+	}
+	return undefined;
+}

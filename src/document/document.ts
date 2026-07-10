@@ -37,7 +37,7 @@ import { referencesAt as referencesAtScopes, type Occurrences } from "../referen
 import type { Dialect } from "../dialect.js";
 import type { QueryExpr, SelectExpr, PartSpan } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
-import { partSpanOf } from "../ir/part-span.js";
+import { partSpanOf, starSpanOf } from "../ir/part-span.js";
 import type { StatementCategory } from "../ir/statement.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
@@ -901,7 +901,9 @@ function collectCtes(scope: Scope, out: CteRef[] = []): CteRef[] {
 /** One resolved output column of a scope — module-internal (the union views expose only
  *  `{name, span}`; `raw` never leaves this file). */
 interface OutputColumn {
-	/** Display form (delimiters stripped) — the name the union views expose. */
+	/** Fold-normalized, quote-preserving identity form — `foldIdentifier(raw, dialect)` — the SAME
+	 *  vocabulary the rest of the resolved surface speaks (scope/qualify/references). This is the
+	 *  name the union views expose; computed exactly once, here, from `raw` below. */
 	name: string;
 	/** The projection's RAW name as the IR carries it (quoting delimiters intact where the dialect
 	 *  keeps them — docs/identifier-delimiter-contract.md). The ONLY safe fold input for identity
@@ -927,16 +929,23 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputC
 			if (p.isStar) {
 				const pairs = qualification.expandStarOf(scope, p);
 				if (!pairs) continue; // unresolvable star — never fabricate a partial list
-				const span = partSpanOf(p.cst);
+				// The star's OWN span — the `*` character itself, never the qualifier (`t.` in `t.*`)
+				// or a modifier clause (Sym star-expansion wave rule, sqllens 9c87f55: a column that
+				// exists only by expansion anchors on the star, never on synthesized/unrelated text).
+				// Falls back to the whole projection's span in the (should-never-happen) case a star
+				// projection's CST carries no literal `*` token — never fabricate, but never drop real
+				// columns over an ideal-span miss either.
+				const span = starSpanOf(p.expr.cst) ?? partSpanOf(p.cst);
 				if (!span) continue;
 				// Every star-expanded column shares the star projection's own span — there is no
 				// per-column source token to point at. A deliberate divergence from deriveSymbols'
 				// zero-width convention (that exists so expanded Syms are never cursor hit-test
 				// targets; these pairs are name/position enumeration, where a real span is useful).
-				for (const pair of pairs) out.push({ name: pair.name, raw: pair.name, span });
+				for (const pair of pairs)
+					out.push({ name: foldIdentifier(pair.name, scope.dialect), raw: pair.name, span });
 			} else if (p.name !== undefined) {
 				const span = partSpanOf(p.aliasCst ?? p.cst);
-				if (span) out.push({ name: displayName(p.name, scope.dialect), raw: p.name, span });
+				if (span) out.push({ name: foldIdentifier(p.name, scope.dialect), raw: p.name, span });
 			}
 			// else: anonymous expression — no determinable name, skip
 		}
