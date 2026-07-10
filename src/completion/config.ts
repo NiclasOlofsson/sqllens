@@ -16,6 +16,8 @@ import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
 import { DuckdbParser } from "../generated/duckdb/DuckdbParser.js";
 import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { TrinoParser } from "../generated/trino/TrinoParser.js";
+import { SqliteLexer } from "../generated/sqlite/SqliteLexer.js";
+import { SqliteParser } from "../generated/sqlite/SqliteParser.js";
 
 /**
  * Per-dialect tuning for the ATN candidate walk (`collectCandidates`).
@@ -156,6 +158,30 @@ const TRINO_NAME_TOKENS = new Set<number>([
 	TrinoLexer.DIGIT_IDENTIFIER,
 ]);
 
+// ── SQLite (grammars-v4 fork) ───────────────────────────────────────────────
+//   post-FROM   → table_name (the relation-name leaf; the enclosing `table_or_subquery` is a
+//                 wider alternation that also recurses into `select_stmt` for a parenthesized
+//                 subquery/join, so marking IT preferred would swallow completion inside a nested
+//                 FROM (SELECT …) — table_name alone still fires at "FROM ‹›" with nothing typed,
+//                 since the ATN walk explores entering it before any token is consumed. table_name
+//                 is also the slot reused by INSERT INTO/UPDATE/ALTER/DROP/CREATE TABLE's table-name
+//                 position, which is a bonus, not a target).
+//   SELECT/WHERE → expr (the value/column slot; expr_base's `column_name_excluding_string` and the
+//                 qualified `table_name DOT column_name` form both nest under it, matching the
+//                 Snowflake `expr` precedent — a single outer entry rule for the whole
+//                 precedence-chain expression grammar).
+// table_name ALSO appears inside expr_base's qualified-column-ref and `x IN table_name` forms; since
+// expr is the outer frame there, those inner positions report columnRules only, not tableRules — a
+// known, accepted imprecision (same shape as the other dialects' rule choices here).
+const SQLITE_TABLE_RULES = new Set<number>([SqliteParser.RULE_table_name]);
+const SQLITE_COLUMN_RULES = new Set<number>([SqliteParser.RULE_expr]);
+const SQLITE_PREFERRED = new Set<number>([...SQLITE_TABLE_RULES, ...SQLITE_COLUMN_RULES]);
+const SQLITE_RELATION_KEYWORDS = new Set<number>([SqliteLexer.FROM_, SqliteLexer.JOIN_]);
+// SQLite's lexer folds plain/"double"/`backtick`/[bracket]-quoted names into ONE IDENTIFIER token
+// (SqliteLexer.g4's IDENTIFIER rule matches all four forms), so there is no separate quoted-ident
+// token type to add, unlike T-SQL/Trino/Postgres.
+const SQLITE_NAME_TOKENS = new Set<number>([SqliteLexer.IDENTIFIER]);
+
 export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 	databricks: {
 		preferredRules: DATABRICKS_PREFERRED,
@@ -220,5 +246,13 @@ export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 		columnRules: TRINO_COLUMN_RULES,
 		relationKeywordTokens: TRINO_RELATION_KEYWORDS,
 		nameTokens: TRINO_NAME_TOKENS,
+	},
+	sqlite: {
+		preferredRules: SQLITE_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: SQLITE_TABLE_RULES,
+		columnRules: SQLITE_COLUMN_RULES,
+		relationKeywordTokens: SQLITE_RELATION_KEYWORDS,
+		nameTokens: SQLITE_NAME_TOKENS,
 	},
 };

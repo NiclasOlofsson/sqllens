@@ -81,6 +81,7 @@ export { parseRedshift } from "./redshift/parse.js";
 export { parsePostgres } from "./postgres/parse.js";
 export { parseDuckdb } from "./duckdb/parse.js";
 export { parseTrino } from "./trino/parse.js";
+export { parseSqlite } from "./sqlite/parse.js";
 export { lower as lowerDatabricks } from "./databricks/lower.js";
 export { lower as lowerTSql } from "./tsql/lower.js";
 export { lower as lowerSnowflake } from "./snowflake/lower.js";
@@ -89,6 +90,7 @@ export { lower as lowerRedshift } from "./redshift/lower.js";
 export { lower as lowerPostgres } from "./postgres/lower.js";
 export { lower as lowerDuckdb } from "./duckdb/lower.js";
 export { lower as lowerTrino } from "./trino/lower.js";
+export { lower as lowerSqlite } from "./sqlite/lower.js";
 export type { ParseResult } from "./parse-result.js";
 
 // --- Minijinja front end (raw jinja-SQL) — the engine itself (parseTemplated/tokenizeTemplated,

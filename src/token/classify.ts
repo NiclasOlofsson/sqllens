@@ -109,6 +109,11 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "string", pattern: /^BINARY_LITERAL$/ },
 		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
 	],
+
+	// SQLite (grammars-v4 SqliteLexer): NUMERIC_LITERAL doesn't match any of the shared "number"
+	// substrings (NUMBER|INT|FLOAT|DECIMAL|REAL|DIGIT), so it falls through to "other" without this
+	// override. Deeper role-probe coverage (BLOB_LITERAL, etc.) deferred to R6.5.
+	sqlite: [{ role: "number", pattern: /^NUMERIC_LITERAL$/ }],
 };
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);

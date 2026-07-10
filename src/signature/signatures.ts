@@ -589,6 +589,9 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	postgres: POSTGRES,
 	duckdb: DUCKDB,
 	trino: TRINO,
+	// No curated SQLite table yet (that is a later, doc-driven task); empty falls through to the
+	// name-only hint, same as every dialect's HARVESTED_SIGNATURES entry below until harvested.
+	sqlite: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -609,6 +612,7 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	postgres: {},
 	duckdb: {},
 	trino: {},
+	sqlite: {},
 };
 
 /**

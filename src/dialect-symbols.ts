@@ -77,6 +77,7 @@ import { RedshiftLexer } from "./generated/redshift/RedshiftLexer.js";
 import { PostgresLexer } from "./generated/postgres/PostgresLexer.js";
 import { DuckdbLexer } from "./generated/duckdb/DuckdbLexer.js";
 import { TrinoLexer } from "./generated/trino/TrinoLexer.js";
+import { SqliteLexer } from "./generated/sqlite/SqliteLexer.js";
 import { inferDialect } from "./infer/dialect.js";
 import { HOF_LAMBDA_ARG } from "./infer/infer.js";
 import { SCALAR_ALIASES, TSQL_ALIASES } from "./infer/types.js";
@@ -86,6 +87,7 @@ import { REDSHIFT_ALIASES } from "./infer/redshift.js";
 import { POSTGRES_ALIASES } from "./infer/postgres.js";
 import { DUCKDB_ALIASES } from "./infer/duckdb.js";
 import { TRINO_ALIASES } from "./infer/trino.js";
+import { SQLITE_ALIASES } from "./infer/sqlite.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES } from "./signature/signatures.js";
 
 /** Per-dialect membership sets — canonical UPPERCASE names. See module header for sources
@@ -106,6 +108,7 @@ const LEXERS: Record<Dialect, () => Lexer> = {
 	postgres: () => new PostgresLexer(CharStream.fromString("")),
 	duckdb: () => new DuckdbLexer(CharStream.fromString("")),
 	trino: () => new TrinoLexer(CharStream.fromString("")),
+	sqlite: () => new SqliteLexer(CharStream.fromString("")),
 };
 
 // The scalar-type-alias table per dialect (see module header, `types` set). Databricks has no
@@ -119,6 +122,7 @@ const TYPE_ALIASES: Record<Dialect, Record<string, string>> = {
 	postgres: POSTGRES_ALIASES,
 	duckdb: DUCKDB_ALIASES,
 	trino: TRINO_ALIASES,
+	sqlite: SQLITE_ALIASES,
 };
 
 /** A bare, keyword-shaped literal token text: letters/digits/underscore, starting with a

@@ -24,6 +24,7 @@ import { statementCategories as redshiftCats } from "../src/redshift/lower.js";
 import { statementCategories as postgresCats } from "../src/postgres/lower.js";
 import { statementCategories as duckdbCats } from "../src/duckdb/lower.js";
 import { statementCategories as trinoCats } from "../src/trino/lower.js";
+import { statementCategories as sqliteCats } from "../src/sqlite/lower.js";
 
 const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = {
 	databricks: databricksCats,
@@ -34,6 +35,7 @@ const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = 
 	postgres: postgresCats,
 	duckdb: duckdbCats,
 	trino: trinoCats,
+	sqlite: sqliteCats,
 };
 const DIALECTS = Object.keys(CATS) as Dialect[];
 

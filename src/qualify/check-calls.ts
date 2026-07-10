@@ -54,6 +54,7 @@ const ARITY_USES_HARVESTED: Record<Dialect, boolean> = {
 	postgres: false,
 	duckdb: false,
 	trino: false,
+	sqlite: false,
 };
 
 export function checkCalls(tree: ScopeTree, schema: SchemaProvider, diagnostics: Diagnostic[]): void {
@@ -275,13 +276,20 @@ const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
 	"redshift",
 	"postgres",
 	"duckdb",
+	// sqlite: dynamic/flexible typing with TEXT<->NUMERIC type affinity — a TEXT value coerces
+	// against a numeric column/argument automatically (sqlite.org/datatype3.html "Type Affinity");
+	// there is no strict typing to reject a str-shaped argument against.
+	"sqlite",
 ]);
 
 /** Dialects that implicitly bridge boolean↔numeric: T-SQL only, whose `bit` (aliased to boolean by
  *  TSQL_ALIASES) converts to/from int implicitly per the same CAST/CONVERT chart. Everywhere else
  *  bool→num / num→bool rejection is safe (Spark: "cannot resolve 'abs(true)' due to data type
  *  mismatch"; Snowflake: "Invalid argument types for function 'ABS': (BOOLEAN)"; PG/DuckDB/BigQuery/
- *  Trino likewise reject) — and corpus-proven across all eight sweeps. */
+ *  Trino likewise reject) — and corpus-proven across all eight sweeps. sqlite is left out: it has no
+ *  dedicated boolean storage class at all (TRUE/FALSE are literal aliases for the integers 1/0 —
+ *  sqlite.org/lang_expr.html#literal_values_constants_), so this checker never sees a `boolean`-typed
+ *  argument for it; membership here is moot unless the corpus proves otherwise. */
 const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql"]);
 
 function accepts(argType: Type, paramText: string | undefined, dialect: Dialect): boolean {
