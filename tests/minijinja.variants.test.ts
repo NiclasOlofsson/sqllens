@@ -203,3 +203,39 @@ describe("TemplateVariant.text() — realized variant source", () => {
 		expect(plain[0].text()).toBe(plain[0].text());
 	});
 });
+
+// ---------------------------------------------------------------------------
+// Stage-5 Task 1 — the synthetic empty-else arm (acceptance brief case A8b).
+//
+// An `{% if %}` region whose LAST arm is `if`/`elif` (no `else`) has no branch
+// for "condition false" — so its body was live in EVERY realization and
+// "optional absent" was never a coverage point. This adds ONE synthetic variant
+// per else-less if-region, blanking that region's whole body. Count law becomes
+// `1 + Σ(arms−1) + #(else-less if-regions)` — still linear.
+// ---------------------------------------------------------------------------
+describe("templateVariants — synthetic empty-else arm (Stage-5 Task 1, A8b/A8c)", () => {
+	it("if-without-else enumerates a synthetic empty arm (A8b)", () => {
+		const SQL =
+			"with data as (\n    SELECT always_present{% if condition %}, optional_col{% endif %} FROM raw_table\n)\nSELECT * FROM data";
+		const vs = templateVariants(SQL, "duckdb");
+		expect(vs.length).toBe(2);
+		const texts = vs.map((v) => v.text());
+		expect(texts.filter((t) => t.includes("optional_col")).length).toBe(1); // live in exactly one
+		const blanked = texts.find((t) => !t.includes("optional_col"))!;
+		expect(blanked.length).toBe(SQL.length); // length-preserving
+		expect(blanked.includes("always_present")).toBe(true); // shared text stays live
+		expect(vs.every((v) => (!v.parse().sql ? true : v.parse().sql.errors === 0))).toBe(true); // both realizations parse
+	});
+	it("nested conditionals stay linear and leaf-complete (A8c)", () => {
+		const SQL =
+			"with data as (\n    SELECT\n        {% if outer %}{% if inner %}col_a{% else %}col_b{% endif %}{% else %}col_c{% endif %},\n        base_col\n    FROM raw_table\n)\nSELECT * FROM data";
+		const vs = templateVariants(SQL, "duckdb");
+		const texts = vs.map((v) => v.text());
+		for (const col of ["col_a", "col_b", "col_c"])
+			expect(
+				texts.some((t) => t.includes(col)),
+				col,
+			).toBe(true);
+		expect(vs.length).toBeLessThanOrEqual(5); // linear (1 + Σ(arms−1) + else-less ifs), never the product
+	});
+});

@@ -14,6 +14,18 @@
 // A `{% for %}`/`{% macro %}` region is single-arm (its default IS the representative
 // single iteration / the body parses in place), so it contributes NO extra variant.
 //
+// SYNTHETIC EMPTY-ELSE ARM (Stage-5 Task 1, acceptance brief A8b): an `{% if %}` region
+// whose LAST arm is `if`/`elif` (no `else`) has no branch for "condition false" — its
+// body would otherwise be live in EVERY variant, so "optional absent" was never a
+// coverage point. Such a region gets ONE additional synthetic variant, with the WHOLE
+// region blanked (every arm's body, none active). Count law: 1 + Σ(arms−1) +
+// #(else-less if-regions) — still linear. Ancestor-path activation (below) still pins
+// this region's ancestors to the arm that contains it, so a nested else-less region's
+// synthetic variant realizes in a realistic surrounding branch. Blanking the WHOLE
+// region's body also blanks any descendant regions nested inside it for free (their
+// text is a subset of the blanked span), so a synthetic blank never leaves an orphaned
+// live fragment.
+//
 // ANCESTOR-PATH ACTIVATION (the coverage guarantee): a variant for (region R, arm k)
 // activates arm k of R AND, for every ANCESTOR region on R's path to root, the arm that
 // CONTAINS R (not arm 0); all NON-ancestor regions take arm 0. So varying an inner else
@@ -46,8 +58,13 @@ import { templateRegions, type TemplateRegion } from "./regions.js";
 
 /** One enumerated branch alternative of a template — a coherent, lazily-parsed variant. */
 export interface TemplateVariant {
-	/** The one non-default arm this variant activates; undefined for variant 0 (all defaults). */
-	active?: { region: TemplateRegion; armIndex: number };
+	/**
+	 * The one non-default arm this variant activates; undefined for variant 0 (all
+	 * defaults). For a synthetic empty-else variant (an else-less if-region blanked in
+	 * its entirety — see file header), `syntheticEmpty` is `true` and no single arm is
+	 * "the" active one, so `armIndex` is absent.
+	 */
+	active?: { region: TemplateRegion; armIndex?: number; syntheticEmpty?: true };
 	/**
 	 * This variant's realized source: the ORIGINAL text with every inactive arm's body
 	 * whitespace-blanked (identical length, newlines at identical offsets). Lazy + memoized
@@ -109,20 +126,29 @@ function blankRanges(text: string, ranges: readonly (readonly [number, number])[
  * EXCEPT: the varied region takes `armIndex`, and each of its ancestors takes the arm
  * that CONTAINS the varied region (ancestor-path activation — the coverage guarantee).
  * Every arm that is NOT its region's active arm has its body span blanked.
+ *
+ * `syntheticEmpty` (Stage-5 Task 1): the varied region itself has NO active arm — every
+ * one of its arms' bodies is blanked (its ancestors are still pinned per the above, so
+ * the "whole region absent" variant still realizes inside a realistic branch).
  */
 function realize(
 	text: string,
 	flat: readonly RegionEntry[],
 	varied: RegionEntry | undefined,
 	armIndex: number,
+	syntheticEmpty = false,
 ): string {
 	const activeIdx = new Map<TemplateRegion, number>();
 	if (varied) {
-		activeIdx.set(varied.region, armIndex);
+		if (!syntheticEmpty) activeIdx.set(varied.region, armIndex);
 		for (const anc of varied.ancestors) activeIdx.set(anc.region, anc.armIndex);
 	}
 	const ranges: [number, number][] = [];
 	for (const { region } of flat) {
+		if (syntheticEmpty && varied && region === varied.region) {
+			for (const arm of region.arms) ranges.push([arm.bodySpan.start, arm.bodySpan.end]);
+			continue;
+		}
 		const idx = activeIdx.get(region) ?? 0;
 		region.arms.forEach((arm, i) => {
 			if (i !== idx) ranges.push([arm.bodySpan.start, arm.bodySpan.end]);
@@ -132,19 +158,26 @@ function realize(
 }
 
 /** Build a lazy, memoized variant over the shared flattened region list. `varied` is the
- *  region entry this variant activates (with `armIndex`); undefined for variant 0. */
+ *  region entry this variant activates (with `armIndex`); undefined for variant 0.
+ *  `syntheticEmpty` (Stage-5 Task 1): `varied` is an else-less if-region blanked whole —
+ *  no arm is active, so `active.armIndex` is omitted and `active.syntheticEmpty` is set. */
 function makeVariant(
 	text: string,
 	dialect: Dialect,
 	flat: readonly RegionEntry[],
 	varied: RegionEntry | undefined,
 	armIndex: number,
+	syntheticEmpty = false,
 ): TemplateVariant {
 	let realized: string | undefined;
 	let cached: TemplatedParseResult | undefined;
-	const textOf = (): string => (realized ??= realize(text, flat, varied, armIndex));
+	const textOf = (): string => (realized ??= realize(text, flat, varied, armIndex, syntheticEmpty));
 	return {
-		active: varied ? { region: varied.region, armIndex } : undefined,
+		active: varied
+			? syntheticEmpty
+				? { region: varied.region, syntheticEmpty: true }
+				: { region: varied.region, armIndex }
+			: undefined,
 		text: textOf,
 		parse(): TemplatedParseResult {
 			return (cached ??= parseTemplated(textOf(), dialect));
@@ -174,6 +207,14 @@ export function templateVariants(text: string, dialect: Dialect): TemplateVarian
 	for (const entry of flat) {
 		for (let armIndex = 1; armIndex < entry.region.arms.length; armIndex++) {
 			variants.push(makeVariant(text, dialect, flat, entry, armIndex));
+		}
+		// Synthetic empty-else arm (Stage-5 Task 1): an if-region whose LAST arm is
+		// `if`/`elif` (no `else`) gets one extra variant with its whole body blanked —
+		// "optional absent" becomes a coverage point too. Law: 1 + Σ(arms−1) +
+		// #(else-less if-regions).
+		const lastArm = entry.region.arms[entry.region.arms.length - 1];
+		if (entry.region.kind === "if" && lastArm && lastArm.keyword !== "else") {
+			variants.push(makeVariant(text, dialect, flat, entry, 0, true));
 		}
 	}
 	return variants;
