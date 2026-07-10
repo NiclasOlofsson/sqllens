@@ -1,11 +1,4 @@
-import {
-	BailErrorStrategy,
-	CharStream,
-	CommonTokenStream,
-	type ParserATNSimulator,
-	type ParserRuleContext,
-	PredictionMode,
-} from "antlr4ng";
+import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
 import { dotPathTokenSource } from "./dot-path.js";

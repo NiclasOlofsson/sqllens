@@ -5,7 +5,6 @@ import {
 	CommonTokenStream,
 	type Lexer,
 	type ParserATNSimulator,
-	type ParserRuleContext,
 	PredictionMode,
 } from "antlr4ng";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";

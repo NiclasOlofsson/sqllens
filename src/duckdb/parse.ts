@@ -5,7 +5,6 @@ import {
 	CommonTokenStream,
 	type Lexer,
 	type ParserATNSimulator,
-	type ParserRuleContext,
 	PredictionMode,
 } from "antlr4ng";
 import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";

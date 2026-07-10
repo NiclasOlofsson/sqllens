@@ -5,7 +5,6 @@ import {
 	CommonTokenStream,
 	type Lexer,
 	type ParserATNSimulator,
-	type ParserRuleContext,
 	PredictionMode,
 } from "antlr4ng";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";

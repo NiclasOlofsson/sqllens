@@ -3,8 +3,11 @@ import { nodeAt, endPosition, parse } from "../src/index.js";
 import type {
 	PipeExpr,
 	PipeStage,
+	PipeSetItem,
+	PipeBranch,
 	LateralViewSource,
 	GraphTableSource,
+	GraphElement,
 	PivotInfo,
 	UnpivotInfo,
 	Clause,
@@ -21,7 +24,8 @@ describe("barrel completeness", () => {
 		expect(typeof endPosition).toBe("function");
 	});
 	it("union-member types are consumable", () => {
-		// compile-time proof: naming each type in a signature must typecheck
+		// compile-time proof: naming each type in a signature must typecheck — all 12 barreled IR
+		// types plus NodeHit/ParseResult/ParserRuleContext
 		const f = (
 			a: PipeStage,
 			b: LateralViewSource,
@@ -29,7 +33,16 @@ describe("barrel completeness", () => {
 			d: NodeHit,
 			e: ParseResult,
 			g: ParserRuleContext,
-		): void => void [a, b, c, d, e, g];
+			h: PipeExpr,
+			i: PipeSetItem,
+			j: PipeBranch,
+			k: GraphTableSource,
+			l: GraphElement,
+			m: PivotInfo,
+			n: UnpivotInfo,
+			o: Clause,
+			p: LimitInfo,
+		): void => void [a, b, c, d, e, g, h, i, j, k, l, m, n, o, p];
 		expect(typeof f).toBe("function");
 		const r: ParseResult = { ...parse("SELECT 1", "duckdb"), tree: parse("SELECT 1", "duckdb").cst } as never;
 		void r;
