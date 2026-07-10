@@ -37,6 +37,11 @@ export const DERIVED_DIALECTS: Readonly<Record<string, Dialect>> = {
 	// is Trino's predecessor
 	athena: "trino",
 	presto: "trino",
+	// Alternate spelling of the engine name (alias class, same as our own dialect
+	// names above). Admitted 2026-07-10 on the anvil channel's request; caveat noted
+	// there: no dbt adapter is attested to emit `postgresql` as its adapter_type —
+	// it is inherited consumer vocabulary, admitted as a cheap, honest alias.
+	postgresql: "postgres",
 };
 
 /**

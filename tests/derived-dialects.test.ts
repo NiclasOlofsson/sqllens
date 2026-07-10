@@ -21,6 +21,7 @@ describe("resolveDialect", () => {
 		expect(resolveDialect("fabric")).toBe("tsql");
 		expect(resolveDialect("synapse")).toBe("tsql");
 		expect(resolveDialect("sqlserver")).toBe("tsql");
+		expect(resolveDialect("postgresql")).toBe("postgres"); // alternate engine-name spelling (alias class)
 	});
 
 	it("is case-insensitive and trims", () => {
