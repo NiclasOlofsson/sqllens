@@ -31,4 +31,13 @@ describe("layering", () => {
 			}
 		}
 	});
+
+	it("src/document does not import ../minijinja", () => {
+		for (const f of readdirSync(join(SRC, "document"))) {
+			if (!f.endsWith(".ts")) continue;
+			for (const imp of importsOf(join(SRC, "document", f))) {
+				expect(imp, `document/${f} imports ${imp}`).not.toMatch(/\.\.\/minijinja/);
+			}
+		}
+	});
 });

@@ -40,9 +40,10 @@ import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
-import { OPEN_PROVIDER } from "../qualify/template-provider.js";
+import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import type { Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
+import type { TemplateEngine, TemplatedParseResult } from "../template/engine.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
@@ -106,6 +107,10 @@ interface CachedCell {
 	 *  reference is stable across edits (the CachedCell is reused via the CellCache), so a cell
 	 *  untouched by an edit keeps its analysis until a schema/version change. */
 	readonly analysis: WeakMap<SchemaProvider, Versioned<CellAnalysis>>;
+	/** Present ONLY for a cell built by `buildTemplatedCell` — the full engine result, so
+	 *  `doc.templated` survives a cache hit across `withText()` without re-invoking the engine.
+	 *  Undefined for every plain cell. */
+	readonly templated?: TemplatedParseResult;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -197,6 +202,10 @@ export class SqlDocument {
 	 *  facade's scopes (`statement: "compound"`); use `statements`/`cellAt` for per-statement scopes. */
 	readonly scopes: ScopeTree;
 	readonly lines: LineIndex;
+	/** The template artifacts when this document was built with a `templating` engine:
+	 *  tags/regions/symbols/placeholder/degraded plus tagOf/nodeOf/diagnosticsOf.
+	 *  Undefined on plain documents. */
+	readonly templated?: TemplatedParseResult;
 
 	/** Schema-keyed memo of the MERGED analyze() result (concat + coordinate shift). Rebuilt per doc
 	 *  version — the merge must redo when an earlier statement's line count changes and shifts later
@@ -211,11 +220,15 @@ export class SqlDocument {
 	/** The content-addressed cross-edit cell cache, carried to withText() children. Its contents stay
 	 *  mutable (a memo) even though the reference is frozen with the instance. */
 	private readonly _cellCache: CellCache;
+	/** The injected template engine + provider, carried to withText() children so an edit keeps
+	 *  building through the same door its parent used. Undefined on a plain document. */
+	private readonly _templating?: TemplateEngine;
+	private readonly _provider?: TemplateProvider;
 
 	private constructor(
 		text: string,
 		dialect: Dialect,
-		opts: { uri?: string; version?: number },
+		opts: { uri?: string; version?: number; templating?: TemplateEngine; provider?: TemplateProvider },
 		cellCache: CellCache,
 	) {
 		this.uri = opts.uri;
@@ -224,21 +237,34 @@ export class SqlDocument {
 		this.dialect = dialect;
 		this.lines = new LineIndex(text);
 		this._cellCache = cellCache;
+		this._templating = opts.templating;
+		this._provider = opts.provider;
 
-		// Split into per-statement cells and parse each independently, reusing unchanged cells from
-		// the (carried) content-addressed cache. Each cell re-enters the dialect's batch entry rule
-		// as a batch of one — the proven single-statement path — so no lower() changes are needed.
-		const spans = splitStatements(text, dialect);
-		const handedOut = new Set<CachedCell>(); // per-BUILD: which cache entries this doc already uses
-		const cells: StatementCell[] = [];
-		const backing: CachedCell[] = [];
-		for (const span of spans) {
-			const built = this.buildCell(span, handedOut);
-			cells.push(built.cell);
-			backing.push(built.cached);
+		let cells: StatementCell[];
+		let backing: CachedCell[];
+		if (opts.templating) {
+			// The templated door: ONE cell spanning the whole text, bypassing splitStatements —
+			// its products come from the engine, not the plain per-dialect parse (see buildTemplatedCell).
+			const built = this.buildTemplatedCell(text, opts.templating, opts.provider);
+			cells = [built.cell];
+			backing = [built.cached];
+		} else {
+			// Split into per-statement cells and parse each independently, reusing unchanged cells from
+			// the (carried) content-addressed cache. Each cell re-enters the dialect's batch entry rule
+			// as a batch of one — the proven single-statement path — so no lower() changes are needed.
+			const spans = splitStatements(text, dialect);
+			const handedOut = new Set<CachedCell>(); // per-BUILD: which cache entries this doc already uses
+			cells = [];
+			backing = [];
+			for (const span of spans) {
+				const built = this.buildCell(span, handedOut);
+				cells.push(built.cell);
+				backing.push(built.cached);
+			}
 		}
 		this.statements = Object.freeze(cells);
 		this._cells = backing;
+		this.templated = opts.templating ? backing[0]!.templated : undefined;
 
 		// Whole-document facade. tokens/diagnostics/errors are the cheap concat/sum across cells.
 		this.tokens = cells.flatMap((c) => c.tokens as Token[]);
@@ -319,16 +345,77 @@ export class SqlDocument {
 		return { cell, cached };
 	}
 
+	/** Build the ONE cell for a TEMPLATED document: span [0, text.length) — the templated build path
+	 *  bypasses `splitStatements` entirely (one cell, whole text), and its products come from a single
+	 *  `engine.parse(text, dialect, { provider })` call rather than the plain per-dialect `parse()`.
+	 *  `r.tokens`/`r.diagnostics` are ALREADY document coordinates (the cell always starts at 0), so —
+	 *  unlike `buildCell` — nothing is shifted. Mirrors `buildCell`'s CachedCell/StatementCell shapes
+	 *  so every downstream consumer (analyze(), cellAt(), nodeAt()…) sees the same structure whether
+	 *  the document is plain or templated. Cached in the SAME cross-edit `_cellCache` as plain cells,
+	 *  under a prefixed key so a templated cell can never collide with a plain one for the same text. */
+	private buildTemplatedCell(
+		text: string,
+		engine: TemplateEngine,
+		provider: TemplateProvider | undefined,
+	): { cell: StatementCell; cached: CachedCell } {
+		const span: StatementCellSpan = { start: 0, end: text.length };
+		// Task 2: + provider version
+		const key = "templated " + this.dialect + " " + text;
+		let cached = this._cellCache.get(key);
+		if (cached === undefined) {
+			const r = engine.parse(text, this.dialect, { provider });
+			cached = {
+				text,
+				category: r.sql.ast.statement ?? "other",
+				ast: r.sql.ast,
+				cst: r.sql.cst,
+				// Resolve scopes from the already-lowered (marker-carrying) ast — do NOT re-parse.
+				scopes: toScopes(r.sql.ast, { dialect: this.dialect }),
+				tokens: r.tokens,
+				errors: r.sql.errors,
+				diagnostics: r.diagnostics,
+				analysis: new WeakMap<SchemaProvider, Versioned<CellAnalysis>>(),
+				templated: r,
+			};
+			this._cellCache.set(key, cached);
+		}
+		const cell = Object.freeze({
+			span,
+			text: cached.text,
+			category: cached.category,
+			ast: cached.ast,
+			cst: cached.cst,
+			scopes: cached.scopes,
+			tokens: cached.tokens,
+			errors: cached.errors,
+			diagnostics: cached.diagnostics,
+		});
+		return { cell, cached };
+	}
+
 	/** Build a document for `text` in `dialect`. Total: never throws, even on broken / mid-edit input.
-	 *  Starts a FRESH cell cache — cross-edit reuse comes from withText(), not create(). */
-	static create(text: string, dialect: Dialect, opts: { uri?: string; version?: number } = {}): SqlDocument {
+	 *  Starts a FRESH cell cache — cross-edit reuse comes from withText(), not create(). Pass
+	 *  `templating` to parse through an injected TemplateEngine (jinja-SQL etc.) instead of the plain
+	 *  per-dialect parser — absent, this is the exact untouched plain-SQL path (never auto-detected).
+	 *  `provider` feeds the engine's fills/markers and is ignored without `templating`. */
+	static create(
+		text: string,
+		dialect: Dialect,
+		opts: { uri?: string; version?: number; templating?: TemplateEngine; provider?: TemplateProvider } = {},
+	): SqlDocument {
 		return new SqlDocument(text, dialect, opts, new CellCache());
 	}
 
 	/** An edit: a NEW SqlDocument for the new text. This instance is untouched (immutable). The cell
-	 *  cache is CARRIED forward, so statements whose text didn't change reuse their parsed cells. */
+	 *  cache is CARRIED forward, so statements whose text didn't change reuse their parsed cells. The
+	 *  injected templating engine + provider (if any) ride the instance to this child too. */
 	withText(text: string, version: number): SqlDocument {
-		return new SqlDocument(text, this.dialect, { uri: this.uri, version }, this._cellCache);
+		return new SqlDocument(
+			text,
+			this.dialect,
+			{ uri: this.uri, version, templating: this._templating, provider: this._provider },
+			this._cellCache,
+		);
 	}
 
 	/** The statement cell owning `offset` (binary search over the tiling cell spans), or undefined if
