@@ -35,14 +35,16 @@ import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
 import { lineageAt as lineageAtScopes, type LineageHop } from "../lineage/hops.js";
 import { referencesAt as referencesAtScopes, type Occurrences } from "../references/references.js";
 import type { Dialect } from "../dialect.js";
-import type { QueryExpr, SelectExpr } from "../ir/ir.js";
+import type { QueryExpr, SelectExpr, PartSpan } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
+import { partSpanOf } from "../ir/part-span.js";
 import type { StatementCategory } from "../ir/statement.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
-import type { ScopeTree } from "../scope/scope.js";
+import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
+import { displayName } from "../ident/fold.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
@@ -192,6 +194,19 @@ export interface DocumentVariant {
 	doc(): SqlDocument;
 }
 
+/** One CTE's identity + its output columns unioned across arms (`SqlDocument.unionCtes`). */
+export interface UnionCte {
+	name: string;
+	/** Declaration identity: the CTE name's own span (`CteDef.nameCst`, falling back to the whole
+	 *  `CteDef.cst` when the name itself has no real token). Part of the key: two same-named CTEs
+	 *  declared at different positions stay distinct entries. */
+	declarationSpan: PartSpan;
+	/** Output columns unioned by NAME across arms; each column's span is the FIRST LIVE ARM's (arm
+	 *  iteration order = `SqlDocument.variants` order) — the representative-span rule pinned by the
+	 *  variant-acceptance brief's A8a-c. */
+	columns: { name: string; span: Span }[];
+}
+
 export class SqlDocument {
 	readonly uri?: string;
 	readonly version: number;
@@ -245,6 +260,18 @@ export class SqlDocument {
 	/** Memo box for the `variants` getter (frozen instance, mutable memo — the `_analysisCache`
 	 *  precedent: the box reference is frozen with the instance, but its `.value` stays settable). */
 	private readonly _variantsMemo: { value?: readonly DocumentVariant[] } = {};
+	/** Schema-keyed memos for the four union views (`unionSymbols`/`unionDiagnostics`/`unionCtes`/
+	 *  `unionOutputColumns`) — one WeakMap per view, same identity+version pattern as `_analysisCache`. */
+	private readonly _unionSymbolsCache = new WeakMap<SchemaProvider, Versioned<Sym[]>>();
+	private readonly _unionDiagnosticsCache = new WeakMap<
+		SchemaProvider,
+		Versioned<(SyntaxDiagnostic | Diagnostic)[]>
+	>();
+	private readonly _unionCtesCache = new WeakMap<SchemaProvider, Versioned<UnionCte[]>>();
+	private readonly _unionOutputColumnsCache = new WeakMap<
+		SchemaProvider,
+		Versioned<{ name: string; span: Span }[]>
+	>();
 
 	private constructor(
 		text: string,
@@ -688,6 +715,194 @@ export class SqlDocument {
 			};
 		});
 	}
+
+	/** Symbols across ALL variants, deduped by span+identity+NAME (`start:end:kind:frame:name` —
+	 *  NAME is load-bearing: schema-expanded star Syms share one zero-width span by design, see
+	 *  symbols.ts's emitColumns). Computed over the VARIANT documents only — never the primary
+	 *  parse, whose all-arms-live SQL can mis-read conflicting arms (e.g. `col_a col_b` reading as
+	 *  an alias) into junk that must never leak into the union. Equals the plain `analyze(schema)`
+	 *  symbols when there are no variants (a plain document, or a templated one with no
+	 *  control-flow regions). Memoized per schema identity+version, like `analyze()`. */
+	unionSymbols(schema?: SchemaProvider): Sym[] {
+		const s = schema ?? OPEN_PROVIDER;
+		return memoByVersion(this._unionSymbolsCache, s, () => this.buildUnionSymbols(s));
+	}
+
+	private buildUnionSymbols(s: SchemaProvider): Sym[] {
+		const variants = this.variants;
+		if (variants.length === 0) return this.analyze(s).symbols;
+		return dedupBy(
+			variants.flatMap((v) => v.doc().analyze(s).symbols),
+			symKey,
+		);
+	}
+
+	/** Diagnostics across all variants — syntax + semantic, like `session.diagnostics()` — deduped
+	 *  by position+identity, NOT message text: two arms producing the SAME diagnostic at the SAME
+	 *  position collapse to one entry, but the same message at TWO DIFFERENT positions stays two
+	 *  entries (the exact case a message-keyed merge gets wrong). Same variant-only, memoized
+	 *  semantics as `unionSymbols`. */
+	unionDiagnostics(schema?: SchemaProvider): (SyntaxDiagnostic | Diagnostic)[] {
+		const s = schema ?? OPEN_PROVIDER;
+		return memoByVersion(this._unionDiagnosticsCache, s, () => this.buildUnionDiagnostics(s));
+	}
+
+	private buildUnionDiagnostics(s: SchemaProvider): (SyntaxDiagnostic | Diagnostic)[] {
+		const variants = this.variants;
+		if (variants.length === 0) return [...this.diagnostics, ...this.analyze(s).diagnostics];
+		const all = variants.flatMap((v) => {
+			const d = v.doc();
+			return [...d.diagnostics, ...d.analyze(s).diagnostics] as (SyntaxDiagnostic | Diagnostic)[];
+		});
+		return dedupBy(all, diagKey);
+	}
+
+	/** Per-CTE column unions across all variants, keyed by NAME + declaration span (two same-named
+	 *  CTEs declared at different positions stay distinct entries; a CTE existing in only one arm
+	 *  still appears). Columns union by NAME; a column's representative span is the FIRST LIVE ARM's
+	 *  (arm iteration order = `this.variants` order) — the rule the variant-acceptance brief's A8a-c
+	 *  pin. Falls through to this document's own (single-arm) answer when there are no variants —
+	 *  there is no pre-existing single-doc equivalent to delegate to, unlike unionSymbols/
+	 *  unionDiagnostics, so the no-variant case is just the one-arm instance of the same algorithm.
+	 *  Variant-only, memoized like `unionSymbols`. */
+	unionCtes(schema?: SchemaProvider): UnionCte[] {
+		const s = schema ?? OPEN_PROVIDER;
+		return memoByVersion(this._unionCtesCache, s, () => this.buildUnionCtes(s));
+	}
+
+	private buildUnionCtes(s: SchemaProvider): UnionCte[] {
+		interface CteAgg {
+			name: string;
+			declarationSpan: PartSpan;
+			columns: Map<string, Span>;
+		}
+		const byKey = new Map<string, CteAgg>();
+		const order: string[] = [];
+		for (const doc of this.arms()) {
+			const qualification = doc.analyze(s).qualification;
+			for (const cteRef of collectCtes(doc.scopes.root)) {
+				const declarationSpan = partSpanOf(cteRef.def.nameCst ?? cteRef.def.cst);
+				if (!declarationSpan) continue; // no real token to key on — never fabricate a span
+				const name = displayName(cteRef.def.name, doc.dialect);
+				const key = `${name}:${declarationSpan.start}`;
+				let entry = byKey.get(key);
+				if (!entry) {
+					entry = { name, declarationSpan, columns: new Map() };
+					byKey.set(key, entry);
+					order.push(key);
+				}
+				for (const col of scopeOutputColumns(cteRef.scope, qualification)) {
+					if (!entry.columns.has(col.name)) entry.columns.set(col.name, col.span);
+				}
+			}
+		}
+		return order.map((key) => {
+			const e = byKey.get(key)!;
+			return {
+				name: e.name,
+				declarationSpan: e.declarationSpan,
+				columns: [...e.columns].map(([name, span]) => ({ name, span })),
+			};
+		});
+	}
+
+	/** The document's final-SELECT (root scope) output columns unioned across arms — same NAME
+	 *  keying and representative-span rule as `unionCtes`. Falls through to this document's own root
+	 *  outputs when there are no variants. */
+	unionOutputColumns(schema?: SchemaProvider): { name: string; span: Span }[] {
+		const s = schema ?? OPEN_PROVIDER;
+		return memoByVersion(this._unionOutputColumnsCache, s, () => this.buildUnionOutputColumns(s));
+	}
+
+	private buildUnionOutputColumns(s: SchemaProvider): { name: string; span: Span }[] {
+		const byName = new Map<string, Span>();
+		const order: string[] = [];
+		for (const doc of this.arms()) {
+			const qualification = doc.analyze(s).qualification;
+			for (const col of scopeOutputColumns(doc.scopes.root, qualification)) {
+				if (!byName.has(col.name)) {
+					byName.set(col.name, col.span);
+					order.push(col.name);
+				}
+			}
+		}
+		return order.map((name) => ({ name, span: byName.get(name)! }));
+	}
+
+	/** The per-arm documents `unionCtes`/`unionOutputColumns` aggregate over: the real variants when
+	 *  they exist, else this document itself as the sole arm (see those methods' fall-through note). */
+	private arms(): readonly SqlDocument[] {
+		return this.variants.length === 0 ? [this] : this.variants.map((v) => v.doc());
+	}
+}
+
+/** Dedup `items` by a string key, keeping the FIRST occurrence of each key — arm/document order, so
+ *  the "first live arm wins" representative-data rule falls out of plain array order. */
+function dedupBy<T>(items: readonly T[], keyOf: (item: T) => string): T[] {
+	const seen = new Set<string>();
+	const out: T[] = [];
+	for (const item of items) {
+		const key = keyOf(item);
+		if (seen.has(key)) continue;
+		seen.add(key);
+		out.push(item);
+	}
+	return out;
+}
+
+/** `unionSymbols` dedup key — the negotiated `start:end:kind:frame:name` (Stage-5 plan Global
+ *  Constraints). NAME is load-bearing: schema-expanded star Syms share one zero-width span by
+ *  design (symbols.ts's emitColumns), so span+kind+frame alone would collapse them into one. */
+function symKey(s: Sym): string {
+	return `${s.span.start}:${s.span.end}:${s.kind}:${s.frame}:${s.name}`;
+}
+
+/** `unionDiagnostics` dedup key. A SyntaxDiagnostic keys on its own identity fields
+ *  (`offset:length:message`). A qualify `Diagnostic` carries no separate "offending name" field —
+ *  its `message` is wholly DERIVED from `kind` + the offending name (see qualify.ts's
+ *  columnDiag/unknownTable: the only variable part of the message IS the name), so `kind + span
+ *  fields + message` is the honest equivalent of "kind + span + name" without inventing a field the
+ *  interface doesn't carry. */
+function diagKey(d: SyntaxDiagnostic | Diagnostic): string {
+	if ("kind" in d) return `${d.kind}:${d.line}:${d.column}:${d.endLine}:${d.endColumn}:${d.message}`;
+	return `${d.offset}:${d.length}:${d.message}`;
+}
+
+/** Every `CteRef` reachable from `scope` and its descendants. A WITH clause's CTEs live on the
+ *  `Scope` that declares them (`Scope.ctes`); a nested WITH clause (in a subquery, a CTE's own
+ *  body, a pipe stage) gets its own entries on its own scope, reached by recursing through
+ *  `children` — mirrors symbols.ts's own scope walk, minus the frame-labeling this doesn't need. */
+function collectCtes(scope: Scope, out: CteRef[] = []): CteRef[] {
+	for (const cteRef of scope.ctes.values()) out.push(cteRef);
+	for (const child of scope.children) collectCtes(child, out);
+	return out;
+}
+
+/** A scope's own projected output columns as {name, span} pairs — schema-fed where a star needs
+ *  expansion (via `qualification.expandStarOf`, the same expansion `deriveSymbols` rides, so the
+ *  two never disagree). Only a `select` body carries a projection list to enumerate; a pipe/setop
+ *  scope answers `[]` here (honest, not wrong — the same posture `session.lineage()` already
+ *  documents for the compound facade). An anonymous (unaliased, non-column) projection has no
+ *  determinable name and is skipped, never fabricated; a star that qualify can't resolve (a schema
+ *  gap) is skipped the same way. */
+function scopeOutputColumns(scope: Scope, qualification: Qualification): { name: string; span: Span }[] {
+	const body = scope.body;
+	if (body.kind !== "select") return [];
+	const out: { name: string; span: Span }[] = [];
+	for (const p of body.projections) {
+		if (p.isStar) {
+			const pairs = qualification.expandStarOf(scope, p);
+			if (!pairs) continue; // unresolvable star — never fabricate a partial list
+			const span = partSpanOf(p.cst);
+			if (!span) continue;
+			for (const pair of pairs) out.push({ name: pair.name, span });
+		} else if (p.name !== undefined) {
+			const span = partSpanOf(p.aliasCst ?? p.cst);
+			if (span) out.push({ name: displayName(p.name, scope.dialect), span });
+		}
+		// else: anonymous expression — no determinable name, skip
+	}
+	return out;
 }
 
 /** Shift a symbol's every span (its own span, its declaration target, its per-part spans, its

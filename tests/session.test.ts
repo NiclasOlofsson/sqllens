@@ -69,4 +69,13 @@ describe("SqlSession — the facade", () => {
 		expect(s.variantAt(IF.indexOf("a"))).toBe(s.doc.variantAt(IF.indexOf("a")));
 		expect(s.variants).toBe(s.doc.variants);
 	});
+	it("unionSymbols/unionDiagnostics/unionCtes/unionOutputColumns are one-line delegations with the session's schema", () => {
+		const IF = "with data as (select {% if v %}a{% else %}b{% endif %} from t) select * from data";
+		const schema = new Schema({ t: { a: "int", b: "int" } });
+		const s = SqlSession.create(IF, "duckdb", { templating: minijinja(), schema });
+		expect(s.unionSymbols()).toBe(s.doc.unionSymbols(schema));
+		expect(s.unionDiagnostics()).toBe(s.doc.unionDiagnostics(schema));
+		expect(s.unionCtes()).toBe(s.doc.unionCtes(schema));
+		expect(s.unionOutputColumns()).toBe(s.doc.unionOutputColumns(schema));
+	});
 });
