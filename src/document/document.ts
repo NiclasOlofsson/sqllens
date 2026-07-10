@@ -46,7 +46,7 @@ import type { Token } from "../token/token.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
-import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan } from "./shift.js";
+import { shiftDiagnostics, shiftTokens, shiftSpanFields, shiftPartSpan, shiftSpan } from "./shift.js";
 
 // A single stable OPEN-WORLD default, used by analyze() when no catalog is configured.
 // Sharing ONE instance (OPEN_PROVIDER) keeps the schema-keyed analyze() memo working for
@@ -470,13 +470,13 @@ export class SqlDocument {
 function shiftSym(sym: Sym, baseLine: number, baseCol: number, baseOffset: number): Sym {
 	return {
 		...sym,
-		span: shiftSpanFields(sym.span, baseLine, baseCol),
-		definition: sym.definition ? shiftSpanFields(sym.definition, baseLine, baseCol) : undefined,
+		span: shiftSpan(sym.span, baseLine, baseCol, baseOffset),
+		definition: sym.definition ? shiftSpan(sym.definition, baseLine, baseCol, baseOffset) : undefined,
 		partSpans: sym.partSpans
 			? sym.partSpans.map((p) => shiftPartSpan(p, baseLine, baseCol, baseOffset))
 			: undefined,
 		alias: sym.alias
-			? { name: sym.alias.name, span: shiftSpanFields(sym.alias.span, baseLine, baseCol) }
+			? { name: sym.alias.name, span: shiftSpan(sym.alias.span, baseLine, baseCol, baseOffset) }
 			: undefined,
 	};
 }

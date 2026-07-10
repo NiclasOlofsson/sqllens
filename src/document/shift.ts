@@ -20,6 +20,7 @@
 
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { PartSpan } from "../ir/part-span.js";
+import type { Span } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 
 /** Shift a cell-relative diagnostic to document coordinates. `line` is 1-based, `column` 0-based. */
@@ -87,6 +88,18 @@ export function shiftPartSpan(p: PartSpan, baseLine: number, baseCol: number, ba
 		...shiftSpanFields(p, baseLine, baseCol),
 		start: p.start + baseOffset,
 		end: p.end + baseOffset,
+	};
+}
+
+/** Shift a symbols `Span` (line/column/endLine/endColumn PLUS absolute start/end char offsets) to
+ *  document coordinates. `shiftSpanFields` alone only shifts the line/column half — its `{...v}`
+ *  spread would otherwise leave `start`/`end` at their stale cell-relative values, so a `Span`
+ *  (unlike a `Diagnostic`, which has no start/end) always goes through this composed shift instead. */
+export function shiftSpan(s: Span, baseLine: number, baseCol: number, baseOffset: number): Span {
+	return {
+		...shiftSpanFields(s, baseLine, baseCol),
+		start: s.start + baseOffset,
+		end: s.end + baseOffset,
 	};
 }
 

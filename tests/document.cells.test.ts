@@ -230,6 +230,10 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		// not the stale cell-relative coordinates a missed shift would leave behind.
 		expect(tableSym.alias!.span).toEqual(aliasSym.span);
 		expect(tableSym.alias!.span.line).toBe(2);
+		// start/end are absolute DOC char offsets too — a shift that only moved line/column (mirroring
+		// the shiftSpanFields spread bug) would leave these at their stale cell-relative values.
+		expect(text.slice(tableSym.alias!.span.start, tableSym.alias!.span.end)).toBe("x");
+		expect(text.slice(aliasSym.span.start, aliasSym.span.end)).toBe("x");
 	});
 
 	it("a column Sym's .source link is remapped to the SHIFTED relation Sym in a multi-statement document", () => {
@@ -245,6 +249,7 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		// original cell-relative object, which is no longer reachable from the returned array.
 		expect(colSym.source).toBe(tableSym);
 		expect(colSym.source!.span.line).toBe(2); // doc coordinates, not cell-relative
+		expect(text.slice(colSym.source!.span.start, colSym.source!.span.end)).toBe("orders o"); // whole source ref
 	});
 
 	it("expanded star column Syms shift to doc coordinates and keep their zero-width span + .source remap", () => {
@@ -253,11 +258,15 @@ describe("SqlDocument.analyze() — per-statement merge (Task 6)", () => {
 		const syms = doc.analyze(schema).symbols;
 		const tableSym = syms.find((s) => s.kind === "table" && s.name === "sales")!;
 		expect(tableSym).toBeDefined();
-		const expanded = syms.filter((s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		const expanded = syms.filter(
+			(s) => s.kind === "column" && s.modifiers.includes("star") && s.modifiers.includes("reference"),
+		);
 		expect(expanded.map((s) => s.name).sort()).toEqual(["amount", "id"]);
 		for (const e of expanded) {
 			expect(e.span.line).toBe(2); // shifted to doc coordinates, not cell-relative
 			expect(e.span.column).toBe(e.span.endColumn); // still zero-width after the shift
+			expect(e.span.start).toBe(e.span.end); // zero-width in offsets too, not just line/column
+			expect(e.span.start).toBe(text.indexOf("*")); // at the star's DOC offset, not cell-relative
 			expect(e.source).toBe(tableSym); // remapped to the SHIFTED relation Sym
 		}
 	});

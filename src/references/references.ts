@@ -425,6 +425,8 @@ function spanOf(cst: ParserRuleContext): Span {
 	const e = cst.stop;
 	const end = endPosition(e?.line ?? 0, e?.column ?? 0, e?.text ?? "");
 	return {
+		start: s?.start ?? 0,
+		end: e ? e.stop + 1 : 0,
 		line: s?.line ?? 0,
 		column: s?.column ?? 0,
 		endLine: end.endLine,

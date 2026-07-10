@@ -1,6 +1,6 @@
 import type { Token } from "antlr4ng";
 import type { Position, Range } from "vscode-languageserver-types";
-import type { ParserRuleContext, Span, SqlDocument, StatementCell, SyntaxDiagnostic } from "../index.js";
+import type { ParserRuleContext, SqlDocument, StatementCell, SyntaxDiagnostic } from "../index.js";
 
 // ---------------------------------------------------------------------------
 // The ONE place that converts library positions to LSP positions. The library
@@ -38,8 +38,17 @@ export function rangeFromCst(cst: ParserRuleContext): Range {
 	return { start: positionFromStartToken(start), end: positionFromStopToken(stop) };
 }
 
-/** A symbols `Span` (1-based line, 0-based column, endColumn already past the last char) → Range. */
-export function rangeFromSpan(span: Span): Range {
+/** The `{ line, column, endLine, endColumn }` shape shared by a symbols `Span` and a qualify
+ *  `Diagnostic` (1-based line, 0-based column, endColumn already past the last char) — accepts
+ *  either without requiring `Span`'s absolute start/end char offsets, which this doesn't need. */
+interface LineSpan {
+	line: number;
+	column: number;
+	endLine: number;
+	endColumn: number;
+}
+
+export function rangeFromSpan(span: LineSpan): Range {
 	return {
 		start: { line: Math.max(0, span.line - 1), character: span.column },
 		end: { line: Math.max(0, span.endLine - 1), character: span.endColumn },

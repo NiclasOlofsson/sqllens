@@ -46,6 +46,10 @@ export type SymbolModifier = "declaration" | "reference" | "output" | "aggregate
 export type StarExpansion = (scope: Scope, projection: Projection) => { name: string; sourceKey: string }[] | undefined;
 
 export interface Span {
+	/** Absolute 0-based char offset, inclusive start. */
+	start: number;
+	/** Absolute 0-based char offset, EXCLUSIVE end — text.slice(start, end) is the spanned text. */
+	end: number;
 	line: number;
 	column: number;
 	endLine: number;
@@ -95,7 +99,11 @@ export const MAIN_FRAME = "_main_";
  *  `expandStarOf` (typically `Qualification.expandStarOf`) additionally expands a resolvable
  *  `SELECT *`/`t.*` into one extra column Sym per source column, alongside the opaque star Sym
  *  it already emits — absent (the default), stars stay opaque as before. */
-export function deriveSymbols(tree: ScopeTree, schema: SchemaProvider = OPEN_PROVIDER, expandStarOf?: StarExpansion): Sym[] {
+export function deriveSymbols(
+	tree: ScopeTree,
+	schema: SchemaProvider = OPEN_PROVIDER,
+	expandStarOf?: StarExpansion,
+): Sym[] {
 	const out: Sym[] = [];
 	const sourceSyms = new Map<ResolvedSource, Sym>();
 	walk(tree.root, MAIN_FRAME, out, schema, sourceSyms, expandStarOf);
@@ -116,7 +124,13 @@ function walk(
 	// the symbol (and frame label) shows the display form of the declared name.
 	for (const [, cteRef] of scope.ctes) {
 		const name = displayName(cteRef.def.name, scope.dialect);
-		out.push({ kind: "cte", modifiers: ["declaration"], name, span: spanOf(cteRef.def.nameCst ?? cteRef.def.cst), frame });
+		out.push({
+			kind: "cte",
+			modifiers: ["declaration"],
+			name,
+			span: spanOf(cteRef.def.nameCst ?? cteRef.def.cst),
+			frame,
+		});
 		walk(cteRef.scope, name, out, schema, sourceSyms, expandStarOf);
 		walked.add(cteRef.scope);
 	}
@@ -262,7 +276,14 @@ function emitColumns(
 					// No separate source token exists per implied column, so every expanded Sym shares
 					// a ZERO-WIDTH span at the star's own start — deliberate (anvil-negotiated): it must
 					// never be a cursor hit-test target, only usable for name/source enumeration.
-					const point: Span = { line: starSpan.line, column: starSpan.column, endLine: starSpan.line, endColumn: starSpan.column };
+					const point: Span = {
+						start: starSpan.start,
+						end: starSpan.start,
+						line: starSpan.line,
+						column: starSpan.column,
+						endLine: starSpan.line,
+						endColumn: starSpan.column,
+					};
 					for (const pair of pairs) {
 						const resolvedSource = scope.sources.get(pair.sourceKey);
 						out.push({
@@ -440,7 +461,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 	};
 }
 
-const ZERO_SPAN: Span = { line: 0, column: 0, endLine: 0, endColumn: 0 };
+const ZERO_SPAN: Span = { start: 0, end: 0, line: 0, column: 0, endLine: 0, endColumn: 0 };
 
 /** A representative CST node for a resolved source (for span fallbacks). */
 function resolvedSourceCst(src: ResolvedSource): ParserRuleContext | undefined {
@@ -463,6 +484,8 @@ function spanOf(cst: ParserRuleContext): Span {
 	const e = cst.stop;
 	const end = endPosition(e?.line ?? 0, e?.column ?? 0, e?.text ?? "");
 	return {
+		start: s?.start ?? 0,
+		end: e ? e.stop + 1 : 0,
 		line: s?.line ?? 0,
 		column: s?.column ?? 0,
 		endLine: end.endLine,
