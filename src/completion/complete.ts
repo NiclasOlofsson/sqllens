@@ -1,5 +1,5 @@
 // ---------------------------------------------------------------------------
-// complete() — scope-aware completion over a SqlDocument.
+// completeAt() — scope-aware completion over a SqlDocument.
 //
 // The interactive editor feature that lives in the BROKEN-input world: the user
 // is mid-keystroke, so this runs its OWN error-tolerant lex+parse of the current
