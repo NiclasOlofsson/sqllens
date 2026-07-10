@@ -18,7 +18,7 @@
 // ---------------------------------------------------------------------------
 
 import type { Lexer } from "antlr4ng";
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import type { TokenRole } from "./token.js";
 
 /** A symbolic-name regex that maps a matching token type to a role. */

@@ -20,4 +20,15 @@ describe("layering", () => {
 			}
 		}
 	});
+
+	it("token and ir do not type-import the api aggregator", () => {
+		for (const dir of ["token", "ir"]) {
+			for (const f of readdirSync(join(SRC, dir))) {
+				if (!f.endsWith(".ts")) continue;
+				for (const imp of importsOf(join(SRC, dir, f))) {
+					expect(imp, `${dir}/${f} imports ${imp}`).not.toMatch(/\.\.\/api\.js/);
+				}
+			}
+		}
+	});
 });

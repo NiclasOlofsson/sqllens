@@ -12,7 +12,7 @@
 // never to a guess.
 // ---------------------------------------------------------------------------
 
-import type { Dialect } from "./api.js";
+import type { Dialect } from "./dialect.js";
 
 export const DERIVED_DIALECTS: Readonly<Record<string, Dialect>> = {
 	// identity — the engine name and the dialect name coincide

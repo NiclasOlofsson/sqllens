@@ -6,7 +6,7 @@ import { inferDialect } from "../infer/dialect.js";
 import type { Type } from "../infer/types.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES, type FnSignature } from "../signature/signatures.js";
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import type { Diagnostic } from "./qualify.js";
 import type { SchemaProvider } from "./schema-provider.js";
 

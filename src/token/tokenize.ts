@@ -9,7 +9,7 @@
 // ---------------------------------------------------------------------------
 
 import { CharStream, type Lexer } from "antlr4ng";
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";

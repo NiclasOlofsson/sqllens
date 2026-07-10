@@ -17,7 +17,7 @@
 // Core module: pure data + types, no antlr, no LSP deps.
 // ---------------------------------------------------------------------------
 
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { TSQL_HARVESTED } from "./generated/tsql.js";
 
 /** One formal parameter of a curated signature. `type` is the dialect's documented type name.

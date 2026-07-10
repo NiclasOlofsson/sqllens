@@ -40,7 +40,7 @@
 // (all-text-live); variants are a separate additive API.
 // ---------------------------------------------------------------------------
 
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { parseTemplated, type TemplatedParseResult } from "./parse.js";
 import { templateRegions, type TemplateRegion } from "./regions.js";
 

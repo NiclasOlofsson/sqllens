@@ -1,5 +1,5 @@
 import { Token } from "antlr4ng";
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";

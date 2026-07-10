@@ -16,7 +16,7 @@
 // an imperfect heuristic; it is not a rare-path afterthought.
 // ---------------------------------------------------------------------------
 
-import type { Dialect } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { tokenize } from "../token/tokenize.js";
 import type { Token } from "../token/token.js";
 

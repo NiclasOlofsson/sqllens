@@ -45,7 +45,8 @@
 // ---------------------------------------------------------------------------
 
 import { CharStream, CommonTokenStream, ListTokenSource, type ParserRuleContext, Token as AntlrToken } from "antlr4ng";
-import { parse, type Dialect, type ParseResultIR } from "../api.js";
+import { parse, type ParseResultIR } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import { endPosition } from "../ir/span.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";

@@ -31,7 +31,8 @@
 // ---------------------------------------------------------------------------
 
 import type { ParserRuleContext } from "antlr4ng";
-import { parse, qualify, deriveSymbols, toScopes, TypeInfo, type Dialect } from "../api.js";
+import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
+import type { Dialect } from "../dialect.js";
 import type { QueryExpr, SelectExpr } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
 import type { StatementCategory } from "../ir/statement.js";
