@@ -16,7 +16,7 @@ import {
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
-import { relationColumns } from "./relation-columns.js";
+import { relationColumns, tableSourceColumns } from "./relation-columns.js";
 import type { Column } from "./schema.js";
 import { type SchemaProvider } from "./schema-provider.js";
 import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
@@ -66,7 +66,9 @@ export interface Qualification {
 	expandStarOf(scope: Scope, projection: Projection): { name: string; sourceKey: string }[] | undefined;
 	/** The columns a single visible source contributes, schema-resolved — or "unknown".
 	 *  Read-only and idempotent: never emits diagnostics (the expandStarOf double-diagnosis
-	 *  lesson applies — this rides the same internal `resolved` cache qualify already built). */
+	 *  lesson applies — this rides the same internal `resolved` cache qualify already built).
+	 *  It never changes any answer either; a lazy CallbackSchema may record misses for a
+	 *  later prime(), same as every read path. */
 	columnsOfSource(scope: Scope, src: ResolvedSource): Column[] | "unknown";
 }
 
@@ -117,11 +119,18 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 			if (pairs === undefined) return undefined;
 			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
 		},
-		// Wraps the side-effect-free `sourceColumns` (never the diagnostics-pushing `checkSourceColumns`
-		// above) — a pure read, so a repeat call can never double-diagnose. Names only (this layer never
-		// tracked per-source types), lifted into `Column` shape (`type`/`nullable` absent) for a stable
-		// public return type shared with `Schema.columnsFor`.
+		// Side-effect-free reads only (never the diagnostics-pushing `checkSourceColumns` above), so a
+		// repeat call can never double-diagnose. A schema-known table answers TYPED columns through the
+		// template-aware `tableSourceColumns` — the exact path infer/nullability/sema-resolve already
+		// read — with inline column aliases taking precedence (they rename the columns and carry no
+		// type, so the catalog's pre-alias names would be wrong). Every derived kind (cte/subquery/
+		// relation/lateral/graphtable/pivot) resolves names only via `sourceColumns` — the `resolved`
+		// map never carried types — lifted into `Column` shape (`type`/`nullable` absent).
 		columnsOfSource: (scope, src) => {
+			if (src.kind === "table" && !src.source.columnAliases) {
+				const cols = tableSourceColumns(src.name, src.source.template, schema, scope.dialect);
+				if (cols) return cols;
+			}
 			const names = sourceColumns(src, schema, resolved, scope.dialect);
 			return names === undefined ? "unknown" : names.map((name): Column => ({ name }));
 		},

@@ -11,6 +11,9 @@ describe("Qualification.columnsOfSource", () => {
 		const again = a.qualification.columnsOfSource(a.scopes.root, src);
 		expect(cols).not.toBe("unknown");
 		expect((cols as { name: string }[]).map((c) => c.name)).toEqual(["a", "b"]);
+		// Typed, not names-only: a schema-known table's columns arrive with their declared types
+		// (via the same tableSourceColumns path infer/nullability/sema-resolve read).
+		expect((cols as { name: string; type?: string }[]).find((c) => c.name === "a")?.type).toBe("int");
 		expect(again).toEqual(cols);
 		expect(a.diagnostics.length).toBe(before); // idempotent — no diagnostic side effects
 	});
