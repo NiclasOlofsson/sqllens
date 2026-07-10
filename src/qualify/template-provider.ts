@@ -39,8 +39,11 @@
 //     warehouse type text (parsed by the engine's per-dialect parseType).
 // ---------------------------------------------------------------------------
 
+import type { TemplateCall } from "../ir/ir.js";
 import type { Column } from "./schema.js";
 import type { SchemaProvider } from "./schema-provider.js";
+
+export type { TemplateCall } from "../ir/ir.js";
 
 /**
  * The syntactic SLOT a call's rendered output occupies — the parse-time answer
@@ -78,23 +81,6 @@ export type ExpansionShape =
  *  per-dialect scalar type). Deliberately closed and small — a stringly-typed field with no
  *  vocabulary drifts. */
 export type ValueType = "string" | "integer" | "float" | "boolean";
-
-/**
- * The identity of one template call, the `expansion()` key. Args are LITERAL
- * string values: quote-stripped, escapes NOT resolved — an argument whose
- * literal contains an escape, or any computed argument, is `null` (never-wrong:
- * a fabricated literal is worse than an unknown one). Kwargs are carried, not
- * dropped, in source order; the provider interprets them (so
- * `ref(package='a', model='b')` is fully reachable). A bare identifier tag
- * (`{{ docs }}`) keys with `args: []` like a zero-arg call.
- */
-export interface TemplateCall {
-	name: string;
-	/** Dotted path before the name (`dbt_utils` in `dbt_utils.star(...)`). */
-	packageParts?: string[];
-	args: (string | null)[];
-	kwargs?: { name: string; value: string | null }[];
-}
 
 /** The resolved physical relation a relation-producing call maps to (payload unchanged from the
  *  pre-unification `relation()`). `columns` text is DIALECT-NATIVE warehouse type strings. */

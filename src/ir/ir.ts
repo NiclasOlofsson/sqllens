@@ -1,12 +1,25 @@
 import type { ParserRuleContext } from "antlr4ng";
-// Type-only (erased at runtime — no runtime edge from the IR up into qualify): the provider's
-// call-identity key, carried on template markers so the semantic layer can consult
-// TemplateProvider.expansion() for ANY templated node, source or scalar.
-import type { TemplateCall } from "../qualify/template-provider.js";
 import type { PartSpan } from "./part-span.js";
 import type { StatementCategory } from "./statement.js";
 
 export type { PartSpan } from "./part-span.js";
+
+/**
+ * The identity of one template call, the `expansion()` key. Args are LITERAL
+ * string values: quote-stripped, escapes NOT resolved — an argument whose
+ * literal contains an escape, or any computed argument, is `null` (never-wrong:
+ * a fabricated literal is worse than an unknown one). Kwargs are carried, not
+ * dropped, in source order; the provider interprets them (so
+ * `ref(package='a', model='b')` is fully reachable). A bare identifier tag
+ * (`{{ docs }}`) keys with `args: []` like a zero-arg call.
+ */
+export interface TemplateCall {
+	name: string;
+	/** Dotted path before the name (`dbt_utils` in `dbt_utils.star(...)`). */
+	packageParts?: string[];
+	args: (string | null)[];
+	kwargs?: { name: string; value: string | null }[];
+}
 
 /** A template tag standing in a scalar/expression slot: the tag's span + (when a call/identifier
  *  leads it) its provider key. Attached post-lower by the jinja front end; plain SQL never carries it. */
