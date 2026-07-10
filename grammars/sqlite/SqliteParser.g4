@@ -446,8 +446,21 @@ select_stmt
     : with_clause? select_core (compound_operator select_core)* order_clause? limit_clause?
 ;
 
+// LOCAL structural correction (this repo's grammars are corrected in place, not held to upstream
+// shape): upstream grammars-v4 writes join_clause flat as
+//   `table_or_subquery (join_operator table_or_subquery join_constraint?)*`,
+// which gives no per-step CST node to anchor a Join on. src/ir/ir.ts's `Join.cst` contract requires a
+// node spanning the FULL `[type] JOIN <table> [ON …|USING …]` construct; the flat rule could only
+// anchor it on the bare `join_operator` (the JOIN keyword). Factoring the repeated group into its own
+// `join_step` rule yields exactly that node. This is a pure factoring — `join_step*` matches the same
+// token sequences as the inline group, so the accepted language is byte-for-byte identical (deliberate
+// divergence from upstream grammars-v4, per repo grammar policy).
 join_clause
-    : table_or_subquery (join_operator table_or_subquery join_constraint?)*
+    : table_or_subquery join_step*
+;
+
+join_step
+    : join_operator table_or_subquery join_constraint?
 ;
 
 // Differs from syntax diagram because comma-separated table_or_subquery is already a subset of join_clause
