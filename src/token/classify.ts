@@ -110,10 +110,16 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
 	],
 
-	// SQLite (grammars-v4 SqliteLexer): NUMERIC_LITERAL doesn't match any of the shared "number"
-	// substrings (NUMBER|INT|FLOAT|DECIMAL|REAL|DIGIT), so it falls through to "other" without this
-	// override. Deeper role-probe coverage (BLOB_LITERAL, etc.) deferred to R6.5.
-	sqlite: [{ role: "number", pattern: /^NUMERIC_LITERAL$/ }],
+	// SQLite (grammars-v4 SqliteLexer): two corrections to the defaults.
+	sqlite: [
+		// NUMERIC_LITERAL doesn't match any of the shared "number" substrings
+		// (NUMBER|INT|FLOAT|DECIMAL|REAL|DIGIT), so it falls through to "other" without this override.
+		{ role: "number", pattern: /^NUMERIC_LITERAL$/ },
+		// BLOB_LITERAL (X'…' hex/binary string, https://sqlite.org/lang_expr.html#literal_values_constants_)
+		// is a binary string literal the default string rule misses — classify it as a string, matching how
+		// the other dialects treat their binary/hex literals (snowflake/trino BINARY_LITERAL, bigquery BYTES_LITERAL).
+		{ role: "string", pattern: /^BLOB_LITERAL$/ },
+	],
 };
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);
