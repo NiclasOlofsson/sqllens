@@ -1,7 +1,6 @@
 import type { Location, Position } from "vscode-languageserver-types";
-import type { SqlDocument } from "../../index.js";
+import { symbolAt, type SqlDocument } from "../../index.js";
 import { rangeFromSpan } from "../ranges.js";
-import { symbolAt } from "../sym-at.js";
 
 // ---------------------------------------------------------------------------
 // Go-to-definition: reuse the cached document's symbol model. analyze().symbols
@@ -15,7 +14,7 @@ import { symbolAt } from "../sym-at.js";
 
 export function computeDefinition(doc: SqlDocument, position: Position, uri: string): Location | null {
 	const cursor = doc.lines.offsetAt(position.line, position.character);
-	const best = symbolAt(doc, doc.analyze().symbols, cursor, (s) => !!s.definition);
+	const best = symbolAt(doc.analyze().symbols, cursor, (s) => !!s.definition);
 	if (!best?.definition) return null;
 	return { uri, range: rangeFromSpan(best.definition) };
 }

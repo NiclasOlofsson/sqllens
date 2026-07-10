@@ -193,6 +193,7 @@ export {
 
 export {
 	MAIN_FRAME,
+	symbolAt,
 	type Span,
 	type StarExpansion,
 	type Sym,

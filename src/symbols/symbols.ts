@@ -1,6 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import { displayName, foldIdentifier } from "../ident/fold.js";
-import type { Expr, PartSpan, Projection } from "../ir/ir.js";
+import type { Expr, PartSpan, Projection, QueryBody } from "../ir/ir.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
@@ -89,6 +89,10 @@ export interface Sym {
 	 *  identical to the Sym already emitted for that source (no separate id scheme needed). Absent
 	 *  when unresolved, ambiguous, or the reference doesn't bind to any source. */
 	source?: Sym;
+	/** The IR node this Sym describes, when one exists: the ColumnRef for a column
+	 *  reference, the Projection for an output declaration, the TableSource for a
+	 *  relation. Absent for synthesized Syms (schema-expanded star columns). */
+	node?: object;
 }
 
 /** The main query's frame label (no enclosing CTE / subquery). */
@@ -108,6 +112,25 @@ export function deriveSymbols(
 	const sourceSyms = new Map<ResolvedSource, Sym>();
 	walk(tree.root, MAIN_FRAME, out, schema, sourceSyms, expandStarOf);
 	return out;
+}
+
+/** The narrowest Sym whose span contains `offset` (`span.start <= offset && offset < span.end` —
+ *  a zero-width span, e.g. a schema-expanded star column, can never match; that is its designed
+ *  contract, not a bug). Candidates are filtered by `pred` first (default: everything). Ties keep
+ *  whichever candidate was found first. The shared position→symbol lookup behind hover's symbol
+ *  fallback and go-to-definition. */
+export function symbolAt(
+	syms: readonly Sym[],
+	offset: number,
+	pred: (s: Sym) => boolean = () => true,
+): Sym | undefined {
+	let best: Sym | undefined;
+	for (const s of syms) {
+		if (!pred(s)) continue;
+		if (!(s.span.start <= offset && offset < s.span.end)) continue;
+		if (!best || s.span.end - s.span.start < best.span.end - best.span.start) best = s;
+	}
+	return best;
 }
 
 function walk(
@@ -130,6 +153,7 @@ function walk(
 			name,
 			span: spanOf(cteRef.def.nameCst ?? cteRef.def.cst),
 			frame,
+			node: cteRef.def,
 		});
 		walk(cteRef.scope, name, out, schema, sourceSyms, expandStarOf);
 		walked.add(cteRef.scope);
@@ -198,6 +222,7 @@ function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaPr
 					span: spanOf(e.cst),
 					frame,
 					type: typeOrUndefined(inferType(e, scope, schema)),
+					node: e,
 				});
 				e.args.forEach(visit);
 				e.window?.partitionBy.forEach(visit);
@@ -270,6 +295,7 @@ function emitColumns(
 					name: q ? `${q.join(".")}.*` : "*",
 					span: starSpan,
 					frame,
+					node: p.expr,
 				});
 				const pairs = expandStarOf?.(scope, p);
 				if (pairs) {
@@ -313,11 +339,18 @@ function emitColumns(
 					frame,
 					type: typeOrUndefined(inferType(p.expr, scope, schema)),
 					origins: originsOrUndefined(originsOf(p.expr, scope, schema)),
+					node: p,
 				});
 			}
 		}
 	}
 	if (body.kind === "pipe") return; // a pipe scope's refs live in its per-stage child scopes
+	// `body.columns` is a flat list of ColumnRef COPIES built during lowering (one per dialect's
+	// `columnsOf`, keyed by clause) — not the original Expr nodes. This map recovers the original
+	// column Expr (object-identical) by its cst, so a REFERENCE Sym can carry the real node it
+	// describes; a ref with no match (an ORDER BY key — the IR keeps no Expr tree for those — or one
+	// recovered from an unmodelled `other` node) honestly gets no node.
+	const columnNodes = columnExprsByCst(body);
 	for (const ref of body.columns) {
 		const res = resolveColumnRef(scope, ref, schema);
 		const modifiers: SymbolModifier[] = ["reference"];
@@ -335,8 +368,66 @@ function emitColumns(
 			origins: originsOrUndefined(originsOf(colExpr, scope, schema)),
 			partSpans: ref.partSpans,
 			source: res.kind === "bound" ? sourceSyms.get(res.source) : undefined,
+			node: columnNodes.get(ref.cst),
 		});
 	}
+}
+
+/** Column Expr nodes reachable from a SELECT body's own clauses (projections, WHERE, JOIN ON,
+ *  GROUP BY, HAVING, QUALIFY), keyed by cst identity. Mirrors each dialect's lower.ts `columnsOf`
+ *  traversal so `emitColumns` can map a `body.columns` ColumnRef back to the original Expr node.
+ *  Empty for a non-select body (a set-op's own `columns` carry no retained Expr tree to recover). */
+function columnExprsByCst(body: QueryBody): Map<ParserRuleContext, Extract<Expr, { kind: "column" }>> {
+	const map = new Map<ParserRuleContext, Extract<Expr, { kind: "column" }>>();
+	if (body.kind !== "select") return map;
+	const visit = (e: Expr): void => {
+		switch (e.kind) {
+			case "column":
+				map.set(e.cst, e);
+				break;
+			case "binary":
+				visit(e.left);
+				visit(e.right);
+				break;
+			case "unary":
+				visit(e.operand);
+				break;
+			case "cast":
+				visit(e.expr);
+				break;
+			case "function":
+				e.args.forEach(visit);
+				e.window?.partitionBy.forEach(visit);
+				e.window?.orderBy.forEach(visit);
+				break;
+			case "case":
+				e.whens.forEach((w) => {
+					visit(w.when);
+					visit(w.then);
+				});
+				if (e.elseExpr) visit(e.elseExpr);
+				break;
+			case "predicate":
+				visit(e.operand);
+				e.args.forEach(visit);
+				break;
+			case "lambda":
+				visit(e.body);
+				break;
+			case "subscript":
+				visit(e.base);
+				visit(e.index);
+				break;
+			// literal/star/subquery/exists/with/other → no further column refs modelled here
+		}
+	};
+	for (const p of body.projections) visit(p.expr);
+	if (body.where) visit(body.where);
+	for (const j of body.joinConditions ?? []) visit(j);
+	for (const g of body.groupBy ?? []) visit(g);
+	if (body.having) visit(body.having);
+	if (body.qualify) visit(body.qualify);
+	return map;
 }
 
 function typeOrUndefined(t: Type): Type | undefined {
@@ -418,6 +509,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 			name: src.source.graph.map(show).join("."),
 			span: spanOf(src.source.cst),
 			frame,
+			node: src.source,
 		};
 	}
 	if (src.kind === "table") {
@@ -427,6 +519,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 			name: src.name.map(show).join("."),
 			span: spanOf(src.source.cst),
 			frame,
+			node: src.source,
 		};
 	}
 	if (src.kind === "cte") {
@@ -437,6 +530,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 			span: spanOf(src.source.cst),
 			frame,
 			definition: spanOf(src.ref.def.nameCst ?? src.ref.def.cst),
+			node: src.source,
 		};
 	}
 	if (src.kind === "lateral") {
@@ -446,6 +540,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 			name: src.source.alias ? show(src.source.alias) : "",
 			span: spanOf(src.source.cst),
 			frame,
+			node: src.source,
 		};
 	}
 	if (src.kind === "pivot") {
@@ -458,6 +553,7 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 		name: src.source.alias ? show(src.source.alias) : "_subquery_",
 		span: spanOf(src.source.cst),
 		frame,
+		node: src.source,
 	};
 }
 

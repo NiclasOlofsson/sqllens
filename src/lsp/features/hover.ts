@@ -1,7 +1,6 @@
 import type { Hover, Position } from "vscode-languageserver-types";
-import { formatType, type SchemaProvider, type SqlDocument } from "../../index.js";
+import { formatType, symbolAt, type SchemaProvider, type SqlDocument } from "../../index.js";
 import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.js";
-import { symbolAt } from "../sym-at.js";
 
 // ---------------------------------------------------------------------------
 // Hover: the inferred type of the expression under the cursor; when inference has no
@@ -25,7 +24,7 @@ export function computeHover(doc: SqlDocument, position: Position, schema?: Sche
 			return { contents: fence(formatType(type) + suffix), range };
 		}
 	}
-	const sym = symbolAt(doc, doc.analyze(schema).symbols, off);
+	const sym = symbolAt(doc.analyze(schema).symbols, off);
 	if (!sym) return null;
 	const typed = sym.type && sym.type.kind !== "unknown" ? `: ${formatType(sym.type)}` : "";
 	return { contents: fence(`(${sym.kind}) ${sym.name}${typed}`), range: rangeFromSpan(sym.span) };
