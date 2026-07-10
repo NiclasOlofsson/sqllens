@@ -558,6 +558,38 @@ export class SqlDocument {
 		};
 	}
 
+	/** The variant whose realization has `offset` LIVE (its arm active): an offset inside a
+	 *  non-default arm routes to that arm's variant; a default-arm or outside-all-regions offset
+	 *  routes to variant 0. undefined on plain documents and no-region templated documents.
+	 *  Never throws; out-of-range offsets answer variant 0 (the honest default). */
+	variantAt(offset: number): DocumentVariant | undefined {
+		if (!this.templated) return undefined;
+		const variants = this.variants;
+		if (variants.length === 0) return undefined;
+		const hit = deepestArmAt(this.templated.regions, offset);
+		if (!hit || hit.armIndex === 0) return variants[0]; // default arm or outside every region
+		// A real (non-synthetic) non-default arm: find the variant that activates exactly this
+		// (region, armIndex). `variants` was built by `buildVariants()` from a SEPARATE
+		// `engine.variants()` call (its own independent templateRegions derivation), so its
+		// `active.region` objects are structurally-identical but NOT reference-identical to the
+		// ones on `this.templated.regions` — both walk the exact same original text through the
+		// exact same deterministic tag→region algorithm, so a region's `span.start` (the opening
+		// tag's offset, unique per region — no two regions can open at the same offset) is a
+		// stable cross-parse identity key; `===` on the region object would never match here.
+		// Guarding syntheticEmpty matters too: a synthetic-empty variant's `active.armIndex` is a
+		// type-stable placeholder (0) — without the guard it could collide with a genuine arm-0
+		// lookup, but arm-0 hits are already routed to variants[0] above and never reach this
+		// search, so the guard is defense-in-depth, not a load-bearing branch.
+		const match = variants.find(
+			(v) =>
+				v.active &&
+				!v.active.syntheticEmpty &&
+				v.active.region.span.start === hit.region.span.start &&
+				v.active.armIndex === hit.armIndex,
+		);
+		return match ?? variants[0];
+	}
+
 	/** The schema-dependent tiers, over the cached per-cell scopes/ast (no re-parse). Memoized by
 	 *  schema IDENTITY + VERSION — a plain Schema (version 0) memoizes exactly as before; a
 	 *  CallbackSchema that has been prime()d bumps its version and so re-computes with the newly
@@ -698,6 +730,29 @@ function shiftSymsForCell(cellSyms: readonly Sym[], baseLine: number, baseCol: n
 	cellSyms.forEach((sym, i) => remap.set(sym, shifted[i]));
 	for (const sym of shifted) if (sym.source) sym.source = remap.get(sym.source) ?? sym.source;
 	return shifted;
+}
+
+/** One arm-containment hit: the region owning the matched arm, and that arm's index within it. */
+interface ArmHit {
+	region: TemplatedParseResult["regions"][number];
+	armIndex: number;
+}
+
+/** Walk `regions` to the DEEPEST arm whose `bodySpan` [start, end) contains `offset` — recursing
+ *  into a containing arm's nested children before settling for that arm itself, so an offset in a
+ *  nested region attributes to the innermost enclosing arm (not an outer ancestor). undefined when
+ *  `offset` falls outside every region (including a negative/out-of-range offset). Does NOT
+ *  re-derive from tags — walks the region tree `templateRegions` already built. */
+function deepestArmAt(regions: TemplatedParseResult["regions"], offset: number): ArmHit | undefined {
+	for (const region of regions) {
+		for (let i = 0; i < region.arms.length; i++) {
+			const arm = region.arms[i];
+			if (offset >= arm.bodySpan.start && offset < arm.bodySpan.end) {
+				return deepestArmAt(arm.children, offset) ?? { region, armIndex: i };
+			}
+		}
+	}
+	return undefined;
 }
 
 /** Build the whole-document compound facade for a multi-cell document — today's compound-flagged

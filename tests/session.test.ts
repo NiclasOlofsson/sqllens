@@ -63,4 +63,10 @@ describe("SqlSession — the facade", () => {
 		const s = SqlSession.create(SQL, "duckdb", { schema: new Schema({ sales: { amount: "int" } }) });
 		expect(completeAt(s.doc, SQL.length).length).toBeGreaterThan(0);
 	});
+	it("variantAt/variants are one-line delegations to the document", () => {
+		const IF = "select {% if v %}a{% else %}b{% endif %} from t";
+		const s = SqlSession.create(IF, "duckdb", { templating: minijinja() });
+		expect(s.variantAt(IF.indexOf("a"))).toBe(s.doc.variantAt(IF.indexOf("a")));
+		expect(s.variants).toBe(s.doc.variants);
+	});
 });

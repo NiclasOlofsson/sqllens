@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ParserRuleContext } from "antlr4ng";
-import { SqlDocument, type DocumentAnalysis } from "./document/document.js";
+import { SqlDocument, type DocumentAnalysis, type DocumentVariant } from "./document/document.js";
 import type { NodeHit } from "./document/node-at.js";
 import { lineage, type Lineage, type TypeInfo } from "./api.js";
 import type { Dialect } from "./dialect.js";
@@ -115,6 +115,9 @@ export class SqlSession {
 	diagnosticsOf(tag: TagNode): SyntaxDiagnostic[] {
 		return this.doc.templated?.diagnosticsOf(tag) ?? [];
 	}
+	get variants(): readonly DocumentVariant[] {
+		return this.doc.variants;
+	}
 
 	// ── pass verbs: execute a pipeline stage with the session's schema (memoized underneath) ──
 	analyze(): DocumentAnalysis {
@@ -169,5 +172,8 @@ export class SqlSession {
 	}
 	lineageAt(offset: number): LineageHop | undefined {
 		return this.doc.lineageAt(offset, this.schema);
+	}
+	variantAt(offset: number): DocumentVariant | undefined {
+		return this.doc.variantAt(offset);
 	}
 }

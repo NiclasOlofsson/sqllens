@@ -28,4 +28,26 @@ describe("doc.variants — per-arm sub-documents", () => {
 		const next = doc.withText(A3, 2);
 		expect(next.variants[1].doc().statements[0].ast).toBe(armAst);
 	});
+	it("variantAt routes offsets to the arm where the byte is live", () => {
+		const doc = SqlDocument.create(A3, "duckdb", { templating: minijinja() });
+		const inColA = A3.indexOf("col_a");
+		const inColB = A3.indexOf("col_b");
+		const inAnchor = A3.indexOf("anchor_table");
+		expect(doc.variantAt(inColA)!.text()).toContain("col_a");
+		expect(doc.variantAt(inColB)!.text()).toContain("col_b");
+		expect(doc.variantAt(inAnchor)).toBe(doc.variants[0]); // outside every region → variant 0
+		expect(doc.variantAt(-1)).toBe(doc.variants[0]); // honest default, never a throw
+		expect(SqlDocument.create("select 1", "duckdb").variantAt(0)).toBeUndefined();
+	});
+	it("variantAt never routes an arm-0 (default) offset to a sibling synthetic-empty variant", () => {
+		// Inner if is else-less and nested inside the outer region's arm 0. An offset in the
+		// inner arm-0 body must route to variant 0 (where the default arm is live) — NOT to the
+		// inner region's synthetic "region absent" variant, which blanks that very byte.
+		const NESTED =
+			"with data as (\n    SELECT base_col{% if outer %}, extra_col{% if inner %}, col_a{% endif %}{% else %}, col_c{% endif %} FROM raw_table\n)\nSELECT * FROM data";
+		const doc = SqlDocument.create(NESTED, "duckdb", { templating: minijinja() });
+		const inColA = NESTED.indexOf("col_a");
+		expect(doc.variantAt(inColA)).toBe(doc.variants[0]);
+		expect(doc.variants[0].text()).toContain("col_a");
+	});
 });
