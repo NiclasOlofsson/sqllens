@@ -1,6 +1,7 @@
 // Public surface of the minijinja engine — import from "sqllens/minijinja".
-// The neutral contract types (TemplateEngine, TemplatedParseResult,
-// TemplatedParseOptions) stay on the MAIN barrel; this module is the engine.
+// TemplateEngine lives ONLY on the main barrel; the result/option types are
+// canonically declared in src/template/engine.ts and re-exported both there
+// and here.
 export { minijinja } from "./engine.js";
 export { parseTemplated, tokenizeTemplated } from "./parse.js";
 export type { TemplatedParseResult, TemplatedParseOptions } from "../template/engine.js";
