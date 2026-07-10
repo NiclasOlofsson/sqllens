@@ -32,9 +32,9 @@ q.lineage.originsOf("total");  // → orders.total
 
 ## Dialects
 
-sqllens implements eight SQL dialects directly, each with its own grammar. Seven
-more engines are covered as *derived dialects*: their SQL is already parsed by one
-of those eight grammars, for 15 engines in total.
+sqllens implements the major SQL dialects directly, each with its own grammar.
+More engines are covered as *derived dialects*: their SQL is already parsed by
+one of the primary grammars.
 
 | Dialect | Derived dialects | Parse + lower | Semantic layer | Notes |
 |---|---|---|---|---|
@@ -73,7 +73,7 @@ parse → lower → resolveScopes → qualify → infer / lineage / symbols
 
 Each stage produces one value, and that value is what a specific editor feature
 reads from. Only the first two stages, parse and lower, are dialect-specific;
-everything after them is shared and runs unchanged across all eight dialects.
+everything after them is shared and runs unchanged across every dialect.
 
 **parse** turns SQL text into a *concrete syntax tree* (CST): the full parse tree,
 every token and grammar node exactly as written, nothing dropped or simplified. It

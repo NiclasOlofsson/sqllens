@@ -10,7 +10,7 @@ semantics, import caching, and a few edges). Its syntax reference is authoritati
 **Status: inc1, inc2, and inc3 (relation + type slices) are built; the seam is `TemplateProvider`.**
 Raw jinja-SQL parses natively: `parseTemplated` / `tokenizeTemplated`, the unified SQL(ch 0/1) +
 jinja(ch 2, role `"minijinja"`) token stream, and the R2 ref/source/macro tag-AST, all additive over the
-eight untouched SQL grammars (jinja reachable only through the barrel). inc2 adds R3 (`{{ ref }}`/`{{
+untouched SQL grammars (jinja reachable only through the barrel). inc2 adds R3 (`{{ ref }}`/`{{
 source }}` in a FROM slot → a real template-tagged `TableSource`), R4 (`templateRegions` /
 `templateSymbols` control-flow region tree + go-to-def symbols), and arm-coverage `templateVariants`.
 inc3 resolves templated refs to real relations/columns/types through the injected provider (zero-provider
@@ -41,7 +41,7 @@ project modeling, any I/O. sqllens learns template SYNTAX only; it stays dbt-una
 ## The mechanism — a pre-lexer, not a 9th dialect, not a grammar weave
 
 Jinja is orthogonal to the SQL dialect axis (any dialect can be templated), so it is a pre-stage that
-wraps `parse(sql, dialect)`, not a `DIALECTS` entry and NOT woven into the eight SQL grammars (Niclas's
+wraps `parse(sql, dialect)`, not a `DIALECTS` entry and NOT woven into the SQL grammars (Niclas's
 standing guardrail: the tag front end is an isolated module with its own gates/ratchets).
 
 The pipeline for `parseTemplated(text, dialect)`:
@@ -309,7 +309,7 @@ generalizes the fill from a char to a length-matched shape-valid string:
   by name (sqllens can't await mid-segment). Threaded into `parseTemplated(text, dialect, opts?)` as a
   `shapeOf?: (call) => Shape | undefined` (the catalog's `expansionShape` bound, or a bare callback), passed
   down to `segment`. No catalog / no `shapeOf` / `undefined` → the current positional fill, byte-identical.
-- Shape → minimal valid fragment (dialect-neutral where it parses across all 8; per-dialect override
+- Shape → minimal valid fragment (dialect-neutral where it parses across all dialects; per-dialect override
   table only where one dialect rejects the neutral form): `statement`/`relation` → `SELECT 1` (a valid
   query body: fits BOTH a standalone statement slot AND a `(…)` CTE/subquery body, the two anvil cases);
   `predicate` → `1=1`; `column-list` → `1` (one valid select item: the macro's real column COUNT differs
@@ -418,7 +418,7 @@ on the R4 control-flow regions.)
 - inc1 — placeholder-parity / raw-jinja-parse (R1 + R2) — BUILT. The pre-lexer, the `grammars/minijinja/`
   island grammar, the unified token stream, and the ref/source/macro tag-AST with the R2 span contract are
   shipped and total: `parseTemplated(text, dialect)` / `tokenizeTemplated` return one source-ordered
-  `Token[]` (SQL channel 0/1 + jinja channel 2, role `"minijinja"`) plus the `TagNode[]`, over the eight
+  `Token[]` (SQL channel 0/1 + jinja channel 2, role `"minijinja"`) plus the `TagNode[]`, over the
   untouched SQL grammars, jinja reachable only through the barrel. Positional-default hole
   (NO_OUTPUT_BUILTINS-aware); the syntactic-slot context field is deferred (§ the hole). Gated by
   `tests/corpus/minijinja.test.ts` over 15 `tests/fixtures/minijinja/` fixtures (totality, byte-for-byte stream

@@ -86,8 +86,8 @@ and dialect branching in code.
 
 sqllens went the grammar-generated way on purpose, with split ANTLR grammars per dialect. The
 reason is the target. For an editor and a debugger, a declarative grammar, a first-class token
-stream, and lexer modes matter more than the last increment of parse throughput, and the eight
-dialects are easier to keep honest as eight grammars than as eight code paths. The hand-written
+stream, and lexer modes matter more than the last increment of parse throughput, and the dialects are
+easier to keep honest as one grammar each than as one code path each. The hand-written
 hubs optimized for a batch library; sqllens optimizes for a living document.
 
 ## Real independent parsers worth knowing
@@ -192,7 +192,7 @@ survives half-typed input. The pieces exist, but siloed:
 - The semantic tools each inherit one borrowed parser's dialect and its all-or-nothing parse
   model.
 
-sqllens sits in that empty intersection: eight dialects on split ANTLR grammars, a total
+sqllens sits in that empty intersection: per-dialect split ANTLR grammars, a total
 `lower()` that never throws on partial input, a first-class token stream, and a dialect-agnostic
 semantic layer (scope, qualify, infer, lineage, symbols) over a shared IR, built for an LSP and a
 debugger. Nothing surveyed here occupies the same square.

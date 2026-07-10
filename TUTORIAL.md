@@ -15,7 +15,7 @@ What the template calls mean is knowledge you inject.
 npm install sqllens
 ```
 
-Every parse names a dialect. Eight are built in: `databricks`, `tsql`, `snowflake`,
+Every parse names a dialect. Built in: `databricks`, `tsql`, `snowflake`,
 `bigquery`, `redshift`, `postgres`, `duckdb`, `trino`. If you only have an engine or
 adapter name, `resolveDialect` maps it (`resolveDialect("athena")` returns `"trino"`).
 
