@@ -124,8 +124,8 @@ function sourceColumnType(
 		if (declared) return declared.type ? d.parseType(declared.type) : UNKNOWN;
 		if (src.source.columnAliases) return UNKNOWN; // inline aliases carry no type
 		// Template-aware: a {{ ref }}/{{ source }} source resolves its typed columns through TemplateProvider.expansion().
-		const t = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find(
-			(c) => eq(c.name, column, dialect),
+		const t = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find((c) =>
+			eq(c.name, column, dialect),
 		)?.type;
 		return t ? d.parseType(t) : UNKNOWN;
 	}

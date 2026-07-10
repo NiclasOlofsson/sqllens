@@ -188,7 +188,11 @@ export function columnNamesOf(
  *  (a staging CTE reused across a join). Marking `visited` permanently (never deleting) turned that
  *  into a false cycle: the second sibling saw the scope "visited" and returned undefined, poisoning
  *  the whole star expansion to undefined and unbinding bare columns downstream. */
-export function outputNames(scope: Scope, schema: SchemaProvider, visited: Set<Scope> = new Set()): string[] | undefined {
+export function outputNames(
+	scope: Scope,
+	schema: SchemaProvider,
+	visited: Set<Scope> = new Set(),
+): string[] | undefined {
 	if (visited.has(scope)) return undefined;
 	visited.add(scope);
 	try {

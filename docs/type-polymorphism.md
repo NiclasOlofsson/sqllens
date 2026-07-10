@@ -1,4 +1,4 @@
-# Type polymorphism — what "templated" means, per dialect
+# Type polymorphism: what "templated" means, per dialect
 
 A function's return type can relate to its arguments in a few distinct ways. SQL
 engines each invented their own vocabulary for the same handful of type-theory
@@ -10,22 +10,22 @@ each dialect's term onto them, and shows how our inference layer
 The whole reason this matters: the inference registry (`src/infer/functions.ts`,
 `bigquery.ts`, `snowflake.ts`) is a table of function return types. Most entries
 are a single fixed type. The interesting ones are the functions whose return type
-is *computed from* the arguments — those are the "templated" / generic functions,
+is *computed from* the arguments; those are the "templated" / generic functions,
 and they are why a registry entry is a `FnRule = (args: Type[]) => Type` (a
 function) rather than a constant.
 
 ## The five cases
 
-### 1. Monomorphic — fixed return type
+### 1. Monomorphic: fixed return type
 
 The return type is the same no matter what you pass: `LENGTH(x)` is always
 `INT64`, `CURRENT_DATE()` is always `DATE`. No type theory needed; it's an
 ordinary typed signature.
 
-- **Every dialect:** just the documented return type.
-- **Our code:** a constant rule — `() => INT64`, written `konst(INT)`.
+- Every dialect: just the documented return type.
+- Our code: a constant rule (`() => INT64`, written `konst(INT)`).
 
-### 2. Parametric polymorphism — return type *follows* the argument type
+### 2. Parametric polymorphism: return type *follows* the argument type
 
 This is **generics**. `SUM(int) → int`, `SUM(double) → double`; `COALESCE(a, b)`
 returns the common type of its arguments; `ARRAY_AGG(x)` returns `ARRAY<type of
@@ -48,16 +48,16 @@ So "templated" (BigQuery's word) and "polymorphic" (Postgres/Redshift's word) an
 our dialects that lets *you* declare it on a user function, with `ANY TYPE`;
 the others expose it only through their built-ins.
 
-- **Our code:** the rule reads the argument types and returns one of them, or a
+- Our code: the rule reads the argument types and returns one of them, or a
   type derived from them:
-  - `firstArg = (args) => args[0]` — "same type as input" (≈ `anyelement →
+  - `firstArg = (args) => args[0]`: "same type as input" (≈ `anyelement →
     anyelement` / `ANY TYPE → ANY TYPE`)
-  - `common = (args) => commonType(args)` — the shared supertype (`COALESCE`,
+  - `common = (args) => commonType(args)`: the shared supertype (`COALESCE`,
     `GREATEST`)
-  - `arrayOfFirst`, `elementOf`, `mapValues` — carry the type *through* a
+  - `arrayOfFirst`, `elementOf`, `mapValues`: carry the type *through* a
     container (`ARRAY_AGG`, array subscript, `MAP_VALUES`)
 
-### 3. Ad-hoc polymorphism — overloading
+### 3. Ad-hoc polymorphism: overloading
 
 Several distinct signatures share one name, and the engine picks by argument
 types. `CONCAT(string…) → string` but `CONCAT(array…) → array`. Unlike generics,
@@ -65,10 +65,10 @@ the cases are enumerated, not parametric. Every dialect supports function
 overloading; this is *not* the same as case 2 even though both are loosely called
 "polymorphism".
 
-- **Our code:** a rule that branches on argument *kind* —
+- Our code is a rule that branches on argument *kind*:
   `concatRule = (args) => args[0]?.kind === "array" ? args[0] : STRING`.
 
-### 4. Implicit coercion — operands collapse to a supertype
+### 4. Implicit coercion: operands collapse to a supertype
 
 `int + double → double`; a `UNION` of `int` and `decimal` columns yields
 `decimal`. Not generics: there's a fixed precedence lattice deciding which type
@@ -87,10 +87,10 @@ and BigQuery, `int` (truncated) in T-SQL, `decimal` in Snowflake. That is the
 `division: "float" | "integer" | "decimal"` field on `InferDialect`
 (`src/infer/dialect.ts`).
 
-- **Our code:** `commonType` / `coerce.ts` for the supertype, plus the per-dialect
+- Our code: `commonType` / `coerce.ts` for the supertype, plus the per-dialect
   `division` strategy.
 
-### 5. Value-dependent — not statically typable
+### 5. Value-dependent: not statically typable
 
 The return type depends on the runtime *value*, not the static type of any
 argument: `JSON_VALUE(doc, '$.path')` is whatever sits at that path; reading a
@@ -107,7 +107,7 @@ The dialects' escape hatch is a dynamic type you opt into:
 | Redshift | `SUPER` |
 | PostgreSQL | `jsonb` |
 
-- **Our code:** these return `UNKNOWN`. That is the inference contract — a
+- Our code: these return `UNKNOWN`. That is the inference contract: a
   function we can't type yields `unknown`, **never a wrong guess**. It is why the
   registry can ship incomplete and just grow: every added rule is a strict
   improvement, and the value-dependent cases stay `unknown` by nature, not by
@@ -117,7 +117,7 @@ The dialects' escape hatch is a dynamic type you opt into:
 
 Putting cases 1–5 together: a registry keyed `name → fixed type string` could
 only express case 1. Because we need cases 2–4 (and need case 5 to fall through to
-`unknown`), each entry is a `FnRule` — a small function over the argument types.
+`unknown`), each entry is a `FnRule`: a small function over the argument types.
 A monomorphic function is just a `FnRule` that ignores its arguments. So the
 single shape covers "always returns X", "returns the same type as its input", and
 "returns the supertype of its inputs" uniformly.

@@ -121,8 +121,8 @@ function tableColumnNullability(
 	if (src.source.declaredColumns?.some((c) => eq(c.name, column, dialect))) return "unknown";
 	if (src.source.columnAliases) return "unknown";
 	// Template-aware (inc3.2): catalog columns carry `nullable` too.
-	const col = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find(
-		(c) => eq(c.name, column, dialect),
+	const col = tableSourceColumns(src.name, src.source.template, schema, dialect)?.find((c) =>
+		eq(c.name, column, dialect),
 	);
 	if (!col) return "unknown"; // no schema / unknown table / unknown column
 	if (col.nullable === false) return "notnull";

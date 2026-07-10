@@ -136,7 +136,14 @@ export type TagNode =
 /** Span from a first + last token (inclusive stop → exclusive end). */
 function spanFromTokens(a: AntlrToken, b: AntlrToken): PartSpan {
 	const end = endPosition(b.line, b.column, b.text ?? "");
-	return { start: a.start, end: b.stop + 1, line: a.line, column: a.column, endLine: end.endLine, endColumn: end.endColumn };
+	return {
+		start: a.start,
+		end: b.stop + 1,
+		line: a.line,
+		column: a.column,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
+	};
 }
 
 /** Span of a rule context (its start..stop tokens), or undefined if it has none. */
@@ -473,7 +480,14 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | 
 	// seg.text is the ENTIRE tag's source text, so the end position falls straight
 	// out of it (multi-line tags advance endLine).
 	const end = endPosition(line, column, seg.text);
-	const tagSpan: PartSpan = { start: seg.start, end: seg.end, line, column, endLine: end.endLine, endColumn: end.endColumn };
+	const tagSpan: PartSpan = {
+		start: seg.start,
+		end: seg.end,
+		line,
+		column,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
+	};
 
 	// Statement tags: classify as "control" and enrich with the lead keyword and,
 	// for the name-declaring keywords, the declared name + its span (R4). The two

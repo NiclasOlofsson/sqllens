@@ -55,7 +55,14 @@ export function partSpanOf(node: ParseTree | null | undefined): PartSpan | undef
 	const e = stopToken(node);
 	if (!s || !e) return undefined;
 	const end = endPosition(e.line, e.column, e.text ?? "");
-	return { start: s.start, end: e.stop + 1, line: s.line, column: s.column, endLine: end.endLine, endColumn: end.endColumn };
+	return {
+		start: s.start,
+		end: e.stop + 1,
+		line: s.line,
+		column: s.column,
+		endLine: end.endLine,
+		endColumn: end.endColumn,
+	};
 }
 
 /** All-or-nothing per column reference: return one `PartSpan` per node only when EVERY part has a

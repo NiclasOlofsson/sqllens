@@ -1717,7 +1717,8 @@ function qualifiedNamePartNodes(node: ParserRuleContext): (ParseTree | undefined
 	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
 	if (ind) {
 		for (const el of directChildrenOfRule(ind, P.RULE_indirection_el)) {
-			if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR)) nodes.push(firstShallow(el, P.RULE_attr_name));
+			if (hasDirectToken(el, P.DOT) && !hasDirectToken(el, P.STAR))
+				nodes.push(firstShallow(el, P.RULE_attr_name));
 		}
 	}
 	return nodes;
