@@ -1,5 +1,7 @@
 # sqllens
 
+[![npm version](https://img.shields.io/npm/v/sqllens)](https://www.npmjs.com/package/sqllens) [![license](https://img.shields.io/npm/l/sqllens)](LICENSE)
+
 A TypeScript SQL parser and static analyzer. It parses SQL into a tree, lowers it
 to a dialect-neutral intermediate representation (IR), and runs a semantic layer
 over that IR: name resolution (scope), schema-fed qualification, type inference,
@@ -8,12 +10,31 @@ query and it tells you the query's sources, its output columns, their types, and
 where each column comes from. The parsers are generated TypeScript on the
 [antlr4ng](https://github.com/mike-lischke/antlr4ng) runtime.
 
-The front end is error-tolerant and token-first, so the same library powers
-editor tooling — an LSP (Language Server Protocol) server and a SQL debugger —
-over incomplete, mid-edit text. See
-[Editor / language tooling](#editor--language-tooling).
+The front end is error-tolerant and token-first, so the library drives editor
+features (completion, hover, diagnostics, go-to-definition) over incomplete,
+mid-edit text. See [Editor / language tooling](#editor--language-tooling). An LSP
+(Language Server Protocol) server built on it lives in the repo, but it is
+experimental and not part of the published package.
+
+```bash
+npm install sqllens
+```
+
+```ts
+import { analyze, Schema } from "sqllens";
+
+const schema = new Schema({ orders: { id: "int", total: "decimal" } });
+const q = analyze("SELECT total FROM orders WHERE total > 100", "postgres", { schema });
+
+q.diagnostics;                 // [] — names and types check against the schema
+q.lineage.originsOf("total");  // → orders.total
+```
 
 ## Dialects
+
+sqllens implements eight SQL dialects directly, each with its own grammar. Seven
+more engines are covered as *derived dialects*: their SQL is already parsed by one
+of those eight grammars, for 15 engines in total.
 
 | Dialect | Derived dialects | Parse + lower | Semantic layer | Notes |
 |---|---|---|---|---|
@@ -26,12 +47,20 @@ over incomplete, mid-edit text. See
 | DuckDB | — | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
 | Trino | Presto, Amazon Athena | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split |
 
-A **derived dialect** is an engine with no grammar of its own: its SQL surface is
-a subset of — or identical to — the primary dialect's, so the same grammar parses
-it. Microsoft Fabric runs a restricted subset of T-SQL; Amazon Athena's query
-engine *is* Trino; AWS Glue runs Spark. The set is corpus-gated, not inferred — an
-engine appears only where the conformance gate proves the coverage, so it is a
-floor, not a guess.
+Each grammar began as a fork of the upstream noted above, but most are now far from
+verbatim copies. They've had substantial extension and correction, driven by a full
+comparison against each dialect's official reference documentation and the reference
+corpus extracted from those docs, so they reach well past their fork points.
+
+A **derived dialect** is an engine that has no grammar of its own but whose SQL
+the primary grammar already parses, because its SQL is a subset of (or the same as)
+the primary dialect's. Microsoft Fabric runs a restricted subset of T-SQL, Amazon
+Athena's engine is Trino, and AWS Glue runs Spark. Each one is checked against real
+SQL from that engine before it goes on the list.
+
+In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`. `resolveDialect` turns an
+engine name (or a dialect name) into the one that parses it: `resolveDialect("athena")`
+returns `"trino"`.
 
 The semantic layer is dialect-agnostic: it operates on the shared IR and runs
 unchanged on every dialect. Only the parse and lower stages are dialect-specific.
@@ -43,157 +72,240 @@ parse → lower → resolveScopes → qualify → infer / lineage / symbols
 ```
 
 Each stage produces one value, and that value is what a specific editor feature
-reads from. Only the first two stages — **parse** and **lower** — are
-dialect-specific; everything after them is shared and runs unchanged across all
-eight dialects.
+reads from. Only the first two stages, parse and lower, are dialect-specific;
+everything after them is shared and runs unchanged across all eight dialects.
 
 **parse** turns SQL text into a *concrete syntax tree* (CST): the full parse tree,
 every token and grammar node exactly as written, nothing dropped or simplified. It
 also hands back the token stream and a syntax-error count. The CST is faithful but
-verbose and dialect-shaped, so nothing downstream reads it directly — it backs
-**syntax squiggles** (the underline under a parse error) and **semantic tokens**
+verbose and dialect-shaped, so nothing downstream reads it directly. It backs
+syntax squiggles (the underline under a parse error) and semantic tokens
 (dialect-aware highlighting).
 
 **lower** walks the CST into an *intermediate representation* (IR): a small,
 dialect-neutral tree of nodes such as `QueryExpr`, `SelectExpr`, and `Expr` that
 mean the same thing whether the SQL came from Snowflake or T-SQL. (In the API this
-value is the `ast` field — *abstract syntax tree*, the cleaned-up counterpart to
-the CST.) It also tags each statement with its kind: a query, **DML**
-(data-manipulation — `INSERT` / `UPDATE` / `DELETE`), or **DDL** (data-definition —
+value is the `ast` field, the *abstract syntax tree*, a cleaned-up counterpart to
+the CST.) It also tags each statement with its kind: a query, DML (data
+manipulation: `INSERT` / `UPDATE` / `DELETE`), or DDL (data definition:
 `CREATE` / `ALTER` / `DROP`). lower never throws, so even half-typed, broken SQL
 still yields an IR the rest of the pipeline can run on.
 
 **resolveScopes** builds a symbol table over the IR with no schema required. For
-each query scope it works out the visible sources — tables, subqueries, and CTEs
-(a *common table expression* is the `WITH name AS (…)` temporary result set) —
-resolves names against them, and computes the query's output columns. Needing no
-catalog, the features it powers work on any file with zero configuration:
-**go-to-definition**, **find-references**, and **document highlight**.
+each query scope it works out the visible sources (tables, subqueries, and CTEs; a
+*common table expression* is the `WITH name AS (…)` temporary result set), resolves
+names against them, and computes the query's output columns. It needs no catalog,
+so the features it powers work on any file with zero configuration: go-to-definition,
+find-references, and document highlight.
 
-**qualify** is the first stage that takes a *schema* — the catalog of tables and
-their column types. With it, it expands `SELECT *` into the real column list,
+**qualify** is the first stage that takes a *schema*, the catalog of tables and
+their column types. With it, qualify expands `SELECT *` into the real column list,
 raises unknown-table and unknown-column diagnostics, and binds each column
-reference to the source it comes from, carrying the column's type. This is what
-turns on the schema-dependent **semantic squiggles** (an unknown column can only be
-flagged once the schema is known) and answers **`bindingOf`** — which source a
+reference to the source it comes from, with the column's type. This is what turns
+on the schema-dependent semantic squiggles (an unknown column can only be flagged
+once the schema is known) and answers `bindingOf`, which tells you which source a
 given column resolves to.
 
 **infer** computes the type and nullability of every expression, from a bare
-column to `a + b`, `COALESCE(…)`, a `CASE`, or a function call. It powers **hover**
-(the type shown when you point at an expression) and **inlay hints** (inline type
+column to `a + b`, `COALESCE(…)`, a `CASE`, or a function call. It powers hover
+(the type shown when you point at an expression) and inlay hints (inline type
 annotations).
 
 **lineage** traces each output column back to the base-table columns it derives
-from — through CTEs, subqueries, and joins — recording every hop on the way. It
-powers the **lineage panel** and **go-to-origin** (jump from an output column to
-the physical column it ultimately reads).
+from, through CTEs, subqueries, and joins, and records every hop on the way. It
+powers the lineage panel and go-to-origin (jump from an output column to the
+physical column it ultimately reads).
 
-**symbols** derives a `Sym` model: every named thing — source, column, CTE —
-classified by kind and modifier. It backs the editor **outline / document
-symbols** list and **code-lens** annotations.
-
-## Status
-
-Published to npm as [`sqllens`](https://www.npmjs.com/package/sqllens); still
-0.x, so the public API is settling and can change between minor versions (this
-release renamed `adapterDialect` → `resolveDialect`). `npm run build` compiles the
-library with `tsc` to JavaScript + `.d.ts` in `dist/`, which is what the package
-ships; in-repo it is consumed directly as TypeScript. The public API (`src/index.ts`)
-is uniform across all eight dialects: `parse` and `analyze` take the dialect as a
-parameter, and every per-dialect `parse*` / `lower` plus the shared passes stay
-exported as lower-level building blocks. The editor-facing surface — `tokenize`,
-`SqlDocument`, `complete`, `signatureAt` — lives on the same barrel.
+**symbols** derives a `Sym` model: every named thing (source, column, CTE),
+classified by kind and modifier. It backs the editor outline / document-symbols
+list and code-lens annotations.
 
 ## Usage
 
-`dialect` is `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`.
+Two ways in: `analyze` for one-shot analysis of a string, and a session for a
+document you hold open and edit. Templated SQL (dbt models) is the same API with
+one more option; it changes the input, not the shape of what you get back.
 
-Those eight grammars cover more than eight engines — the **derived dialects**
-above — because several engines share the SQL surface of one we already parse.
-`resolveDialect` maps an engine or product name (or a dialect name) to the dialect
-that parses its SQL, so consumers don't re-derive the family knowledge:
+### One-shot: `analyze`
 
-```ts
-import { resolveDialect, DERIVED_DIALECTS } from "sqllens";
-
-resolveDialect("athena");    // "trino"      — Athena engine v3 executes on Trino
-resolveDialect("glue");      // "databricks" — AWS Glue runs Spark; Databricks SQL = Spark SQL
-resolveDialect("fabric");    // "tsql"       — same for "synapse" and "sqlserver"
-resolveDialect("presto");    // "trino"      — Trino's predecessor
-resolveDialect("oracle");    // undefined    — not served; never a guess
-```
-
-The map is exact by contract: only engines whose SQL surface the corpus gates
-genuinely represent are listed. The LSP's `.sqllens.json` accepts these engine
-names through the same map, so `{ "dialect": "athena" }` works in rules and
-`default`.
-
-The surface is
-**layered** — each tier is a terminal value you can stop at — and **composable**:
-every semantic method takes the closest upstream result (so passing it does no
-rework) or a raw string / IR via an idempotent lift helper.
+`analyze` runs the whole pipeline and hands back a result you read directly:
 
 ```ts
-import { parse, analyze, Schema } from "sqllens";
+import { analyze, Schema } from "sqllens";
 
-// Tier 1 — just the IR. No semantic layer pulled in.
-const { ast, errors, cst } = parse("SELECT a, b FROM t WHERE a > 1", "tsql");
-// ast = dialect-neutral IR (frozen — no pass mutates it); cst = raw antlr tree (escape hatch)
-// ast.statement -> "query" | "dml" | "ddl" | …
-
-// Whole pipeline in one call.
 const schema = new Schema({ t: { a: "int", b: "string" } });
 const a = analyze("SELECT a, b FROM t", "tsql", { schema });
+
 a.scopes;                                  // name resolution (ScopeTree)
-a.diagnostics;                             // unknown-table/column diagnostics
+a.diagnostics;                             // unknown-table / column diagnostics
 a.qualification.columnsOf(a.scopes.root);  // * expansion
 a.types.typeOf(expr, scope);               // per-expression types
 a.lineage.originsOf("a");                  // base-table origins of an output column
 a.symbols;                                 // kind × modifier symbol model
 ```
 
-Compose tier by tier — pass any upstream result (or a string) to any later pass,
-and only the missing steps run. No exported signature takes or returns a raw
-`Map`/`Set`/`Record`:
+### A document you keep: the session
+
+An editor holds a file that changes. The entry for that is a session: it parses on
+construction, caches per statement, and an edit reuses everything it didn't touch.
+
+```ts
+import { SqlSession, Schema } from "sqllens";
+
+const s = SqlSession.create("SELECT amount FROM sales", "databricks", { schema });
+
+// properties — cheap reads of what construction already produced
+s.ast;                // the dialect-neutral IR (frozen)
+s.tokens;             // the token stream: every token, exact spans — present even mid-edit
+s.scopes;             // name resolution; needs no schema
+
+// verbs — parentheses execute a pass (memoized against the schema's version)
+s.diagnostics();      // syntax + schema-fed, one document-ordered list
+s.lineage();          // column lineage for the output columns
+s.deriveSymbols();    // the outline / symbol model
+
+// cursor verbs — offset in, spans out
+s.completeAt(14);     // completions at an offset (works on broken, mid-keystroke text)
+s.referencesAt(9);    // declaration + every occurrence of the symbol under the cursor
+s.typeAt(9);          // inferred type of the expression under the cursor
+
+// edits are immutable: a new session, caches carried over
+const next = s.withText("SELECT amount, id FROM sales");
+```
+
+The convention throughout: properties are cheap, parentheses do work. Every verb
+is a one-line delegation to a free function (`qualify`, `lineage`, `deriveSymbols`,
+`referencesAt`, …) that stays exported, so a slim consumer can skip the session,
+import only the functions it calls, and bundle nothing else.
+
+### Stage-wise building blocks
+
+Every stage is also its own entry point, and each result is a value you can stop
+at or pass to the next; hand a result forward and only the missing steps run:
 
 ```ts
 import { parse, qualify, lineage, deriveSymbols, toScopes, Schema } from "sqllens";
 
-const { ast } = parse(sql, "snowflake");
-const scopes = toScopes(ast, { dialect: "snowflake" }); // idempotent lift; identity if already a ScopeTree
+const { ast, errors, cst } = parse("SELECT a, b FROM t", "snowflake");
+// ast = dialect-neutral IR (frozen); cst = the raw antlr tree (escape hatch)
+
+const scopes = toScopes(ast, { dialect: "snowflake" }); // idempotent lift
 qualify(scopes, schema);   // reuses scopes — never re-parses or re-resolves
-lineage(scopes, schema);   // safe to call on the same scopes, in any order
-deriveSymbols(scopes);     // independent results, no cross-contamination
+lineage(scopes, schema);   // safe on the same scopes, in any order
+deriveSymbols(scopes);     // independent results
 ```
 
-The per-dialect entries (`parseDatabricks` / `parseTSql` / `parseSnowflake` /
-`parseBigQuery` / `parseRedshift` / `parsePostgres` / `parseDuckdb` / `parseTrino`,
-each `lower`, and the raw `resolveScopes` / `inferType`) remain exported for
-callers that want a single stage.
+The per-dialect entries (`parseDatabricks` … `parseTrino`, each `lower`, and the
+raw `resolveScopes` / `inferType`) stay exported for callers that want a single
+stage.
+
+### Templated SQL (dbt models)
+
+A dbt model is not plain SQL; it is minijinja-templated SQL (`{{ ref('orders') }}`,
+`{% if %}` …). sqllens parses that raw text natively, without rendering: tags get
+exact spans, a `ref` in a FROM slot becomes a real table source that carries its
+model name, and everything downstream (scopes, diagnostics, types, lineage,
+completion) runs on the templated document unchanged.
+
+Templating is declared, never guessed. You hand the session a template engine; no
+engine means plain SQL:
+
+```ts
+import { SqlSession } from "sqllens";
+import { minijinja } from "sqllens/minijinja"; // its own entry point — plain-SQL consumers never load it
+
+const s = SqlSession.create(modelText, "databricks", {
+	templating: minijinja(),
+	provider,   // optional — template knowledge, see extension points below
+	schema,
+});
+
+s.ast;             // IR: {{ ref('orders') }} in FROM is a TableSource named "orders"
+s.tokens;          // ONE stream: SQL tokens + template tokens (channel 2, role "minijinja")
+s.diagnostics();   // SQL + template + schema-fed, merged, all in document coordinates
+s.tags;            // every tag with exact spans (ref / source / macro / var / control)
+s.regions;         // {% if %} / {% for %} structure — folding, branch enumeration
+s.tagOf(node);     // the tag an IR node came from; nodeOf(tag) goes the other way
+```
+
+Why no auto-detection: `{{ … }}` inside a SQL string literal is a template to dbt
+and literal text to everyone else. No scanner can tell which was meant, and sqllens
+never guesses. The host declares it (file association, language id, or config).
+Declaring an engine on a file that turns out to have no tags costs nothing and
+changes nothing: the result is byte-identical to a plain parse, with empty template
+facets.
+
+Everything works with no provider at all: the shipped defaults answer what they can
+(a `ref` is a relation named by its literal argument; `config` renders nothing) and
+everything else reports as unknown, never guessed. A provider only makes results
+more precise.
+
+### Extension points
+
+sqllens knows SQL and template *syntax*. Everything it cannot know (your catalog,
+what your macros expand to, what `var('x')` holds) enters through three interfaces.
+All are optional, and every one answers misses the same way: a miss is "unknown",
+never a guess, and no diagnostic fires on missing knowledge.
+
+`SchemaProvider` is the catalog: which tables exist, with their column types.
+`Schema` is the upfront form (a plain mapping, as in the examples above).
+`CallbackSchema` is the lazy form for hosts with a live catalog: sqllens records
+what it missed, your `prime()` resolves the misses asynchronously and bumps a
+version, and the next read reflects it. An LSP republishes diagnostics on exactly
+that signal.
+
+`TemplateProvider` is template knowledge: what template calls *mean*. Subclass
+`DefaultTemplateProvider` and override only what your host knows; each method
+answers one question:
+
+```ts
+class MyDbtProvider extends DefaultTemplateProvider {
+	relationOf(call) { /* ref/source → the physical relation, with columns */ }
+	valueOf(call)    { /* var/env_var → the scalar type it yields */ }
+	shapeOf(call)    { /* a macro's expansion shape: "expr" | "predicate" | "column-list" | "statement" … */ }
+	columnsOf(call)  { /* a column-list macro's output columns */ }
+}
+```
+
+One instance per document. Answers are synchronous, from a warm cache, with the
+same miss-recording + `prime()` + version protocol as the schema. The base class
+alone is fully functional; it is what the zero-provider examples above run on. The
+payoff of each override is direct: `relationOf` turns "`{{ ref('orders') }}` is
+exempt from checks" into "`orders` has these columns, and `o.totall` is a real
+unknown-column diagnostic"; `shapeOf` makes a macro standing in a statement slot
+parse cleanly; `valueOf` gives `{{ var('limit') }}` a type that inference can use.
+
+`TemplateEngine` is template syntax, and is rare. The engine owns how templated
+text is parsed; minijinja ships as the only implementation and nearly every
+consumer just passes it. Implementing your own (another template language over SQL)
+is supported, but it is a contract, not a callback: your result must satisfy the
+invariants the conformance gates check. Tokens tile the source byte-for-byte, every
+span is in original document coordinates, broken input never throws, and tag-free
+text is identical to a plain parse.
 
 ## Editor / language tooling
 
 The front end is error-tolerant and token-first, so it serves editor features
-that run on incomplete, mid-edit text — they never need a clean parse:
+that run on incomplete, mid-edit text. They never need a clean parse:
 
-- **`tokenize(sql, dialect)`** and **`parse(...).tokens`** give a first-class token
-  stream: every token with its exact span, role, and channel. Always available,
-  even when the parse has errors.
-- **`lower()` never throws** on broken or partial input — you get a flagged
-  `query` IR back, so every downstream pass stays total.
-- **`SqlDocument`** is a persistent, immutable, position-addressable per-file
-  model. It runs `parse → resolveScopes` once (plus lazy `analyze(schema)`),
-  caches the result, and answers `tokenAt` / `nodeAt`. An edit yields a new
-  document; an O(log n) `LineIndex` maps positions ↔ offsets.
-- **`complete(doc, offset, schema?)`** — scope-aware completion (keywords,
-  columns, tables, functions) from an ATN (Augmented Transition Network — the
-  grammar's state-machine form) candidate walk over the grammar, our own, with no
-  third-party dependency.
-- **`signatureAt(doc, offset)`** — parameter hints from a curated per-dialect
+- `tokenize(sql, dialect)` and `parse(...).tokens` give a first-class token
+  stream: every token with its exact span, role, and channel. Available even when
+  the parse has errors.
+- `lower()` never throws on broken or partial input; you get a flagged `query` IR
+  back, so every downstream pass stays total.
+- `SqlDocument` is a persistent, immutable, position-addressable per-file model.
+  It runs `parse → resolveScopes` once (plus lazy `analyze(schema)`), caches the
+  result, and answers `tokenAt` / `nodeAt`. An edit yields a new document; an
+  O(log n) `LineIndex` maps positions to offsets.
+- `complete(doc, offset, schema?)`: scope-aware completion (keywords, columns,
+  tables, functions) from an ATN (Augmented Transition Network, the grammar's
+  state-machine form) candidate walk over the grammar, our own, with no third-party
+  dependency.
+- `signatureAt(doc, offset)`: parameter hints from a curated per-dialect
   function-signature table; the long tail degrades to name + active-argument.
-- **`referencesAt(scopes, offset, schema?)`** — every occurrence (plus the
-  declaration) of the symbol under the cursor; backs find-references, document
-  highlight, and code-lens reference counts.
+- `referencesAt(scopes, offset, schema?)`: every occurrence (plus the declaration)
+  of the symbol under the cursor; backs find-references, document highlight, and
+  code-lens reference counts.
 
 ```ts
 import { SqlDocument, Schema } from "sqllens";
@@ -204,22 +316,19 @@ doc.tokenAt(7);                   // token under an offset
 const next = doc.withText("SELECT amount, id FROM sales", 2); // immutable edit → new doc
 ```
 
-## Language server
+## Language server (experimental)
 
-An LSP (Language Server Protocol) server built on the library, in `src/lsp/`. It
-holds one `SqlDocument` per open file (rebuilt on edit) and reaches the library
-only through the public API surface above — it adds no analysis of its own, only
-protocol translation.
+An LSP (Language Server Protocol) server built on the library lives in `src/lsp/`.
+It is experimental and **not part of the published npm package**: the package ships
+the library only, and the server is source you run from the repo. It holds one
+`SqlDocument` per open file (rebuilt on edit) and reaches the library only through
+the public API, and adds no analysis of its own beyond protocol translation.
 
-LSP is a large protocol — roughly thirty request types across document-sync,
-language, and workspace features — so "supports LSP" is not one bit but a long
-checklist. A SQL server needs a subset, but more of it maps to SQL than it first
-looks — a CTE / view / model is the SQL analog of a definition, and the
-dependency graph between them is a call hierarchy. A few features genuinely don't
-apply (type hierarchy, document color, monikers); a few are deliberately deferred
-(formatting, project-wide navigation). The coverage, feature by feature:
+A SQL server needs only a subset of LSP's ~30 request types: some don't apply to
+SQL (type hierarchy, document color, monikers), and a few are deferred (formatting,
+project-wide navigation). Where the server stands today, feature by feature:
 
-**Language features**
+### Language features
 
 | Feature | Status |
 | --- | --- |
@@ -250,7 +359,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | Document color | — n/a — no color literals |
 | Moniker | — n/a — LSIF / cross-repo indexing concern |
 
-**Diagnostics & document sync**
+### Diagnostics & document sync
 
 | Feature | Status |
 | --- | --- |
@@ -263,7 +372,7 @@ apply (type hierarchy, document color, monikers); a few are deliberately deferre
 | Save notifications (`didSave` / `willSave`) | ◻️ not yet |
 | Notebook document sync | ◻️ not yet |
 
-**Workspace features**
+### Workspace features
 
 | Feature | Status |
 | --- | --- |
@@ -277,18 +386,6 @@ deferred items are tracked work: rename and
 code actions are the next LSP phase, workspace symbols need the project model,
 and formatting is expected to wrap an existing external formatter.
 
-## Generating the parsers
-
-`src/generated/` is a build product and is gitignored. After a fresh clone, or
-after editing any `.g4`, generate the parsers (the lexer must generate before the
-parser, which the driver handles):
-
-```bash
-npm run gen -- databricks   # | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino
-npm run typecheck
-npm test
-```
-
 ## Architecture
 
 One folder per dialect; no shared "core" grammar and no grammar inheritance. Each
@@ -296,14 +393,15 @@ dialect is a standalone pair of split `.g4` files (a lexer grammar + a parser
 grammar), forked from its best starting point and edited in place. Everything
 downstream of `lower` is shared and dialect-neutral.
 
-## Contributing
+## Building from source & contributing
 
-See [CONTRIBUTING.md](CONTRIBUTING.md). In short: the conformance corpora are the
-gate — a grammar change that regresses a corpus is not done — and grammar work is
-test-driven against those corpora.
+`npm install sqllens` needs no build step on your side. To build it yourself from
+source, or to work on a grammar, you regenerate the parsers from the `.g4` files
+first. [CONTRIBUTING.md](CONTRIBUTING.md) has the setup, the command list, and the
+corpus-gate workflow.
 
 ## License
 
-MIT — see [LICENSE](LICENSE). The forked grammars under `grammars/` keep their
+MIT. See [LICENSE](LICENSE). The forked grammars under `grammars/` keep their
 upstream licenses (Apache-2.0 for Databricks; MIT for T-SQL and Snowflake; BSD-3
 for BigQuery and Redshift); see [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md).
