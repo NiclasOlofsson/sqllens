@@ -1,0 +1,180 @@
+// Extract SQL examples from the official SQLite language docs into the corpus repo.
+//
+// Mirror-then-parse (the SQLite site's own recommendation and the politest option): download the
+// documentation bundle once (sqlite.org/<year>/sqlite-doc-<ver>.zip), unzip it into the gitignored
+// cache, then parse the local `lang_*.html` pages. No per-page hammering, byte-reproducible from a
+// pinned bundle version.
+//
+// Where the SQL lives. SQLite's language pages present *syntax* as pikchr SVG railroad diagrams (not
+// extractable text, and not runnable anyway) and *examples* as either:
+//   - <pre> blocks (often wrapped `<div class="codeblock"><pre>…</pre></div>`) — statement pages, and
+//   - <blockquote> blocks — the function pages (lang_datefunc etc.) put runnable SELECTs here.
+// Both are pulled; the hygiene filters below drop metasyntax fragments, ellipsis, prose, and result
+// output so what lands is a parse corpus.
+//
+// Deterministic + re-runnable: wipes OUT and rebuilds from the cached bundle every run, so a rerun
+// reproduces the committed corpus exactly. Each file carries a `-- source:` provenance comment (a
+// hidden-channel SQLite comment — parse-invisible) plus its page slug directory.
+//
+// Usage:  node tools/scrape-sqlite-docs.mjs
+//   Env overrides: SQLITE_DOC_VER / SQLITE_DOC_YEAR (bump on a new SQLite release);
+//                  SQLITE_DOC_DIR (point at an already-unzipped doc dir, skips download).
+
+import { mkdirSync, readdirSync, readFileSync, writeFileSync, rmSync, existsSync } from "node:fs";
+import { join } from "node:path";
+import { pathToFileURL } from "node:url";
+import { execFileSync } from "node:child_process";
+import { corpusPath } from "./corpus-paths.mjs";
+
+// Pinned SQLite documentation release. Bump these two on a new release, rerun, recommit.
+const DOC_VER = process.env.SQLITE_DOC_VER ?? "3530300"; // SQLite 3.53.3
+const DOC_YEAR = process.env.SQLITE_DOC_YEAR ?? "2026";
+const ZIP_NAME = `sqlite-doc-${DOC_VER}.zip`;
+const ZIP_URL = `https://sqlite.org/${DOC_YEAR}/${ZIP_NAME}`;
+const SITE = "https://sqlite.org";
+
+const CACHE = corpusPath("harness/local/sqlite-html"); // gitignored (corpus .gitignore: harness/local/*-html/)
+const DOC_DIR = process.env.SQLITE_DOC_DIR ?? join(CACHE, `sqlite-doc-${DOC_VER}`);
+const OUT = corpusPath("sqlite/docs");
+
+function unescapeHtml(s) {
+	return s
+		.replace(/&#x([0-9a-f]+);/gi, (_, h) => String.fromCodePoint(parseInt(h, 16)))
+		.replace(/&#(\d+);/g, (_, d) => String.fromCodePoint(Number(d)))
+		.replace(/&lt;/g, "<")
+		.replace(/&gt;/g, ">")
+		.replace(/&quot;/g, '"')
+		.replace(/&#39;/g, "'")
+		.replace(/&amp;/g, "&");
+}
+
+// First words that can begin a SQLite statement — the statement list from sqlite.org/lang.html
+// (plus VALUES/TABLE, which begin a query). A block starting with anything else is a clause
+// fragment, prose, or metasyntax, not a parse-corpus statement.
+const STATEMENT_STARTERS =
+	/^(alter|analyze|attach|begin|commit|create|delete|detach|drop|end|explain|insert|pragma|reindex|release|replace|rollback|savepoint|select|table|update|vacuum|values|with)\b/i;
+
+// A rendered result-table border line (dashes with a +/| column separator) that leaked in under a
+// statement.
+function isResultBorder(line) {
+	return /^[\s\-+=|]+$/.test(line) && /-{3,}/.test(line) && /[+|]/.test(line);
+}
+// A psql-style `(N rows)` footer and English prose lines the docs put between a statement and its
+// output.
+const ROWS_FOOTER = /^\s*\(\d+ rows?\)\s*$/;
+const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:|In this)/;
+
+export function cleanSql(sql) {
+	// Docs HTML renders spacing with non-breaking spaces (&nbsp; → U+00A0); the SQL lexer rejects
+	// them, so normalize to a plain space. Strip zero-width space / soft hyphen / BOM too.
+	sql = sql.replace(/ /g, " ").replace(/[​­﻿]/g, "");
+	const lines = sql.split("\n");
+	// Cut at the first result border, `(N rows)` footer, or prose line that sits UNDER the statement.
+	let cut = lines.findIndex(
+		(l, i) => i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || PROSE_LINE.test(l)),
+	);
+	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
+	if (kept === "") return null;
+	if (/^[[{]/.test(kept)) return null; // JSON output block
+	if (/(^|[\s(,])\.\.\.([\s),;]|$)/.test(kept)) return null; // ellipsis placeholder anywhere
+	// Documentation-abbreviation marker: a `--` comment saying content was left out (e.g. the
+	// `-- other content omitted` inside lang_with's CREATE TABLE org) — the block is truncated
+	// pseudo-syntax (a trailing comma before `)`), not runnable SQL.
+	if (/--[^\n]*\bomitted\b/i.test(kept)) return null;
+	if (/<[a-z_][a-z0-9_-]*>/i.test(kept)) return null; // <placeholder> template, not real SQL
+	// Metasyntax option brackets `[ … ]` around a keyword — railroad-diagram text, never runnable SQL.
+	if (/\[\s*(,|WITH|OR|IF|NOT|AS|LIKE|IN|CASCADE|RESTRICT|COLLATE|ASC|DESC)\b/i.test(kept)) return null;
+	if ((kept.match(/'/g) ?? []).length % 2 === 1) return null; // odd quote count — truncated illustration
+	if (!/^\(+\s*(select|with|values|table)\b/i.test(kept) && !STATEMENT_STARTERS.test(kept)) return null;
+	return kept;
+}
+
+// SQL examples live in <pre> blocks (incl. `<div class="codeblock"><pre>`) and <blockquote> blocks.
+// Both are pulled; cleanSql + the statement-starter gate keep only runnable statements.
+export function extractSql(html) {
+	const blocks = [];
+	const push = (raw) => {
+		// Drop any block that carried list markup (<li> …): those are enumerations of syntax forms
+		// (e.g. the CASE variants on lang_expr), not statements.
+		if (/<li[ >]/i.test(raw)) return;
+		// Drop blocks wrapping an HTML data table — a <blockquote>/<pre> around a <table> is a
+		// comparison/reference table (e.g. lang_altertable's foreign_keys×legacy_alter_table matrix),
+		// whose cells flatten into non-SQL noise.
+		if (/<t(able|r|d|h)[ >]/i.test(raw)) return;
+		const sql = cleanSql(unescapeHtml(raw.replace(/<[^>]+>/g, "")));
+		if (sql) blocks.push(sql);
+	};
+	for (const m of html.matchAll(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi)) push(m[1]);
+	for (const m of html.matchAll(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi)) push(m[1]);
+	return blocks;
+}
+
+async function ensureDocDir() {
+	if (existsSync(DOC_DIR)) return;
+	mkdirSync(CACHE, { recursive: true });
+	const zipPath = join(CACHE, ZIP_NAME);
+	if (!existsSync(zipPath)) {
+		console.log(`downloading ${ZIP_URL} …`);
+		const res = await fetch(ZIP_URL);
+		if (!res.ok) throw new Error(`fetch ${ZIP_URL} → ${res.status}`);
+		writeFileSync(zipPath, Buffer.from(await res.arrayBuffer()));
+	}
+	console.log(`unzipping ${ZIP_NAME} …`);
+	try {
+		execFileSync("unzip", ["-q", "-o", zipPath, "-d", CACHE], { stdio: "ignore" });
+	} catch {
+		// No `unzip` on PATH (bare Windows) — fall back to PowerShell's Expand-Archive.
+		execFileSync(
+			"powershell",
+			["-NoProfile", "-Command", `Expand-Archive -Force -LiteralPath '${zipPath}' -DestinationPath '${CACHE}'`],
+			{ stdio: "ignore" },
+		);
+	}
+	if (!existsSync(DOC_DIR)) throw new Error(`unzip did not produce ${DOC_DIR}`);
+}
+
+async function main() {
+	await ensureDocDir();
+	if (existsSync(OUT)) rmSync(OUT, { recursive: true });
+	mkdirSync(OUT, { recursive: true });
+
+	const pages = readdirSync(DOC_DIR)
+		.filter((f) => /^lang.*\.html$/.test(f)) // lang.html + every per-statement lang_*.html
+		.sort();
+
+	const seen = new Set(); // global content dedupe (same example repeated across pages)
+	let extracted = 0;
+	let written = 0;
+	const manifest = {};
+
+	for (const page of pages) {
+		const slug = page.replace(/\.html$/, "");
+		const url = `${SITE}/${page}`;
+		const blocks = extractSql(readFileSync(join(DOC_DIR, page), "utf8"));
+		extracted += blocks.length;
+		let i = 0;
+		for (const sql of blocks) {
+			const key = sql.replace(/\s+/g, " ").trim();
+			if (seen.has(key)) continue;
+			seen.add(key);
+			const dir = join(OUT, slug);
+			mkdirSync(dir, { recursive: true });
+			writeFileSync(join(dir, `${++i}.sql`), `-- source: ${url}\n${sql}\n`);
+			written++;
+		}
+		manifest[page] = { extracted: blocks.length, written: i };
+	}
+
+	writeFileSync(
+		join(OUT, "manifest.json"),
+		JSON.stringify({ bundle: ZIP_NAME, source: `${SITE}/lang.html`, pages: manifest }, null, 1),
+	);
+	const filtered = extracted - written; // dedupe + reject
+	console.log(
+		`done: ${pages.length} lang pages, ${extracted} raw blocks, ${filtered} filtered/deduped, ${written} sql files written`,
+	);
+}
+
+if (import.meta.url === pathToFileURL(process.argv[1]).href) {
+	await main();
+}
