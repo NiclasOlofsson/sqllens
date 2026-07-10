@@ -440,6 +440,14 @@ export class SqlDocument {
 					}
 					return undefined;
 				},
+				// Same per-cell fall-through: a ResolvedSource is unique to the cell that produced it.
+				columnsOfSource: (scope, src) => {
+					for (const q of cellQuals) {
+						const r = q.columnsOfSource(scope, src);
+						if (r !== "unknown") return r;
+					}
+					return "unknown";
+				},
 			};
 			analysis = { qualification, types: new TypeInfo(s), symbols, diagnostics };
 		}

@@ -17,6 +17,7 @@ import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import { checkCalls } from "./check-calls.js";
 import { relationColumns } from "./relation-columns.js";
+import type { Column } from "./schema.js";
 import { type SchemaProvider } from "./schema-provider.js";
 import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../sema/resolve.js";
 
@@ -63,6 +64,10 @@ export interface Qualification {
 	 *  matched source's columns are unknown (never-wrong: no fabricated partial list). `sourceKey`
 	 *  is the same fold-normalized key `scope.sources` is keyed by (matches `bindingOf`'s `source`). */
 	expandStarOf(scope: Scope, projection: Projection): { name: string; sourceKey: string }[] | undefined;
+	/** The columns a single visible source contributes, schema-resolved — or "unknown".
+	 *  Read-only and idempotent: never emits diagnostics (the expandStarOf double-diagnosis
+	 *  lesson applies — this rides the same internal `resolved` cache qualify already built). */
+	columnsOfSource(scope: Scope, src: ResolvedSource): Column[] | "unknown";
 }
 
 /** The result of `Qualification.bindingOf` — a column reference's resolved source binding. Structurally
@@ -111,6 +116,14 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 			const pairs = starPairs.get(projection);
 			if (pairs === undefined) return undefined;
 			return star ? applyStarModifiersToPairs(pairs, star, scope.dialect) : pairs;
+		},
+		// Wraps the side-effect-free `sourceColumns` (never the diagnostics-pushing `checkSourceColumns`
+		// above) — a pure read, so a repeat call can never double-diagnose. Names only (this layer never
+		// tracked per-source types), lifted into `Column` shape (`type`/`nullable` absent) for a stable
+		// public return type shared with `Schema.columnsFor`.
+		columnsOfSource: (scope, src) => {
+			const names = sourceColumns(src, schema, resolved, scope.dialect);
+			return names === undefined ? "unknown" : names.map((name): Column => ({ name }));
 		},
 	};
 }
@@ -235,7 +248,7 @@ function resolvePipeStage(
 			if (incoming === "unknown") return "unknown";
 			const joinSrc = [...scope.sources.entries()].find(([k]) => k !== "")?.[1];
 			const joinCols = joinSrc
-				? columnsOfSource(joinSrc, schema, resolved, diagnostics, scope.dialect)
+				? checkSourceColumns(joinSrc, schema, resolved, diagnostics, scope.dialect)
 				: undefined;
 			return joinCols === undefined ? "unknown" : [...incoming, ...joinCols];
 		}
@@ -281,7 +294,7 @@ function expandStarPairs(
 		// it anyway (it has no alias to qualify by), so this only affects the bare-`*` case.
 		if (want === undefined && src.kind === "lateral" && src.source.pseudo) continue;
 		matched = true;
-		const srcCols = columnsOfSource(src, schema, resolved, diagnostics, scope.dialect);
+		const srcCols = checkSourceColumns(src, schema, resolved, diagnostics, scope.dialect);
 		if (srcCols === undefined) return undefined;
 		cols.push(...srcCols.map((name) => ({ name, sourceKey: key })));
 	}
@@ -329,7 +342,7 @@ function applyStarModifiersToPairs(
 /** The output column names of a source — schema for a table (reporting unknown-table if absent),
  *  the resolved child names for a CTE/subquery (column aliases rename them), the AS columns for a
  *  lateral view. Types are not threaded here; type inference (src/infer) owns types. */
-function columnsOfSource(
+function checkSourceColumns(
 	src: ResolvedSource,
 	schema: SchemaProvider,
 	resolved: Map<Scope, string[] | "unknown">,
@@ -355,7 +368,7 @@ function columnsOfSource(
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot") {
 		return known(
-			pivotSourceOutputs(src, (s) => columnsOfSource(s, schema, resolved, diagnostics, dialect) ?? "unknown"),
+			pivotSourceOutputs(src, (s) => checkSourceColumns(s, schema, resolved, diagnostics, dialect) ?? "unknown"),
 		);
 	}
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
