@@ -109,6 +109,17 @@ Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4) `sql/sqlit
 Copyright (c) 2020 Martin Mirchev; (c) 2014 Bart Kiers. Licensed under the MIT
 License (full text retained in the file headers).
 
+### MySQL grammar — MIT
+
+`grammars/mysql/MysqlLexer.g4`, `grammars/mysql/MysqlParser.g4`
+
+Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
+`sql/mysql/Positive-Technologies` (upstream commit
+`bf61744020dc46f2d7b8761e35b0c0cb39b3f31a`, retrieved 2026-07-10) — not the
+`sql/mysql/Oracle` sibling variant. Copyright (c) 2015-2017 Ivan Kochurkin,
+Positive Technologies; (c) 2017 Ivan Khudyashev. Licensed under the MIT License
+(full text retained in the file headers).
+
 ## Runtime and build dependencies (not redistributed in source)
 
 - **antlr4ng** — the TypeScript ANTLR runtime (BSD-3-Clause). Runtime dependency.
