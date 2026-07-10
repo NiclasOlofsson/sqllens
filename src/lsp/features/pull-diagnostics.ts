@@ -1,5 +1,5 @@
 import type { DocumentDiagnosticReport } from "vscode-languageserver-protocol";
-import type { SchemaProvider, SqlDocument } from "../../index.js";
+import type { SchemaProvider, SqlSession } from "../../index.js";
 import { computeDiagnostics } from "./diagnostics.js";
 
 // ---------------------------------------------------------------------------
@@ -9,6 +9,6 @@ import { computeDiagnostics } from "./diagnostics.js";
 // coexist; this is a thin adapter, no analysis of its own. Never throws.
 // ---------------------------------------------------------------------------
 
-export function computeDocumentDiagnostics(doc: SqlDocument, schema?: SchemaProvider): DocumentDiagnosticReport {
-	return { kind: "full", items: computeDiagnostics(doc, schema) };
+export function computeDocumentDiagnostics(session: SqlSession, schema?: SchemaProvider): DocumentDiagnosticReport {
+	return { kind: "full", items: computeDiagnostics(session, schema) };
 }

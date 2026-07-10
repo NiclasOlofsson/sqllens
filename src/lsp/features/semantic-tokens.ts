@@ -1,6 +1,6 @@
 import { SemanticTokensBuilder } from "vscode-languageserver";
 import type { Range, SemanticTokens, SemanticTokensDelta, SemanticTokensLegend } from "vscode-languageserver-types";
-import type { SqlDocument, Token, TokenRole } from "../../index.js";
+import type { SqlSession, Token, TokenRole } from "../../index.js";
 
 // ---------------------------------------------------------------------------
 // Semantic tokens: semantic highlighting from the token artifact. Pure
@@ -63,20 +63,20 @@ function pushTokens(builder: SemanticTokensBuilder, tokens: readonly Token[]): v
 // id; otherwise we fall back to a fresh full build. Bounded by the number of open docs.
 const fullBuilders = new Map<string, SemanticTokensBuilder>();
 
-export function computeSemanticTokens(doc: SqlDocument, uri?: string): SemanticTokens {
+export function computeSemanticTokens(session: SqlSession, uri?: string): SemanticTokens {
 	const builder = new SemanticTokensBuilder();
-	pushTokens(builder, doc.tokens);
+	pushTokens(builder, session.tokens);
 	const result = builder.build();
 	if (uri !== undefined) fullBuilders.set(uri, builder);
 	return result;
 }
 
-export function computeSemanticTokensRange(doc: SqlDocument, range: Range): SemanticTokens {
+export function computeSemanticTokensRange(session: SqlSession, range: Range): SemanticTokens {
 	// Offset window for the requested range; keep any token that overlaps it (a token
 	// straddling the start/end edge is still in view). Range results don't feed delta.
-	const startOff = doc.lines.offsetAt(range.start.line, range.start.character);
-	const endOff = doc.lines.offsetAt(range.end.line, range.end.character);
-	const inRange = doc.tokens.filter((t) => t.start <= endOff && t.stop >= startOff);
+	const startOff = session.doc.lines.offsetAt(range.start.line, range.start.character);
+	const endOff = session.doc.lines.offsetAt(range.end.line, range.end.character);
+	const inRange = session.tokens.filter((t) => t.start <= endOff && t.stop >= startOff);
 	const builder = new SemanticTokensBuilder();
 	pushTokens(builder, inRange);
 	return builder.build();
@@ -89,17 +89,17 @@ export function forgetSemanticTokens(uri: string): void {
 }
 
 export function computeSemanticTokensDelta(
-	doc: SqlDocument,
+	session: SqlSession,
 	uri: string,
 	previousResultId: string,
 ): SemanticTokens | SemanticTokensDelta {
 	const prev = fullBuilders.get(uri);
 	// Stale / unknown id (or no retained builder): fall back to a fresh full build.
-	if (!prev || prev.id !== previousResultId) return computeSemanticTokens(doc, uri);
+	if (!prev || prev.id !== previousResultId) return computeSemanticTokens(session, uri);
 	// Reuse the retained builder: previousResult() captures the prior data (since the id
 	// matches) and re-initializes it with a NEW id, then we re-push and diff.
 	prev.previousResult(previousResultId);
-	pushTokens(prev, doc.tokens);
+	pushTokens(prev, session.tokens);
 	const result = prev.buildEdits();
 	fullBuilders.set(uri, prev); // keep it for the next delta (its id changed after previousResult)
 	return result;

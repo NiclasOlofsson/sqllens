@@ -1,19 +1,19 @@
 import { type InlayHint, InlayHintKind, type Position, type Range } from "vscode-languageserver-types";
-import { formatType, type SchemaProvider, type Scope, type SqlDocument } from "../../index.js";
+import { formatType, type Scope, type SqlSession } from "../../index.js";
 import { cellBaseOf, rangeFromCst, shiftPosition } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
 // Inlay hints: each SELECT output column's inferred type, shown inline at the
 // end of the projection (like a `: decimal` type annotation). Pure translation
 // over the cached document model — walk the scope tree, and for each select
-// body's projections ask the cached analyze(schema).types for the type
-// (the library's inference, not ours). formatType renders it; unknown types are
-// skipped (no schema, or undeterminable — a useless hint). Only hints whose
-// anchor falls within the requested (visible) range are emitted. Never throws.
+// body's projections ask the session's types() for the type (the library's
+// inference, not ours). formatType renders it; unknown types are skipped (no
+// schema, or undeterminable — a useless hint). Only hints whose anchor falls
+// within the requested (visible) range are emitted. Never throws.
 // ---------------------------------------------------------------------------
 
-export function computeInlayHints(doc: SqlDocument, range: Range, schema?: SchemaProvider): InlayHint[] {
-	const types = doc.analyze(schema).types;
+export function computeInlayHints(session: SqlSession, range: Range): InlayHint[] {
+	const types = session.types();
 	const out: InlayHint[] = [];
 
 	// Each cell's scope tree carries CELL-relative CST spans, so a projection's anchor position shifts
@@ -38,7 +38,7 @@ export function computeInlayHints(doc: SqlDocument, range: Range, schema?: Schem
 		for (const child of scope.children) walk(child, base);
 	};
 
-	for (const cell of doc.statements) walk(cell.scopes.root, cellBaseOf(doc, cell));
+	for (const cell of session.doc.statements) walk(cell.scopes.root, cellBaseOf(session.doc, cell));
 	return out;
 }
 

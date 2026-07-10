@@ -1,5 +1,5 @@
 import type { Location, Position } from "vscode-languageserver-types";
-import { symbolAt, type SqlDocument } from "../../index.js";
+import { symbolAt, type SqlSession } from "../../index.js";
 import { rangeFromSpan } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -9,12 +9,17 @@ import { rangeFromSpan } from "../ranges.js";
 // a column). This finds the reference under the cursor and returns its definition
 // Location. Pure translation: no re-resolution here. Offsets come from doc.lines.
 //
+// Goes through session.doc.analyze() (schema-free), not session.analyze(): this
+// feature has never threaded a schema (the server never passed one), so the
+// escape hatch preserves that — session.analyze() would apply the session's
+// configured schema and change which symbols (e.g. star-expanded columns) show up.
+//
 // Meta: Claude Code's LSP tool speaks this method (goToDefinition).
 // ---------------------------------------------------------------------------
 
-export function computeDefinition(doc: SqlDocument, position: Position, uri: string): Location | null {
-	const cursor = doc.lines.offsetAt(position.line, position.character);
-	const best = symbolAt(doc.analyze().symbols, cursor, (s) => !!s.definition);
+export function computeDefinition(session: SqlSession, position: Position, uri: string): Location | null {
+	const cursor = session.doc.lines.offsetAt(position.line, position.character);
+	const best = symbolAt(session.doc.analyze().symbols, cursor, (s) => !!s.definition);
 	if (!best?.definition) return null;
 	return { uri, range: rangeFromSpan(best.definition) };
 }

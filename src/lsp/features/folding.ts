@@ -9,6 +9,7 @@ import {
 	type SetOpExpr,
 	type Source,
 	type SqlDocument,
+	type SqlSession,
 } from "../../index.js";
 import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
@@ -18,13 +19,16 @@ import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.j
 // select body, each set-op branch, each pipe stage — folds when its CST span is
 // multi-line. Pure translation of the cached document's IR; recurses into nested
 // query blocks so nested CTEs / subqueries fold too. Never throws → [].
-// Comment-block folding is out of scope (no comment grouping here).
+// Comment-block folding is out of scope (no comment grouping here). Purely
+// structural (no schema), so this reads through session.doc throughout — there's
+// no session verb to substitute, just the entry parameter.
 // ---------------------------------------------------------------------------
 
 /** The structural shape of a PipeExpr stage (PipeStage isn't re-exported from the barrel). */
 type StageShape = { op: string; cst: QueryExpr["cst"] } & Record<string, unknown>;
 
-export function computeFoldingRanges(doc: SqlDocument): FoldingRange[] {
+export function computeFoldingRanges(session: SqlSession): FoldingRange[] {
+	const doc = session.doc;
 	const ranges: FoldingRange[] = [];
 	const seen = new Set<string>();
 	// The current cell's base — cst spans are CELL-relative, so each fold shifts to doc coordinates.

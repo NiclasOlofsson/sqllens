@@ -1,5 +1,5 @@
 import type { Position, Range, SelectionRange } from "vscode-languageserver-types";
-import type { ParserRuleContext, SqlDocument } from "../../index.js";
+import type { ParserRuleContext, SqlSession } from "../../index.js";
 import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -131,7 +131,8 @@ function shiftSelectionRange(sr: SelectionRange, base: CellBase): SelectionRange
 	return shifted;
 }
 
-export function computeSelectionRanges(doc: SqlDocument, positions: Position[]): SelectionRange[] {
+export function computeSelectionRanges(session: SqlSession, positions: Position[]): SelectionRange[] {
+	const doc = session.doc;
 	return positions.map((position) => {
 		const off = doc.lines.offsetAt(position.line, position.character);
 		const cell = doc.cellAt(off);

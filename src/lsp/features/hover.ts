@@ -1,5 +1,5 @@
 import type { Hover, Position } from "vscode-languageserver-types";
-import { formatType, symbolAt, type SchemaProvider, type SqlDocument } from "../../index.js";
+import { formatType, symbolAt, type SqlSession } from "../../index.js";
 import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -10,21 +10,21 @@ import { cellBaseAt, rangeFromCst, rangeFromSpan, shiftRange } from "../ranges.j
 // Meta: Claude Code's LSP tool speaks this method (hover).
 // ---------------------------------------------------------------------------
 
-export function computeHover(doc: SqlDocument, position: Position, schema?: SchemaProvider): Hover | null {
-	const off = doc.lines.offsetAt(position.line, position.character);
-	const hit = doc.nodeAt(off);
+export function computeHover(session: SqlSession, position: Position): Hover | null {
+	const off = session.doc.lines.offsetAt(position.line, position.character);
+	const hit = session.nodeAt(off);
 	if (hit) {
-		const types = doc.analyze(schema).types;
+		const types = session.types();
 		const type = types.typeOf(hit.expr, hit.scope);
 		if (type.kind !== "unknown") {
-			// hit.expr.cst is CELL-relative (doc.nodeAt routes to the owning cell) — shift to doc coords.
-			const range = shiftRange(rangeFromCst(hit.expr.cst), cellBaseAt(doc, off));
+			// hit.expr.cst is CELL-relative (nodeAt routes to the owning cell) — shift to doc coords.
+			const range = shiftRange(rangeFromCst(hit.expr.cst), cellBaseAt(session.doc, off));
 			const nullability = types.nullabilityOf(hit.expr, hit.scope);
 			const suffix = nullability === "notnull" ? " — not null" : nullability === "nullable" ? " — nullable" : "";
 			return { contents: fence(formatType(type) + suffix), range };
 		}
 	}
-	const sym = symbolAt(doc.analyze(schema).symbols, off);
+	const sym = symbolAt(session.deriveSymbols(), off);
 	if (!sym) return null;
 	const typed = sym.type && sym.type.kind !== "unknown" ? `: ${formatType(sym.type)}` : "";
 	return { contents: fence(`(${sym.kind}) ${sym.name}${typed}`), range: rangeFromSpan(sym.span) };

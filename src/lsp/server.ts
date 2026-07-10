@@ -9,7 +9,7 @@ import {
 import { TextDocument } from "vscode-languageserver-textdocument";
 import { fileURLToPath } from "node:url";
 import { relative } from "node:path";
-import { SqlDocument, type SchemaProvider } from "../index.js";
+import { SqlSession, type SchemaProvider } from "../index.js";
 import { loadDialectConfig, type DialectConfig } from "./dialect-config.js";
 import { computeDiagnostics } from "./features/diagnostics.js";
 import { computeDocumentDiagnostics } from "./features/pull-diagnostics.js";
@@ -33,11 +33,13 @@ import { computeSelectionRanges } from "./features/selection.js";
 import { computeInlayHints } from "./features/inlay-hints.js";
 
 // ---------------------------------------------------------------------------
-// The server: connection wiring only. It holds ONE SqlDocument per open file,
-// rebuilt on open/change and cached in `docs`, and serves every feature from
-// that cached model — no per-request re-parse. Each document maps to its dialect
-// (via .sqllens.json). No analysis lives here; the LSP↔internal coordinate
-// conversion stays at this boundary (in ranges.ts / SqlDocument.lines).
+// The server: connection wiring only. It holds ONE SqlSession per open file,
+// rebuilt on open/change and cached in `sessions`, and serves every feature from
+// that cached model — no per-request re-parse. SqlSession is the verb-shaped
+// facade over one SqlDocument; features reach the document's escape-hatch
+// members (LineIndex, cellAt, statements) via `session.doc`. Each document maps
+// to its dialect (via .sqllens.json). No analysis lives here; the LSP↔internal
+// coordinate conversion stays at this boundary (in ranges.ts / SqlDocument.lines).
 // startServer(connection) is shared by the stdio binary (main.ts) and the
 // in-memory acceptance suite, so the tested code path IS the shipped one.
 //
@@ -78,8 +80,8 @@ export interface ServerOptions {
 
 export function startServer(connection: Connection, options: ServerOptions = {}): void {
 	const documents = new TextDocuments<TextDocument>(TextDocument);
-	// One SqlDocument per open file, keyed by URI; rebuilt on open/change.
-	const docs = new Map<string, SqlDocument>();
+	// One SqlSession per open file, keyed by URI; rebuilt on open/change.
+	const sessions = new Map<string, SqlSession>();
 	let rootDir = process.cwd();
 	let config: DialectConfig = loadDialectConfig(rootDir);
 
@@ -96,27 +98,28 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 		}
 	};
 
-	// Build (or rebuild) the SqlDocument for `uri` from the TextDocuments registry's
-	// current text + version, resolving the dialect via config, and cache it. Returns
-	// undefined only when the registry has no such open document. On an edit we carry the
-	// previous document's per-statement cell cache forward via withText(), so statements whose
+	// Build (or rebuild) the SqlSession for `uri` from the TextDocuments registry's current
+	// text, resolving the dialect via config, and cache it. Returns undefined only when the
+	// registry has no such open document. On an edit we carry the previous session's underlying
+	// document (and its per-statement cell cache) forward via withText(), so statements whose
 	// text didn't change reuse their parsed cells AND their cached per-cell analysis — an edit to
-	// one statement recomputes only that statement. A fresh open (or a dialect change) starts clean.
-	const rebuild = (uri: string): SqlDocument | undefined => {
+	// one statement recomputes only that statement. A fresh open (or a dialect change) starts clean,
+	// with the active schema baked into the session for its whole lifetime.
+	const rebuild = (uri: string): SqlSession | undefined => {
 		const td = documents.get(uri);
 		if (!td) return undefined;
 		const dialect = config.dialectFor(uriToRel(uri));
-		const prev = docs.get(uri);
-		const doc =
+		const prev = sessions.get(uri);
+		const session =
 			prev && prev.dialect === dialect
-				? prev.withText(td.getText(), td.version)
-				: SqlDocument.create(td.getText(), dialect, { uri, version: td.version });
-		docs.set(uri, doc);
-		return doc;
+				? prev.withText(td.getText())
+				: SqlSession.create(td.getText(), dialect, { uri, schema: activeSchema() });
+		sessions.set(uri, session);
+		return session;
 	};
 
-	// The cached document for `uri`, rebuilding once as a fallback if it is missing.
-	const docFor = (uri: string): SqlDocument | undefined => docs.get(uri) ?? rebuild(uri);
+	// The cached session for `uri`, rebuilding once as a fallback if it is missing.
+	const sessionFor = (uri: string): SqlSession | undefined => sessions.get(uri) ?? rebuild(uri);
 
 	connection.onInitialize((params: InitializeParams): InitializeResult => {
 		if (params.rootUri) {
@@ -157,10 +160,10 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 	});
 
 	const publish = (uri: string): void => {
-		const doc = rebuild(uri);
-		if (!doc) return;
+		const session = rebuild(uri);
+		if (!session) return;
 		const schema = activeSchema();
-		const diagnostics = computeDiagnostics(doc, schema);
+		const diagnostics = computeDiagnostics(session, schema);
 		connection.sendDiagnostics({ uri, diagnostics });
 
 		// Lazy catalog: computeDiagnostics just resolved against `schema`; a resolve-on-demand catalog
@@ -171,17 +174,22 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 		// best-known (possibly incomplete) diagnostics. Duck-typed (isLazyCatalog) so a resolved templated
 		// ref republishes on warm exactly like a resolved physical table.
 		if (isLazyCatalog(schema) && schema.misses.length > 0) {
-			// Version guard, keyed on the DOCUMENT version — the axis a slow prime threatens. If the file
-			// is edited before prime() settles, that edit's OWN publish+prime chain owns the re-publish,
-			// so this stale callback stands down (docs.get holds the latest rebuilt doc). The SCHEMA axis
-			// needs no guard here: prime() resolves true only when its version actually bumped (new tables
-			// arrived), and publish() re-reads the current doc + schema, so a re-publish is never stale
-			// data — only a redundant one, which the doc-version check suppresses. prime() itself coalesces
-			// concurrent calls (both CallbackSchema.prime and CallbackTemplateCatalog.prime), so rapid edits
-			// can't double-fetch.
-			const version = doc.version;
+			// Version guard, keyed on the CLIENT's TextDocument version (documents.get(uri)?.version), NOT
+			// the session's own doc.version. vscode-languageserver's TextDocuments fires BOTH onDidOpen and
+			// onDidChangeContent for a single open notification, so publish() runs twice per open — the
+			// second rebuild() carries the identical text but is still a fresh SqlSession, whose internal
+			// doc.version bumps regardless (rebuild()/withText() has no notion of "nothing changed"). The
+			// LSP-protocol version only changes on a REAL didChange, so it's the stable axis a slow prime
+			// threatens: if the file is edited before prime() settles, that edit's own publish+prime chain
+			// owns the re-publish, and this stale callback stands down. The SCHEMA axis needs no guard here:
+			// prime() resolves true only when its version actually bumped (new tables arrived), and
+			// publish() re-reads the current session + schema, so a re-publish is never stale data — only a
+			// redundant one, which the client-version check suppresses. prime() itself coalesces concurrent
+			// calls (both CallbackSchema.prime and CallbackTemplateCatalog.prime), so rapid edits can't
+			// double-fetch.
+			const version = documents.get(uri)?.version;
 			void schema.prime().then((changed) => {
-				if (changed && docs.get(uri)?.version === version) publish(uri);
+				if (changed && documents.get(uri)?.version === version) publish(uri);
 			});
 		}
 	};
@@ -189,93 +197,87 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 	documents.onDidOpen((e) => publish(e.document.uri));
 	documents.onDidChangeContent((e) => publish(e.document.uri));
 	documents.onDidClose((e) => {
-		docs.delete(e.document.uri);
+		sessions.delete(e.document.uri);
 		forgetSemanticTokens(e.document.uri);
 	});
 
 	// Pull diagnostics (textDocument/diagnostic): same items as the push path, on demand.
 	// Push (above) and pull coexist; the client picks whichever it supports.
 	connection.languages.diagnostics.on((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeDocumentDiagnostics(doc, activeSchema()) : { kind: "full", items: [] };
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeDocumentDiagnostics(session, activeSchema()) : { kind: "full", items: [] };
 	});
 
 	connection.onHover((params) => {
-		const doc = docFor(params.textDocument.uri);
-		if (!doc) return null;
-		return computeHover(doc, params.position, activeSchema());
+		const session = sessionFor(params.textDocument.uri);
+		if (!session) return null;
+		return computeHover(session, params.position);
 	});
 
 	connection.onDefinition((params) => {
-		const doc = docFor(params.textDocument.uri);
-		if (!doc) return null;
-		return computeDefinition(doc, params.position, params.textDocument.uri);
+		const session = sessionFor(params.textDocument.uri);
+		if (!session) return null;
+		return computeDefinition(session, params.position, params.textDocument.uri);
 	});
 
 	connection.onReferences((params) => {
-		const doc = docFor(params.textDocument.uri);
-		if (!doc) return [];
-		return computeReferences(
-			doc,
-			params.position,
-			params.context.includeDeclaration,
-			params.textDocument.uri,
-			activeSchema(),
-		);
+		const session = sessionFor(params.textDocument.uri);
+		if (!session) return [];
+		return computeReferences(session, params.position, params.context.includeDeclaration, params.textDocument.uri);
 	});
 
 	connection.onDocumentHighlight((params) => {
-		const doc = docFor(params.textDocument.uri);
-		if (!doc) return [];
-		return computeDocumentHighlight(doc, params.position, activeSchema());
+		const session = sessionFor(params.textDocument.uri);
+		if (!session) return [];
+		return computeDocumentHighlight(session, params.position);
 	});
 
 	connection.onDocumentSymbol((params) => {
-		const doc = docFor(params.textDocument.uri);
-		if (!doc) return [];
-		return computeDocumentSymbols(doc, activeSchema());
+		const session = sessionFor(params.textDocument.uri);
+		if (!session) return [];
+		return computeDocumentSymbols(session);
 	});
 
 	connection.onFoldingRanges((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeFoldingRanges(doc) : [];
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeFoldingRanges(session) : [];
 	});
 
 	connection.onSelectionRanges((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeSelectionRanges(doc, params.positions) : [];
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeSelectionRanges(session, params.positions) : [];
 	});
 
 	connection.onCodeLens((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeCodeLens(doc, activeSchema()) : [];
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeCodeLens(session) : [];
 	});
 
 	connection.languages.inlayHint.on((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeInlayHints(doc, params.range, activeSchema()) : [];
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeInlayHints(session, params.range) : [];
 	});
 
 	connection.languages.semanticTokens.on((params) => {
 		const uri = params.textDocument.uri;
-		const doc = docFor(uri);
-		return doc ? computeSemanticTokens(doc, uri) : { data: [] };
+		const session = sessionFor(uri);
+		return session ? computeSemanticTokens(session, uri) : { data: [] };
 	});
 
 	connection.languages.semanticTokens.onRange((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeSemanticTokensRange(doc, params.range) : { data: [] };
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeSemanticTokensRange(session, params.range) : { data: [] };
 	});
 
 	connection.languages.semanticTokens.onDelta((params) => {
 		const uri = params.textDocument.uri;
-		const doc = docFor(uri);
-		return doc ? computeSemanticTokensDelta(doc, uri, params.previousResultId) : { data: [] };
+		const session = sessionFor(uri);
+		return session ? computeSemanticTokensDelta(session, uri, params.previousResultId) : { data: [] };
 	});
 
 	connection.onCompletion((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeCompletion(doc, params.position, activeSchema()) : [];
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeCompletion(session, params.position) : [];
 	});
 
 	// completionItem/resolve receives ONLY the item (no doc/position); resolveCompletion reads its
@@ -283,8 +285,8 @@ export function startServer(connection: Connection, options: ServerOptions = {})
 	connection.onCompletionResolve((item) => resolveCompletion(item));
 
 	connection.onSignatureHelp((params) => {
-		const doc = docFor(params.textDocument.uri);
-		return doc ? computeSignatureHelp(doc, params.position, activeSchema()) : null;
+		const session = sessionFor(params.textDocument.uri);
+		return session ? computeSignatureHelp(session, params.position) : null;
 	});
 
 	documents.listen(connection);
