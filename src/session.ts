@@ -131,6 +131,10 @@ export class SqlSession {
 	diagnostics(): (SyntaxDiagnostic | Diagnostic)[] {
 		return [...this.doc.diagnostics, ...this.analyze().diagnostics];
 	}
+	/** Column lineage for the output columns. WHOLE-DOCUMENT-scoped: on a multi-statement document
+	 *  `doc.scopes` is the compound facade (no outputs), so this answers empty there — use
+	 *  `lineageAt(offset)` for per-statement lineage. Single-statement documents (every dbt model,
+	 *  and all templated documents) are fully covered. */
 	lineage(): Lineage {
 		return lineage(this.doc.scopes, this.schema);
 	}

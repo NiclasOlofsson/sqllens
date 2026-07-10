@@ -297,7 +297,7 @@ that run on incomplete, mid-edit text. They never need a clean parse:
   It runs `parse → resolveScopes` once (plus lazy `analyze(schema)`), caches the
   result, and answers `tokenAt` / `nodeAt`. An edit yields a new document; an
   O(log n) `LineIndex` maps positions to offsets.
-- `complete(doc, offset, schema?)`: scope-aware completion (keywords, columns,
+- `completeAt(doc, offset, schema?)`: scope-aware completion (keywords, columns,
   tables, functions) from an ATN (Augmented Transition Network, the grammar's
   state-machine form) candidate walk over the grammar, our own, with no third-party
   dependency.
