@@ -126,6 +126,27 @@ describe("trino", () => {
 	});
 });
 
+describe("sqlite", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("Foo", "sqlite")).toBe("foo");
+	});
+	it("folds double-quoted identifiers to lower too (SQLite quirk: quoting does NOT make it case-sensitive, unlike Postgres)", () => {
+		expect(foldIdentifier('"Foo"', "sqlite")).toBe("foo");
+	});
+	it("folds bracket- and backtick-quoted identifiers to lower too", () => {
+		expect(foldIdentifier("[Foo]", "sqlite")).toBe("foo");
+		expect(foldIdentifier("`Foo`", "sqlite")).toBe("foo");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "sqlite")).toBe('a"b');
+	});
+	it('unquoted Foo equals unquoted foo, AND equals quoted "Foo" (the SQLite quoted-insensitive quirk)', () => {
+		const unquoted = foldIdentifier("Foo", "sqlite");
+		expect(unquoted).toBe(foldIdentifier("foo", "sqlite"));
+		expect(unquoted).toBe(foldIdentifier('"Foo"', "sqlite"));
+	});
+});
+
 describe("undefined/unknown dialect", () => {
 	it("folds unquoted mixed case to lower", () => {
 		expect(foldIdentifier("MyTable", undefined)).toBe("mytable");

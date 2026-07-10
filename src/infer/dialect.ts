@@ -7,6 +7,7 @@ import { REDSHIFT_FUNCTION_RETURNS, redshiftLiteral, redshiftParseType } from ".
 import { POSTGRES_FUNCTION_RETURNS, postgresLiteral, postgresParseType } from "./postgres.js";
 import { DUCKDB_FUNCTION_RETURNS, duckdbLiteral, duckdbParseType } from "./duckdb.js";
 import { TRINO_FUNCTION_RETURNS, trinoLiteral, trinoParseType } from "./trino.js";
+import { SQLITE_FUNCTION_RETURNS, sqliteLiteral, sqliteParseType } from "./sqlite.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -89,6 +90,16 @@ const trino: InferDialect = {
 	division: "integer", // Trino: integer / integer truncates - functions/math.html
 };
 
+const sqlite: InferDialect = {
+	functions: SQLITE_FUNCTION_RETURNS,
+	literal: sqliteLiteral,
+	parseType: sqliteParseType,
+	// SQLite: "Integer divide yields an integer result, truncated toward zero" (lang_expr.html) —
+	// 5/2 → 2, same typed-division shape as tsql/postgres/redshift/trino (NOT databricks, whose
+	// `/` widens to float even for two integers).
+	division: "integer",
+};
+
 const DIALECTS: Record<string, InferDialect> = {
 	databricks,
 	tsql,
@@ -98,6 +109,7 @@ const DIALECTS: Record<string, InferDialect> = {
 	postgres,
 	duckdb,
 	trino,
+	sqlite,
 };
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */

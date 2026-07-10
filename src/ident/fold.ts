@@ -149,6 +149,24 @@ const RULES: Record<string, FoldRule> = {
 		unquoted: "lower",
 		quoted: "lower",
 	},
+
+	// sqlite.org/lang_keywords.html — verified live: SQLite recognizes three identifier-quoting
+	// delimiters, each documented only as "is an identifier" (double-quote, square-bracket, and
+	// grave-accent/backtick forms) with no case-sensitivity distinction drawn between them or
+	// against the unquoted form. SQLite's own grammar (IDENTIFIER token) treats `"x"`, `` `x` ``,
+	// `[x]` and bare `x` as the same lexical category, and SQLite's C-level identifier compare
+	// (sqlite3StrICmp) is ASCII case-insensitive regardless of how the name was spelled — the
+	// documented quirk this module's brief calls out: unlike Postgres/Snowflake, quoting an
+	// identifier does NOT make it case-sensitive in SQLite. So both unquoted AND quoted fold to
+	// lower here (same shape as redshift/duckdb/trino), for ASCII only — SQLite explicitly does
+	// not case-fold non-ASCII. Bracket delimiters have no escape mechanism (the lexer's `[`...`]`
+	// body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not unescaped, same as
+	// this module's tsql bracket handling.
+	sqlite: {
+		delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
+		unquoted: "lower",
+		quoted: "lower",
+	},
 };
 
 // Today's behavior — the safe default for an unrecognized/absent dialect tag: strip backticks,

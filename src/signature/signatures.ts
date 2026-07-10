@@ -579,6 +579,68 @@ const TRINO: Record<string, FnSignature> = {
 	if: { name: "if", params: [p("condition", "boolean"), p("true_value", "any"), p("false_value", "any")] }, // if(cond, t[, f])
 };
 
+// ---------------------------------------------------------------------------
+// SQLite — sqlite.org/lang_corefunc.html, lang_aggfunc.html, lang_datefunc.html,
+// lang_mathfunc.html; cites the page per entry. min()/max()/count()/sum()/total()/avg()/
+// group_concat() are always lowered with the `aggregate` flag set (src/sqlite/lower.ts's
+// AGGREGATES set is name-based, not arg-count-based), so the arity checker in
+// src/qualify/check-calls.ts never applies these signatures to a call — they exist here purely
+// for the signature-help hint. `log(X)` / `log(B,X)` is deliberately NOT curated: the two forms
+// disagree on argument ORDER, not just optional trailing count, and this table's ParamSig can't
+// express a leading-optional/reordered overload without asserting a wrong arity for one form.
+// ---------------------------------------------------------------------------
+const SQLITE: Record<string, FnSignature> = {
+	// date/time — lang_datefunc.html (modifier repeats; each function's own doc page shows the
+	// same "time-value, modifier, modifier, ..." shape)
+	date: { name: "date", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // date(time-value, modifier, ...)
+	time: { name: "time", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // time(time-value, modifier, ...)
+	datetime: { name: "datetime", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // datetime(time-value, modifier, ...)
+	julianday: { name: "julianday", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // julianday(time-value, modifier, ...)
+	unixepoch: { name: "unixepoch", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // unixepoch(time-value, modifier, ...)
+	strftime: {
+		name: "strftime",
+		params: [p("format", "text"), p("time_value", "text"), p("modifier", "text")],
+		variadic: true,
+	}, // strftime(format, time-value, modifier, ...)
+	timediff: { name: "timediff", params: [p("time_value_1", "text"), p("time_value_2", "text")] }, // timediff(time-value-1, time-value-2)
+	// string — lang_corefunc.html
+	substr: { name: "substr", params: [p("X", "text"), p("Y", "int"), o("Z", "int")] }, // substr(X,Y,Z) / substr(X,Y)
+	replace: { name: "replace", params: [p("X", "text"), p("Y", "text"), p("Z", "text")] }, // replace(X,Y,Z)
+	trim: { name: "trim", params: [p("X", "text"), o("Y", "text")] }, // trim(X,Y)
+	ltrim: { name: "ltrim", params: [p("X", "text"), o("Y", "text")] }, // ltrim(X,Y)
+	rtrim: { name: "rtrim", params: [p("X", "text"), o("Y", "text")] }, // rtrim(X,Y)
+	instr: { name: "instr", params: [p("X", "text"), p("Y", "text")] }, // instr(X,Y)
+	glob: { name: "glob", params: [p("pattern", "text"), p("string", "text")] }, // glob(X,Y) ("Y GLOB X")
+	like: { name: "like", params: [p("pattern", "text"), p("string", "text"), o("escape", "text")] }, // like(X,Y[,Z]) ("Y LIKE X [ESCAPE Z]")
+	printf: { name: "printf", params: [p("format", "text"), p("args")], variadic: true }, // printf(FORMAT,...) — alias for format()
+	quote: { name: "quote", params: [p("X")] }, // quote(X)
+	soundex: { name: "soundex", params: [p("X", "text")] }, // soundex(X)
+	// numeric — lang_corefunc.html + lang_mathfunc.html
+	round: { name: "round", params: [p("X", "numeric"), o("Y", "int")] }, // round(X,Y) / round(X)
+	abs: { name: "abs", params: [p("X", "numeric")] }, // abs(X)
+	sign: { name: "sign", params: [p("X", "numeric")] }, // sign(X)
+	hex: { name: "hex", params: [p("X", "blob")] }, // hex(X)
+	power: { name: "power", params: [p("X", "numeric"), p("Y", "numeric")] }, // power(X,Y) — lang_mathfunc.html
+	sqrt: { name: "sqrt", params: [p("X", "numeric")] }, // sqrt(X) — lang_mathfunc.html
+	mod: { name: "mod", params: [p("X", "numeric"), p("Y", "numeric")] }, // mod(X,Y) — lang_mathfunc.html
+	pi: { name: "pi", params: [] }, // pi() — lang_mathfunc.html
+	exp: { name: "exp", params: [p("X", "numeric")] }, // exp(X) — lang_mathfunc.html
+	ln: { name: "ln", params: [p("X", "numeric")] }, // ln(X) — lang_mathfunc.html
+	// conditional/null — lang_corefunc.html
+	coalesce: { name: "coalesce", params: [p("X"), p("Y")], variadic: true }, // coalesce(X,Y,...) (SQLite requires >= 2 args)
+	ifnull: { name: "ifnull", params: [p("X"), p("Y")] }, // ifnull(X,Y)
+	nullif: { name: "nullif", params: [p("X"), p("Y")] }, // nullif(X,Y)
+	iif: { name: "iif", params: [p("condition", "boolean"), p("true_value"), p("false_value")], variadic: true }, // iif(B1,V1,B2,V2,...,else)
+	// aggregate — lang_aggfunc.html (see the module note: never arity-checked, name-based aggregate flag)
+	count: { name: "count", params: [p("X")] }, // count(X) / count(*)
+	sum: { name: "sum", params: [p("X", "numeric")] }, // sum(X)
+	total: { name: "total", params: [p("X", "numeric")] }, // total(X)
+	avg: { name: "avg", params: [p("X", "numeric")] }, // avg(X)
+	min: { name: "min", params: [p("X")], variadic: true }, // min(X) aggregate / min(X,Y,...) scalar
+	max: { name: "max", params: [p("X")], variadic: true }, // max(X) aggregate / max(X,Y,...) scalar
+	group_concat: { name: "group_concat", params: [p("X", "text"), o("Y", "text")] }, // group_concat(X[,Y])
+};
+
 /** Curated parameter signatures, per dialect, keyed by LOWERCASED function name. */
 export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	databricks: DATABRICKS,
@@ -589,9 +651,7 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	postgres: POSTGRES,
 	duckdb: DUCKDB,
 	trino: TRINO,
-	// No curated SQLite table yet (that is a later, doc-driven task); empty falls through to the
-	// name-only hint, same as every dialect's HARVESTED_SIGNATURES entry below until harvested.
-	sqlite: {},
+	sqlite: SQLITE,
 };
 
 // ---------------------------------------------------------------------------

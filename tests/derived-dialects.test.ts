@@ -5,7 +5,17 @@
 import { describe, it, expect } from "vitest";
 import { DERIVED_DIALECTS, resolveDialect, parse, type Dialect } from "../src/index.js";
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+];
 
 describe("resolveDialect", () => {
 	it("every dialect name resolves to itself (both vocabularies accepted)", () => {

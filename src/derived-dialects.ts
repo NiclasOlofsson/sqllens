@@ -23,6 +23,7 @@ export const DERIVED_DIALECTS: Readonly<Record<string, Dialect>> = {
 	postgres: "postgres",
 	duckdb: "duckdb",
 	trino: "trino",
+	sqlite: "sqlite",
 	// our dialect name (not an engine name) — accepted so both vocabularies work
 	tsql: "tsql",
 	// Spark SQL family — Databricks SQL = Spark SQL; AWS Glue runs Spark
