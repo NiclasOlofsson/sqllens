@@ -12,7 +12,7 @@
 // `,` that follows a completed prior CTE clause (a comma-only slot guard).
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import { NamedShapeProvider } from "./helpers/providers.js";
 
 describe("cte-definition ExpansionShape", () => {

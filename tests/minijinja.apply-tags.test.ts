@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated, resolveScopes } from "../src/index.js";
+import { resolveScopes } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import { applyTemplateTags } from "../src/minijinja/apply-tags.js";
 
 /** Navigate QueryExpr → select body → from[0] (the IR's real field is `from`, not `sources`). */

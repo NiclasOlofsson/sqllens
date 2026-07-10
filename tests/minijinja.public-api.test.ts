@@ -3,24 +3,26 @@ import { describe, expect, it } from "vitest";
 // src/minijinja path — to prove the inc1 + inc2 surface is exported: parseTemplated,
 // tokenizeTemplated, the region/symbol/variant functions, and every public type.
 import {
-	parseTemplated,
-	tokenizeTemplated,
-	templateRegions,
-	templateSymbols,
-	templateVariants,
 	DefaultTemplateProvider,
 	qualify,
 	type TemplatedParseResult,
-	type TagNode,
-	type TemplateRegion,
-	type TemplateArm,
-	type TemplateSymbol,
-	type TemplateVariant,
 	type TemplateSourceInfo,
 	type TemplateProvider,
 	type TemplateCall,
 	type ResolvedRelation,
 } from "../src/index.js";
+import {
+	parseTemplated,
+	tokenizeTemplated,
+	templateRegions,
+	templateSymbols,
+	templateVariants,
+	type TagNode,
+	type TemplateRegion,
+	type TemplateArm,
+	type TemplateSymbol,
+	type TemplateVariant,
+} from "../src/minijinja/index.js";
 
 describe("jinja public surface (barrel export)", () => {
 	it("parseTemplated / tokenizeTemplated are reachable through src/index.ts", () => {

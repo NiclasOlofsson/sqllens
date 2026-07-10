@@ -13,7 +13,7 @@
 //     statement also carries a broken tag (error recovery must not smear the join chain).
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import { NamedShapeProvider } from "./helpers/providers.js";
 
 // The exact slot Niclas hit: a complete ON predicate, then the where-mode tag, then UNION ALL.

@@ -8,7 +8,7 @@
 // (all-text-live, today's behavior). else/elif arms of a blanked if stay live (false → else runs).
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 
 const UNION_LOOP = `{% for x in ['a','b'] %}
 select 1 as n

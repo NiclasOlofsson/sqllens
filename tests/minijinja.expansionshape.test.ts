@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
-import { DefaultTemplateProvider, parseTemplated, type TemplateCall } from "../src/index.js";
+import { DefaultTemplateProvider, type TemplateCall } from "../src/index.js";
 import type { Dialect } from "../src/api.js";
 import type { ExpansionShape } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import { shaped } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------

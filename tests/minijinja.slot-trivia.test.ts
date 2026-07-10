@@ -8,7 +8,7 @@
 // `//` elsewhere is division) — documented, revisit on a real snowflake hit.
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import { NamedShapeProvider } from "./helpers/providers.js";
 
 const stmtShaped = () => ({ provider: new NamedShapeProvider({ whole_view: "statement" }) });

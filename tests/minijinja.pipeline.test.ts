@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parseTemplated, toScopes, qualify, lineage, Schema } from "../src/index.js";
+import { toScopes, qualify, lineage, Schema } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 import type { ResolvedSource } from "../src/scope/scope.js";
 
 // ---------------------------------------------------------------------------

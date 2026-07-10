@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import type { TemplateEngine, TemplatedParseResult } from "../src/index.js";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 
 describe("TemplateEngine contract type", () => {
 	it("parseTemplated satisfies the engine parse signature", () => {

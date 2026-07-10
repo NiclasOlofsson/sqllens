@@ -7,7 +7,7 @@
 // alphabet dies under identifier folding). Length and newline offsets stay exact.
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 
 /** The fill slice for the k-th `{{ … }}` tag of `text`, cut from the placeholder. */
 function fillSlices(text: string, placeholder: string): string[] {

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parseTemplated } from "../src/index.js";
+import { parseTemplated } from "../src/minijinja/index.js";
 
 describe("TemplatedParseResult Of-accessors", () => {
 	it("tagOf/nodeOf join a templated FROM source to its ref tag", () => {

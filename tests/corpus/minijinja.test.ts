@@ -1,15 +1,14 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { qualify, Schema } from "../../src/index.js";
 import {
 	parseTemplated,
-	qualify,
-	Schema,
 	templateRegions,
 	templateSymbols,
 	templateVariants,
 	type TagNode,
-} from "../../src/index.js";
+} from "../../src/minijinja/index.js";
 import type { Dialect } from "../../src/api.js";
 import type { Token } from "../../src/token/token.js";
 import type { PartSpan } from "../../src/ir/part-span.js";

@@ -86,27 +86,13 @@ export { lower as lowerDuckdb } from "./duckdb/lower.js";
 export { lower as lowerTrino } from "./trino/lower.js";
 export type { ParseResult } from "./parse-result.js";
 
-// --- Minijinja front end (raw jinja-SQL) — the unified SQL+jinja token stream (inc1 R1)
-//     + the inc2 surface: control-flow regions / template symbols (R4) and branch-variant
-//     realization. Additive-only; reachable ONLY through this barrel (the eight SQL
-//     grammars are untouched). See also `TemplateSourceInfo`/`TemplateExprInfo` (IR section)
-//     and `DefaultTemplateProvider` (qualify section) — the rest of the template surface. ---
-export {
-	parseTemplated,
-	tokenizeTemplated,
-	type TemplatedParseResult,
-	type TemplatedParseOptions,
-	type TagNode,
-	type MacroCall,
-} from "./minijinja/parse.js";
-export {
-	templateRegions,
-	templateSymbols,
-	type TemplateRegion,
-	type TemplateArm,
-	type TemplateSymbol,
-} from "./minijinja/regions.js";
-export { templateVariants, type TemplateVariant } from "./minijinja/variants.js";
+// --- Minijinja front end (raw jinja-SQL) — the engine itself (parseTemplated/tokenizeTemplated,
+//     tag/region/symbol/variant types) lives at the `sqllens/minijinja` subpath
+//     (src/minijinja/index.ts), not here. The main barrel keeps only the engine-neutral contract:
+//     the TemplateEngine interface (below) and the result/options shape it produces. See also
+//     `TemplateSourceInfo`/`TemplateExprInfo` (IR section) and `DefaultTemplateProvider` (qualify
+//     section) — the rest of the template surface. ---
+export { type TemplatedParseResult, type TemplatedParseOptions } from "./template/engine.js";
 
 // --- The IR ---
 export type {
