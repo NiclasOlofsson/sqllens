@@ -499,3 +499,20 @@ contract is enforced by the runnable conformance suite in
 zero-tag degeneracy, no fill leakage). The tag/region/symbol types remain minijinja-declared
 (type-only imports from the contract file) until the tag-kind taxonomy is de-dbt'd — that
 relocation is bound to the anvil-coordinated overlay wave.
+
+## The unified door (2026-07-10) — SqlDocument.fromTemplated is superseded
+
+The "LSP boundary" limitation above (templated refs not reaching the server end-to-end
+until `SqlDocument.fromTemplated` lands) is CLOSED by a different shape than the one it
+predicted: `SqlDocument.create(text, dialect, { templating: minijinja(), provider })` —
+templating as an injected engine option on the ONE document entry, not a separate factory.
+A templated document rides the single-cell path v1 (dbt models are single-statement;
+control regions can straddle statement boundaries, so cell-splitting templated text is a
+tracked deferral), exposes the engine result as `doc.templated` (tags/regions/symbols/
+placeholder/degraded + tagOf/nodeOf/diagnosticsOf), and its cached parse is keyed on the
+engine name + the provider's version, so a `prime()` re-warm invalidates exactly like the
+schema memo. There is deliberately NO auto-detection — `{{ … }}` inside a string literal
+is undecidable (template to dbt, literal text to everyone else), so the host declares
+templating (file association, language id, config); tag-free text under a declared engine
+is byte-identical to a plain parse. Wiring the option into the LSP server (language-id /
+`.sqllens.json` rule) is the remaining application-layer step, tracked for the facade wave.
