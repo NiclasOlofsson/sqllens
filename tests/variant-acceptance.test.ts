@@ -369,59 +369,11 @@ describe("A8c — nested conditionals: every leaf path enumerated", () => {
 // ---------------------------------------------------------------------------
 
 // ---------------------------------------------------------------------------
-// Fold vocabulary / star anchor — NOT part of the A1-A9 brief above (see this
-// file's header: those are lifted verbatim from the anvil brief). Added for the
-// anvil retirement blockers: unionOutputColumns/unionCtes column entries must
-// speak the SAME identity vocabulary the rest of the resolved surface does
-// (fold-normalized via src/ident/fold.ts's foldIdentifier, quote-preserving —
-// docs/identifier-delimiter-contract.md) and a star-expanded column's span must
-// anchor on the `*` character itself (the Sym star-expansion wave rule, sqllens
-// 9c87f55: a column that exists only by expansion anchors on the star, never on
-// synthesized or unrelated text — src/ir/part-span.ts's starSpanOf). These bind
-// the vocabulary the way A1-A8 bind the union logic.
+// Fold vocabulary / star anchor — NOT part of the A1-A9 brief above; these
+// bindings live in tests/vocabulary-contract.test.ts (the reusable
+// `vocabularyContract` suite, the engineContract treatment): union column
+// names fold-normalized + quote-preserving, star-expanded spans anchored on
+// the `*` character, and UnionCte.name in the same fold vocabulary — invoked
+// there for BOTH unionOutputColumns and unionCtes, so the fixtures live once.
+// They bind the vocabulary the way A1-A8 above bind the union logic.
 // ---------------------------------------------------------------------------
-
-describe("fold vocabulary — union column names are fold-normalized, quote-preserving", () => {
-	// One mixed-case + quoted fixture per fold family. docs/identifier-delimiter-contract.md:
-	// `Projection.name` keeps its quoting delimiters intact for every non-BigQuery dialect, so a
-	// FOLD (not a strip) is what turns the raw provenance into the identity key both views expose.
-
-	it("lower-fold (duckdb): unquoted mixed-case folds lower, and a quoted name folds lower too", () => {
-		const SQL = 'select Upper_Col, "Mixed" from t';
-		expect(
-			SqlDocument.create(SQL, "duckdb")
-				.unionOutputColumns()
-				.map((c) => c.name),
-		).toEqual(["upper_col", "mixed"]);
-		const cteDoc = SqlDocument.create(`with c as (${SQL}) select * from c`, "duckdb");
-		expect(cteDoc.unionCtes()[0].columns.map((c) => c.name)).toEqual(["upper_col", "mixed"]);
-	});
-
-	it("upper-fold (snowflake): unquoted mixed-case folds upper, a quoted name PRESERVES its case", () => {
-		const SQL = 'select Upper_Col, "Mixed" from t';
-		expect(
-			SqlDocument.create(SQL, "snowflake")
-				.unionOutputColumns()
-				.map((c) => c.name),
-		).toEqual(["UPPER_COL", "Mixed"]);
-		const cteDoc = SqlDocument.create(`with c as (${SQL}) select * from c`, "snowflake");
-		expect(cteDoc.unionCtes()[0].columns.map((c) => c.name)).toEqual(["UPPER_COL", "Mixed"]);
-	});
-});
-
-describe("star anchor — star-expanded output columns anchor their span on the `*` character", () => {
-	it("a qualified `t.*` expansion: every expanded column's span slices to exactly `*`, not the qualifier", () => {
-		const SQL = "select t.* from t";
-		const schema = new Schema({ t: { a: "int", b: "int" } });
-		const cols = SqlDocument.create(SQL, "duckdb").unionOutputColumns(schema);
-		expect(cols.map((c) => c.name)).toEqual(["a", "b"]);
-		for (const c of cols) expect(SQL.slice(c.span.start, c.span.end)).toBe("*");
-	});
-
-	it("a CTE-chain wildcard: the root SELECT * FROM cte expansion's span slices to exactly `*`", () => {
-		const SQL = "with c as (select a, b from t) select * from c";
-		const cols = SqlDocument.create(SQL, "duckdb").unionOutputColumns();
-		expect(cols.map((c) => c.name)).toEqual(["a", "b"]);
-		for (const c of cols) expect(SQL.slice(c.span.start, c.span.end)).toBe("*");
-	});
-});

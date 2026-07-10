@@ -44,7 +44,7 @@ import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
-import { displayName, foldIdentifier } from "../ident/fold.js";
+import { foldIdentifier } from "../ident/fold.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
@@ -196,6 +196,9 @@ export interface DocumentVariant {
 
 /** One CTE's identity + its output columns unioned across arms (`SqlDocument.unionCtes`). */
 export interface UnionCte {
+	/** Fold-normalized, quote-preserving identity form — `foldIdentifier(raw, dialect)`, the same
+	 *  vocabulary the column entries below (and the rest of the resolved surface) speak. The exact
+	 *  written form is recoverable by slicing the source at `declarationSpan`. */
 	name: string;
 	/** Declaration identity: the CTE name's own span (`CteDef.nameCst`, falling back to the whole
 	 *  `CteDef.cst` when the name itself has no real token). Part of the key: two same-named CTEs
@@ -203,7 +206,7 @@ export interface UnionCte {
 	declarationSpan: PartSpan;
 	/** Output columns unioned by NAME across arms; each column's span is the FIRST LIVE ARM's (arm
 	 *  iteration order = `SqlDocument.variants` order) — the representative-span rule pinned by the
-	 *  variant-acceptance brief's A8a-c. */
+	 *  variant-acceptance brief's A8a-c. Names are fold-normalized like `name` above. */
 	columns: { name: string; span: Span }[];
 }
 
@@ -788,7 +791,7 @@ export class SqlDocument {
 			for (const cteRef of collectCtes(doc.scopes.root)) {
 				const declarationSpan = partSpanOf(cteRef.def.nameCst ?? cteRef.def.cst);
 				if (!declarationSpan) continue; // no real token to key on — never fabricate a span
-				const name = displayName(cteRef.def.name, doc.dialect);
+				const name = foldIdentifier(cteRef.def.name, doc.dialect);
 				const key = `${name}:${declarationSpan.start}`;
 				let entry = byKey.get(key);
 				if (!entry) {
