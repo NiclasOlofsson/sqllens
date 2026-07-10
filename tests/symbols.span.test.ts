@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { parse, toScopes, deriveSymbols, referencesAt } from "../src/index.js";
+import { toScopes, deriveSymbols, referencesAt } from "../src/index.js";
 
 const SQL = "SELECT amount FROM sales";
 
