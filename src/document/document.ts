@@ -359,8 +359,12 @@ export class SqlDocument {
 		provider: TemplateProvider | undefined,
 	): { cell: StatementCell; cached: CachedCell } {
 		const span: StatementCellSpan = { start: 0, end: text.length };
-		// Task 2: + provider version
-		const key = "templated " + this.dialect + " " + text;
+		// Collision-proofed against a plain cell's `dialect + " " + text` key by the "templated "
+		// prefix; folds in the engine name (two engines could tokenize the same text differently)
+		// and the provider's version counter (0 when no provider) so a prime() that resolves a
+		// miss invalidates every cached templated cell built against the stale answers.
+		const providerVersion = provider?.version ?? 0;
+		const key = `templated ${engine.name}@${providerVersion} ${this.dialect} ${text}`;
 		let cached = this._cellCache.get(key);
 		if (cached === undefined) {
 			const r = engine.parse(text, this.dialect, { provider });

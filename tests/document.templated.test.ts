@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { SqlDocument, Schema } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
+import { TestRelationProvider, relKey } from "./helpers/providers.js";
 
 const MODEL = "select o.total from {{ ref('orders') }} o where o.total > {{ var('min') }}";
 
@@ -39,5 +40,30 @@ describe("SqlDocument + templating engine (the unified door)", () => {
 		const a = doc.analyze(schema);
 		expect(a.symbols.length).toBeGreaterThan(0);
 		expect(a.diagnostics).toEqual([]); // templated source resolvable → no false unknowns
+	});
+	it("withText carries the engine: the child re-parses templated", () => {
+		const doc = SqlDocument.create(MODEL, "databricks", { templating: minijinja() });
+		const next = doc.withText(MODEL + " ", 2);
+		expect(next.templated).toBeDefined();
+		expect(next.templated!.tags.length).toBe(doc.templated!.tags.length);
+	});
+	it("unchanged text reuses the cached templated cell across withText", () => {
+		const doc = SqlDocument.create(MODEL, "databricks", { templating: minijinja() });
+		const next = doc.withText(MODEL, 2);
+		expect(next.statements[0].ast).toBe(doc.statements[0].ast); // object identity = cache hit
+	});
+	it("a provider version bump invalidates the cached templated parse", async () => {
+		// TestRelationProvider (tests/helpers/providers.ts) is a DefaultTemplateProvider subclass
+		// driven exactly like a host: relationOf records a miss on a cold ref('orders'), and
+		// prime() drains it through fetchExpansions and bumps `version` — the real invalidation
+		// path (mirrors how the LSP drives schema.prime() in src/lsp/server.ts), not a poke at
+		// the counter.
+		const provider = new TestRelationProvider();
+		const doc = SqlDocument.create(MODEL, "databricks", { templating: minijinja(), provider });
+		expect(provider.misses.length).toBe(1); // the ref('orders') tag missed during that parse
+		provider.pending.set(relKey("ref", ["orders"]), { nameParts: ["orders"] });
+		expect(await provider.prime()).toBe(true); // real bump
+		const next = doc.withText(MODEL, 2);
+		expect(next.statements[0].ast).not.toBe(doc.statements[0].ast); // stale entry missed
 	});
 });
