@@ -64,6 +64,9 @@ export {
 	type StatementCellSpan,
 } from "./api.js";
 
+// SqlSession — the verb-shaped facade over one SqlDocument (offset in, answer out; pure delegation).
+export { SqlSession, type SessionOptions } from "./session.js";
+
 // --- Per-dialect building blocks: parse* (CST + errors) and lower* (CST → IR), kept as one
 //     contiguous family. Every export is dialect-suffixed on both sides — parseDatabricks/
 //     lowerDatabricks … parseTrino/lowerTrino. (Each dialect's module still exports the function
