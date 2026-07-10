@@ -155,6 +155,21 @@ describe("A4 — union view carries arm-local symbols, deduped by span+identity+
 		expect(names.filter((n) => n === "c").length).toBe(1);
 		expect(names.filter((n) => n === "anchor_table").length).toBe(1);
 	});
+
+	it("unionSymbols is EXACTLY those four — nothing from a blanked arm leaks as whitespace-derived junk", () => {
+		const doc = SqlDocument.create(SQL, "duckdb", { templating: minijinja() });
+		const syms = doc.unionSymbols();
+		// The fixture's only identifiers, and no others: col_a (if-arm), col_b (else-arm), c,
+		// anchor_table. Pinning the total closes the gap the two presence/exactly-once checks above
+		// leave open — those pass even if a fifth, unaccounted-for symbol were present.
+		expect(syms.length).toBe(4);
+		for (const s of syms) {
+			// No blanked-arm whitespace/junk symbol: every name is non-blank and traces back to an
+			// actual identifier the fixture text contains (not a synthesized or trimmed artifact).
+			expect(s.name.trim().length).toBeGreaterThan(0);
+			expect(SQL.includes(s.name)).toBe(true);
+		}
+	});
 });
 
 describe("A5 — zero-width star-Sym expansion survives the union key", () => {

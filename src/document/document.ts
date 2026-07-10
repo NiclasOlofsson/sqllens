@@ -766,7 +766,10 @@ export class SqlDocument {
 	 *  visible, ledgered gap, see `scopeOutputColumns`. Falls through to this document's own
 	 *  (single-arm) answer when there are no variants — there is no pre-existing single-doc
 	 *  equivalent to delegate to, unlike unionSymbols/unionDiagnostics, so the no-variant case is
-	 *  just the one-arm instance of the same algorithm. Variant-only, memoized like `unionSymbols`. */
+	 *  just the one-arm instance of the same algorithm. Variant-only, memoized like `unionSymbols`.
+	 *  KNOWN GAP (visible, ledgered — not silently narrowed): on a multi-statement document these
+	 *  answer `[]` — the compound facade carries no CTEs/outputs; the per-cell merge is a tracked
+	 *  follow-up; single-statement documents (every dbt model) are fully covered. */
 	unionCtes(schema?: SchemaProvider): UnionCte[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionCtesCache, s, () => this.buildUnionCtes(s));
@@ -813,7 +816,10 @@ export class SqlDocument {
 	 *  `… UNION ALL …` arm shape) answers through the qualification — names per SQL setop semantics
 	 *  (left branch positionally, BY NAME appends right-only), spans from the declaring branch. A
 	 *  PIPE-syntax root answers `[]` — a visible, ledgered gap, see `scopeOutputColumns`. Falls
-	 *  through to this document's own root outputs when there are no variants. */
+	 *  through to this document's own root outputs when there are no variants.
+	 *  KNOWN GAP (visible, ledgered — not silently narrowed): on a multi-statement document these
+	 *  answer `[]` — the compound facade carries no CTEs/outputs; the per-cell merge is a tracked
+	 *  follow-up; single-statement documents (every dbt model) are fully covered. */
 	unionOutputColumns(schema?: SchemaProvider): { name: string; span: Span }[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionOutputColumnsCache, s, () => this.buildUnionOutputColumns(s));
