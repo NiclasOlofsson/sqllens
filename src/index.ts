@@ -145,6 +145,10 @@ export { partSpanOf, partSpansOf } from "./ir/part-span.js";
 
 export { endPosition } from "./ir/span.js";
 
+// The shared IR walk — expr/query-tree traversal with no scope/document knowledge, single-sourced
+// for src/document/node-at.ts and the LSP folding feature (and any other IR-only consumer).
+export { childExprs, walkExprs, allQueryExprs } from "./ir/walk.js";
+
 // The CST node-at-offset walk — the one genuinely LSP-shaped capability that lives outside
 // src/lsp/: given an offset, the smallest IR Expr (+ owning Scope) that covers it. Backs hover.
 export { nodeAt, type NodeHit } from "./document/node-at.js";

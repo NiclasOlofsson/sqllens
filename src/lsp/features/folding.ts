@@ -1,5 +1,15 @@
 import { type FoldingRange, FoldingRangeKind } from "vscode-languageserver-types";
-import type { CteDef, Expr, QueryBody, QueryExpr, SelectExpr, SetOpExpr, Source, SqlDocument } from "../../index.js";
+import {
+	childExprs,
+	type CteDef,
+	type Expr,
+	type QueryBody,
+	type QueryExpr,
+	type SelectExpr,
+	type SetOpExpr,
+	type Source,
+	type SqlDocument,
+} from "../../index.js";
 import { type CellBase, cellBaseOf, rangeFromCst, shiftRange } from "../ranges.js";
 
 // ---------------------------------------------------------------------------
@@ -140,33 +150,6 @@ export function computeFoldingRanges(doc: SqlDocument): FoldingRange[] {
 		// Total: never throw on broken / mid-edit input.
 	}
 	return ranges;
-}
-
-/** Sub-expressions reachable without crossing into a nested query block (subquery/exists
- *  are handled by visitExpr directly). Mirrors node-at's childExprs, kept LSP-local. */
-function childExprs(expr: Expr): Expr[] {
-	switch (expr.kind) {
-		case "binary":
-			return [expr.left, expr.right];
-		case "unary":
-			return [expr.operand];
-		case "function":
-			return [...expr.args, ...(expr.window ? [...expr.window.partitionBy, ...expr.window.orderBy] : [])];
-		case "case":
-			return [...expr.whens.flatMap((w) => [w.when, w.then]), ...(expr.elseExpr ? [expr.elseExpr] : [])];
-		case "cast":
-			return [expr.expr];
-		case "predicate":
-			return [expr.operand, ...expr.args];
-		case "lambda":
-			return [expr.body];
-		case "subscript":
-			return [expr.base, expr.index];
-		case "star":
-			return expr.replace?.map((r) => r.expr) ?? [];
-		default:
-			return [];
-	}
 }
 
 // doc.ast models ONE statement. A multi-statement document parses to a single root whose
