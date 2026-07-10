@@ -44,7 +44,7 @@ import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
-import { displayName } from "../ident/fold.js";
+import { displayName, foldIdentifier } from "../ident/fold.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
@@ -761,10 +761,12 @@ export class SqlDocument {
 	 *  CTEs declared at different positions stay distinct entries; a CTE existing in only one arm
 	 *  still appears). Columns union by NAME; a column's representative span is the FIRST LIVE ARM's
 	 *  (arm iteration order = `this.variants` order) — the rule the variant-acceptance brief's A8a-c
-	 *  pin. Falls through to this document's own (single-arm) answer when there are no variants —
-	 *  there is no pre-existing single-doc equivalent to delegate to, unlike unionSymbols/
-	 *  unionDiagnostics, so the no-variant case is just the one-arm instance of the same algorithm.
-	 *  Variant-only, memoized like `unionSymbols`. */
+	 *  pin. A CTE whose body is a set operation answers through the qualification (names per SQL
+	 *  setop semantics, spans from the declaring branch); a PIPE-syntax body answers no columns — a
+	 *  visible, ledgered gap, see `scopeOutputColumns`. Falls through to this document's own
+	 *  (single-arm) answer when there are no variants — there is no pre-existing single-doc
+	 *  equivalent to delegate to, unlike unionSymbols/unionDiagnostics, so the no-variant case is
+	 *  just the one-arm instance of the same algorithm. Variant-only, memoized like `unionSymbols`. */
 	unionCtes(schema?: SchemaProvider): UnionCte[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionCtesCache, s, () => this.buildUnionCtes(s));
@@ -807,8 +809,11 @@ export class SqlDocument {
 	}
 
 	/** The document's final-SELECT (root scope) output columns unioned across arms — same NAME
-	 *  keying and representative-span rule as `unionCtes`. Falls through to this document's own root
-	 *  outputs when there are no variants. */
+	 *  keying and representative-span rule as `unionCtes`. A setop root (the dbt-incremental
+	 *  `… UNION ALL …` arm shape) answers through the qualification — names per SQL setop semantics
+	 *  (left branch positionally, BY NAME appends right-only), spans from the declaring branch. A
+	 *  PIPE-syntax root answers `[]` — a visible, ledgered gap, see `scopeOutputColumns`. Falls
+	 *  through to this document's own root outputs when there are no variants. */
 	unionOutputColumns(schema?: SchemaProvider): { name: string; span: Span }[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionOutputColumnsCache, s, () => this.buildUnionOutputColumns(s));
@@ -857,15 +862,24 @@ function symKey(s: Sym): string {
 	return `${s.span.start}:${s.span.end}:${s.kind}:${s.frame}:${s.name}`;
 }
 
-/** `unionDiagnostics` dedup key. A SyntaxDiagnostic keys on its own identity fields
- *  (`offset:length:message`). A qualify `Diagnostic` carries no separate "offending name" field —
- *  its `message` is wholly DERIVED from `kind` + the offending name (see qualify.ts's
- *  columnDiag/unknownTable: the only variable part of the message IS the name), so `kind + span
- *  fields + message` is the honest equivalent of "kind + span + name" without inventing a field the
- *  interface doesn't carry. */
+/** `unionDiagnostics` dedup key. A SyntaxDiagnostic keys on `line:column:offset:length:message` —
+ *  line:column are LOAD-BEARING, not redundant with offset: a LEXER error ("token recognition
+ *  error") carries no offending symbol, so its `offset` is undefined (parse-diagnostics.ts), and an
+ *  offset-keyed key alone would collapse two same-character lexer errors from different arms at
+ *  different positions into one (the A6 message-only bug for that subclass). A qualify `Diagnostic`
+ *  carries no separate "offending name" field — its `message` is wholly DERIVED from `kind` + the
+ *  offending name (see qualify.ts's columnDiag/unknownTable: the only variable part of the message
+ *  IS the name), so `kind + span fields + message` is the honest equivalent of "kind + span + name"
+ *  without inventing a field the interface doesn't carry. The message-as-name-proxy is also safe
+ *  ACROSS arms: realizations share one coordinate space and sibling arms occupy DISJOINT byte
+ *  ranges, so two arms can only produce identical-span diagnostics from the SAME source bytes
+ *  (shared text outside the arms, or one arm's own bytes reached by both variants of an unrelated
+ *  region) — identical code at identical spans SHOULD dedup, and a same-span reference that
+ *  resolves DIFFERENTLY per arm (unknown in one, ambiguous in the other) differs in kind+message
+ *  and correctly keeps both entries. */
 function diagKey(d: SyntaxDiagnostic | Diagnostic): string {
 	if ("kind" in d) return `${d.kind}:${d.line}:${d.column}:${d.endLine}:${d.endColumn}:${d.message}`;
-	return `${d.offset}:${d.length}:${d.message}`;
+	return `${d.line}:${d.column}:${d.offset}:${d.length}:${d.message}`;
 }
 
 /** Every `CteRef` reachable from `scope` and its descendants. A WITH clause's CTEs live on the
@@ -880,29 +894,59 @@ function collectCtes(scope: Scope, out: CteRef[] = []): CteRef[] {
 
 /** A scope's own projected output columns as {name, span} pairs — schema-fed where a star needs
  *  expansion (via `qualification.expandStarOf`, the same expansion `deriveSymbols` rides, so the
- *  two never disagree). Only a `select` body carries a projection list to enumerate; a pipe/setop
- *  scope answers `[]` here (honest, not wrong — the same posture `session.lineage()` already
- *  documents for the compound facade). An anonymous (unaliased, non-column) projection has no
- *  determinable name and is skipped, never fabricated; a star that qualify can't resolve (a schema
- *  gap) is skipped the same way. */
+ *  two never disagree). A `select` body enumerates its projections; a `setop` body answers through
+ *  `qualification.columnsOf` with spans from the declaring branch (see below). KNOWN GAP (visible,
+ *  ledgered — not silently narrowed): a PIPE body answers `[]` — its output spans live across its
+ *  per-stage scopes (a pass-through last stage carries no projections of its own), and per-stage
+ *  span attribution is unbuilt. An anonymous (unaliased, non-column) projection has no determinable
+ *  name and is skipped, never fabricated; a star that qualify can't resolve (a schema gap) is
+ *  skipped the same way. */
 function scopeOutputColumns(scope: Scope, qualification: Qualification): { name: string; span: Span }[] {
 	const body = scope.body;
-	if (body.kind !== "select") return [];
-	const out: { name: string; span: Span }[] = [];
-	for (const p of body.projections) {
-		if (p.isStar) {
-			const pairs = qualification.expandStarOf(scope, p);
-			if (!pairs) continue; // unresolvable star — never fabricate a partial list
-			const span = partSpanOf(p.cst);
-			if (!span) continue;
-			for (const pair of pairs) out.push({ name: pair.name, span });
-		} else if (p.name !== undefined) {
-			const span = partSpanOf(p.aliasCst ?? p.cst);
-			if (span) out.push({ name: displayName(p.name, scope.dialect), span });
+	if (body.kind === "select") {
+		const out: { name: string; span: Span }[] = [];
+		for (const p of body.projections) {
+			if (p.isStar) {
+				const pairs = qualification.expandStarOf(scope, p);
+				if (!pairs) continue; // unresolvable star — never fabricate a partial list
+				const span = partSpanOf(p.cst);
+				if (!span) continue;
+				// Every star-expanded column shares the star projection's own span — there is no
+				// per-column source token to point at. A deliberate divergence from deriveSymbols'
+				// zero-width convention (that exists so expanded Syms are never cursor hit-test
+				// targets; these pairs are name/position enumeration, where a real span is useful).
+				for (const pair of pairs) out.push({ name: pair.name, span });
+			} else if (p.name !== undefined) {
+				const span = partSpanOf(p.aliasCst ?? p.cst);
+				if (span) out.push({ name: displayName(p.name, scope.dialect), span });
+			}
+			// else: anonymous expression — no determinable name, skip
 		}
-		// else: anonymous expression — no determinable name, skip
+		return out;
 	}
-	return out;
+	if (body.kind === "setop" && scope.branches) {
+		// A set operation's output NAMES are its left branch's (positional), with BY NAME appending
+		// the right branch's not-in-left columns — exactly what `columnsOf` already computes
+		// (qualify.ts resolveColumns' setop case), so names route through it rather than being
+		// re-derived here. Each name's representative SPAN comes from the branch that declares it
+		// (left first — the same first-wins rule the arms use), recursing through nested setops.
+		const names = qualification.columnsOf(scope);
+		if (names === "unknown") return [];
+		const declared = new Map<string, { name: string; span: Span }>();
+		for (const branch of [scope.branches.left, scope.branches.right]) {
+			for (const col of scopeOutputColumns(branch, qualification)) {
+				const key = foldIdentifier(col.name, scope.dialect);
+				if (!declared.has(key)) declared.set(key, col);
+			}
+		}
+		const out: { name: string; span: Span }[] = [];
+		for (const name of names) {
+			const hit = declared.get(foldIdentifier(name, scope.dialect));
+			if (hit) out.push(hit); // a name no branch declares a span for is skipped, never fabricated
+		}
+		return out;
+	}
+	return []; // pipe body — the documented gap above
 }
 
 /** Shift a symbol's every span (its own span, its declaration target, its per-part spans, its

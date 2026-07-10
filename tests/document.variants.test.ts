@@ -98,6 +98,27 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(diags.length).toBe(2); // same message, different offsets — the wart-fix regression pin
 	});
 
+	it("lexer errors (offset-undefined) at different positions stay two union entries", () => {
+		// A LEXER "token recognition error" carries NO offending symbol, so its offset is undefined
+		// (parse-diagnostics.ts; pinned by tests/parse-diagnostics.test.ts). An offset-keyed dedup
+		// alone would collapse two same-character lexer errors from DIFFERENT arms at DIFFERENT
+		// positions into one — the A6 message-only bug reintroduced for one diagnostic subclass.
+		// tsql's lexer has no catch-all error rule, so ¤ provably takes this path (duckdb/postgres
+		// recover with an offset-carrying "no viable alternative" instead — probed, not guessed).
+		const SQL = "{% if v %}select ¤a from t{% else %}select  ¤a from t{% endif %}";
+		const doc = SqlDocument.create(SQL, "tsql", { templating: minijinja() });
+		const armDiags = doc.variants.map((v) =>
+			v.doc().diagnostics.filter((d) => d.message.includes("token recognition")),
+		);
+		expect(armDiags.map((a) => a.length)).toEqual([1, 1]); // one per arm...
+		expect(armDiags[0][0].offset).toBeUndefined(); // ...provably offset-undefined...
+		expect(armDiags[0][0].column).not.toBe(armDiags[1][0].column); // ...at different positions
+		const union = doc
+			.unionDiagnostics()
+			.filter((d) => String((d as { message?: string }).message ?? "").includes("token recognition"));
+		expect(union.length).toBe(2); // line:column in the key keeps both
+	});
+
 	it("a no-variant doc's union views deep-equal the plain single-doc answers", () => {
 		const plain = SqlDocument.create("select a, b from t", "duckdb");
 		expect(plain.unionSymbols()).toEqual(plain.analyze().symbols);
@@ -133,5 +154,37 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(ctes.length).toBe(1);
 		expect(ctes[0].columns.map((c) => c.name)).toEqual(["a", "b"]);
 		expect(doc.unionOutputColumns().map((c) => c.name)).toEqual(["a", "b"]);
+
+		// A region-free TEMPLATED doc (tags but no control flow) is also a no-variant doc — the
+		// fall-through must hold through the templated door too, not just the plain one.
+		const templated = SqlDocument.create(
+			"with data as (select a, b from {{ ref('t') }}) select * from data",
+			"duckdb",
+			{ templating: minijinja() },
+		);
+		expect(templated.variants).toEqual([]);
+		const tctes = templated.unionCtes();
+		expect(tctes.length).toBe(1);
+		expect(tctes[0].name).toBe("data");
+		expect(tctes[0].columns.map((c) => c.name)).toEqual(["a", "b"]);
+		expect(templated.unionOutputColumns().map((c) => c.name)).toEqual(["a", "b"]);
+	});
+
+	it("a setop root answers output columns: names per SQL setop semantics, spans from the declaring branch", () => {
+		// Positional UNION: output names are the LEFT branch's; the span is the left `a`'s own token.
+		const SQL = "select a from t union all select b from u";
+		const doc = SqlDocument.create(SQL, "duckdb");
+		const cols = doc.unionOutputColumns();
+		expect(cols.map((c) => c.name)).toEqual(["a"]);
+		expect(cols[0].span.start).toBe(SQL.indexOf("a"));
+
+		// The dbt incremental shape: the else arm's realization has a setop root — its outputs must
+		// reach the union, not silently vanish (the visible-gap rule).
+		const TPL =
+			"{% if inc %}select a, c from t{% else %}select a, c from t union all select a, c from u{% endif %}";
+		const tdoc = SqlDocument.create(TPL, "duckdb", { templating: minijinja() });
+		const names = tdoc.unionOutputColumns().map((c) => c.name);
+		expect(names.filter((n) => n === "a").length).toBe(1);
+		expect(names.filter((n) => n === "c").length).toBe(1);
 	});
 });
