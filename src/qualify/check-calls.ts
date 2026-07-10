@@ -289,20 +289,27 @@ const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
 	"mysql",
 ]);
 
-/** Dialects that implicitly bridge boolean↔numeric: T-SQL only, whose `bit` (aliased to boolean by
- *  TSQL_ALIASES) converts to/from int implicitly per the same CAST/CONVERT chart. Everywhere else
- *  bool→num / num→bool rejection is safe (Spark: "cannot resolve 'abs(true)' due to data type
- *  mismatch"; Snowflake: "Invalid argument types for function 'ABS': (BOOLEAN)"; PG/DuckDB/BigQuery/
- *  Trino likewise reject) — and corpus-proven across all eight sweeps. sqlite is left out: it has no
- *  dedicated boolean storage class at all (TRUE/FALSE are literal aliases for the integers 1/0 —
- *  sqlite.org/lang_expr.html#literal_values_constants_), so this checker never sees a `boolean`-typed
- *  argument for it; membership here is moot unless the corpus proves otherwise. mysql is left out for
- *  the same reason: BOOL/BOOLEAN is a documented TINYINT(1) synonym, not a distinct storage class
- *  (dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html), and TRUE/FALSE are synonyms for 1/0
- *  (src/infer/mysql.ts's mysqlLiteral types them `int`) — so this checker never sees a `boolean`-typed
- *  mysql argument either, unless a later MYSQL_ALIASES entry (B-R5.2) changes that; membership here is
- *  moot until then / unless the corpus proves otherwise. */
-const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql"]);
+/** Dialects that implicitly bridge boolean↔numeric. T-SQL: `bit` (aliased to boolean by
+ *  TSQL_ALIASES) converts to/from int implicitly per the same CAST/CONVERT chart. mysql (B-R5.4):
+ *  MySQL has no dedicated boolean storage class either — BOOL/BOOLEAN is a documented TINYINT(1)
+ *  synonym (dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html), and a comparison's result
+ *  "is 1, 0, or NULL" (.../comparison-operators.html), directly assignable anywhere an integer is
+ *  expected — `ABS(a > b)`, an int-flag `IF(a > b, 1, 0)` condition, etc. are ordinary valid MySQL.
+ *  MYSQL_ALIASES (src/infer/mysql.ts) maps bool/boolean to `tinyint`, not this module's shared
+ *  `boolean` scalar, so a *declared* BOOL column never trips this path — but the dialect-agnostic
+ *  inference engine (src/infer/infer.ts) types every comparison/predicate expression `boolean`
+ *  regardless of dialect, and THAT is what reaches a numeric mysql argument here. Verification of
+ *  "no false positives" is B-R6's corpus sweep, not this task. Everywhere else bool→num / num→bool
+ *  rejection is safe (Spark: "cannot resolve 'abs(true)' due to data type mismatch"; Snowflake:
+ *  "Invalid argument types for function 'ABS': (BOOLEAN)"; PG/DuckDB/BigQuery/Trino likewise reject)
+ *  — corpus-proven across all eight non-mysql sweeps. sqlite is left out: it has no dedicated
+ *  boolean storage class at all (TRUE/FALSE are literal aliases for the integers 1/0 —
+ *  sqlite.org/lang_expr.html#literal_values_constants_) AND SQLITE_ALIASES stays empty (no bool/
+ *  boolean key at all), so this checker never sees a `boolean`-typed sqlite argument from a declared
+ *  column either — only from the same universal comparison/predicate typing mysql gets, and sqlite
+ *  was left out at A-R5.4 without hitting that corpus case; membership here is moot unless the
+ *  corpus proves otherwise. */
+const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql", "mysql"]);
 
 function accepts(argType: Type, paramText: string | undefined, dialect: Dialect): boolean {
 	if (!paramText) return true; // untyped param → no information, accept

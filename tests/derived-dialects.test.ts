@@ -15,6 +15,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 describe("resolveDialect", () => {
@@ -31,6 +32,7 @@ describe("resolveDialect", () => {
 		expect(resolveDialect("fabric")).toBe("tsql");
 		expect(resolveDialect("synapse")).toBe("tsql");
 		expect(resolveDialect("sqlserver")).toBe("tsql");
+		expect(resolveDialect("mariadb")).toBe("mysql"); // near-superset core SQL; MariaDB-only extensions are an Open Gap
 	});
 
 	it("is case-insensitive and trims", () => {

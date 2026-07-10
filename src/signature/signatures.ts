@@ -641,6 +641,87 @@ const SQLITE: Record<string, FnSignature> = {
 	group_concat: { name: "group_concat", params: [p("X", "text"), o("Y", "text")] }, // group_concat(X[,Y])
 };
 
+// ---------------------------------------------------------------------------
+// MySQL — dev.mysql.com/doc/refman/8.4/en/, cites the function-reference page per entry. TRIM is
+// deliberately NOT curated: MySQL's grammar gives it two structurally different shapes — a bare
+// `TRIM(str)` (1 arg, the ordinary function-call path) and the `TRIM([{BOTH|LEADING|TRAILING}]
+// [remstr] FROM str)` form (a dedicated grammar production) — the same leading-optional/reordered
+// shape SQLite's module note calls out for log() as un-curatable without asserting a wrong arity
+// for one form. DATE_ADD/DATE_SUB ARE curated: MySqlParser.g4's grammar folds their whole
+// `INTERVAL expr unit` operand into a single expression (a dedicated `intervalExpressionAtom`), so
+// the call is a genuine, arity-safe 2-argument form at the functionArgs level despite the multi-
+// word SQL surface syntax.
+// ---------------------------------------------------------------------------
+const MYSQL: Record<string, FnSignature> = {
+	// string — string-functions.html
+	concat: { name: "CONCAT", params: [p("str", "string")], variadic: true }, // CONCAT(str1,str2,...)
+	concat_ws: { name: "CONCAT_WS", params: [p("separator", "string"), p("str", "string")], variadic: true }, // CONCAT_WS(separator,str1,str2,...)
+	substring: { name: "SUBSTRING", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // SUBSTRING(str,pos[,len])
+	substr: { name: "SUBSTR", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // SUBSTR(str,pos[,len]) — documented synonym of SUBSTRING
+	left: { name: "LEFT", params: [p("str", "string"), p("len", "int")] }, // LEFT(str,len)
+	right: { name: "RIGHT", params: [p("str", "string"), p("len", "int")] }, // RIGHT(str,len)
+	lpad: { name: "LPAD", params: [p("str", "string"), p("len", "int"), p("padstr", "string")] }, // LPAD(str,len,padstr)
+	rpad: { name: "RPAD", params: [p("str", "string"), p("len", "int"), p("padstr", "string")] }, // RPAD(str,len,padstr)
+	replace: { name: "REPLACE", params: [p("str", "string"), p("from_str", "string"), p("to_str", "string")] }, // REPLACE(str,from_str,to_str)
+	repeat: { name: "REPEAT", params: [p("str", "string"), p("count", "int")] }, // REPEAT(str,count)
+	locate: { name: "LOCATE", params: [p("substr", "string"), p("str", "string"), o("pos", "int")] }, // LOCATE(substr,str[,pos])
+	instr: { name: "INSTR", params: [p("str", "string"), p("substr", "string")] }, // INSTR(str,substr)
+	substring_index: {
+		name: "SUBSTRING_INDEX",
+		params: [p("str", "string"), p("delim", "string"), p("count", "int")],
+	}, // SUBSTRING_INDEX(str,delim,count)
+	insert: { name: "INSERT", params: [p("str", "string"), p("pos", "int"), p("len", "int"), p("newstr", "string")] }, // INSERT(str,pos,len,newstr)
+	strcmp: { name: "STRCMP", params: [p("str1", "string"), p("str2", "string")] }, // STRCMP(str1,str2)
+	field: { name: "FIELD", params: [p("str", "string"), p("str1", "string")], variadic: true }, // FIELD(str,str1,str2,str3,...)
+	format: { name: "FORMAT", params: [p("X", "numeric"), p("D", "int"), o("locale", "string")] }, // FORMAT(X,D[,locale])
+	hex: { name: "HEX", params: [p("N_or_str")] }, // HEX(N) numeric form / HEX(str) string form — polymorphic
+
+	// numeric — mathematical-functions.html
+	round: { name: "ROUND", params: [p("X", "numeric"), o("D", "int")] }, // ROUND(X) / ROUND(X,D)
+	truncate: { name: "TRUNCATE", params: [p("X", "numeric"), p("D", "int")] }, // TRUNCATE(X,D)
+	mod: { name: "MOD", params: [p("N", "numeric"), p("M", "numeric")] }, // MOD(N,M)
+	pow: { name: "POW", params: [p("X", "double"), p("Y", "double")] }, // POW(X,Y)
+	power: { name: "POWER", params: [p("X", "double"), p("Y", "double")] }, // POWER(X,Y) — documented synonym of POW
+	sqrt: { name: "SQRT", params: [p("X", "numeric")] }, // SQRT(X)
+	ceiling: { name: "CEILING", params: [p("X", "numeric")] }, // CEILING(X)
+	ceil: { name: "CEIL", params: [p("X", "numeric")] }, // CEIL(X) — documented synonym of CEILING
+	floor: { name: "FLOOR", params: [p("X", "numeric")] }, // FLOOR(X)
+	rand: { name: "RAND", params: [o("N", "int")] }, // RAND([N])
+	sign: { name: "SIGN", params: [p("X", "numeric")] }, // SIGN(X)
+	abs: { name: "ABS", params: [p("X", "numeric")] }, // ABS(X)
+
+	// date/time — date-and-time-functions.html
+	date_add: { name: "DATE_ADD", params: [p("date", "date"), p("expr", "interval")] }, // DATE_ADD(date, INTERVAL expr unit)
+	date_sub: { name: "DATE_SUB", params: [p("date", "date"), p("expr", "interval")] }, // DATE_SUB(date, INTERVAL expr unit)
+	datediff: { name: "DATEDIFF", params: [p("expr1", "date"), p("expr2", "date")] }, // DATEDIFF(expr1,expr2)
+	date_format: { name: "DATE_FORMAT", params: [p("date", "date"), p("format", "string")] }, // DATE_FORMAT(date,format)
+	str_to_date: { name: "STR_TO_DATE", params: [p("str", "string"), p("format", "string")] }, // STR_TO_DATE(str,format)
+
+	// flow control — flow-control-functions.html
+	if: { name: "IF", params: [p("expr1", "boolean"), p("expr2"), p("expr3")] }, // IF(expr1,expr2,expr3)
+	ifnull: { name: "IFNULL", params: [p("expr1"), p("expr2")] }, // IFNULL(expr1,expr2)
+	nullif: { name: "NULLIF", params: [p("expr1"), p("expr2")] }, // NULLIF(expr1,expr2)
+
+	// comparison — comparison-operators.html
+	coalesce: { name: "COALESCE", params: [p("value")], variadic: true }, // COALESCE(value,...)
+	greatest: { name: "GREATEST", params: [p("value1"), p("value2")], variadic: true }, // GREATEST(value1,value2,...)
+	least: { name: "LEAST", params: [p("value1"), p("value2")], variadic: true }, // LEAST(value1,value2,...)
+
+	// conversion — cast-functions.html (both CAST and CONVERT lower to a `cast` IR node, not a
+	// `function` call, in src/mysql/lower.ts — these entries exist purely for the signature-help
+	// token-scan, never reach the arity checker)
+	cast: { name: "CAST", params: [p("expr"), p("type")] }, // CAST(expr AS type)
+	convert: { name: "CONVERT", params: [p("expr"), p("type")] }, // CONVERT(expr,type)
+
+	// JSON — json-search-functions.html
+	json_extract: { name: "JSON_EXTRACT", params: [p("json_doc", "json"), p("path", "string")], variadic: true }, // JSON_EXTRACT(json_doc,path[,path]...)
+	json_contains: {
+		name: "JSON_CONTAINS",
+		params: [p("target", "json"), p("candidate", "json"), o("path", "string")],
+	}, // JSON_CONTAINS(target,candidate[,path])
+	json_keys: { name: "JSON_KEYS", params: [p("json_doc", "json"), o("path", "string")] }, // JSON_KEYS(json_doc[,path])
+};
+
 /** Curated parameter signatures, per dialect, keyed by LOWERCASED function name. */
 export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	databricks: DATABRICKS,
@@ -652,9 +733,7 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	duckdb: DUCKDB,
 	trino: TRINO,
 	sqlite: SQLITE,
-	// No curated MySQL table yet (that is B-R5.3, a later doc-driven task); empty falls through to
-	// the name-only hint, same as every dialect's HARVESTED_SIGNATURES entry below until harvested.
-	mysql: {},
+	mysql: MYSQL,
 };
 
 // ---------------------------------------------------------------------------

@@ -8,6 +8,7 @@ import { POSTGRES_FUNCTION_RETURNS, postgresLiteral, postgresParseType } from ".
 import { DUCKDB_FUNCTION_RETURNS, duckdbLiteral, duckdbParseType } from "./duckdb.js";
 import { TRINO_FUNCTION_RETURNS, trinoLiteral, trinoParseType } from "./trino.js";
 import { SQLITE_FUNCTION_RETURNS, sqliteLiteral, sqliteParseType } from "./sqlite.js";
+import { MYSQL_FUNCTION_RETURNS, mysqlLiteral, mysqlParseType } from "./mysql.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
@@ -100,6 +101,20 @@ const sqlite: InferDialect = {
 	division: "integer",
 };
 
+const mysql: InferDialect = {
+	functions: MYSQL_FUNCTION_RETURNS,
+	literal: mysqlLiteral,
+	parseType: mysqlParseType,
+	// MySQL `/` is exact-value division for two exact-value (integer/decimal) operands — "the scale
+	// of the result ... is the scale of the first operand plus div_precision_increment"
+	// (arithmetic-functions.html; 5/2 → 2.5000, DECIMAL, not truncating — that's the separate DIV
+	// operator). When either operand is a real (floating-point) value, "the precision of the result
+	// is the precision of the operand with the maximum precision" — i.e. the result floats too. This
+	// is exactly the shape the existing "decimal" mode already encodes (Snowflake's 10/3 →
+	// 3.333333): decimal unless a float is involved, then double. No new division mode needed.
+	division: "decimal",
+};
+
 const DIALECTS: Record<string, InferDialect> = {
 	databricks,
 	tsql,
@@ -110,6 +125,7 @@ const DIALECTS: Record<string, InferDialect> = {
 	duckdb,
 	trino,
 	sqlite,
+	mysql,
 };
 
 /** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */

@@ -147,6 +147,24 @@ describe("sqlite", () => {
 	});
 });
 
+describe("mysql", () => {
+	it("folds unquoted mixed case to lower (column/alias names are case-insensitive on every platform)", () => {
+		expect(foldIdentifier("Amount", "mysql")).toBe("amount");
+	});
+	it("folds backtick-quoted identifiers to lower too, so a backtick-quoted name equals its unquoted spelling", () => {
+		expect(foldIdentifier("`Amount`", "mysql")).toBe("amount");
+		expect(foldIdentifier("`Amount`", "mysql")).toBe(foldIdentifier("amount", "mysql"));
+	});
+	it("unquoted Amount equals unquoted amount, AND equals backtick-quoted `Amount` (column/alias case-insensitivity, not a quoting-based distinction)", () => {
+		const unquoted = foldIdentifier("Amount", "mysql");
+		expect(unquoted).toBe(foldIdentifier("amount", "mysql"));
+		expect(unquoted).toBe(foldIdentifier("`Amount`", "mysql"));
+	});
+	it("unescapes a doubled backtick inside a quoted identifier", () => {
+		expect(foldIdentifier("`a``b`", "mysql")).toBe("a`b");
+	});
+});
+
 describe("undefined/unknown dialect", () => {
 	it("folds unquoted mixed case to lower", () => {
 		expect(foldIdentifier("MyTable", undefined)).toBe("mytable");
