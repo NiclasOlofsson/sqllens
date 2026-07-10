@@ -110,6 +110,10 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
 	],
 
+	// MySQL (grammars-v4 mysql/Positive-Technologies): probed empty first (R4.6) — see the probe
+	// output before assuming a gap; overrides added below only where the probe/tests proved one.
+	mysql: [],
+
 	// SQLite (grammars-v4 SqliteLexer): two corrections to the defaults.
 	sqlite: [
 		// NUMERIC_LITERAL doesn't match any of the shared "number" substrings
@@ -140,6 +144,11 @@ export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): Tok
 		const text = literal.replace(/^'|'$/g, "");
 		if (/^[A-Za-z_]/.test(text)) return "keyword";
 		if (PUNCTUATION.has(text)) return "punctuation";
+		// A handful of grammars (MySQL-PT's ZERO_DECIMAL/ONE_DECIMAL/TWO_DECIMAL, defined as exact
+		// '0'/'1'/'2' lexer rules for parser disambiguation) give a NUMERIC literal a fixed literal
+		// name too, breaking this branch's "lexical tokens have none" assumption — a bare-digit
+		// literal is a number, never an operator symbol.
+		if (/^[0-9]+$/.test(text)) return "number";
 		return "operator";
 	}
 

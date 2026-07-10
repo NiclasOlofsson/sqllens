@@ -18,6 +18,8 @@ import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { TrinoParser } from "../generated/trino/TrinoParser.js";
 import { SqliteLexer } from "../generated/sqlite/SqliteLexer.js";
 import { SqliteParser } from "../generated/sqlite/SqliteParser.js";
+import { MysqlLexer } from "../generated/mysql/MysqlLexer.js";
+import { MysqlParser } from "../generated/mysql/MysqlParser.js";
 
 /**
  * Per-dialect tuning for the ATN candidate walk (`collectCandidates`).
@@ -182,6 +184,30 @@ const SQLITE_RELATION_KEYWORDS = new Set<number>([SqliteLexer.FROM_, SqliteLexer
 // token type to add, unlike T-SQL/Trino/Postgres.
 const SQLITE_NAME_TOKENS = new Set<number>([SqliteLexer.IDENTIFIER]);
 
+// ── MySQL (grammars-v4 mysql/Positive-Technologies fork) ───────────────────
+//   post-FROM   → tableName (the relation-name leaf; the enclosing `tableSourceItem` is a wider
+//                 4-way alternation whose `subqueryTableItem` arm recurses into `selectStatement`
+//                 for a parenthesized subquery, so marking IT preferred would swallow completion
+//                 inside a nested "FROM (SELECT ... FROM ‹›)" — same table_or_subquery-vs-table_name
+//                 trap as the SQLite entry above. tableName wraps fullId -> uid, so it still fires at
+//                 "FROM ‹›" with nothing typed. tableName is also reused by INSERT INTO/UPDATE/DELETE/
+//                 DDL's table-name slot, a bonus, not a target).
+//   SELECT/WHERE → expression (the outer frame of the expression -> predicate -> expressionAtom
+//                 precedence chain; fullColumnName nests under it, matching the Snowflake/SQLite
+//                 `expr`-as-single-outer-rule precedent).
+// tableName ALSO appears inside fullColumnName-adjacent and IN-list positions reached from inside
+// `expression`; since expression is the outer frame there, those inner positions report columnRules
+// only, not tableRules — the same accepted imprecision as the other dialects' choices here.
+const MYSQL_TABLE_RULES = new Set<number>([MysqlParser.RULE_tableName]);
+const MYSQL_COLUMN_RULES = new Set<number>([MysqlParser.RULE_expression]);
+const MYSQL_PREFERRED = new Set<number>([...MYSQL_TABLE_RULES, ...MYSQL_COLUMN_RULES]);
+const MYSQL_RELATION_KEYWORDS = new Set<number>([MysqlLexer.FROM, MysqlLexer.JOIN]);
+// MySQL's `uid` rule (the identifier slot fullId/tableName bottom out on) accepts simpleId (built on
+// the plain ID token) or STRING_LITERAL — this fork's DOUBLE_QUOTE_ID/REVERSE_QUOTE_ID alternatives
+// are commented out of `uid`, so backtick/double-quoted names lex to, and reach `uid` through,
+// STRING_LITERAL (docs/identifier-delimiter-contract.md's MySQL note says the same).
+const MYSQL_NAME_TOKENS = new Set<number>([MysqlLexer.ID, MysqlLexer.STRING_LITERAL]);
+
 export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 	databricks: {
 		preferredRules: DATABRICKS_PREFERRED,
@@ -254,5 +280,13 @@ export const COMPLETION_CONFIG: Record<Dialect, CompletionConfig> = {
 		columnRules: SQLITE_COLUMN_RULES,
 		relationKeywordTokens: SQLITE_RELATION_KEYWORDS,
 		nameTokens: SQLITE_NAME_TOKENS,
+	},
+	mysql: {
+		preferredRules: MYSQL_PREFERRED,
+		ignoredTokens: new Set([Token.EOF]),
+		tableRules: MYSQL_TABLE_RULES,
+		columnRules: MYSQL_COLUMN_RULES,
+		relationKeywordTokens: MYSQL_RELATION_KEYWORDS,
+		nameTokens: MYSQL_NAME_TOKENS,
 	},
 };

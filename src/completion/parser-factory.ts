@@ -25,6 +25,8 @@ import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { TrinoParser } from "../generated/trino/TrinoParser.js";
 import { SqliteLexer } from "../generated/sqlite/SqliteLexer.js";
 import { SqliteParser } from "../generated/sqlite/SqliteParser.js";
+import { MysqlLexer } from "../generated/mysql/MysqlLexer.js";
+import { MysqlParser } from "../generated/mysql/MysqlParser.js";
 
 /**
  * A ready-to-walk parser for the completion engine: the lexer, the token stream, the entry
@@ -198,6 +200,22 @@ function sqliteFactory(sql: string): MadeParser {
 	};
 }
 
+function mysqlFactory(sql: string): MadeParser {
+	const lexer = new MysqlLexer(CharStream.fromString(sql));
+	const tokenStream = new CommonTokenStream(lexer);
+	const parser = new MysqlParser(tokenStream);
+	parser.errorHandler = new DefaultErrorStrategy();
+	lexer.removeErrorListeners();
+	parser.removeErrorListeners();
+	return {
+		parser,
+		lexer,
+		tokenStream,
+		entryRuleIndex: MysqlParser.RULE_root,
+		runEntry: () => parser.root(),
+	};
+}
+
 const FACTORIES: Record<Dialect, Factory> = {
 	databricks: databricksFactory,
 	tsql: tsqlFactory,
@@ -208,6 +226,7 @@ const FACTORIES: Record<Dialect, Factory> = {
 	duckdb: duckdbFactory,
 	trino: trinoFactory,
 	sqlite: sqliteFactory,
+	mysql: mysqlFactory,
 };
 
 /** Build a fresh error-tolerant parser for `dialect`, lexing `sql`. */

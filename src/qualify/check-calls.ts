@@ -55,6 +55,7 @@ const ARITY_USES_HARVESTED: Record<Dialect, boolean> = {
 	duckdb: false,
 	trino: false,
 	sqlite: false,
+	mysql: false,
 };
 
 export function checkCalls(tree: ScopeTree, schema: SchemaProvider, diagnostics: Diagnostic[]): void {
@@ -280,6 +281,12 @@ const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
 	// against a numeric column/argument automatically (sqlite.org/datatype3.html "Type Affinity");
 	// there is no strict typing to reject a str-shaped argument against.
 	"sqlite",
+	// mysql: implicit string<->number coercion in arithmetic/comparison — "if one of the operands
+	// is a string, ... it is not treated as a number" is the ONLY exception (comparing two hex
+	// strings); numeric context otherwise converts a string operand to a number automatically
+	// (dev.mysql.com/doc/refman/8.4/en/type-conversion.html "Type Conversion in Expression
+	// Evaluation").
+	"mysql",
 ]);
 
 /** Dialects that implicitly bridge boolean↔numeric: T-SQL only, whose `bit` (aliased to boolean by
@@ -289,7 +296,12 @@ const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
  *  Trino likewise reject) — and corpus-proven across all eight sweeps. sqlite is left out: it has no
  *  dedicated boolean storage class at all (TRUE/FALSE are literal aliases for the integers 1/0 —
  *  sqlite.org/lang_expr.html#literal_values_constants_), so this checker never sees a `boolean`-typed
- *  argument for it; membership here is moot unless the corpus proves otherwise. */
+ *  argument for it; membership here is moot unless the corpus proves otherwise. mysql is left out for
+ *  the same reason: BOOL/BOOLEAN is a documented TINYINT(1) synonym, not a distinct storage class
+ *  (dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html), and TRUE/FALSE are synonyms for 1/0
+ *  (src/infer/mysql.ts's mysqlLiteral types them `int`) — so this checker never sees a `boolean`-typed
+ *  mysql argument either, unless a later MYSQL_ALIASES entry (B-R5.2) changes that; membership here is
+ *  moot until then / unless the corpus proves otherwise. */
 const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql"]);
 
 function accepts(argType: Type, paramText: string | undefined, dialect: Dialect): boolean {

@@ -9,6 +9,7 @@ import { parsePostgres } from "../../src/postgres/parse.js";
 import { parseDuckdb } from "../../src/duckdb/parse.js";
 import { parseTrino } from "../../src/trino/parse.js";
 import { parseSqlite } from "../../src/sqlite/parse.js";
+import { parseMysql } from "../../src/mysql/parse.js";
 import type { Token } from "../../src/token/token.js";
 
 const DIALECTS: Dialect[] = [
@@ -21,6 +22,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 // The per-dialect parse* functions are the layer that adds the token list to its ParseResult; the
@@ -37,6 +39,7 @@ const PARSE_FNS: Record<Dialect, (sql: string) => { tokens: Token[]; errors: num
 	duckdb: parseDuckdb,
 	trino: parseTrino,
 	sqlite: parseSqlite,
+	mysql: parseMysql,
 };
 
 function byText(tokens: Token[], text: string): Token | undefined {

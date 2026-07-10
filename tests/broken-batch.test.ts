@@ -25,6 +25,7 @@ import { statementCategories as postgresCats } from "../src/postgres/lower.js";
 import { statementCategories as duckdbCats } from "../src/duckdb/lower.js";
 import { statementCategories as trinoCats } from "../src/trino/lower.js";
 import { statementCategories as sqliteCats } from "../src/sqlite/lower.js";
+import { statementCategories as mysqlCats } from "../src/mysql/lower.js";
 
 const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = {
 	databricks: databricksCats,
@@ -36,6 +37,7 @@ const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = 
 	duckdb: duckdbCats,
 	trino: trinoCats,
 	sqlite: sqliteCats,
+	mysql: mysqlCats,
 };
 const DIALECTS = Object.keys(CATS) as Dialect[];
 

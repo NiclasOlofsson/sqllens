@@ -652,6 +652,9 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	duckdb: DUCKDB,
 	trino: TRINO,
 	sqlite: SQLITE,
+	// No curated MySQL table yet (that is B-R5.3, a later doc-driven task); empty falls through to
+	// the name-only hint, same as every dialect's HARVESTED_SIGNATURES entry below until harvested.
+	mysql: {},
 };
 
 // ---------------------------------------------------------------------------
@@ -673,6 +676,7 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	duckdb: {},
 	trino: {},
 	sqlite: {},
+	mysql: {},
 };
 
 /**
