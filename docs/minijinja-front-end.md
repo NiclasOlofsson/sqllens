@@ -485,3 +485,17 @@ increment (its `JINJA-CONSUMPTION-PLAN.md` maps each of its ~2,538 dying/relocat
   editor still sees and edits both). Rare in real dbt.
 - minijinja vs Jinja2 divergences (division, import caching, silent undefined) are accept-syntax edges;
   encode minijinja, cite it, flag any surprise like the dialect fold-policy citations.
+
+## Engine extraction (2026-07-10) — TemplateEngine + the sqllens/minijinja subpath
+
+The front end is now an injected engine. The neutral contract — `TemplateEngine`,
+`TemplatedParseResult`, `TemplatedParseOptions` — lives in `src/template/engine.ts` and stays
+on the main barrel; the engine itself (`minijinja()`, `parseTemplated`, `tokenizeTemplated`,
+the tag-AST, regions, variants) ships behind the `sqllens/minijinja` subpath
+(`src/minijinja/index.ts`), so plain-SQL consumers never load the island grammar. The engine
+owns the whole templating strategy and calls the core `parse()` as a primitive; its result
+contract is enforced by the runnable conformance suite in
+`tests/template.engine-contract.test.ts` (byte tiling, original coordinates, totality,
+zero-tag degeneracy, no fill leakage). The tag/region/symbol types remain minijinja-declared
+(type-only imports from the contract file) until the tag-kind taxonomy is de-dbt'd — that
+relocation is bound to the anvil-coordinated overlay wave.
