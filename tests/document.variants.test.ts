@@ -187,4 +187,16 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(names.filter((n) => n === "a").length).toBe(1);
 		expect(names.filter((n) => n === "c").length).toBe(1);
 	});
+
+	it("quoted setop projections survive on asymmetric-fold dialects (raw-name fold provenance)", () => {
+		// snowflake folds an UNQUOTED name by upper-casing but PRESERVES a quoted one — so folding
+		// the display form (delimiters stripped -> the unquoted rule fires: MYCOL) can never match
+		// folding the raw form ("MyCol" kept -> the quoted rule fires: MyCol). Both sides of the
+		// setop name<->span match must fold the RAW projection name; displayName's own contract says
+		// never use it for comparison (src/ident/fold.ts).
+		const SQL = 'select "MyCol" from t union all select "MyCol" from u';
+		const cols = SqlDocument.create(SQL, "snowflake").unionOutputColumns();
+		expect(cols.map((c) => c.name)).toEqual(["MyCol"]); // display form, not dropped
+		expect(cols[0].span.start).toBe(SQL.indexOf('"MyCol"')); // the LEFT branch's own token
+	});
 });

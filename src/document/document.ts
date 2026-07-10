@@ -892,6 +892,18 @@ function collectCtes(scope: Scope, out: CteRef[] = []): CteRef[] {
 	return out;
 }
 
+/** One resolved output column of a scope — module-internal (the union views expose only
+ *  `{name, span}`; `raw` never leaves this file). */
+interface OutputColumn {
+	/** Display form (delimiters stripped) — the name the union views expose. */
+	name: string;
+	/** The projection's RAW name as the IR carries it (quoting delimiters intact where the dialect
+	 *  keeps them — docs/identifier-delimiter-contract.md). The ONLY safe fold input for identity
+	 *  comparison: displayName's contract forbids comparing display forms (src/ident/fold.ts). */
+	raw: string;
+	span: Span;
+}
+
 /** A scope's own projected output columns as {name, span} pairs — schema-fed where a star needs
  *  expansion (via `qualification.expandStarOf`, the same expansion `deriveSymbols` rides, so the
  *  two never disagree). A `select` body enumerates its projections; a `setop` body answers through
@@ -901,10 +913,10 @@ function collectCtes(scope: Scope, out: CteRef[] = []): CteRef[] {
  *  span attribution is unbuilt. An anonymous (unaliased, non-column) projection has no determinable
  *  name and is skipped, never fabricated; a star that qualify can't resolve (a schema gap) is
  *  skipped the same way. */
-function scopeOutputColumns(scope: Scope, qualification: Qualification): { name: string; span: Span }[] {
+function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputColumn[] {
 	const body = scope.body;
 	if (body.kind === "select") {
-		const out: { name: string; span: Span }[] = [];
+		const out: OutputColumn[] = [];
 		for (const p of body.projections) {
 			if (p.isStar) {
 				const pairs = qualification.expandStarOf(scope, p);
@@ -915,10 +927,10 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): { name:
 				// per-column source token to point at. A deliberate divergence from deriveSymbols'
 				// zero-width convention (that exists so expanded Syms are never cursor hit-test
 				// targets; these pairs are name/position enumeration, where a real span is useful).
-				for (const pair of pairs) out.push({ name: pair.name, span });
+				for (const pair of pairs) out.push({ name: pair.name, raw: pair.name, span });
 			} else if (p.name !== undefined) {
 				const span = partSpanOf(p.aliasCst ?? p.cst);
-				if (span) out.push({ name: displayName(p.name, scope.dialect), span });
+				if (span) out.push({ name: displayName(p.name, scope.dialect), raw: p.name, span });
 			}
 			// else: anonymous expression — no determinable name, skip
 		}
@@ -930,16 +942,21 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): { name:
 		// (qualify.ts resolveColumns' setop case), so names route through it rather than being
 		// re-derived here. Each name's representative SPAN comes from the branch that declares it
 		// (left first — the same first-wins rule the arms use), recursing through nested setops.
+		// BOTH sides of the name<->span match fold the RAW projection name (`OutputColumn.raw` —
+		// delimiters intact, the same provenance `columnsOf`'s names carry): folding the DISPLAY
+		// form instead would apply the unquoted fold rule to a stripped-quotes name and miss on
+		// every asymmetric-fold dialect (snowflake `"MyCol"` folds preserved as raw but upper-cases
+		// as display — displayName's own contract says never use it for comparison).
 		const names = qualification.columnsOf(scope);
 		if (names === "unknown") return [];
-		const declared = new Map<string, { name: string; span: Span }>();
+		const declared = new Map<string, OutputColumn>();
 		for (const branch of [scope.branches.left, scope.branches.right]) {
 			for (const col of scopeOutputColumns(branch, qualification)) {
-				const key = foldIdentifier(col.name, scope.dialect);
+				const key = foldIdentifier(col.raw, scope.dialect);
 				if (!declared.has(key)) declared.set(key, col);
 			}
 		}
-		const out: { name: string; span: Span }[] = [];
+		const out: OutputColumn[] = [];
 		for (const name of names) {
 			const hit = declared.get(foldIdentifier(name, scope.dialect));
 			if (hit) out.push(hit); // a name no branch declares a span for is skipped, never fabricated
