@@ -17,6 +17,8 @@ import { parseRedshift } from "../src/redshift/parse.js";
 import { parsePostgres } from "../src/postgres/parse.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { parseTrino } from "../src/trino/parse.js";
+import { lower as lowerSqlite } from "../src/sqlite/lower.js";
+import { parseSqlite } from "../src/sqlite/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 
@@ -84,6 +86,12 @@ const DIALECTS: Dialect[] = [
 		name: "trino",
 		parse: parseTrino,
 		lower: lowerTrino as LowerFn,
+		quoted: { sql: 'SELECT "a b".c FROM t', rawQualifier: '"a b"' },
+	},
+	{
+		name: "sqlite",
+		parse: parseSqlite,
+		lower: lowerSqlite as LowerFn,
 		quoted: { sql: 'SELECT "a b".c FROM t', rawQualifier: '"a b"' },
 	},
 ];

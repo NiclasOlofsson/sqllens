@@ -181,6 +181,7 @@ const EXTRACTORS = {
 	postgres: () => null,
 	duckdb: () => null,
 	trino: () => null,
+	sqlite: () => null,
 };
 
 const CONST_NAME = {
@@ -192,6 +193,7 @@ const CONST_NAME = {
 	postgres: "POSTGRES_HARVESTED",
 	duckdb: "DUCKDB_HARVESTED",
 	trino: "TRINO_HARVESTED",
+	sqlite: "SQLITE_HARVESTED",
 };
 
 /** Serialize one FnSignature literal (stable key order). */

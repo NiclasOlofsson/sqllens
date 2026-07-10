@@ -174,6 +174,7 @@ const ALL_DIALECTS: Dialect[] = [
 	"postgres",
 	"duckdb",
 	"trino",
+	"sqlite",
 ];
 
 const ACCEPTANCE_FIXTURES: string[] = [

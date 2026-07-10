@@ -151,6 +151,17 @@ const DIALECTS: DialectCfg[] = [
 			return { L: DuckdbLexer as unknown as LexerCtor, P: DuckdbParser as unknown as ParserCtor };
 		},
 	},
+	{
+		name: "sqlite",
+		dir: "sqlite/docs/parser/positive/query",
+		entry: "parse",
+		loadParse: async () => (await import("../src/sqlite/parse.js")).parseSqlite,
+		loadRaw: async () => {
+			const { SqliteLexer } = await import("../src/generated/sqlite/SqliteLexer.js");
+			const { SqliteParser } = await import("../src/generated/sqlite/SqliteParser.js");
+			return { L: SqliteLexer as unknown as LexerCtor, P: SqliteParser as unknown as ParserCtor };
+		},
+	},
 ];
 
 function sample<T>(xs: T[], cap: number): T[] {

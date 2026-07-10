@@ -22,7 +22,17 @@ import type { Token } from "../src/token/token.js";
 // reported text (`sql.slice(start, stop+1) === text`), which is the real "exact spans" contract; the
 // comparison against the expected comment body tolerates a captured trailing newline.
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+];
 
 /** Strip one trailing CR/LF/CRLF, if a comment token captured it (databricks/trino/bigquery do). */
 function stripTrailingNewline(s: string): string {

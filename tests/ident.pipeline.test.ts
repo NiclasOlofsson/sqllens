@@ -128,7 +128,9 @@ describe("databricks — backtick-quoted names round-trip (backticks are not cas
 	});
 });
 
-describe.each(["redshift", "duckdb", "trino"] as const)('%s — quoted "FOO" ≡ unquoted foo', (dialect) => {
+// sqlite is the poster child here: unlike Postgres, quoting an identifier does NOT make it
+// case-sensitive in SQLite — "FOO" and foo are the same name (see src/ident/fold.ts).
+describe.each(["redshift", "duckdb", "trino", "sqlite"] as const)('%s — quoted "FOO" ≡ unquoted foo', (dialect) => {
 	const schema = new Schema({ t: { foo: "int" } });
 
 	it('SELECT "FOO" FROM t resolves against the unquoted foo column', () => {

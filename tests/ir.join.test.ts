@@ -17,6 +17,8 @@ import { parseRedshift } from "../src/redshift/parse.js";
 import { parsePostgres } from "../src/postgres/parse.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { parseTrino } from "../src/trino/parse.js";
+import { lower as lowerSqlite } from "../src/sqlite/lower.js";
+import { parseSqlite } from "../src/sqlite/parse.js";
 
 // P1 (Anvil): the additive Join[] view over the FROM join chain. Per dialect: a 3-join chain (spans
 // ordered left-to-right, each covering its own JOIN…ON text), a USING join where the grammar has one,
@@ -32,6 +34,13 @@ interface Dialect {
 	/** Trino's `relation` is left-recursive, so a JoinRelation's span includes the left input — the
 	 *  join spans are cumulative (base…ON) rather than the isolated `JOIN x ON …` of every other dialect. */
 	cumulativeSpans?: boolean;
+	/** KNOWN GAP (sqlite): the upstream grammar's `join_clause` is FLAT
+	 *  (`table_or_subquery (join_operator table_or_subquery join_constraint?)*`) — no CST node covers
+	 *  one join step, so `Join.cst` is the `join_operator` node and its span is only the join keyword(s)
+	 *  ("JOIN"/"LEFT JOIN"), NOT the full construct `src/ir/ir.ts` documents for `Join.cst`. Fixing needs
+	 *  a grammar sub-rule split (per-step node) + regen + corpus re-run — tracked as an open gap. This
+	 *  pin asserts the TRUE current shape so that grammar fix fails here and upgrades the expectation. */
+	operatorOnlySpans?: boolean;
 }
 
 function sel(d: Dialect, sql: string): SelectExpr {
@@ -54,6 +63,7 @@ const DIALECTS: Record<string, Dialect> = {
 	postgres: { name: "postgres", parse: parsePostgres, lower: lowerPostgres as LowerFn },
 	duckdb: { name: "duckdb", parse: parseDuckdb, lower: lowerDuckdb as LowerFn },
 	trino: { name: "trino", parse: parseTrino, lower: lowerTrino as LowerFn, cumulativeSpans: true },
+	sqlite: { name: "sqlite", parse: parseSqlite, lower: lowerSqlite as LowerFn, operatorOnlySpans: true },
 };
 
 // --- Shared per-dialect assertions ------------------------------------------
@@ -81,7 +91,10 @@ for (const key of Object.keys(DIALECTS)) {
 			}
 			// spans ordered left-to-right, each ending at its own JOIN…ON text
 			const texts = joins.map((j) => span(CHAIN, j.cst));
-			if (d.cumulativeSpans) {
+			if (d.operatorOnlySpans) {
+				// sqlite: the span covers only the join operator — see the flag's doc comment (open gap).
+				expect(texts).toEqual(["JOIN", "JOIN", "JOIN"]);
+			} else if (d.cumulativeSpans) {
 				// Trino's left-recursive relation: each join span starts at the base and GROWS through the
 				// chain (cumulative slices — exactly the debugger's progressive stages).
 				expect(texts[0].endsWith("JOIN b ON a.x = b.x")).toBe(true);
@@ -123,6 +136,7 @@ const USING_CASES: Record<string, string> = {
 	postgres: "SELECT * FROM a JOIN b USING (x)",
 	duckdb: "SELECT * FROM a JOIN b USING (x)",
 	trino: "SELECT * FROM a JOIN b USING (x)",
+	sqlite: "SELECT * FROM a JOIN b USING (x)",
 };
 for (const key of Object.keys(USING_CASES)) {
 	const d = DIALECTS[key];
@@ -220,6 +234,19 @@ describe("Join kind coverage", () => {
 		expect(kindsOf(d, "SELECT * FROM a LEFT JOIN b ON a.x = b.x")).toEqual(["left"]);
 		expect(kindsOf(d, "SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x")).toEqual(["full"]);
 		expect(kindsOf(d, "SELECT * FROM a CROSS JOIN b")).toEqual(["cross"]);
+		const nat = sel(d, "SELECT * FROM a NATURAL JOIN b");
+		expect(nat.joins?.[0].kind).toBe("natural");
+		expect(nat.joins?.[0].natural).toBe(true);
+	});
+
+	it("sqlite: left/right/cross/full/inner + natural flag", () => {
+		const d = DIALECTS.sqlite;
+		expect(kindsOf(d, "SELECT * FROM a LEFT JOIN b ON a.x = b.x")).toEqual(["left"]);
+		// RIGHT / FULL joins exist since SQLite 3.39 (sqlite.org/lang_select.html).
+		expect(kindsOf(d, "SELECT * FROM a RIGHT JOIN b ON a.x = b.x")).toEqual(["right"]);
+		expect(kindsOf(d, "SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x")).toEqual(["full"]);
+		expect(kindsOf(d, "SELECT * FROM a CROSS JOIN b")).toEqual(["cross"]);
+		expect(kindsOf(d, "SELECT * FROM a INNER JOIN b ON a.x = b.x")).toEqual(["inner"]);
 		const nat = sel(d, "SELECT * FROM a NATURAL JOIN b");
 		expect(nat.joins?.[0].kind).toBe("natural");
 		expect(nat.joins?.[0].natural).toBe(true);
