@@ -362,11 +362,18 @@ function buildProjection(rc: ParserRuleContext): Projection {
  *  flattened into this level rather than hidden behind an anonymous subquery. */
 function buildSources(joinClause: ParserRuleContext): Source[] {
 	const out: Source[] = [];
-	for (const tos of directChildrenOfRule(joinClause, P.RULE_table_or_subquery)) {
+	const addSource = (tos: ParserRuleContext): void => {
 		const sel = directChildrenOfRule(tos, P.RULE_select_stmt)[0];
 		const nested = sel ? undefined : directChildrenOfRule(tos, P.RULE_join_clause)[0];
 		if (nested) out.push(...buildSources(nested));
 		else out.push(buildSource(tos));
+	};
+	// join_clause: table_or_subquery join_step*. The left operand is a direct table_or_subquery child;
+	// each subsequent operand lives inside a join_step. Direct-then-steps preserves source order.
+	for (const tos of directChildrenOfRule(joinClause, P.RULE_table_or_subquery)) addSource(tos);
+	for (const step of directChildrenOfRule(joinClause, P.RULE_join_step)) {
+		const tos = directChildrenOfRule(step, P.RULE_table_or_subquery)[0];
+		if (tos) addSource(tos);
 	}
 	return out;
 }
@@ -452,10 +459,12 @@ function collectJoinData(joinClause: ParserRuleContext): {
 	return { joinConditions, onByConstraint, usingByConstraint };
 }
 
-/** join_clause: table_or_subquery (join_operator table_or_subquery join_constraint?)*. One Join per
- *  explicit join_operator (a bare COMMA is a plain FROM entry, not a join — the IR contract). Each
- *  join.source is the reference-identical `from` entry for its right table_or_subquery; join.on is the
- *  shared Expr from onByConstraint. */
+/** join_clause: table_or_subquery join_step*  /  join_step: join_operator table_or_subquery
+ *  join_constraint?. One Join per join_step whose operator is an explicit JOIN (a bare COMMA step is a
+ *  plain FROM entry, not a join — the IR contract). Each join.source is the reference-identical `from`
+ *  entry for that step's right table_or_subquery; join.on is the shared Expr from onByConstraint.
+ *  Join.cst is the `join_step` node itself, so its span is the full `[type] JOIN <table> [ON …|USING …]`
+ *  construct (the src/ir/ir.ts Join.cst contract) — the reason the grammar carries the join_step rule. */
 function buildJoins(
 	joinClause: ParserRuleContext,
 	from: Source[],
@@ -463,41 +472,18 @@ function buildJoins(
 	usingByConstraint: Map<ParserRuleContext, string[]>,
 ): Join[] {
 	const joins: Join[] = [];
-	const kids = kidsOf(joinClause);
-	// Skip the leading table_or_subquery (the left operand of the first join).
-	let idx = kids.findIndex((k) => isRule(k, P.RULE_table_or_subquery));
-	if (idx < 0) return joins;
-	idx++;
-	while (idx < kids.length) {
-		const op = kids[idx];
-		if (!isRule(op, P.RULE_join_operator)) {
-			idx++;
-			continue;
-		}
-		idx++;
-		let tos: ParserRuleContext | undefined;
-		while (idx < kids.length) {
-			if (isRule(kids[idx], P.RULE_table_or_subquery)) {
-				tos = kids[idx] as ParserRuleContext;
-				idx++;
-				break;
-			}
-			if (isRule(kids[idx], P.RULE_join_operator)) break;
-			idx++;
-		}
-		let jc: ParserRuleContext | undefined;
-		if (idx < kids.length && isRule(kids[idx], P.RULE_join_constraint)) {
-			jc = kids[idx] as ParserRuleContext;
-			idx++;
-		}
-		if (hasDirectToken(op as ParserRuleContext, P.COMMA)) continue; // comma → plain from entry
+	for (const step of directChildrenOfRule(joinClause, P.RULE_join_step)) {
+		const op = directChildrenOfRule(step, P.RULE_join_operator)[0];
+		if (!op || hasDirectToken(op, P.COMMA)) continue; // comma → plain from entry, not a join
+		const tos = directChildrenOfRule(step, P.RULE_table_or_subquery)[0];
 		if (!tos) continue;
 		const source = sourceFor(from, tos);
 		if (!source) continue;
-		const { kind, natural } = joinKind(op as ParserRuleContext);
+		const jc = directChildrenOfRule(step, P.RULE_join_constraint)[0];
+		const { kind, natural } = joinKind(op);
 		const on = jc ? onByConstraint.get(jc) : undefined;
 		const using = jc ? usingByConstraint.get(jc) : undefined;
-		joins.push({ kind, source, on, using, natural: natural || undefined, cst: op as ParserRuleContext });
+		joins.push({ kind, source, on, using, natural: natural || undefined, cst: step });
 	}
 	return joins;
 }

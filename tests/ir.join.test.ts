@@ -34,13 +34,6 @@ interface Dialect {
 	/** Trino's `relation` is left-recursive, so a JoinRelation's span includes the left input — the
 	 *  join spans are cumulative (base…ON) rather than the isolated `JOIN x ON …` of every other dialect. */
 	cumulativeSpans?: boolean;
-	/** KNOWN GAP (sqlite): the upstream grammar's `join_clause` is FLAT
-	 *  (`table_or_subquery (join_operator table_or_subquery join_constraint?)*`) — no CST node covers
-	 *  one join step, so `Join.cst` is the `join_operator` node and its span is only the join keyword(s)
-	 *  ("JOIN"/"LEFT JOIN"), NOT the full construct `src/ir/ir.ts` documents for `Join.cst`. Fixing needs
-	 *  a grammar sub-rule split (per-step node) + regen + corpus re-run — tracked as an open gap. This
-	 *  pin asserts the TRUE current shape so that grammar fix fails here and upgrades the expectation. */
-	operatorOnlySpans?: boolean;
 }
 
 function sel(d: Dialect, sql: string): SelectExpr {
@@ -63,7 +56,7 @@ const DIALECTS: Record<string, Dialect> = {
 	postgres: { name: "postgres", parse: parsePostgres, lower: lowerPostgres as LowerFn },
 	duckdb: { name: "duckdb", parse: parseDuckdb, lower: lowerDuckdb as LowerFn },
 	trino: { name: "trino", parse: parseTrino, lower: lowerTrino as LowerFn, cumulativeSpans: true },
-	sqlite: { name: "sqlite", parse: parseSqlite, lower: lowerSqlite as LowerFn, operatorOnlySpans: true },
+	sqlite: { name: "sqlite", parse: parseSqlite, lower: lowerSqlite as LowerFn },
 };
 
 // --- Shared per-dialect assertions ------------------------------------------
@@ -91,10 +84,7 @@ for (const key of Object.keys(DIALECTS)) {
 			}
 			// spans ordered left-to-right, each ending at its own JOIN…ON text
 			const texts = joins.map((j) => span(CHAIN, j.cst));
-			if (d.operatorOnlySpans) {
-				// sqlite: the span covers only the join operator — see the flag's doc comment (open gap).
-				expect(texts).toEqual(["JOIN", "JOIN", "JOIN"]);
-			} else if (d.cumulativeSpans) {
+			if (d.cumulativeSpans) {
 				// Trino's left-recursive relation: each join span starts at the base and GROWS through the
 				// chain (cumulative slices — exactly the debugger's progressive stages).
 				expect(texts[0].endsWith("JOIN b ON a.x = b.x")).toBe(true);
@@ -103,9 +93,16 @@ for (const key of Object.keys(DIALECTS)) {
 				expect(texts[0].length).toBeLessThan(texts[1].length);
 				expect(texts[1].length).toBeLessThan(texts[2].length);
 			} else {
+				// Isolated per-step spans: `[type] JOIN <table> [ON …]`, the src/ir/ir.ts Join.cst construct.
+				// sqlite joins this branch once its join_step sub-rule gives a full-construct node (task A-R8).
 				expect(texts[0]).toBe("JOIN b ON a.x = b.x");
 				expect(texts[1]).toBe("JOIN c ON b.y = c.y");
 				expect(texts[2]).toBe("JOIN d ON c.z = d.z");
+				// span STARTS strictly increase (isolated spans begin at successive JOIN keywords). Not true
+				// of cumulative spans, which all start at the base — hence this lives in the isolated branch.
+				const starts = joins.map((j) => j.cst.start?.start ?? -1);
+				expect(starts[0]).toBeLessThan(starts[1]);
+				expect(starts[1]).toBeLessThan(starts[2]);
 			}
 			// stop offsets strictly increase (source order left-to-right — holds for both span styles)
 			const stops = joins.map((j) => j.cst.stop?.stop ?? -1);
