@@ -165,6 +165,11 @@ export type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 // --- Shared passes as building blocks (raw forms) + their typed result interfaces ---
 export { resolveScopes, type CteRef, type ResolvedSource, type Scope, type ScopeTree } from "./scope/scope.js";
 
+// The node→scope join: every (expr, owning scope) pair in structure order, and the memoized
+// point lookup built on top of it. Backs hover/completion/lineage/references-shaped consumers
+// that need "which Scope owns this Expr" without re-deriving the walk by hand.
+export { walk, scopeOf } from "./scope/walk.js";
+
 export { type Diagnostic, type Qualification, type ColumnBinding } from "./qualify/qualify.js";
 
 export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qualify/schema.js";

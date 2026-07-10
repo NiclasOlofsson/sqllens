@@ -1,7 +1,8 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { Expr, QueryBody, QueryExpr } from "../ir/ir.js";
-import { allQueryExprs, childExprs, selectExprs, stageExprs } from "../ir/walk.js";
+import { allQueryExprs, childExprs } from "../ir/walk.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
+import { scopeExprs } from "../scope/walk.js";
 
 // ---------------------------------------------------------------------------
 // node-at: the one genuinely new capability the LSP needs. Given a 0-based char
@@ -70,12 +71,4 @@ export function nodeAt(tree: ScopeTree, offset: number, ast?: QueryExpr): NodeHi
 		}
 	}
 	return best;
-}
-
-/** The Exprs that belong directly to a scope's body (not its child scopes). */
-function scopeExprs(scope: Scope): Expr[] {
-	const body = scope.body;
-	if (body.kind === "select") return selectExprs(body);
-	if (body.kind === "pipe") return scope.pipeStage ? stageExprs(scope.pipeStage) : [];
-	return []; // setop: exprs live in its branch scopes (children)
 }
