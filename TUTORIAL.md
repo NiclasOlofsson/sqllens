@@ -6,7 +6,7 @@ your own knowledge, get diagnostics, types and lineage out, and handle `{% if %}
 branches without ever rendering the template.
 
 The examples use a dbt-shaped model, but nothing here requires dbt. sqllens parses the
-template syntax (the oracle is minijinja, the Rust templating engine dbt Core uses).
+template syntax (the oracle is minijinja, the templating engine dbt Core uses).
 What the template calls mean is knowledge you inject.
 
 ## Step 0: install and pick a dialect
