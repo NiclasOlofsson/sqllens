@@ -158,10 +158,13 @@ const RULES: Record<string, FoldRule> = {
 	// (sqlite3StrICmp) is ASCII case-insensitive regardless of how the name was spelled — the
 	// documented quirk this module's brief calls out: unlike Postgres/Snowflake, quoting an
 	// identifier does NOT make it case-sensitive in SQLite. So both unquoted AND quoted fold to
-	// lower here (same shape as redshift/duckdb/trino), for ASCII only — SQLite explicitly does
-	// not case-fold non-ASCII. Bracket delimiters have no escape mechanism (the lexer's `[`...`]`
-	// body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not unescaped, same as
-	// this module's tsql bracket handling.
+	// lower here (same shape as redshift/duckdb/trino). SQLite's own documented fold is
+	// ASCII-only (it does not case-fold non-ASCII), but this module's shared applyCase uses JS
+	// toLowerCase() — a Unicode-wide fold — so a rare non-ASCII identifier pair (Ä vs ä) that
+	// SQLite would keep distinct conflates here: a known shared-engine limitation, consistent
+	// across every dialect in this table. Bracket delimiters have no escape mechanism (the
+	// lexer's `[`...`]` body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not
+	// unescaped, same as this module's tsql bracket handling.
 	sqlite: {
 		delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
 		unquoted: "lower",
