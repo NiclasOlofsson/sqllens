@@ -191,6 +191,8 @@ export {
 	type ExpansionShape,
 } from "./qualify/template-provider.js";
 
+export type { TemplateEngine } from "./template/engine.js";
+
 export {
 	MAIN_FRAME,
 	symbolAt,

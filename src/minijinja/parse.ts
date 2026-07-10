@@ -45,7 +45,7 @@
 // ---------------------------------------------------------------------------
 
 import { CharStream, CommonTokenStream, ListTokenSource, type ParserRuleContext, Token as AntlrToken } from "antlr4ng";
-import { parse, type ParseResultIR } from "../api.js";
+import { parse } from "../api.js";
 import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import { endPosition } from "../ir/span.js";
@@ -54,10 +54,11 @@ import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.
 import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
-import { templateRegions, templateSymbols, type TemplateRegion, type TemplateSymbol } from "./regions.js";
+import { templateRegions, templateSymbols } from "./regions.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
+import type { TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
 
 /**
  * A single shared `MinijinjaLexer` instance, used ONLY for its static vocabulary
@@ -75,55 +76,10 @@ export type { TagNode, MacroCall } from "./tag-ast.js";
 // Re-export the R4 region / symbol shapes (Task 3) so the barrel re-exports them here.
 export type { TemplateRegion, TemplateArm, TemplateSymbol } from "./regions.js";
 export { templateRegions, templateSymbols } from "./regions.js";
-/**
- * Options for `parseTemplated` (all optional — the 2-arg call runs on the shipped default provider).
- * `provider` is the ONE resolution seam for every template expression (the catalog-unification
- * redesign): a `DefaultTemplateProvider` subclass whose overrides answer what your host knows —
- * shapes for the fill, relations/values for the semantic layer. Pass the SAME per-document instance
- * you hand to qualify/analyze so both layers share one warm cache.
- */
-export interface TemplatedParseOptions {
-	provider?: TemplateProvider;
-}
-
-/** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
-export interface TemplatedParseResult {
-	/** ONE source-ordered stream: SQL tokens (channel 0) + jinja tokens (channel 2, role "minijinja"). */
-	tokens: Token[];
-	/** The underlying SQL parse over the placeholder (ast / cst / errors / diagnostics). */
-	sql: ParseResultIR;
-	/** R2 tag nodes. Task 4 fills these; Task 3 leaves them empty. */
-	tags: TagNode[];
-	/** R4 control-flow regions (if/for/macro), stack-paired from the control tags. */
-	regions: TemplateRegion[];
-	/** R4 go-to-def template symbols (set targets / macro names). */
-	symbols: TemplateSymbol[];
-	/** SQL diagnostics (+ jinja diagnostics from Task 4), positioned in original coordinates. */
-	diagnostics: SyntaxDiagnostic[];
-	/**
-	 * The placeholder-filled SQL text the SQL parser actually saw: `text` with every jinja
-	 * tag replaced by its length-/newline-preserving fill (identical length, newlines at
-	 * identical offsets, everything outside tags byte-identical). On the defensive
-	 * degrade-to-plain-SQL path this IS the original text.
-	 */
-	placeholder: string;
-	/**
-	 * Present (true) ONLY on the defensive degrade path: the jinja front end threw and the
-	 * result is the whole text parsed as plain SQL — `tags`/`regions`/`symbols` are empty
-	 * NOT because the text has no jinja, but because jinja handling gave up. Absent on
-	 * every normal parse (including plain SQL with no jinja).
-	 */
-	degraded?: true;
-	/** The TagNode a template-marked IR node came from (TableSource with .template, or a
-	 *  marked column expr). undefined for unmarked nodes and on plain SQL. */
-	tagOf(node: object): TagNode | undefined;
-	/** The IR node a tag became (a ref/source in a FROM slot → its TableSource; a scalar-slot
-	 *  tag → its column expr). undefined for tags with no IR presence (control/comment/config). */
-	nodeOf(tag: TagNode): object | undefined;
-	/** The diagnostics attributed to a tag: its own jinja parse errors + SQL diagnostics the
-	 *  scrubber widened to it. Empty array when none. */
-	diagnosticsOf(tag: TagNode): SyntaxDiagnostic[];
-}
+// TemplatedParseOptions / TemplatedParseResult now live in ../template/engine.js
+// (the neutral TemplateEngine contract); re-exported here so every existing
+// import site keeps working.
+export type { TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
 
 /** No-op accessors for the degraded/no-correlation path: total, never wrong. */
 function noCorrelation(): Pick<TemplatedParseResult, "tagOf" | "nodeOf" | "diagnosticsOf"> {
