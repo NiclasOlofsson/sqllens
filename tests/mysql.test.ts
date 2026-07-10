@@ -105,6 +105,15 @@ describe("Mysql lower -> IR", () => {
 		expect(using.joins?.[0]).toMatchObject({ kind: "inner", using: ["id"] });
 	});
 
+	it("captures RIGHT OUTER, CROSS and NATURAL join kinds", () => {
+		const right = selectBody("SELECT * FROM a RIGHT OUTER JOIN b ON a.id = b.id").body;
+		expect(right.joins?.[0]).toMatchObject({ kind: "right" });
+		const cross = selectBody("SELECT * FROM a CROSS JOIN b").body;
+		expect(cross.joins?.[0]).toMatchObject({ kind: "cross" });
+		const nat = selectBody("SELECT * FROM a NATURAL JOIN b").body;
+		expect(nat.joins?.[0]).toMatchObject({ kind: "natural", natural: true });
+	});
+
 	it("models a comma cross-join as two plain FROM entries (no joins)", () => {
 		const { body } = selectBody("SELECT * FROM a, b WHERE a.id = b.id");
 		expect(body.from).toHaveLength(2);
@@ -155,6 +164,20 @@ describe("Mysql lower -> IR", () => {
 		expect(q.body.left.op).toBe("union");
 	});
 
+	it("collects the trailing into-tail UNION arm (bare core after loose UNION/ALL tokens)", () => {
+		// unionSelect's optional last arm — `UNION (ALL|DISTINCT)? querySpecification` with an INTO —
+		// parses as loose UNION/ALL tokens + a bare direct core; it must fold as a third branch,
+		// not vanish (B-R3 review finding).
+		const q = ir("SELECT 1 FROM t1 UNION SELECT 2 FROM t2 UNION ALL SELECT 3 FROM t3 INTO @a").q;
+		if (q.body.kind !== "setop") throw new Error(`expected setop, got ${q.body.kind}`);
+		expect(q.body.all).toBe(true); // the trailing arm's loose ALL
+		expect(q.body.right.kind).toBe("select");
+		if (q.body.left.kind !== "setop") throw new Error("expected nested setop (3 branches)");
+		expect(q.body.left.all).toBe(false);
+		expect(q.body.left.left.kind).toBe("select");
+		expect(q.body.left.right.kind).toBe("select");
+	});
+
 	it("lowers a VALUES statement to literal-named projections", () => {
 		const { body } = selectBody("VALUES (1, 2), (3, 4)");
 		expect(body.projections.map((p) => p.name)).toEqual(["column_0", "column_1"]);
@@ -190,6 +213,11 @@ describe("Mysql lower -> IR", () => {
 		const { body } = selectBody("SELECT s.a FROM (SELECT a FROM t) s WHERE s.a IN (SELECT x FROM u)");
 		expect(body.from[0].kind).toBe("subquery");
 		expect(body.subqueries).toHaveLength(1); // only the WHERE IN subquery, not the FROM one
+	});
+
+	it("collects an ORDER BY subquery into SelectExpr.subqueries (walk rooted at the query spec)", () => {
+		const { body } = selectBody("SELECT a FROM t ORDER BY (SELECT max(x) FROM u)");
+		expect(body.subqueries).toHaveLength(1);
 	});
 
 	it("lowers a non-SELECT statement to an unsupported non-query with a sensible category", () => {

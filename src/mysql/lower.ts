@@ -265,13 +265,22 @@ function lowerSelectStatement(selectStmt: ParserRuleContext): QueryExpr {
 	return { kind: "query", ctes: [], body, orderBy, limit, cst: selectStmt };
 }
 
-/** Linearize the union chain of a selectStatement into ordered branch cores + operator nodes. The
+/** One linearized UNION operator: its ALL flag and the CST node anchoring the setop's span (the
+ *  unionStatement/unionParenthesis rule node, or — for the trailing into-tail arm, whose UNION/ALL
+ *  are loose tokens — the trailing branch core itself). */
+type UnionOp = { all: boolean; cst: ParserRuleContext };
+
+/** Linearize the union chain of a selectStatement into ordered branch cores + operator entries. The
  *  grammar nests the union operator both directly under selectStatement AND as the trailing child of a
  *  querySpecificationNointo core, so each core is followed ONLY into its trailing union operator (never
- *  into a queryExpression's parenthesized inner core, which is unwrapping, not a second branch). */
-function collectUnion(selectStmt: ParserRuleContext): { cores: ParserRuleContext[]; ops: ParserRuleContext[] } {
+ *  into a queryExpression's parenthesized inner core, which is unwrapping, not a second branch).
+ *  unionSelect/unionParenthesisSelect additionally allow ONE trailing `UNION (ALL|DISTINCT)?
+ *  (querySpecification|queryExpression)` into-tail arm whose UNION/ALL are LOOSE direct tokens of
+ *  selectStatement and whose branch is a bare direct core — collected here as a branch of its own
+ *  (previously silently dropped; B-R3 review finding). */
+function collectUnion(selectStmt: ParserRuleContext): { cores: ParserRuleContext[]; ops: UnionOp[] } {
 	const cores: ParserRuleContext[] = [];
-	const ops: ParserRuleContext[] = [];
+	const ops: UnionOp[] = [];
 	const isOp = (n: ParserRuleContext): boolean =>
 		n.ruleIndex === P.RULE_unionStatement || n.ruleIndex === P.RULE_unionParenthesis;
 
@@ -281,23 +290,34 @@ function collectUnion(selectStmt: ParserRuleContext): { cores: ParserRuleContext
 		for (const c of kidsOf(core)) if (c instanceof ParserRuleContext && isOp(c)) processOp(c);
 	};
 	const processOp = (op: ParserRuleContext): void => {
-		ops.push(op);
+		ops.push({ all: hasDirectToken(op, P.ALL), cst: op });
 		const core = firstCoreChild(op);
 		if (core) processCore(core);
 	};
 
+	let pendingAll = false; // the loose ALL token preceding the trailing into-tail branch
 	for (const c of kidsOf(selectStmt)) {
+		if (c instanceof TerminalNode) {
+			if (c.symbol.type === P.ALL) pendingAll = true;
+			continue;
+		}
 		if (!(c instanceof ParserRuleContext)) continue;
-		if (cores.length === 0 && CORE_RULES.has(c.ruleIndex)) processCore(c);
-		else if (isOp(c)) processOp(c);
+		if (isOp(c)) {
+			processOp(c);
+			pendingAll = false;
+		} else if (CORE_RULES.has(c.ruleIndex)) {
+			if (cores.length > 0) ops.push({ all: pendingAll, cst: c }); // the trailing into-tail branch
+			processCore(c);
+			pendingAll = false;
+		}
 	}
 	return { cores, ops };
 }
 
-/** Left-fold union branch bodies. MySQL has only UNION (no INTERSECT/EXCEPT); each op carries an
- *  optional ALL. A trailing bare-UNION "into" branch (rare) with no wrapping op node folds as
- *  all=false. */
-function foldSetop(cores: ParserRuleContext[], ops: ParserRuleContext[], cst: ParserRuleContext): QueryBody {
+/** Left-fold union branch bodies. MySQL has only UNION (no INTERSECT/EXCEPT); each op entry carries
+ *  its ALL flag (a missing entry — never expected, cores always lead ops by one — folds as the
+ *  DISTINCT default). */
+function foldSetop(cores: ParserRuleContext[], ops: UnionOp[], cst: ParserRuleContext): QueryBody {
 	const bodies = cores.map(buildCoreBody);
 	let body: QueryBody = bodies[0] ?? emptyBody(cst);
 	for (let i = 1; i < bodies.length; i++) {
@@ -305,11 +325,11 @@ function foldSetop(cores: ParserRuleContext[], ops: ParserRuleContext[], cst: Pa
 		body = {
 			kind: "setop",
 			op: "union",
-			all: op ? hasDirectToken(op, P.ALL) : false,
+			all: op?.all ?? false,
 			left: body,
 			right: bodies[i],
 			columns: [],
-			cst: op ?? cst,
+			cst: op?.cst ?? cst,
 		};
 	}
 	return body;
