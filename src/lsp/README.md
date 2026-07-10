@@ -6,7 +6,7 @@ resolveScopes → qualify → infer → symbols`) and translates the results int
 shapes. It holds no analysis logic of its own: diagnostics, types, definitions,
 output columns, tokens, completions, and signatures all come from the library.
 
-The server holds one `SqlDocument` per open file (rebuilt on edit) and serves
+The server holds one `SqlSession` per open file (rebuilt on edit) and serves
 every feature from that cached document. It consumes only the public library
 surface (`src/api.ts` / `src/index.ts`) plus `vscode-languageserver-*` and local
 presentation helpers. This is the seam that lets the server be lifted into its own repo.
