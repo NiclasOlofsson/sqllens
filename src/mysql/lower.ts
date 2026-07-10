@@ -37,8 +37,9 @@ import { freezeIR } from "../ir/freeze.js";
 //     adjacent statements (a bare `withStatement`, then the `selectStatement`);
 //     lowerImpl rejoins them into one CTE query. No INTERSECT/EXCEPT set ops
 //     exist (only UNION), and CTEs live only on the fork's withStatement rule.
-//  2. Bare `LEFT`/`RIGHT` before JOIN mis-parses as a table alias (an SLL/LL
-//     ambiguity in the upstream grammar); `LEFT OUTER JOIN` disambiguates.
+//  2. Bare `LEFT`/`RIGHT` before JOIN now parse as an outer join, not a swallowed
+//     table alias — our fork removed the reserved words LEFT/RIGHT from the
+//     keyword-as-identifier path (upstream let them alias); joinPart carries the token.
 //
 // Identifier-delimiter contract (docs/identifier-delimiter-contract.md): MySQL
 // follows the "kept" convention shared by every dialect except BigQuery — every

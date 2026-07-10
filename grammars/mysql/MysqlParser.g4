@@ -2366,12 +2366,16 @@ orReplace
 //    Functions
 
 functionCall
-    : specificFunction                         # specificFunctionCall
-    | aggregateWindowedFunction                # aggregateFunctionCall
-    | nonAggregateWindowedFunction             # nonAggregateFunctionCall
-    | scalarFunctionName '(' functionArgs? ')' # scalarFunctionCall
-    | fullId '(' functionArgs? ')'             # udfFunctionCall
-    | passwordFunctionClause                   # passwordFunctionCall
+    : specificFunction             # specificFunctionCall
+    | aggregateWindowedFunction    # aggregateFunctionCall
+    | nonAggregateWindowedFunction # nonAggregateFunctionCall
+    // LEFT / RIGHT are RESERVED words (dev.mysql.com/doc/refman/8.4/en/keywords.html) so they were
+    // removed from scalarFunctionName / simpleId (they must not be bare identifiers or table aliases —
+    // see the outerJoin fix), but they are still the LEFT()/RIGHT() string functions
+    // (dev.mysql.com/doc/refman/8.4/en/string-functions.html), so admit them only in call position here.
+    | (scalarFunctionName | LEFT | RIGHT) '(' functionArgs? ')' # scalarFunctionCall
+    | fullId '(' functionArgs? ')'                             # udfFunctionCall
+    | passwordFunctionClause                                   # passwordFunctionCall
     ;
 
 specificFunction
@@ -3292,7 +3296,8 @@ functionNameBase
     | LCASE
     | LEAD
     | LEAST
-    | LEFT
+    // LEFT removed: it is a RESERVED word (dev.mysql.com/doc/refman/8.4/en/keywords.html) and must not
+    // reach simpleId as a bare identifier/alias; the LEFT() function stays via functionCall's scalarFunctionCall.
     | LENGTH
     | LINEFROMTEXT
     | LINEFROMWKB
@@ -3376,7 +3381,8 @@ functionNameBase
     | RANDOM_BYTES
     | RELEASE_LOCK
     | REVERSE
-    | RIGHT
+    // RIGHT removed: it is a RESERVED word (dev.mysql.com/doc/refman/8.4/en/keywords.html) and must not
+    // reach simpleId as a bare identifier/alias; the RIGHT() function stays via functionCall's scalarFunctionCall.
     | ROUND
     | ROW_COUNT
     | ROW_NUMBER

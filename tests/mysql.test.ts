@@ -97,12 +97,38 @@ describe("Mysql lower -> IR", () => {
 	});
 
 	it("captures a LEFT OUTER JOIN kind and a USING (col) constraint", () => {
-		// bare `LEFT JOIN` mis-parses `LEFT` as an alias in this grammar (documented wart); `LEFT
-		// OUTER JOIN` disambiguates to a real outer join.
 		const left = selectBody("SELECT * FROM a LEFT OUTER JOIN b ON a.id = b.id").body;
 		expect(left.joins?.[0]).toMatchObject({ kind: "left" });
 		const using = selectBody("SELECT * FROM a INNER JOIN b USING (id)").body;
 		expect(using.joins?.[0]).toMatchObject({ kind: "inner", using: ["id"] });
+	});
+
+	// Regression: LEFT / RIGHT are RESERVED words (dev.mysql.com/doc/refman/8.4/en/keywords.html), so
+	// they were pulled out of the keyword-as-identifier path (scalarFunctionName → simpleId). Before the
+	// fix, bare `LEFT JOIN` mis-parsed `LEFT` as table `a`'s alias and degraded the join to inner.
+	it("captures a bare LEFT JOIN as a left join with no alias swallowed", () => {
+		const { body } = selectBody("SELECT a FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
+		expect(body.joins?.[0]).toMatchObject({ kind: "left" });
+		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"] });
+		expect(body.from[0].alias).toBeUndefined(); // `LEFT` is NOT consumed as t1's alias
+	});
+
+	it("captures a bare RIGHT JOIN as a right join with no alias swallowed", () => {
+		const { body } = selectBody("SELECT a FROM t1 RIGHT JOIN t2 ON t1.id = t2.id");
+		expect(body.joins?.[0]).toMatchObject({ kind: "right" });
+		expect(body.from[0].alias).toBeUndefined();
+	});
+
+	it("still parses LEFT()/RIGHT() as reserved-word string functions in call position", () => {
+		const l = selectBody("SELECT LEFT(name, 3) AS p FROM t").body;
+		expect(l.projections[0].expr).toMatchObject({ kind: "function", name: "left" });
+		const r = selectBody("SELECT RIGHT(name, 3) AS s FROM t").body;
+		expect(r.projections[0].expr).toMatchObject({ kind: "function", name: "right" });
+	});
+
+	it("still admits a backtick-quoted `LEFT` as a table alias", () => {
+		const { body } = selectBody("SELECT a FROM t1 `LEFT`");
+		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"], alias: "`LEFT`" });
 	});
 
 	it("captures RIGHT OUTER, CROSS and NATURAL join kinds", () => {
