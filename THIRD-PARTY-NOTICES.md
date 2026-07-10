@@ -100,6 +100,15 @@ Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 `sql/snowflake`. Copyright (c) 2022 Michał Lorek. Licensed under the MIT License
 (full text retained in the file header).
 
+### SQLite grammar — MIT
+
+`grammars/sqlite/SqliteLexer.g4`, `grammars/sqlite/SqliteParser.g4`
+
+Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4) `sql/sqlite`
+(upstream commit `8af0d4c26c796ea27c15c3d85418f2d0f77c3adb`, retrieved 2026-07-10).
+Copyright (c) 2020 Martin Mirchev; (c) 2014 Bart Kiers. Licensed under the MIT
+License (full text retained in the file headers).
+
 ## Runtime and build dependencies (not redistributed in source)
 
 - **antlr4ng** — the TypeScript ANTLR runtime (BSD-3-Clause). Runtime dependency.
