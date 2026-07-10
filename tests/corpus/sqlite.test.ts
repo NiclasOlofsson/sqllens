@@ -19,12 +19,15 @@ import { KNOWN_BAD, KNOWN_BAD_DOCS } from "../sqlite-corpus-known-bad.js";
 //   sqlite/docs — every runnable SQL example scraped from the official SQLite language docs
 //   (sqlite.org/lang*.html, bundle sqlite-doc-3530300 = SQLite 3.53.3; tools/scrape-sqlite-docs.mjs).
 //   This is the grammar's real validation against the vendor's documented syntax — the grammars-v4
-//   examples only cover what upstream contributors happened to write. The gate recurses the whole
-//   tier and requires zero syntax errors on every file (SQLite's is a full-language grammar, so DDL /
-//   PRAGMA / functions all parse — no query-only carve-out), lowering each totally. KNOWN_BAD_DOCS
-//   holds the docs' own genuinely-not-SQLite examples (a MySQL counter-example), asserted to STILL
-//   fail. The scraper is deterministic (wipe+rebuild from the pinned bundle), so a rerun reproduces
-//   this corpus exactly and the KNOWN_BAD_DOCS keys stay stable.
+//   examples only cover what upstream contributors happened to write. Laid out per the corpus
+//   convention, parser/positive/<query|dml|ddl|unparsed>/<page-slug>/<n>.sql — the scraper buckets
+//   with the organizer's own rule (bucketOfKinds over the current parser; parse failures → unparsed).
+//   The gate recurses the whole tier and requires zero syntax errors on every file (SQLite's is a
+//   full-language grammar, so DDL / PRAGMA / functions all parse — no query-only carve-out), lowering
+//   each totally; the buckets are informational here, never an exclusion. KNOWN_BAD_DOCS holds the
+//   docs' own genuinely-not-SQLite examples (a MySQL counter-example, under unparsed/ by
+//   construction), asserted to STILL fail. The scraper is deterministic (wipe+rebuild from the pinned
+//   bundle), so a rerun reproduces this corpus exactly and the KNOWN_BAD_DOCS keys stay stable.
 
 const VENDOR_EXAMPLES = corpusPath("sqlite/grammars-v4");
 const DOCS_CORPUS = corpusPath("sqlite/docs");
@@ -83,7 +86,7 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("SQLite grammar vs the grammars-v4
 
 // The SLL→LL fallback floor over the docs corpus, counted only over the files that SHOULD parse
 // (KNOWN_BAD_DOCS excluded — a failing parse always falls back, so counting them would just measure
-// the known-bad set). Measured over the 47 scraped files (2026-07-10): 0 of the 46 parseable files
+// the known-bad set). Measured over the 48 scraped files (2026-07-10): 0 of the 47 parseable files
 // fall back. Seed honest, ratchet down.
 const DOCS_FALLBACK_FLOOR = 0;
 

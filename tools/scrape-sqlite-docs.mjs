@@ -14,9 +14,12 @@
 //
 // Deterministic + re-runnable: wipes OUT and rebuilds from the cached bundle every run, so a rerun
 // reproduces the committed corpus exactly. Each file carries a `-- source:` provenance comment (a
-// hidden-channel SQLite comment — parse-invisible) plus its page slug directory.
+// hidden-channel SQLite comment — parse-invisible). Output follows the corpus-repo convention,
+// `parser/positive/<kind>/<page-slug>/<n>.sql`, bucketed with the SAME rule the organizer uses
+// (bucketOfKinds over the current parser's statementCategories; parse failures → unparsed), which is
+// why this scraper — unlike the plain-node siblings — runs under tsx: bucketing imports the TS parser.
 //
-// Usage:  node tools/scrape-sqlite-docs.mjs
+// Usage:  npx tsx tools/scrape-sqlite-docs.mjs        (needs src/generated/sqlite: npm run gen -- sqlite)
 //   Env overrides: SQLITE_DOC_VER / SQLITE_DOC_YEAR (bump on a new SQLite release);
 //                  SQLITE_DOC_DIR (point at an already-unzipped doc dir, skips download).
 
@@ -85,28 +88,44 @@ export function cleanSql(sql) {
 	// Metasyntax option brackets `[ … ]` around a keyword — railroad-diagram text, never runnable SQL.
 	if (/\[\s*(,|WITH|OR|IF|NOT|AS|LIKE|IN|CASCADE|RESTRICT|COLLATE|ASC|DESC)\b/i.test(kept)) return null;
 	if ((kept.match(/'/g) ?? []).length % 2 === 1) return null; // odd quote count — truncated illustration
-	if (!/^\(+\s*(select|with|values|table)\b/i.test(kept) && !STATEMENT_STARTERS.test(kept)) return null;
+	// The statement-starter gate must see PAST leading comments: lang_naming's runnable block opens
+	// with a `/* … */` banner before its ATTACH/CREATE statements, and testing the raw first word
+	// silently dropped it. Strip leading `--` lines and `/* */` blocks for the TEST only — the kept
+	// text (comments included) is what gets written.
+	let head = kept;
+	for (;;) {
+		const stripped = head.replace(/^\s*(--[^\n]*(\n|$)|\/\*[\s\S]*?\*\/)/, "");
+		if (stripped === head) break;
+		head = stripped;
+	}
+	head = head.trim();
+	if (head === "") return null; // comment-only block
+	if (!/^\(+\s*(select|with|values|table)\b/i.test(head) && !STATEMENT_STARTERS.test(head)) return null;
 	return kept;
 }
 
 // SQL examples live in <pre> blocks (incl. `<div class="codeblock"><pre>`) and <blockquote> blocks.
 // Both are pulled; cleanSql + the statement-starter gate keep only runnable statements.
+// Returns { blocks, raw }: `raw` counts every candidate container found, so the funnel report can
+// state raw → hygiene-passed → written honestly.
 export function extractSql(html) {
 	const blocks = [];
-	const push = (raw) => {
+	let raw = 0;
+	const push = (rawBlock) => {
+		raw++;
 		// Drop any block that carried list markup (<li> …): those are enumerations of syntax forms
 		// (e.g. the CASE variants on lang_expr), not statements.
-		if (/<li[ >]/i.test(raw)) return;
+		if (/<li[ >]/i.test(rawBlock)) return;
 		// Drop blocks wrapping an HTML data table — a <blockquote>/<pre> around a <table> is a
 		// comparison/reference table (e.g. lang_altertable's foreign_keys×legacy_alter_table matrix),
 		// whose cells flatten into non-SQL noise.
-		if (/<t(able|r|d|h)[ >]/i.test(raw)) return;
-		const sql = cleanSql(unescapeHtml(raw.replace(/<[^>]+>/g, "")));
+		if (/<t(able|r|d|h)[ >]/i.test(rawBlock)) return;
+		const sql = cleanSql(unescapeHtml(rawBlock.replace(/<[^>]+>/g, "")));
 		if (sql) blocks.push(sql);
 	};
 	for (const m of html.matchAll(/<pre\b[^>]*>([\s\S]*?)<\/pre>/gi)) push(m[1]);
 	for (const m of html.matchAll(/<blockquote\b[^>]*>([\s\S]*?)<\/blockquote>/gi)) push(m[1]);
-	return blocks;
+	return { blocks, raw };
 }
 
 async function ensureDocDir() {
@@ -133,7 +152,46 @@ async function ensureDocDir() {
 	if (!existsSync(DOC_DIR)) throw new Error(`unzip did not produce ${DOC_DIR}`);
 }
 
+// The corpus-convention bucket for one snippet: `parser/positive/<kind>` via the SAME rule the
+// organizer applies (tools/organize-corpus.test.ts) — bucketOfKinds over the current parser's
+// statementCategories; a snippet the parser rejects lands in `unparsed` (the organizer's rule for
+// parse failures). Pure function of the snippet text + the current grammar, so byte-reproducible.
+function makeBucketer({ parseSqlite, statementCategories, bucketOfKinds }) {
+	return (sql) => {
+		let r;
+		try {
+			r = parseSqlite(sql);
+		} catch {
+			return "unparsed";
+		}
+		if (r.errors > 0) return "unparsed";
+		try {
+			return bucketOfKinds(statementCategories(r.tree));
+		} catch {
+			return "unparsed";
+		}
+	};
+}
+
 async function main() {
+	// Classification needs the real sqlite parser (TypeScript) — hence the tsx usage requirement.
+	let classifier;
+	try {
+		const [{ parseSqlite }, { statementCategories }, { bucketOfKinds }] = await Promise.all([
+			import("../src/sqlite/parse.ts"),
+			import("../src/sqlite/lower.ts"),
+			import("../tests/helpers/statement-bucket.ts"),
+		]);
+		classifier = makeBucketer({ parseSqlite, statementCategories, bucketOfKinds });
+	} catch (e) {
+		console.error(
+			"cannot load the sqlite parser for bucketing — run via tsx (npx tsx tools/scrape-sqlite-docs.mjs)\n" +
+				"and make sure src/generated/sqlite exists (npm run gen -- sqlite).\n" +
+				String(e).slice(0, 200),
+		);
+		process.exit(1);
+	}
+
 	await ensureDocDir();
 	if (existsSync(OUT)) rmSync(OUT, { recursive: true });
 	mkdirSync(OUT, { recursive: true });
@@ -143,35 +201,42 @@ async function main() {
 		.sort();
 
 	const seen = new Set(); // global content dedupe (same example repeated across pages)
-	let extracted = 0;
+	let rawTotal = 0;
+	let passed = 0;
 	let written = 0;
 	const manifest = {};
 
 	for (const page of pages) {
 		const slug = page.replace(/\.html$/, "");
 		const url = `${SITE}/${page}`;
-		const blocks = extractSql(readFileSync(join(DOC_DIR, page), "utf8"));
-		extracted += blocks.length;
+		const { blocks, raw } = extractSql(readFileSync(join(DOC_DIR, page), "utf8"));
+		rawTotal += raw;
+		passed += blocks.length;
+		// One file per snippet at parser/positive/<bucket>/<slug>/<n>.sql. `n` counts the page's
+		// deduped snippets in document order ACROSS buckets, so a file keeps its number even if a
+		// grammar change moves it to another bucket (keeps KNOWN_BAD_DOCS keys traceable).
 		let i = 0;
 		for (const sql of blocks) {
 			const key = sql.replace(/\s+/g, " ").trim();
 			if (seen.has(key)) continue;
 			seen.add(key);
-			const dir = join(OUT, slug);
+			i++;
+			const bucket = classifier(sql);
+			const dir = join(OUT, "parser", "positive", bucket, slug);
 			mkdirSync(dir, { recursive: true });
-			writeFileSync(join(dir, `${++i}.sql`), `-- source: ${url}\n${sql}\n`);
+			writeFileSync(join(dir, `${i}.sql`), `-- source: ${url}\n${sql}\n`);
 			written++;
 		}
-		manifest[page] = { extracted: blocks.length, written: i };
+		manifest[page] = { raw, hygienePassed: blocks.length, written: i };
 	}
 
 	writeFileSync(
 		join(OUT, "manifest.json"),
 		JSON.stringify({ bundle: ZIP_NAME, source: `${SITE}/lang.html`, pages: manifest }, null, 1),
 	);
-	const filtered = extracted - written; // dedupe + reject
 	console.log(
-		`done: ${pages.length} lang pages, ${extracted} raw blocks, ${filtered} filtered/deduped, ${written} sql files written`,
+		`done: ${pages.length} lang pages, ${rawTotal} raw blocks, ${rawTotal - passed} hygiene-rejected, ` +
+			`${passed - written} duplicates dropped, ${written} sql files written`,
 	);
 }
 
