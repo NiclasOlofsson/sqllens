@@ -76,6 +76,10 @@ describe("sqlite function registry", () => {
 		expect(rule("abs", [scalar("int")])).toEqual(scalar("int"));
 		expect(rule("abs", [scalar("double")])).toEqual(scalar("double"));
 	});
+	it("sign is always int, regardless of a REAL or INTEGER argument (\"-1, 0, or +1\")", () => {
+		expect(rule("sign", [scalar("double")])).toEqual(scalar("int"));
+		expect(rule("sign", [scalar("int")])).toEqual(scalar("int"));
+	});
 	it("upper/lower/typeof/hex are text", () => {
 		expect(rule("upper")).toEqual(scalar("string"));
 		expect(rule("lower")).toEqual(scalar("string"));

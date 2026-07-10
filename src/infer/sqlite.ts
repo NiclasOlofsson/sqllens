@@ -95,6 +95,7 @@ export const SQLITE_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"octet_length", // "returns the number of bytes in the encoding of text string X"
 		"unicode", // "returns the numeric unicode code point corresponding to the first character of the string X"
 		"instr", // "returns the number of prior characters plus 1, or 0 if Y is nowhere found within X"
+		"sign", // "returns -1, 0, or +1" — always one of those three integers, regardless of whether X is REAL or INTEGER
 	]),
 	// --- bigint — values documented across the full 64-bit signed range --------------------------
 	count: fixed(BIG), // lang_aggfunc.html: "returns a count of the number of times that X is not NULL in a group"
