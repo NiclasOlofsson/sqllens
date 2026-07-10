@@ -14,7 +14,7 @@
 
 import type { ParserRuleContext } from "antlr4ng";
 import { SqlDocument, type DocumentAnalysis } from "./document/document.js";
-import { nodeAt, type NodeHit } from "./document/node-at.js";
+import type { NodeHit } from "./document/node-at.js";
 import { lineage, type Lineage, type TypeInfo } from "./api.js";
 import type { Dialect } from "./dialect.js";
 import type { QueryExpr } from "./ir/ir.js";
@@ -27,8 +27,8 @@ import { complete, type Completion } from "./completion/complete.js";
 import type { Diagnostic, Qualification } from "./qualify/qualify.js";
 import type { SchemaProvider } from "./qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "./qualify/template-provider.js";
-import { referencesAt, type Occurrences } from "./references/references.js";
-import { lineageAt, type LineageHop } from "./lineage/hops.js";
+import type { Occurrences } from "./references/references.js";
+import type { LineageHop } from "./lineage/hops.js";
 import { signatureAt, type SignatureInfo } from "./signature/signature.js";
 import type { Scope, ScopeTree } from "./scope/scope.js";
 import type { Sym } from "./symbols/symbols.js";
@@ -143,7 +143,7 @@ export class SqlSession {
 		return this.doc.tokenAt(offset);
 	}
 	nodeAt(offset: number): NodeHit | undefined {
-		return nodeAt(this.doc.scopes, offset, this.doc.ast);
+		return this.doc.nodeAt(offset);
 	}
 	scopeAt(offset: number): Scope | undefined {
 		return this.nodeAt(offset)?.scope;
@@ -163,9 +163,9 @@ export class SqlSession {
 		return signatureAt(this.doc, offset);
 	}
 	referencesAt(offset: number): Occurrences | null {
-		return referencesAt(this.doc.scopes, offset, this.schema, this.doc.ast);
+		return this.doc.referencesAt(offset, this.schema);
 	}
 	lineageAt(offset: number): LineageHop | undefined {
-		return lineageAt(this.doc.scopes, offset, this.schema);
+		return this.doc.lineageAt(offset, this.schema);
 	}
 }

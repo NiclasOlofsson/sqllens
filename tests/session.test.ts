@@ -34,6 +34,23 @@ describe("SqlSession — the facade", () => {
 		if (body.kind !== "select") throw new Error("expected select");
 		expect(t.tagOf(body.from[0])?.kind).toBe("ref");
 	});
+	it("multi-statement: cursor verbs are cell-aware, spans in document coordinates", () => {
+		const TWO = "select a from t; select b from u";
+		const s = SqlSession.create(TWO, "duckdb", { schema: new Schema({ t: { a: "int" }, u: { b: "int" } }) });
+		// statement 2: cursor on `b`
+		const off = TWO.indexOf("b from");
+		const occ = s.referencesAt(off);
+		expect(occ?.symbol).toBe("b");
+		for (const o of occ!.occurrences) expect(TWO.slice(o.span.start, o.span.end)).toBe("b");
+		expect(s.nodeAt(off)?.expr.kind).toBe("column");
+		expect(s.typeAt(off)).toEqual({ kind: "scalar", name: "int" });
+		// statement 1 unchanged
+		const offA = TWO.indexOf("a");
+		const occA = s.referencesAt(offA);
+		expect(occA?.symbol).toBe("a");
+		for (const o of occA!.occurrences) expect(TWO.slice(o.span.start, o.span.end)).toBe("a");
+		expect(s.typeAt(offA)).toEqual({ kind: "scalar", name: "int" });
+	});
 	it("withText: immutable successor, options carried", () => {
 		const s = SqlSession.create(MODEL, "databricks", { templating: minijinja() });
 		const next = s.withText(MODEL + " ");

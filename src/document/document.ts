@@ -32,6 +32,8 @@
 
 import type { ParserRuleContext } from "antlr4ng";
 import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
+import { lineageAt as lineageAtScopes, type LineageHop } from "../lineage/hops.js";
+import { referencesAt as referencesAtScopes, type Occurrences } from "../references/references.js";
 import type { Dialect } from "../dialect.js";
 import type { QueryExpr, SelectExpr } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
@@ -41,7 +43,7 @@ import type { ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
-import type { Sym } from "../symbols/symbols.js";
+import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult } from "../template/engine.js";
 import { LineIndex } from "./line-index.js";
@@ -459,6 +461,39 @@ export class SqlDocument {
 		const cell = this.cellAt(offset);
 		if (!cell) return nodeAt(this.scopes, offset, this.ast);
 		return nodeAt(cell.scopes, offset - cell.span.start, cell.ast);
+	}
+
+	/** The declaration + every occurrence of the symbol at `offset` (the references engine,
+	 *  cell-aware): resolved over the CELL owning the offset — its own scopes/ast, with a
+	 *  cell-relative offset — then every returned span (occurrences + declaration) shifted from
+	 *  cell-relative to DOCUMENT coordinates by the cell base. Absorbs the dance the LSP
+	 *  references/documentHighlight/codeLens features hand-rolled. Single-cell documents: base
+	 *  0/0/0, byte-identical to the free referencesAt over doc.scopes. Total: null off-symbol or
+	 *  with no cells; never throws. */
+	referencesAt(offset: number, schema?: SchemaProvider): Occurrences | null {
+		const cell = this.cellAt(offset);
+		if (!cell) return referencesAtScopes(this.scopes, offset, schema, this.ast);
+		const occ = referencesAtScopes(cell.scopes, offset - cell.span.start, schema, cell.ast);
+		if (!occ || cell.span.start === 0) return occ; // first cell: identity shift
+		const base = this.lines.positionAt(cell.span.start);
+		const shift = (s: Span): Span => shiftSpan(s, base.line, base.column, cell.span.start);
+		return {
+			...occ,
+			declaration: occ.declaration ? shift(occ.declaration) : undefined,
+			occurrences: occ.occurrences.map((o) => ({ ...o, span: shift(o.span) })),
+		};
+	}
+
+	/** The per-hop lineage spine anchored at `offset` (cell-aware): resolved over the CELL owning
+	 *  the offset, with a cell-relative offset. NOTE: on a MULTI-statement document the returned
+	 *  hop nodes' cst spans are CELL-relative — the spine references the frozen per-cell IR (hops
+	 *  are references, not copies), so nothing is shifted here; use `cellAt(offset).span.start` as
+	 *  the base to map them to document coordinates. Single-cell documents (every dbt model) are
+	 *  identical either way. Total: undefined off-symbol or with no cells; never throws. */
+	lineageAt(offset: number, schema?: SchemaProvider): LineageHop | undefined {
+		const cell = this.cellAt(offset);
+		if (!cell) return lineageAtScopes(this.scopes, offset, schema);
+		return lineageAtScopes(cell.scopes, offset - cell.span.start, schema);
 	}
 
 	/** The schema-dependent tiers, over the cached per-cell scopes/ast (no re-parse). Memoized by
