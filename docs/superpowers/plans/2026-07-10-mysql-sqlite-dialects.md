@@ -146,6 +146,16 @@ This is the full ordered routine, written once with real code. Each track below 
 - [ ] **R6.5** Token-role check: run a token probe over a few corpus files and confirm comments/strings/numbers classify correctly. Add `classify.ts` `DIALECT_RULES["<dialect>"]` overrides only for the mismatches (mirror snowflake's two-rule example).
 - [ ] **R6.6** Commit. `git add grammars/<dialect>/ tests/corpus/<dialect>.test.ts tests/<dialect>-corpus-known-bad.ts src/token/classify.ts && git commit -m "feat(<dialect>): corpus gate green"`
 
+### R6b — docs-corpus tier (scrape the vendor manual, second gate, correct the grammar against it)
+
+**Files:** Create `tools/scrape-<dialect>-docs.mjs`; extend `tests/corpus/<dialect>.test.ts` and `tests/<dialect>-corpus-known-bad.ts`. Corpus output to `<dialect>/docs` in the corpus clone. This tier is what validates the grammar against the vendor's documented syntax — the grammars-v4 examples only cover what upstream contributors happened to write.
+
+- [ ] **R6b.1** Read the existing scrapers (`tools/scrape-snowflake-docs.mjs`, `tools/extract-trino-docs.mjs`) and how the snowflake/trino corpus gates consume their `<dialect>/docs` tier. Mirror the closest fit: fetch pages → extract SQL example snippets → hygiene filters (skip pseudo-syntax/ellipsis/placeholder fragments, dedupe) → one file per snippet with a source-URL provenance comment, following whatever layout/manifest conventions the existing docs tiers use in the corpus clone.
+- [ ] **R6b.2** Write `tools/scrape-<dialect>-docs.mjs` against the track's official docs source (see track spec) and run it into `$SQL_CORPUS_DIR/<dialect>/docs`.
+- [ ] **R6b.3** Extend `tests/corpus/<dialect>.test.ts` with a `<dialect>/docs` describe block mirroring snowflake's docs tier (own `describe.skipIf`, zero-syntax-error assertion, known-bad quarantine with cited reasons).
+- [ ] **R6b.4** Native loop to green. Triage each failure honestly: (a) valid dialect SQL the grammar rejects → a real grammar gap — fix the `.g4` with a vendor-manual citation comment, regenerate, rerun; (b) scraper artifact (pseudo-syntax, truncated snippet, prose caught by the extractor) → fix the scraper filter and re-scrape; (c) genuinely invalid SQL printed in the docs → quarantine in `tests/<dialect>-corpus-known-bad.ts` with the citation. Never quarantine category (a) — if a gap is structural (an entire missing statement family needing large grammar surgery), STOP and report it to the controller for a scope ruling instead of hiding it.
+- [ ] **R6b.5** `npm run test:corpus` green with both tiers present (check the skip count). Commit: `git add tools/scrape-<dialect>-docs.mjs tests/corpus/<dialect>.test.ts tests/<dialect>-corpus-known-bad.ts grammars/<dialect>/ && git commit -m "feat(<dialect>): docs-corpus tier green"`
+
 ### R7 — test matrix, tooling registries, docs
 
 **Files (test-only + tool registries that carry their own dialect lists — silent):** `tests/lsp.acceptance.dialects.test.ts`, `tests/derived-dialects.test.ts`, `tests/multistmt-span.all-dialects.test.ts`, `tests/batch-parity.test.ts`, `tests/token/parse-tokens.test.ts`, `tools/organize-corpus.test.ts`, `tools/mutate-corpus.mjs`. **Docs:** `README.md`, `src/lsp/README.md`, `docs/identifier-delimiter-contract.md`, `CLAUDE.md`, `package.json`.
@@ -168,10 +178,11 @@ Run R1–R7 with:
 - **Fold rule (R5.2):** SQLite unquoted identifiers are **case-insensitive but case-preserving** for ASCII; folding for equality is ASCII-lower, display keeps original case. Double-quoted identifiers are also case-insensitive in SQLite (a quirk — it does not enforce quoted-name case-sensitivity the way Postgres does). Set the rule to match, and add a test asserting `Foo` and `foo` resolve equal.
 - **Implicit coercions (R5.4):** SQLite has flexible/dynamic typing with broad implicit string↔number affinity — include `sqlite` in `IMPLICIT_STR_TO_NUM`. It has no dedicated boolean type (0/1) — leave it out of `IMPLICIT_BOOL_NUM` unless the corpus proves otherwise.
 - **Derived aliases (R5.5):** identity only (`sqlite: "sqlite"`). No common engine aliases.
-- **Corpus (R6):** `sqlite/grammars-v4` from the upstream `examples/`. A `sqlite/docs` scrape is an Open Gap (below), not a Track A blocker.
+- **Corpus (R6):** `sqlite/grammars-v4` from the upstream `examples/`.
+- **Docs tier (R6b):** scrape source = the official SQLite language docs at `sqlite.org/lang.html` and the per-statement pages beneath it (`sqlite.org/lang_*.html`); their examples are authoritative and the syntax-diagram pages carry runnable snippets. SQLite's docs are also downloadable as a bundle (`sqlite.org/download.html`, "Documentation" zip) — mirror-then-parse beats per-page fetching if rate limits bite.
 - **Why first:** smallest grammar, official complete spec, minimal registry surface. This track proves the routine end to end.
 
-**Track A completion criteria:** `npx vitest run tests/sqlite.test.ts` green; `npm run typecheck` clean; `npm run test:corpus` green with `sqlite/grammars-v4` present (not skipped); `sqlite` present in every all-dialects test and both tool registries; README/docs updated.
+**Track A completion criteria:** `npx vitest run tests/sqlite.test.ts` green; `npm run typecheck` clean; `npm run test:corpus` green with BOTH `sqlite/grammars-v4` and `sqlite/docs` present (not skipped); `sqlite` present in every all-dialects test and both tool registries; README/docs updated.
 
 ## Track B — MySQL
 
@@ -183,7 +194,8 @@ Run R1–R7 with:
 - **Fold rule (R5.2):** MySQL identifier case-sensitivity is **collation/OS-dependent** (`lower_case_table_names`): table/database names vary by platform, but column and alias names are case-insensitive everywhere. For a static analyzer with no server context, fold column/alias identifiers case-insensitively (ASCII-lower for equality, preserve display). Document the table-name platform-dependence as a known limitation in the fold rule comment. Add a test asserting column `Amount`/`amount` resolve equal.
 - **Implicit coercions (R5.4):** MySQL implicitly coerces strings↔numbers in arithmetic — include `mysql` in `IMPLICIT_STR_TO_NUM`. It treats booleans as tinyint(1) — consider `IMPLICIT_BOOL_NUM` membership, verified against the corpus.
 - **Derived aliases (R5.5):** `mysql: "mysql"` plus `mariadb: "mysql"` (MariaDB's SQL is a near-identical superset — a derived dialect, no separate grammar). Spot-check a few MariaDB-specific statements against the grammar before claiming the alias; if they fail, note MariaDB as a partial/Open-Gap alias rather than asserting full coverage.
-- **Corpus (R6):** `mysql/grammars-v4` from the upstream `examples/` (this grammar ships a substantial example set — expect a longer R6.4 loop than SQLite given the 95 KB parser and the grammar's known lag on newer MySQL 8 features). A `mysql/docs` scrape is an Open Gap.
+- **Corpus (R6):** `mysql/grammars-v4` from the upstream `examples/` (this grammar ships a substantial example set — expect a longer R6.4 loop than SQLite given the 95 KB parser and the grammar's known lag on newer MySQL 8 features).
+- **Docs tier (R6b):** scrape source = the MySQL 8.4 reference manual at `dev.mysql.com/doc/refman/8.4/en/` — the SQL-statement chapters (`sql-statements.html` and beneath) plus the function/operator chapters. Expect the longest loop of the whole plan here: the PT grammar lags newer 8.x features, and every valid-but-unparsed manual example is a real gap to fix, not to quarantine. Structural gaps (an entire missing statement family) get escalated to the controller for a scope ruling per R6b.4, never silently quarantined.
 - **Reuse:** every mechanical edit is identical to Track A with the dialect string swapped; the compiler (R4.1) re-lists the enforced points for you. The genuinely new work is `lower.ts` (R3.2, larger surface) and the corpus loop (R6.4).
 
 **Track B completion criteria:** same as Track A with `mysql`; MariaDB derived-alias behavior documented (full or partial); `tests/derived-dialects.test.ts` covers `mariadb → mysql`.
@@ -194,7 +206,7 @@ Run R1–R7 with:
 
 These are visible, intentional deferrals. Ship the dialects without them; record them so they're known.
 
-- **Docs-corpus tier.** Existing primary dialects have a `<dialect>/docs` scrape (e.g. `tools/scrape-snowflake-docs.mjs`, `tools/extract-trino-docs.mjs`) feeding a second corpus gate. Neither MySQL nor SQLite has one. The `grammars-v4` example corpus is the launch gate; a docs scrape (`tools/scrape-sqlite-docs.mjs`, `tools/scrape-mysql-docs.mjs`) and the negative/mutated corpus tier (`tools/mutate-corpus.mjs`, curated negatives) are follow-on hardening.
+- **Negative/mutated corpus tier.** The docs-corpus scrape was originally deferred here but is now in scope as R6b (decided 2026-07-10 — the docs tier is what corrects and validates the grammar; the grammars-v4 examples alone are not a real gate). Still deferred: the negative/mutated corpus tier (`tools/mutate-corpus.mjs`, curated negatives) — follow-on hardening once both docs gates are green.
 - **Doc-coverage probe suite.** `tests/<dialect>.doc-coverage.test.ts` (a `Record<string, Probe[]>` of official-docs constructs) is worth adding once each grammar stabilizes; not a launch blocker.
 - **Signature/inference long tail.** `src/infer/<dialect>.ts` and the curated signature table start minimal and grow. Missing entries infer `unknown` by contract — correct, not a bug.
 - **CLAUDE.md "four places" correction.** The code-map line claiming a dialect touches four places is stale (the real surface is ~22 touchpoints). Per CLAUDE.md's own rule ("if a decision turns out wrong, update this file in the same change that departs from it"), fold a corrected sentence into the Track A PR, citing this plan's routine as the itemized reality.
