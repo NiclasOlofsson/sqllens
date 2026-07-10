@@ -31,6 +31,7 @@ export {
 	SqlDocument,
 	LineIndex,
 	complete,
+	completeAt,
 	type Completion,
 	signatureAt,
 	FUNCTION_SIGNATURES,

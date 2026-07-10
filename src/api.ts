@@ -299,7 +299,7 @@ export type { StatementCellSpan } from "./document/split.js";
 
 // Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
 // tables/columns + function names at the caret). Total: never throws.
-export { complete, type Completion } from "./completion/complete.js";
+export { complete, completeAt, type Completion } from "./completion/complete.js";
 
 // Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
 // while typing inside a call's parens. Lookup order: curated (hand-verified) → harvested (doc-derived

@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SqlSession, Schema } from "../src/index.js";
+import { SqlSession, Schema, complete, completeAt } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
 
 const SQL = "select amount from sales where amount > 10";
@@ -57,5 +57,10 @@ describe("SqlSession — the facade", () => {
 		expect(next).not.toBe(s);
 		expect(next.tags.length).toBe(s.tags.length);
 		expect(s.doc.version).toBeLessThan(next.doc.version);
+	});
+	it("complete is the deprecated alias of completeAt — same function, not a wrapper", () => {
+		expect(complete).toBe(completeAt);
+		const s = SqlSession.create(SQL, "duckdb", { schema: new Schema({ sales: { amount: "int" } }) });
+		expect(completeAt(s.doc, SQL.length).length).toBeGreaterThan(0);
 	});
 });

@@ -23,7 +23,7 @@ import { UNKNOWN } from "./infer/types.js";
 import type { TagNode } from "./minijinja/tag-ast.js";
 import type { TemplateRegion, TemplateSymbol } from "./minijinja/regions.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
-import { complete, type Completion } from "./completion/complete.js";
+import { completeAt, type Completion } from "./completion/complete.js";
 import type { Diagnostic, Qualification } from "./qualify/qualify.js";
 import type { SchemaProvider } from "./qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "./qualify/template-provider.js";
@@ -154,10 +154,8 @@ export class SqlSession {
 		const hit = this.nodeAt(offset);
 		return hit ? this.types().typeOf(hit.expr, hit.scope) : UNKNOWN;
 	}
-	// Task 2: completeAt — delegates to the existing `complete` until the dedicated offset-anchored
-	// entry point lands.
 	completeAt(offset: number): Completion[] {
-		return complete(this.doc, offset, this.schema);
+		return completeAt(this.doc, offset, this.schema);
 	}
 	signatureAt(offset: number): SignatureInfo | null {
 		return signatureAt(this.doc, offset);

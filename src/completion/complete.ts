@@ -40,7 +40,7 @@ export interface Completion {
  * (table names + column types). NEVER throws: on broken / mid-edit input it still returns the
  * keyword candidates the walk can reach.
  */
-export function complete(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
+export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	try {
 		return collect(doc, offset, schema);
 	} catch {
@@ -48,6 +48,9 @@ export function complete(doc: SqlDocument, offset: number, schema?: SchemaProvid
 		return [];
 	}
 }
+
+/** @deprecated Use completeAt — same function, uniform cursor-verb naming. */
+export const complete = completeAt;
 
 function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	const dialect = doc.dialect;
