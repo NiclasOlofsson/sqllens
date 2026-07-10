@@ -88,7 +88,7 @@ describe("R3 apply-tags", () => {
 		const r = parseTemplated("SELECT 1", "databricks");
 		expect(r.sql.ast).toBeDefined();
 		// applyTemplateTags(ast, []) is a no-op that returns the same reference (structural sharing).
-		expect(applyTemplateTags(r.sql.ast, [], "SELECT 1")).toBe(r.sql.ast);
+		expect(applyTemplateTags(r.sql.ast, [], "SELECT 1").ast).toBe(r.sql.ast);
 	});
 
 	it("result is frozen", () => {

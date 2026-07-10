@@ -114,6 +114,24 @@ export interface TemplatedParseResult {
 	 * every normal parse (including plain SQL with no jinja).
 	 */
 	degraded?: true;
+	/** The TagNode a template-marked IR node came from (TableSource with .template, or a
+	 *  marked column expr). undefined for unmarked nodes and on plain SQL. */
+	tagOf(node: object): TagNode | undefined;
+	/** The IR node a tag became (a ref/source in a FROM slot → its TableSource; a scalar-slot
+	 *  tag → its column expr). undefined for tags with no IR presence (control/comment/config). */
+	nodeOf(tag: TagNode): object | undefined;
+	/** The diagnostics attributed to a tag: its own jinja parse errors + SQL diagnostics the
+	 *  scrubber widened to it. Empty array when none. */
+	diagnosticsOf(tag: TagNode): SyntaxDiagnostic[];
+}
+
+/** No-op accessors for the degraded/no-correlation path: total, never wrong. */
+function noCorrelation(): Pick<TemplatedParseResult, "tagOf" | "nodeOf" | "diagnosticsOf"> {
+	return {
+		tagOf: () => undefined,
+		nodeOf: () => undefined,
+		diagnosticsOf: () => [],
+	};
 }
 
 /** Document line (1-based) / column (0-based) of a source offset. */
@@ -254,21 +272,28 @@ function parseSliceTag(slice: readonly AntlrToken[]): { tree: ParserRuleContext;
 	return { tree, diagnostics: collector.diagnostics };
 }
 
+/** A tag segment (the `kind: "tag"` arm of Segment) — reused as the key linking a scrubbed
+ *  diagnostic's owning range back to its TagNode (Task 10). */
+type TagSegment = Extract<Segment, { kind: "tag" }>;
+
 /**
  * Scrub placeholder gibberish out of SQL syntax diagnostics. A diagnostic whose
  * offending token starts inside a tag range is really complaining about the TAG:
  * rewrite every occurrence of the placeholder token's text in the message with the
  * tag's original source text, and widen offset/length (+ line/column) to the whole
- * tag. Diagnostics outside every tag pass through untouched.
+ * tag. Diagnostics outside every tag pass through untouched. `bySegment` carries the
+ * widened diagnostics keyed by the owning tag segment — build() maps that back to a
+ * TagNode for `diagnosticsOf`.
  */
 function scrubPlaceholderDiagnostics(
 	diags: SyntaxDiagnostic[],
-	tagRanges: readonly { start: number; end: number }[],
+	tagRanges: readonly TagSegment[],
 	text: string,
 	placeholder: string,
-): SyntaxDiagnostic[] {
-	if (tagRanges.length === 0) return diags;
-	return diags.map((d) => {
+): { diagnostics: SyntaxDiagnostic[]; bySegment: Map<TagSegment, SyntaxDiagnostic[]> } {
+	const bySegment = new Map<TagSegment, SyntaxDiagnostic[]>();
+	if (tagRanges.length === 0) return { diagnostics: diags, bySegment };
+	const diagnostics = diags.map((d) => {
 		if (d.offset === undefined) return d;
 		const tag = tagRanges.find((s) => d.offset! >= s.start && d.offset! < s.end);
 		if (!tag) return d;
@@ -276,8 +301,20 @@ function scrubPlaceholderDiagnostics(
 		const tagText = text.slice(tag.start, tag.end);
 		const message = seen.length > 0 ? d.message.split(`'${seen}'`).join(`'${tagText}'`) : d.message;
 		const pos = docPosAt(text, tag.start);
-		return { ...d, message, offset: tag.start, length: tag.end - tag.start, line: pos.line, column: pos.column };
+		const widened = {
+			...d,
+			message,
+			offset: tag.start,
+			length: tag.end - tag.start,
+			line: pos.line,
+			column: pos.column,
+		};
+		const existing = bySegment.get(tag);
+		if (existing) existing.push(widened);
+		else bySegment.set(tag, [widened]);
+		return widened;
 	});
+	return { diagnostics, bySegment };
 }
 
 /** The core build — total by construction (every composed piece is total). */
@@ -316,6 +353,10 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	const jinjaTokens: Token[] = [];
 	const tags: TagNode[] = [];
 	const jinjaDiagnostics: SyntaxDiagnostic[] = [];
+	// Task 10: the direct tag↔diagnostics join, built alongside `tags` (no span
+	// matching needed — `seg`/`tag` are already in hand together in this loop).
+	const segToTag = new Map<TagSegment, TagNode>();
+	const diagsByTag = new Map<TagNode, SyntaxDiagnostic[]>();
 	for (const seg of tagRanges) {
 		const slice = tagTokens.get(seg) ?? [];
 		for (const tok of slice) {
@@ -324,8 +365,12 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 		}
 
 		const { tree, diagnostics } = parseSliceTag(slice);
-		const node = tagNodesOf(seg, tree);
-		if (node) tags.push(node);
+		const tag = tagNodesOf(seg, tree);
+		if (tag) {
+			tags.push(tag);
+			segToTag.set(seg, tag);
+			if (diagnostics.length > 0) diagsByTag.set(tag, [...diagnostics]);
+		}
 		jinjaDiagnostics.push(...diagnostics);
 	}
 
@@ -333,8 +378,10 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// nodes carrying the dbt-logical model/source name + a `template` marker, so
 	// scope/qualify/lineage bind the real model rather than the `jjj…` placeholder.
 	// Total (returns the input ast on any surprise); the reassignment stays inside
-	// build()'s caller try/catch so parseTemplated's totality holds.
-	const sqlResult = { ...sql, ast: applyTemplateTags(sql.ast, tags, text) };
+	// build()'s caller try/catch so parseTemplated's totality holds. `correlation`
+	// carries the Task 10 tag↔IR-node join collected while rebuilding.
+	const correlation = applyTemplateTags(sql.ast, tags, text);
+	const sqlResult = { ...sql, ast: correlation.ast };
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are
 	// disjoint (tag-contained SQL tokens were dropped), so a stable sort by start
@@ -350,7 +397,22 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// surface a consumer naturally reads — and the raw fill-quoting messages are
 	// engine-internal, never public (the gold__vendor F5 leak, 2026-07-06: the raw
 	// "mismatched input 'jjjj…'" reached a user's screen through sql.diagnostics).
-	const scrubbed = scrubPlaceholderDiagnostics(sqlResult.diagnostics, tagRanges, text, placeholder);
+	const { diagnostics: scrubbed, bySegment } = scrubPlaceholderDiagnostics(
+		sqlResult.diagnostics,
+		tagRanges,
+		text,
+		placeholder,
+	);
+	// Fold the scrubbed SQL diagnostics into the same per-tag map as the jinja ones
+	// (Task 10) — a tag's diagnostics are its own jinja parse errors PLUS whatever
+	// SQL diagnostics the scrubber widened onto it.
+	for (const [seg, widened] of bySegment) {
+		const tag = segToTag.get(seg);
+		if (!tag) continue;
+		const existing = diagsByTag.get(tag);
+		if (existing) existing.push(...widened);
+		else diagsByTag.set(tag, [...widened]);
+	}
 	const finalSql = { ...sqlResult, diagnostics: scrubbed };
 	const diagnostics = [...scrubbed, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
 
@@ -359,7 +421,18 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	const regions = templateRegions(tags, text);
 	const symbols = templateSymbols(tags);
 
-	return { tokens, sql: finalSql, tags, regions, symbols, diagnostics, placeholder };
+	return {
+		tokens,
+		sql: finalSql,
+		tags,
+		regions,
+		symbols,
+		diagnostics,
+		placeholder,
+		tagOf: (node: object) => correlation.byNode.get(node),
+		nodeOf: (tag: TagNode) => correlation.byTag.get(tag),
+		diagnosticsOf: (tag: TagNode) => diagsByTag.get(tag) ?? [],
+	};
 }
 
 /**
@@ -385,6 +458,7 @@ export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedP
 			diagnostics: sql.diagnostics,
 			placeholder: text,
 			degraded: true,
+			...noCorrelation(),
 		};
 	}
 }

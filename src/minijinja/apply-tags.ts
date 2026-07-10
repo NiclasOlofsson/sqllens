@@ -68,15 +68,45 @@ interface TagContext {
 	relTags: RelationTag[];
 	sets: ReadonlyMap<string, SetResolution>;
 	text: string;
+	/** Collected at every `template`-attach site (Task 10): the two-spine join, direct
+	 *  and unambiguous — replaces the span-containment correlation a consumer would
+	 *  otherwise have to redo itself. */
+	byNode: WeakMap<object, TagNode>;
+	byTag: Map<TagNode, object>;
+}
+
+/** The rebuilt AST plus the tag↔node correlations collected while building it. */
+export interface TagCorrelation {
+	ast: QueryExpr;
+	/** IR node → the TagNode it came from (a template-marked TableSource, or a marked column expr). */
+	byNode: WeakMap<object, TagNode>;
+	/** TagNode → the IR node it became (undefined-by-absence for tags with no IR presence). */
+	byTag: Map<TagNode, object>;
+}
+
+/** Record a freshly built node's correlation to the tag it came from, then return it unchanged
+ *  (a passthrough so call sites stay expression-shaped). A scalar-slot tag lowers to BOTH a
+ *  column Expr (`kind: "column"`) and a parallel ColumnRef record (`kind: "columnref"`, same
+ *  `cst`) — both attach here, but `byTag` (the tag's ONE answer, per `nodeOf`'s contract) keeps
+ *  the column Expr: never downgrade an already-recorded "column" to a "columnref", regardless
+ *  of which one this walk visits first. */
+function attach<T extends object>(ctx: TagContext, node: T, tag: RelationTag): T {
+	ctx.byNode.set(node, tag);
+	const existing = ctx.byTag.get(tag) as { kind?: string } | undefined;
+	if (existing?.kind !== "column") ctx.byTag.set(tag, node);
+	return node;
 }
 
 /**
  * Rewrite templated FROM/JOIN sources in `ast` to carry their dbt-logical name +
  * a `template` marker, correlating each source to a tag by span containment.
- * Returns the SAME reference when nothing correlates (structural sharing); returns
- * a re-frozen rebuilt tree otherwise. Total — never throws.
+ * Returns the SAME `ast` reference when nothing correlates (structural sharing);
+ * returns a re-frozen rebuilt tree otherwise. Total — never throws; the
+ * correlation maps are empty (not absent) on the no-op and error paths.
  */
-export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string): QueryExpr {
+export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string): TagCorrelation {
+	const byNode = new WeakMap<object, TagNode>();
+	const byTag = new Map<TagNode, object>();
 	try {
 		// config is a no-output tag (whitespace-filled) — it can never yield a table
 		// source, so it stays out of the correlation set even though ExprTag admits it.
@@ -89,16 +119,16 @@ export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string)
 				t.kind === "env_var" ||
 				t.kind === "other",
 		);
-		if (relTags.length === 0) return ast;
-		const ctx: TagContext = { relTags, sets: resolveSets(tags, text), text };
+		if (relTags.length === 0) return { ast, byNode, byTag };
+		const ctx: TagContext = { relTags, sets: resolveSets(tags, text), text, byNode, byTag };
 		const next = transformQuery(ast, ctx);
 		// Scalar-slot marking: every column-shaped node whose token is a tag's placeholder
 		// fill gets a `template` marker (span + provider key), so inference resolves it
 		// through the provider and qualify never checks the placeholder as a real column.
 		const marked = markTemplateExprs(next, ctx) as QueryExpr;
-		return marked === ast ? ast : freezeIR(marked);
+		return { ast: marked === ast ? ast : freezeIR(marked), byNode, byTag };
 	} catch {
-		return ast;
+		return { ast, byNode: new WeakMap(), byTag: new Map() };
 	}
 }
 
@@ -158,7 +188,7 @@ function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
 		const start = (rec.cst as { start?: { start: number } } | undefined)?.start?.start;
 		if (start !== undefined) {
 			const tag = containingTag(ctx.relTags, start);
-			if (tag) return { ...rec, template: exprInfoOf(tag, ctx) };
+			if (tag) return attach(ctx, { ...rec, template: exprInfoOf(tag, ctx) }, tag);
 		}
 	}
 
@@ -267,9 +297,7 @@ function setResolution(tag: ControlTag, text: string): SetResolution | undefined
 	if (call.packageName === undefined && call.name === "source" && call.args.length === 2) {
 		const src = literalArg(text, call, 0);
 		const tbl = literalArg(text, call, 1);
-		return src !== undefined && tbl !== undefined
-			? { kind: "source", name: [src, tbl], call: tCall }
-			: undefined;
+		return src !== undefined && tbl !== undefined ? { kind: "source", name: [src, tbl], call: tCall } : undefined;
 	}
 	return { kind: "macro", call: tCall };
 }
@@ -473,12 +501,12 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	if (tag.kind === "ref") {
 		const call: TemplateCall = { name: "ref", args: [tag.model] };
 		const template: TemplateSourceInfo = { kind: "ref", span: tag.tagSpan, call };
-		return { ...base, name: [tag.model], template };
+		return attach(ctx, { ...base, name: [tag.model], template }, tag);
 	}
 	if (tag.kind === "source") {
 		const call: TemplateCall = { name: "source", args: [tag.sourceName, tag.tableName] };
 		const template: TemplateSourceInfo = { kind: "source", span: tag.tagSpan, call };
-		return { ...base, name: [tag.sourceName, tag.tableName], template };
+		return attach(ctx, { ...base, name: [tag.sourceName, tag.tableName], template }, tag);
 	}
 	if (tag.kind === "macro") {
 		// A macro in a FROM slot keeps the placeholder name (never fabricated) but is no
@@ -486,7 +514,7 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 		// (a TVF-like macro). Without a provider answer it behaves exactly like the old
 		// opaque marker (exemption, no diagnostics).
 		const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, call: callOf(tag, ctx.text) };
-		return { ...base, template };
+		return attach(ctx, { ...base, template }, tag);
 	}
 
 	// Non-call expression tag (var / env_var / other) in a FROM slot. A bare `{{ t }}`
@@ -502,7 +530,7 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 			indirect: true,
 			call: resolved.call,
 		};
-		return { ...base, name: [...resolved.name], template };
+		return attach(ctx, { ...base, name: [...resolved.name], template }, tag);
 	}
 	if (resolved) {
 		// set-var bound to a non-ref/source call: macro semantics at the use site.
@@ -512,8 +540,8 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 			indirect: true,
 			call: resolved.call,
 		};
-		return { ...base, template };
+		return attach(ctx, { ...base, template }, tag);
 	}
 	const template: TemplateSourceInfo = { kind: "expr", span: tag.tagSpan, opaque: true };
-	return { ...base, template };
+	return attach(ctx, { ...base, template }, tag);
 }
