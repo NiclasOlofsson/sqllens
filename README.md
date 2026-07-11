@@ -46,6 +46,8 @@ one of the primary grammars.
 | PostgreSQL | — | yes | yes | grammar forked from `bytebase/parser` `postgresql/` (BSD-3, PG18 keywords) |
 | DuckDB | — | yes | yes | grammar forked from this repo's own postgres pair (no open ANTLR grammar exists) |
 | Trino | Presto, Amazon Athena | yes | yes | grammar is the first-party trinodb `SqlBase.g4` (release 482), mechanically split |
+| SQLite | — | yes | yes | grammar forked from grammars-v4 `sql/sqlite` (MIT); entry rule `parse` |
+| MySQL | MariaDB (partial — ordinary DQL/DML only, MariaDB-only extensions unmodeled) | yes | yes | grammar forked from grammars-v4 `sql/mysql/Positive-Technologies` (MIT); entry rule `root` |
 
 Each grammar began as a fork of the upstream noted above, but most are now far from
 verbatim copies. They've had substantial extension and correction, driven by a full
@@ -58,7 +60,7 @@ the primary dialect's. Microsoft Fabric runs a restricted subset of T-SQL, Amazo
 Athena's engine is Trino, and AWS Glue runs Spark. Each one is checked against real
 SQL from that engine before it goes on the list.
 
-In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino"`. `resolveDialect` turns an
+In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino" | "sqlite" | "mysql"`. `resolveDialect` turns an
 engine name (or a dialect name) into the one that parses it: `resolveDialect("athena")`
 returns `"trino"`.
 

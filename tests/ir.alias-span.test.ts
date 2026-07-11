@@ -33,9 +33,11 @@ const DIALECTS: { dialect: Dialect; quoted: string }[] = [
 	{ dialect: "postgres", quoted: '"Total"' },
 	{ dialect: "duckdb", quoted: '"Total"' },
 	{ dialect: "trino", quoted: '"Total"' },
+	{ dialect: "sqlite", quoted: '"Total"' },
+	{ dialect: "mysql", quoted: "`Total`" },
 ];
 
-describe("aliasCst on Projection — alias identifier span, all eight dialects", () => {
+describe("aliasCst on Projection — alias identifier span, all dialects", () => {
 	for (const { dialect, quoted } of DIALECTS) {
 		describe(dialect, () => {
 			it("AS alias — span covers the identifier only, not AS", () => {

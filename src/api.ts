@@ -29,6 +29,10 @@ import { parseDuckdb } from "./duckdb/parse.js";
 import { lower as lowerDuckdb } from "./duckdb/lower.js";
 import { parseTrino } from "./trino/parse.js";
 import { lower as lowerTrino } from "./trino/lower.js";
+import { parseSqlite } from "./sqlite/parse.js";
+import { lower as lowerSqlite } from "./sqlite/lower.js";
+import { parseMysql } from "./mysql/parse.js";
+import { lower as lowerMysql } from "./mysql/lower.js";
 import type { Expr, Projection, QueryExpr } from "./ir/ir.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
 import { resolveScopes, type Scope, type ScopeTree } from "./scope/scope.js";
@@ -73,6 +77,8 @@ const DIALECTS: Record<Dialect, DialectFns> = {
 	postgres: { parse: parsePostgres, lower: lowerPostgres },
 	duckdb: { parse: parseDuckdb, lower: lowerDuckdb },
 	trino: { parse: parseTrino, lower: lowerTrino },
+	sqlite: { parse: parseSqlite, lower: lowerSqlite },
+	mysql: { parse: parseMysql, lower: lowerMysql },
 };
 
 /** Options carrying the dialect, needed only when a lift helper enters from a raw string. */

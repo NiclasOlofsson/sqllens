@@ -24,6 +24,8 @@ import { statementCategories as redshiftCats } from "../src/redshift/lower.js";
 import { statementCategories as postgresCats } from "../src/postgres/lower.js";
 import { statementCategories as duckdbCats } from "../src/duckdb/lower.js";
 import { statementCategories as trinoCats } from "../src/trino/lower.js";
+import { statementCategories as sqliteCats } from "../src/sqlite/lower.js";
+import { statementCategories as mysqlCats } from "../src/mysql/lower.js";
 
 const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = {
 	databricks: databricksCats,
@@ -34,10 +36,12 @@ const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = 
 	postgres: postgresCats,
 	duckdb: duckdbCats,
 	trino: trinoCats,
+	sqlite: sqliteCats,
+	mysql: mysqlCats,
 };
 const DIALECTS = Object.keys(CATS) as Dialect[];
 
-// `group by` cannot start a statement in any of the eight grammars, so the middle
+// `group by` cannot start a statement in any of the dialect grammars, so the middle
 // statement is genuinely broken everywhere (unlike e.g. `select where`, which is a
 // valid identifier select on databricks).
 const BROKEN_MIDDLE = "select a from t; group by ; select b from u";

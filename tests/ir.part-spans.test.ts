@@ -17,6 +17,10 @@ import { parseRedshift } from "../src/redshift/parse.js";
 import { parsePostgres } from "../src/postgres/parse.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { parseTrino } from "../src/trino/parse.js";
+import { lower as lowerSqlite } from "../src/sqlite/lower.js";
+import { parseSqlite } from "../src/sqlite/parse.js";
+import { lower as lowerMysql } from "../src/mysql/lower.js";
+import { parseMysql } from "../src/mysql/parse.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
 
@@ -35,6 +39,12 @@ interface Dialect {
 	/** The dialect's quoted-identifier form: source for `<quoted>.c` plus the exact delimited token the
 	 *  first part's span must cover (delimiters included). */
 	quoted: { sql: string; rawQualifier: string };
+	/** MySQL genuine-shape gap: an unspaced dot lexes as ONE fused `DOT_ID` token (`.b` —
+	 *  MysqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), so a dotted part after it has no clean span
+	 *  excluding the dot. `dottedParts` (src/mysql/lower.ts) pushes `undefined` for that part, and
+	 *  `partSpansOf`'s all-or-nothing rule drops the WHOLE array — not just the affected part. A real,
+	 *  currently-standing limitation of the upstream grammar fork, not a lower.ts bug. */
+	noPartSpans?: boolean;
 }
 
 const DIALECTS: Dialect[] = [
@@ -86,6 +96,19 @@ const DIALECTS: Dialect[] = [
 		lower: lowerTrino as LowerFn,
 		quoted: { sql: 'SELECT "a b".c FROM t', rawQualifier: '"a b"' },
 	},
+	{
+		name: "sqlite",
+		parse: parseSqlite,
+		lower: lowerSqlite as LowerFn,
+		quoted: { sql: 'SELECT "a b".c FROM t', rawQualifier: '"a b"' },
+	},
+	{
+		name: "mysql",
+		parse: parseMysql,
+		lower: lowerMysql as LowerFn,
+		quoted: { sql: "SELECT `a b`.c FROM t", rawQualifier: "`a b`" },
+		noPartSpans: true,
+	},
 ];
 
 function columns(d: Dialect, sql: string): ColumnRef[] {
@@ -118,6 +141,11 @@ describe("per-part spans on column references (P2)", () => {
 				const sql = "SELECT a.b.c FROM t";
 				const ref = projected(d, sql);
 				expect(ref.parts).toEqual(["a", "b", "c"]);
+				if (d.noPartSpans) {
+					// See the Dialect.noPartSpans doc comment — mysql fused DOT_ID drops all spans.
+					expect(ref.partSpans).toBeUndefined();
+					return;
+				}
 				expect(ref.partSpans, "partSpans present").toBeDefined();
 				expect(ref.partSpans!.length).toBe(3);
 				expectSpan(sql, ref.partSpans![0], "a");
@@ -129,6 +157,11 @@ describe("per-part spans on column references (P2)", () => {
 				const { sql, rawQualifier } = d.quoted;
 				const ref = projected(d, sql);
 				expect(ref.parts.length).toBe(2);
+				if (d.noPartSpans) {
+					// The second part (after the unspaced dot) lexes into the fused DOT_ID token too.
+					expect(ref.partSpans).toBeUndefined();
+					return;
+				}
 				expect(ref.partSpans, "partSpans present").toBeDefined();
 				expect(ref.partSpans!.length).toBe(2);
 				// The qualifier span covers the whole delimited token (quotes/brackets/backticks included).

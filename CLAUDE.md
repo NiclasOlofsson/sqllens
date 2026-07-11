@@ -80,6 +80,8 @@ unchanged on each. Every grammar is a standalone split pair
 | PostgreSQL | `bytebase/parser` `postgresql/` (PG18 keywords) | BSD-3 | `root` |
 | DuckDB | this repo's own `grammars/postgres/` pair | BSD-3 (inherited) | `root` |
 | Trino | first-party `trinodb/trino` `SqlBase.g4` (rel. 482), mechanically split | Apache-2.0 | `root` |
+| SQLite | `antlr/grammars-v4` `sql/sqlite` (Martin Mirchev) | MIT | `parse` |
+| MySQL | `antlr/grammars-v4` `sql/mysql/Positive-Technologies` (Ivan Kochurkin) | MIT | `root` |
 
 Notes on the less obvious lineages:
 
@@ -91,6 +93,10 @@ Notes on the less obvious lineages:
   to TS, a batch `root` entry added — the whole delta is in the grammar headers), so
   upstream parity is by construction. On a new Trino release, diff upstream's
   `SqlBase.g4` against ours and re-apply the small header-documented split delta.
+- **MySQL** has a derived-dialect alias, `mariadb`, mapped to the same grammar
+  (MariaDB forked from MySQL 5.1 and is a near-superset for ordinary DQL/DML). It
+  is a PARTIAL alias, not full coverage — MariaDB-only extensions (sequences,
+  `RETURNING`) are unmodeled; see `src/derived-dialects.ts`'s `mariadb` entry.
 
 Third-party grammar attributions are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md);
 each `.g4` also retains its upstream license header.
@@ -142,7 +148,7 @@ not Jinja2). See [docs/minijinja-front-end.md](docs/minijinja-front-end.md).
 ## Commands
 
 ```bash
-npm run gen -- <dialect>             # antlr-ng → TS into src/generated/<dialect>/ (databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino); dialect arg required
+npm run gen -- <dialect>             # antlr-ng → TS into src/generated/<dialect>/ (databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino | sqlite | mysql); dialect arg required
 npm run typecheck                    # tsgo -p tsconfig.json (noEmit; tsc is the fallback compiler)
 npm test                             # tier 1 — the fast inner loop: units + features + LSP (corpus gates excluded); well under a minute
 npm run test:corpus                  # tier 2 — the conformance gates (tests/corpus/**); ~3–5 min. Green required before any merge to master
@@ -205,10 +211,12 @@ src/lsp/                   the LSP server (an application, not the library) — 
 tools/gen.mjs              generation driver (sorts .g4 so the lexer generates before the parser — tokenVocab)
 ```
 
-Adding a dialect touches four places: `grammars/<dialect>/`, `src/<dialect>/parse.ts`
-+ `lower.ts`, and one entry in `src/infer/dialect.ts`. A missing function rule in a
-registry yields `unknown`, never a wrong type — that's the contract; don't guess
-return types.
+Adding a dialect is not a four-file change: the real surface is ~22 touchpoints —
+the compile-enforced `Dialect`-union maps the TypeScript compiler catches, plus a
+longer tail of silent-gap registries and test/tool matrices it doesn't. See
+`docs/superpowers/plans/2026-07-10-mysql-sqlite-dialects.md` for the itemized
+routine. A missing function rule in a registry yields `unknown`, never a wrong
+type — that's the contract; don't guess return types.
 
 **Public-API-only seam.** Everything under `src/` except `src/lsp/` imports only
 `antlr4ng`. The LSP layer is the one editor consumer and reaches the rest of the

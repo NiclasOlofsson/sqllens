@@ -18,6 +18,8 @@ import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { PostgresLexer } from "../generated/postgres/PostgresLexer.js";
 import { DuckdbLexer } from "../generated/duckdb/DuckdbLexer.js";
 import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
+import { SqliteLexer } from "../generated/sqlite/SqliteLexer.js";
+import { MysqlLexer } from "../generated/mysql/MysqlLexer.js";
 import { mapTokens } from "./map.js";
 import type { Token } from "./token.js";
 
@@ -32,6 +34,8 @@ const LEXERS: Record<Dialect, (cs: CharStream) => Lexer> = {
 	postgres: (cs) => new PostgresLexer(cs),
 	duckdb: (cs) => new DuckdbLexer(cs),
 	trino: (cs) => new TrinoLexer(cs),
+	sqlite: (cs) => new SqliteLexer(cs),
+	mysql: (cs) => new MysqlLexer(cs),
 };
 
 /**

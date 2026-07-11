@@ -44,8 +44,22 @@ import { parseDuckdb } from "../src/duckdb/parse.js";
 import { statementCategories as duckdbCategories } from "../src/duckdb/lower.js";
 import { parseTrino } from "../src/trino/parse.js";
 import { statementCategories as trinoCategories } from "../src/trino/lower.js";
+import { parseSqlite } from "../src/sqlite/parse.js";
+import { statementCategories as sqliteCategories } from "../src/sqlite/lower.js";
+import { parseMysql } from "../src/mysql/parse.js";
+import { statementCategories as mysqlCategories } from "../src/mysql/lower.js";
 
-type Dialect = "databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino";
+type Dialect =
+	| "databricks"
+	| "tsql"
+	| "snowflake"
+	| "bigquery"
+	| "redshift"
+	| "postgres"
+	| "duckdb"
+	| "trino"
+	| "sqlite"
+	| "mysql";
 
 const PARSERS: Record<
 	Dialect,
@@ -59,6 +73,8 @@ const PARSERS: Record<
 	postgres: { parse: parsePostgres, categories: postgresCategories },
 	duckdb: { parse: parseDuckdb, categories: duckdbCategories },
 	trino: { parse: parseTrino, categories: trinoCategories },
+	sqlite: { parse: parseSqlite, categories: sqliteCategories },
+	mysql: { parse: parseMysql, categories: mysqlCategories },
 };
 
 /** The gate's bucket over the current parse: query | dml | ddl, or "unparsed" when the parser
@@ -101,6 +117,10 @@ const CORPORA: Corpus[] = [
 	{ rootRel: "duckdb/docs", dialect: "duckdb" },
 	{ rootRel: "trino/docs", dialect: "trino" },
 	{ rootRel: "trino/bytebase", dialect: "trino" },
+	{ rootRel: "sqlite/grammars-v4", dialect: "sqlite" },
+	{ rootRel: "sqlite/docs", dialect: "sqlite" },
+	{ rootRel: "mysql/grammars-v4", dialect: "mysql" },
+	{ rootRel: "mysql/docs", dialect: "mysql" },
 ];
 
 function sqlFiles(root: string): string[] {

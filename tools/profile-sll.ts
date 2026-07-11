@@ -151,6 +151,28 @@ const DIALECTS: DialectCfg[] = [
 			return { L: DuckdbLexer as unknown as LexerCtor, P: DuckdbParser as unknown as ParserCtor };
 		},
 	},
+	{
+		name: "sqlite",
+		dir: "sqlite/docs/parser/positive/query",
+		entry: "parse",
+		loadParse: async () => (await import("../src/sqlite/parse.js")).parseSqlite,
+		loadRaw: async () => {
+			const { SqliteLexer } = await import("../src/generated/sqlite/SqliteLexer.js");
+			const { SqliteParser } = await import("../src/generated/sqlite/SqliteParser.js");
+			return { L: SqliteLexer as unknown as LexerCtor, P: SqliteParser as unknown as ParserCtor };
+		},
+	},
+	{
+		name: "mysql",
+		dir: "mysql/docs/parser/positive/query",
+		entry: "root",
+		loadParse: async () => (await import("../src/mysql/parse.js")).parseMysql,
+		loadRaw: async () => {
+			const { MysqlLexer } = await import("../src/generated/mysql/MysqlLexer.js");
+			const { MysqlParser } = await import("../src/generated/mysql/MysqlParser.js");
+			return { L: MysqlLexer as unknown as LexerCtor, P: MysqlParser as unknown as ParserCtor };
+		},
+	},
 ];
 
 function sample<T>(xs: T[], cap: number): T[] {

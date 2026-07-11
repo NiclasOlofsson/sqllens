@@ -2,7 +2,18 @@ import { describe, expect, test } from "vitest";
 import { parse, partSpanOf } from "../src/index.js";
 import type { QueryExpr } from "../src/index.js";
 
-const DIALECTS = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"] as const;
+const DIALECTS = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+] as const;
 
 describe("CteDef.nameCst", () => {
 	for (const dialect of DIALECTS) {

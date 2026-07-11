@@ -1,11 +1,22 @@
-// tests/derived-dialects.test.ts — the derived-dialect → dialect map. The eight grammars parse ~15
+// tests/derived-dialects.test.ts — the derived-dialect → dialect map. The grammars parse many more
 // engines; this table is where that family knowledge lives, so consumers (the LSP config, an editor
 // reading an engine name) never re-derive it. The map must stay exact: an engine we don't genuinely
 // serve resolves to undefined, never to a guess.
 import { describe, it, expect } from "vitest";
 import { DERIVED_DIALECTS, resolveDialect, parse, type Dialect } from "../src/index.js";
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+];
 
 describe("resolveDialect", () => {
 	it("every dialect name resolves to itself (both vocabularies accepted)", () => {
@@ -21,6 +32,7 @@ describe("resolveDialect", () => {
 		expect(resolveDialect("fabric")).toBe("tsql");
 		expect(resolveDialect("synapse")).toBe("tsql");
 		expect(resolveDialect("sqlserver")).toBe("tsql");
+		expect(resolveDialect("mariadb")).toBe("mysql"); // near-superset core SQL; MariaDB-only extensions are an Open Gap
 		expect(resolveDialect("postgresql")).toBe("postgres"); // alternate engine-name spelling (alias class)
 	});
 

@@ -85,13 +85,14 @@ export type QueryBody = SelectExpr | SetOpExpr | PipeExpr;
  * to be `string[]`, letting any dialect push anything with no shared vocabulary.
  */
 export type UnsupportedFlag =
-	| "multi-statement" // a `;`-batch (healthy or recovery-swallowed) — flagged stub body. All 8 dialects.
-	| "broken" // a wholly-unparsed statement (recovery consumed it; input was NOT empty). All 8 dialects.
-	| "empty" // genuinely empty input. databricks, snowflake, bigquery, redshift, postgres, duckdb, trino
-	// (T-SQL folds this case into "unparsed" instead — see that member).
+	| "multi-statement" // a `;`-batch (healthy or recovery-swallowed) — flagged stub body. All dialects.
+	| "broken" // a wholly-unparsed statement (recovery consumed it; input was NOT empty). All dialects.
+	| "empty" // genuinely empty input. databricks, snowflake, bigquery, redshift, postgres, duckdb, trino,
+	// sqlite, mysql (T-SQL folds this case into "unparsed" instead — see that member).
 	| "compound" // a BEGIN…END scripting compound body. databricks only (`flagged(stmt, statement, "compound")`).
 	| "non-query" // a parsed statement with no query body (utility/DDL/DML/DCL/TCL, no SELECT).
-	// databricks, snowflake, bigquery, redshift, postgres, duckdb, trino (T-SQL uses "unparsed" for this case).
+	// databricks, snowflake, bigquery, redshift, postgres, duckdb, trino, sqlite, mysql (T-SQL uses
+	// "unparsed" for this case).
 	| "non-query-cte" // a CTE whose body has no inner SELECT to lower. postgres, redshift, duckdb only.
 	| "unparsed" // the generic unparseable-body fallback (T-SQL's default reason incl. empty input;
 	// also snowflake/postgres/redshift/duckdb's `emptyBody()`/`emptyQuery()` no-reason-given default).

@@ -8,6 +8,8 @@ import { statementCategories as catsRedshift } from "../src/redshift/lower.js";
 import { statementCategories as catsPostgres } from "../src/postgres/lower.js";
 import { statementCategories as catsDuckdb } from "../src/duckdb/lower.js";
 import { statementCategories as catsTrino } from "../src/trino/lower.js";
+import { statementCategories as catsSqlite } from "../src/sqlite/lower.js";
+import { statementCategories as catsMysql } from "../src/mysql/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { parseTSql } from "../src/tsql/parse.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
@@ -16,10 +18,12 @@ import { parseRedshift } from "../src/redshift/parse.js";
 import { parsePostgres } from "../src/postgres/parse.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { parseTrino } from "../src/trino/parse.js";
+import { parseSqlite } from "../src/sqlite/parse.js";
+import { parseMysql } from "../src/mysql/parse.js";
 
 // P4 (Anvil phase-0, item 4 — .superpowers/sdd/anvil-phase0-brief.md):
 // "batch (multi-statement) parse parity — verify first." Databricks got a batch-level entry rule
-// (`multiStatement`) 2026-06-28 (issue #1); this pins that the other seven dialects' entry rules are
+// (`multiStatement`) 2026-06-28 (issue #1); this pins that the other dialects' entry rules are
 // ALSO batch-level (a `;`-separated list of statements, not a single-statement rule), so
 // `SELECT 1; SELECT 2;` parses with 0 errors and `statementCategories` reports two `query` entries,
 // in source order, for every dialect.
@@ -52,6 +56,8 @@ const CASES: Case[] = [
 	{ name: "postgres", sql: "SELECT 1; SELECT 2;", parse: parsePostgres, cats: catsPostgres },
 	{ name: "duckdb", sql: "SELECT 1; SELECT 2;", parse: parseDuckdb, cats: catsDuckdb },
 	{ name: "trino", sql: "SELECT 1; SELECT 2;", parse: parseTrino, cats: catsTrino },
+	{ name: "sqlite", sql: "SELECT 1; SELECT 2;", parse: parseSqlite, cats: catsSqlite },
+	{ name: "mysql", sql: "SELECT 1; SELECT 2;", parse: parseMysql, cats: catsMysql },
 ];
 
 describe("batch parity — SELECT 1; SELECT 2; parses as two query statements", () => {

@@ -109,6 +109,33 @@ const DIALECT_RULES: Record<Dialect, RoleRule[]> = {
 		{ role: "string", pattern: /^BINARY_LITERAL$/ },
 		{ role: "number", pattern: /^DOUBLE_VALUE$/ },
 	],
+
+	// MySQL (grammars-v4 mysql/Positive-Technologies): two corrections the R6.5 probe proved.
+	mysql: [
+		// SPEC_MYSQL_COMMENT (`/*! ... */`, the version-conditional executable comment,
+		// dev.mysql.com/doc/refman/8.4/en/comments.html) is a comment, but the default string rule grabs
+		// it first — its symbolic name contains "SQ" (from "MY-SQ-L"). Reclassify to comment.
+		{ role: "comment", pattern: /^SPEC_MYSQL_COMMENT$/ },
+		// FILESIZE_LITERAL (`10M` / `4G` = DEC_DIGIT+ ('K'|'M'|'G'|'T'), the tablespace/logfile size
+		// literal, dev.mysql.com/doc/refman/8.4/en/create-tablespace.html) is a numeric literal, but its
+		// symbolic name matches none of the default number substrings, so it falls through to "other".
+		{ role: "number", pattern: /^FILESIZE_LITERAL$/ },
+		// STRING_CHARSET_NAME (`_utf8` / `_binary`, the character-set introducer that always immediately
+		// precedes a STRING/HEX literal, dev.mysql.com/doc/refman/8.4/en/charset-introducer.html) is left
+		// as the default "string": it binds to and renders with the string constant it introduces, so no
+		// override is warranted. (Recorded here as the deliberate R6.5 decision, not an oversight.)
+	],
+
+	// SQLite (grammars-v4 SqliteLexer): two corrections to the defaults.
+	sqlite: [
+		// NUMERIC_LITERAL doesn't match any of the shared "number" substrings
+		// (NUMBER|INT|FLOAT|DECIMAL|REAL|DIGIT), so it falls through to "other" without this override.
+		{ role: "number", pattern: /^NUMERIC_LITERAL$/ },
+		// BLOB_LITERAL (X'…' hex/binary string, https://sqlite.org/lang_expr.html#literal_values_constants_)
+		// is a binary string literal the default string rule misses — classify it as a string, matching how
+		// the other dialects treat their binary/hex literals (snowflake/trino BINARY_LITERAL, bigquery BYTES_LITERAL).
+		{ role: "string", pattern: /^BLOB_LITERAL$/ },
+	],
 };
 
 const PUNCTUATION = new Set(["(", ")", "[", "]", "{", "}", ",", ";", "."]);
@@ -129,6 +156,11 @@ export function classifyToken(lexer: Lexer, type: number, dialect: Dialect): Tok
 		const text = literal.replace(/^'|'$/g, "");
 		if (/^[A-Za-z_]/.test(text)) return "keyword";
 		if (PUNCTUATION.has(text)) return "punctuation";
+		// A handful of grammars (MySQL-PT's ZERO_DECIMAL/ONE_DECIMAL/TWO_DECIMAL, defined as exact
+		// '0'/'1'/'2' lexer rules for parser disambiguation) give a NUMERIC literal a fixed literal
+		// name too, breaking this branch's "lexical tokens have none" assumption — a bare-digit
+		// literal is a number, never an operator symbol.
+		if (/^[0-9]+$/.test(text)) return "number";
 		return "operator";
 	}
 

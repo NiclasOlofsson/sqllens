@@ -8,9 +8,22 @@ import { parseRedshift } from "../../src/redshift/parse.js";
 import { parsePostgres } from "../../src/postgres/parse.js";
 import { parseDuckdb } from "../../src/duckdb/parse.js";
 import { parseTrino } from "../../src/trino/parse.js";
+import { parseSqlite } from "../../src/sqlite/parse.js";
+import { parseMysql } from "../../src/mysql/parse.js";
 import type { Token } from "../../src/token/token.js";
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+];
 
 // The per-dialect parse* functions are the layer that adds the token list to its ParseResult; the
 // broken-input guarantee (tokens present, no throw, even with syntax errors) is asserted there. The
@@ -25,6 +38,8 @@ const PARSE_FNS: Record<Dialect, (sql: string) => { tokens: Token[]; errors: num
 	postgres: parsePostgres,
 	duckdb: parseDuckdb,
 	trino: parseTrino,
+	sqlite: parseSqlite,
+	mysql: parseMysql,
 };
 
 function byText(tokens: Token[], text: string): Token | undefined {

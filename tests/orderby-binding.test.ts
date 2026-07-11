@@ -8,7 +8,18 @@
 import { describe, expect, test } from "vitest";
 import { parse, type Dialect } from "../src/index.js";
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+];
 
 // The CTE body carries an inner ORDER BY with the SAME column names as the root's (line 1
 // vs line 4) — the trap: a document-order deep search finds the inner clause first.

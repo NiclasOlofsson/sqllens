@@ -579,6 +579,149 @@ const TRINO: Record<string, FnSignature> = {
 	if: { name: "if", params: [p("condition", "boolean"), p("true_value", "any"), p("false_value", "any")] }, // if(cond, t[, f])
 };
 
+// ---------------------------------------------------------------------------
+// SQLite — sqlite.org/lang_corefunc.html, lang_aggfunc.html, lang_datefunc.html,
+// lang_mathfunc.html; cites the page per entry. min()/max()/count()/sum()/total()/avg()/
+// group_concat() are always lowered with the `aggregate` flag set (src/sqlite/lower.ts's
+// AGGREGATES set is name-based, not arg-count-based), so the arity checker in
+// src/qualify/check-calls.ts never applies these signatures to a call — they exist here purely
+// for the signature-help hint. `log(X)` / `log(B,X)` is deliberately NOT curated: the two forms
+// disagree on argument ORDER, not just optional trailing count, and this table's ParamSig can't
+// express a leading-optional/reordered overload without asserting a wrong arity for one form.
+// ---------------------------------------------------------------------------
+const SQLITE: Record<string, FnSignature> = {
+	// date/time — lang_datefunc.html (modifier repeats; each function's own doc page shows the
+	// same "time-value, modifier, modifier, ..." shape)
+	date: { name: "date", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // date(time-value, modifier, ...)
+	time: { name: "time", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // time(time-value, modifier, ...)
+	datetime: { name: "datetime", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // datetime(time-value, modifier, ...)
+	julianday: { name: "julianday", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // julianday(time-value, modifier, ...)
+	unixepoch: { name: "unixepoch", params: [p("time_value", "text"), p("modifier", "text")], variadic: true }, // unixepoch(time-value, modifier, ...)
+	strftime: {
+		name: "strftime",
+		params: [p("format", "text"), p("time_value", "text"), p("modifier", "text")],
+		variadic: true,
+	}, // strftime(format, time-value, modifier, ...)
+	timediff: { name: "timediff", params: [p("time_value_1", "text"), p("time_value_2", "text")] }, // timediff(time-value-1, time-value-2)
+	// string — lang_corefunc.html
+	substr: { name: "substr", params: [p("X", "text"), p("Y", "int"), o("Z", "int")] }, // substr(X,Y,Z) / substr(X,Y)
+	replace: { name: "replace", params: [p("X", "text"), p("Y", "text"), p("Z", "text")] }, // replace(X,Y,Z)
+	trim: { name: "trim", params: [p("X", "text"), o("Y", "text")] }, // trim(X,Y)
+	ltrim: { name: "ltrim", params: [p("X", "text"), o("Y", "text")] }, // ltrim(X,Y)
+	rtrim: { name: "rtrim", params: [p("X", "text"), o("Y", "text")] }, // rtrim(X,Y)
+	instr: { name: "instr", params: [p("X", "text"), p("Y", "text")] }, // instr(X,Y)
+	glob: { name: "glob", params: [p("pattern", "text"), p("string", "text")] }, // glob(X,Y) ("Y GLOB X")
+	like: { name: "like", params: [p("pattern", "text"), p("string", "text"), o("escape", "text")] }, // like(X,Y[,Z]) ("Y LIKE X [ESCAPE Z]")
+	printf: { name: "printf", params: [p("format", "text"), p("args")], variadic: true }, // printf(FORMAT,...) — alias for format()
+	quote: { name: "quote", params: [p("X")] }, // quote(X)
+	soundex: { name: "soundex", params: [p("X", "text")] }, // soundex(X)
+	// numeric — lang_corefunc.html + lang_mathfunc.html
+	round: { name: "round", params: [p("X", "numeric"), o("Y", "int")] }, // round(X,Y) / round(X)
+	abs: { name: "abs", params: [p("X", "numeric")] }, // abs(X)
+	sign: { name: "sign", params: [p("X", "numeric")] }, // sign(X)
+	hex: { name: "hex", params: [p("X", "blob")] }, // hex(X)
+	power: { name: "power", params: [p("X", "numeric"), p("Y", "numeric")] }, // power(X,Y) — lang_mathfunc.html
+	sqrt: { name: "sqrt", params: [p("X", "numeric")] }, // sqrt(X) — lang_mathfunc.html
+	mod: { name: "mod", params: [p("X", "numeric"), p("Y", "numeric")] }, // mod(X,Y) — lang_mathfunc.html
+	pi: { name: "pi", params: [] }, // pi() — lang_mathfunc.html
+	exp: { name: "exp", params: [p("X", "numeric")] }, // exp(X) — lang_mathfunc.html
+	ln: { name: "ln", params: [p("X", "numeric")] }, // ln(X) — lang_mathfunc.html
+	// conditional/null — lang_corefunc.html
+	coalesce: { name: "coalesce", params: [p("X"), p("Y")], variadic: true }, // coalesce(X,Y,...) (SQLite requires >= 2 args)
+	ifnull: { name: "ifnull", params: [p("X"), p("Y")] }, // ifnull(X,Y)
+	nullif: { name: "nullif", params: [p("X"), p("Y")] }, // nullif(X,Y)
+	iif: { name: "iif", params: [p("condition", "boolean"), p("true_value"), p("false_value")], variadic: true }, // iif(B1,V1,B2,V2,...,else)
+	// aggregate — lang_aggfunc.html (see the module note: never arity-checked, name-based aggregate flag)
+	count: { name: "count", params: [p("X")] }, // count(X) / count(*)
+	sum: { name: "sum", params: [p("X", "numeric")] }, // sum(X)
+	total: { name: "total", params: [p("X", "numeric")] }, // total(X)
+	avg: { name: "avg", params: [p("X", "numeric")] }, // avg(X)
+	min: { name: "min", params: [p("X")], variadic: true }, // min(X) aggregate / min(X,Y,...) scalar
+	max: { name: "max", params: [p("X")], variadic: true }, // max(X) aggregate / max(X,Y,...) scalar
+	group_concat: { name: "group_concat", params: [p("X", "text"), o("Y", "text")] }, // group_concat(X[,Y])
+};
+
+// ---------------------------------------------------------------------------
+// MySQL — dev.mysql.com/doc/refman/8.4/en/, cites the function-reference page per entry. TRIM is
+// deliberately NOT curated: MySQL's grammar gives it two structurally different shapes — a bare
+// `TRIM(str)` (1 arg, the ordinary function-call path) and the `TRIM([{BOTH|LEADING|TRAILING}]
+// [remstr] FROM str)` form (a dedicated grammar production) — the same leading-optional/reordered
+// shape SQLite's module note calls out for log() as un-curatable without asserting a wrong arity
+// for one form. DATE_ADD/DATE_SUB ARE curated: MySqlParser.g4's grammar folds their whole
+// `INTERVAL expr unit` operand into a single expression (a dedicated `intervalExpressionAtom`), so
+// the call is a genuine, arity-safe 2-argument form at the functionArgs level despite the multi-
+// word SQL surface syntax.
+// ---------------------------------------------------------------------------
+const MYSQL: Record<string, FnSignature> = {
+	// string — string-functions.html
+	concat: { name: "CONCAT", params: [p("str", "string")], variadic: true }, // CONCAT(str1,str2,...)
+	concat_ws: { name: "CONCAT_WS", params: [p("separator", "string"), p("str", "string")], variadic: true }, // CONCAT_WS(separator,str1,str2,...)
+	substring: { name: "SUBSTRING", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // SUBSTRING(str,pos[,len])
+	substr: { name: "SUBSTR", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // SUBSTR(str,pos[,len]) — documented synonym of SUBSTRING
+	left: { name: "LEFT", params: [p("str", "string"), p("len", "int")] }, // LEFT(str,len)
+	right: { name: "RIGHT", params: [p("str", "string"), p("len", "int")] }, // RIGHT(str,len)
+	lpad: { name: "LPAD", params: [p("str", "string"), p("len", "int"), p("padstr", "string")] }, // LPAD(str,len,padstr)
+	rpad: { name: "RPAD", params: [p("str", "string"), p("len", "int"), p("padstr", "string")] }, // RPAD(str,len,padstr)
+	replace: { name: "REPLACE", params: [p("str", "string"), p("from_str", "string"), p("to_str", "string")] }, // REPLACE(str,from_str,to_str)
+	repeat: { name: "REPEAT", params: [p("str", "string"), p("count", "int")] }, // REPEAT(str,count)
+	locate: { name: "LOCATE", params: [p("substr", "string"), p("str", "string"), o("pos", "int")] }, // LOCATE(substr,str[,pos])
+	instr: { name: "INSTR", params: [p("str", "string"), p("substr", "string")] }, // INSTR(str,substr)
+	substring_index: {
+		name: "SUBSTRING_INDEX",
+		params: [p("str", "string"), p("delim", "string"), p("count", "int")],
+	}, // SUBSTRING_INDEX(str,delim,count)
+	insert: { name: "INSERT", params: [p("str", "string"), p("pos", "int"), p("len", "int"), p("newstr", "string")] }, // INSERT(str,pos,len,newstr)
+	strcmp: { name: "STRCMP", params: [p("str1", "string"), p("str2", "string")] }, // STRCMP(str1,str2)
+	field: { name: "FIELD", params: [p("str", "string"), p("str1", "string")], variadic: true }, // FIELD(str,str1,str2,str3,...)
+	format: { name: "FORMAT", params: [p("X", "numeric"), p("D", "int"), o("locale", "string")] }, // FORMAT(X,D[,locale])
+	hex: { name: "HEX", params: [p("N_or_str")] }, // HEX(N) numeric form / HEX(str) string form — polymorphic
+
+	// numeric — mathematical-functions.html
+	round: { name: "ROUND", params: [p("X", "numeric"), o("D", "int")] }, // ROUND(X) / ROUND(X,D)
+	truncate: { name: "TRUNCATE", params: [p("X", "numeric"), p("D", "int")] }, // TRUNCATE(X,D)
+	mod: { name: "MOD", params: [p("N", "numeric"), p("M", "numeric")] }, // MOD(N,M)
+	pow: { name: "POW", params: [p("X", "double"), p("Y", "double")] }, // POW(X,Y)
+	power: { name: "POWER", params: [p("X", "double"), p("Y", "double")] }, // POWER(X,Y) — documented synonym of POW
+	sqrt: { name: "SQRT", params: [p("X", "numeric")] }, // SQRT(X)
+	ceiling: { name: "CEILING", params: [p("X", "numeric")] }, // CEILING(X)
+	ceil: { name: "CEIL", params: [p("X", "numeric")] }, // CEIL(X) — documented synonym of CEILING
+	floor: { name: "FLOOR", params: [p("X", "numeric")] }, // FLOOR(X)
+	rand: { name: "RAND", params: [o("N", "int")] }, // RAND([N])
+	sign: { name: "SIGN", params: [p("X", "numeric")] }, // SIGN(X)
+	abs: { name: "ABS", params: [p("X", "numeric")] }, // ABS(X)
+
+	// date/time — date-and-time-functions.html
+	date_add: { name: "DATE_ADD", params: [p("date", "date"), p("expr", "interval")] }, // DATE_ADD(date, INTERVAL expr unit)
+	date_sub: { name: "DATE_SUB", params: [p("date", "date"), p("expr", "interval")] }, // DATE_SUB(date, INTERVAL expr unit)
+	datediff: { name: "DATEDIFF", params: [p("expr1", "date"), p("expr2", "date")] }, // DATEDIFF(expr1,expr2)
+	date_format: { name: "DATE_FORMAT", params: [p("date", "date"), p("format", "string")] }, // DATE_FORMAT(date,format)
+	str_to_date: { name: "STR_TO_DATE", params: [p("str", "string"), p("format", "string")] }, // STR_TO_DATE(str,format)
+
+	// flow control — flow-control-functions.html
+	if: { name: "IF", params: [p("expr1", "boolean"), p("expr2"), p("expr3")] }, // IF(expr1,expr2,expr3)
+	ifnull: { name: "IFNULL", params: [p("expr1"), p("expr2")] }, // IFNULL(expr1,expr2)
+	nullif: { name: "NULLIF", params: [p("expr1"), p("expr2")] }, // NULLIF(expr1,expr2)
+
+	// comparison — comparison-operators.html
+	coalesce: { name: "COALESCE", params: [p("value")], variadic: true }, // COALESCE(value,...)
+	greatest: { name: "GREATEST", params: [p("value1"), p("value2")], variadic: true }, // GREATEST(value1,value2,...)
+	least: { name: "LEAST", params: [p("value1"), p("value2")], variadic: true }, // LEAST(value1,value2,...)
+
+	// conversion — cast-functions.html (both CAST and CONVERT lower to a `cast` IR node, not a
+	// `function` call, in src/mysql/lower.ts — these entries exist purely for the signature-help
+	// token-scan, never reach the arity checker)
+	cast: { name: "CAST", params: [p("expr"), p("type")] }, // CAST(expr AS type)
+	convert: { name: "CONVERT", params: [p("expr"), p("type")] }, // CONVERT(expr,type)
+
+	// JSON — json-search-functions.html
+	json_extract: { name: "JSON_EXTRACT", params: [p("json_doc", "json"), p("path", "string")], variadic: true }, // JSON_EXTRACT(json_doc,path[,path]...)
+	json_contains: {
+		name: "JSON_CONTAINS",
+		params: [p("target", "json"), p("candidate", "json"), o("path", "string")],
+	}, // JSON_CONTAINS(target,candidate[,path])
+	json_keys: { name: "JSON_KEYS", params: [p("json_doc", "json"), o("path", "string")] }, // JSON_KEYS(json_doc[,path])
+};
+
 /** Curated parameter signatures, per dialect, keyed by LOWERCASED function name. */
 export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	databricks: DATABRICKS,
@@ -589,6 +732,8 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 	postgres: POSTGRES,
 	duckdb: DUCKDB,
 	trino: TRINO,
+	sqlite: SQLITE,
+	mysql: MYSQL,
 };
 
 // ---------------------------------------------------------------------------
@@ -609,6 +754,8 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	postgres: {},
 	duckdb: {},
 	trino: {},
+	sqlite: {},
+	mysql: {},
 };
 
 /**

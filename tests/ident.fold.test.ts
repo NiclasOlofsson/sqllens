@@ -126,6 +126,45 @@ describe("trino", () => {
 	});
 });
 
+describe("sqlite", () => {
+	it("folds unquoted mixed case to lower", () => {
+		expect(foldIdentifier("Foo", "sqlite")).toBe("foo");
+	});
+	it("folds double-quoted identifiers to lower too (SQLite quirk: quoting does NOT make it case-sensitive, unlike Postgres)", () => {
+		expect(foldIdentifier('"Foo"', "sqlite")).toBe("foo");
+	});
+	it("folds bracket- and backtick-quoted identifiers to lower too", () => {
+		expect(foldIdentifier("[Foo]", "sqlite")).toBe("foo");
+		expect(foldIdentifier("`Foo`", "sqlite")).toBe("foo");
+	});
+	it("unescapes a doubled double-quote inside a quoted identifier", () => {
+		expect(foldIdentifier('"a""b"', "sqlite")).toBe('a"b');
+	});
+	it('unquoted Foo equals unquoted foo, AND equals quoted "Foo" (the SQLite quoted-insensitive quirk)', () => {
+		const unquoted = foldIdentifier("Foo", "sqlite");
+		expect(unquoted).toBe(foldIdentifier("foo", "sqlite"));
+		expect(unquoted).toBe(foldIdentifier('"Foo"', "sqlite"));
+	});
+});
+
+describe("mysql", () => {
+	it("folds unquoted mixed case to lower (column/alias names are case-insensitive on every platform)", () => {
+		expect(foldIdentifier("Amount", "mysql")).toBe("amount");
+	});
+	it("folds backtick-quoted identifiers to lower too, so a backtick-quoted name equals its unquoted spelling", () => {
+		expect(foldIdentifier("`Amount`", "mysql")).toBe("amount");
+		expect(foldIdentifier("`Amount`", "mysql")).toBe(foldIdentifier("amount", "mysql"));
+	});
+	it("unquoted Amount equals unquoted amount, AND equals backtick-quoted `Amount` (column/alias case-insensitivity, not a quoting-based distinction)", () => {
+		const unquoted = foldIdentifier("Amount", "mysql");
+		expect(unquoted).toBe(foldIdentifier("amount", "mysql"));
+		expect(unquoted).toBe(foldIdentifier("`Amount`", "mysql"));
+	});
+	it("unescapes a doubled backtick inside a quoted identifier", () => {
+		expect(foldIdentifier("`a``b`", "mysql")).toBe("a`b");
+	});
+});
+
 describe("undefined/unknown dialect", () => {
 	it("folds unquoted mixed case to lower", () => {
 		expect(foldIdentifier("MyTable", undefined)).toBe("mytable");

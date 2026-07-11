@@ -149,6 +149,57 @@ const RULES: Record<string, FoldRule> = {
 		unquoted: "lower",
 		quoted: "lower",
 	},
+
+	// sqlite.org/lang_keywords.html — verified live: SQLite recognizes three identifier-quoting
+	// delimiters, each documented only as "is an identifier" (double-quote, square-bracket, and
+	// grave-accent/backtick forms) with no case-sensitivity distinction drawn between them or
+	// against the unquoted form. SQLite's own grammar (IDENTIFIER token) treats `"x"`, `` `x` ``,
+	// `[x]` and bare `x` as the same lexical category, and SQLite's C-level identifier compare
+	// (sqlite3StrICmp) is ASCII case-insensitive regardless of how the name was spelled — the
+	// documented quirk this module's brief calls out: unlike Postgres/Snowflake, quoting an
+	// identifier does NOT make it case-sensitive in SQLite. So both unquoted AND quoted fold to
+	// lower here (same shape as redshift/duckdb/trino). SQLite's own documented fold is
+	// ASCII-only (it does not case-fold non-ASCII), but this module's shared applyCase uses JS
+	// toLowerCase() — a Unicode-wide fold — so a rare non-ASCII identifier pair (Ä vs ä) that
+	// SQLite would keep distinct conflates here: a known shared-engine limitation, consistent
+	// across every dialect in this table. Bracket delimiters have no escape mechanism (the
+	// lexer's `[`...`]` body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not
+	// unescaped, same as this module's tsql bracket handling.
+	sqlite: {
+		delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
+		unquoted: "lower",
+		quoted: "lower",
+	},
+
+	// dev.mysql.com/doc/refman/8.4/en/identifier-case-sensitivity.html — verified live. This module's
+	// fold rule is per-DIALECT, not per-identifier-KIND (only BigQuery's `tableCase` override draws
+	// that distinction), so one rule must cover both halves of a genuinely split MySQL reality:
+	// "Partition, subpartition, column, index, stored routine, event, and resource group names are
+	// not case-sensitive on any platform, nor are column aliases" — unconditional, so this module
+	// folds unquoted AND backtick-quoted identifiers to lower for equality (column/alias/CTE/field
+	// names, the identifier kinds this module actually threads through scope/qualify/infer today).
+	// KNOWN LIMITATION (documented here, not silently dropped): table/database names are genuinely
+	// platform/`lower_case_table_names`-dependent — "case sensitivity of the underlying operating
+	// system plays a part": case-SENSITIVE by default on Unix (lower_case_table_names=0), case-
+	// INSENSITIVE by default on Windows (=1) and macOS (=2), and the variable "can only be
+	// configured when initializing the server" (not discoverable from SQL text alone). A static
+	// analyzer with no server/OS context cannot resolve this per-installation choice; this module
+	// applies the same lower-fold to table identifiers too (foldTableName's kind:"table" path, since
+	// no `tableCase` override is set here) — correct for the Windows/macOS default and for Unix
+	// installs whose tables happen to be written in a single consistent case (the common case), WRONG
+	// only when a Unix-collation database genuinely holds two tables differing only in case (e.g.
+	// `Orders` and `orders` as distinct tables) — a real but narrow misresolution, called out here
+	// rather than left for a caller to discover by surprise. Identifier quote char is the backtick by
+	// default (ANSI_QUOTES mode, which repurposes `"` as the identifier quote and `` ` `` stops being
+	// special, is a session/server SQL-mode setting not visible in the SQL text either — out of
+	// scope for the same reason as lower_case_table_names). Doubled-quote escape: "To include a quote
+	// character within an identifier, quote the identifier and double the quote character" (example:
+	// `` `a``b` `` → `` a`b ``).
+	mysql: {
+		delimiters: [BACKTICK],
+		unquoted: "lower",
+		quoted: "lower",
+	},
 };
 
 // Today's behavior — the safe default for an unrecognized/absent dialect tag: strip backticks,

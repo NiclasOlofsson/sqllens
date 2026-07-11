@@ -14,7 +14,18 @@ const DP = new DefaultTemplateProvider();
 // → mismatched input), breaking the SQL parse. Anvil cascade-deletion blocker.
 // ---------------------------------------------------------------------------
 
-const DIALECTS: Dialect[] = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+const DIALECTS: Dialect[] = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+];
 
 // The anvil minimal repro: a macro call spread across multiple lines.
 const MULTILINE = 'select {{\n  elo_calc(\n   "a",\n   "b",\n  )\n}} as x from t';
@@ -27,7 +38,7 @@ function newlineOffsets(s: string): number[] {
 	return out;
 }
 
-describe("minijinja multi-line {{ }} fill — parse across all 8 dialects", () => {
+describe("minijinja multi-line {{ }} fill — parse across all dialects", () => {
 	for (const dialect of DIALECTS) {
 		it(`multi-line macro-call tag parses with 0 errors (${dialect})`, () => {
 			const r = parseTemplated(MULTILINE, dialect);

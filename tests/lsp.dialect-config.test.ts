@@ -32,9 +32,20 @@ describe("loadDialectConfig", () => {
 		expect(c.dialectFor("models/x.sql")).toBe("databricks");
 	});
 
-	it("accepts every wired dialect (all eight), none skipped as unknown", () => {
+	it("accepts every wired dialect, none skipped as unknown", () => {
 		const all = mkdtempSync(join(tmpdir(), "sqllens-all-"));
-		const dialects = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+		const dialects = [
+			"databricks",
+			"tsql",
+			"snowflake",
+			"bigquery",
+			"redshift",
+			"postgres",
+			"duckdb",
+			"trino",
+			"sqlite",
+			"mysql",
+		];
 		writeFileSync(
 			join(all, ".sqllens.json"),
 			JSON.stringify({ dialects: dialects.map((d) => ({ files: `${d}/**/*.sql`, dialect: d })) }),
@@ -97,17 +108,28 @@ describe("loadDialectConfig", () => {
 		rmSync(unk, { recursive: true, force: true });
 	});
 
-	it("all eight dialects are accepted in rules (regression: postgres/duckdb/trino were silently dropped)", () => {
-		const eight = mkdtempSync(join(tmpdir(), "sqllens-eight-"));
-		const dialects = ["databricks", "tsql", "snowflake", "bigquery", "redshift", "postgres", "duckdb", "trino"];
+	it("all dialects are accepted in rules (regression: postgres/duckdb/trino were silently dropped)", () => {
+		const allRules = mkdtempSync(join(tmpdir(), "sqllens-allrules-"));
+		const dialects = [
+			"databricks",
+			"tsql",
+			"snowflake",
+			"bigquery",
+			"redshift",
+			"postgres",
+			"duckdb",
+			"trino",
+			"sqlite",
+			"mysql",
+		];
 		writeFileSync(
-			join(eight, ".sqllens.json"),
+			join(allRules, ".sqllens.json"),
 			JSON.stringify({ dialects: dialects.map((d) => ({ files: `**/*.${d}.sql`, dialect: d })) }),
 		);
-		const c = loadDialectConfig(eight);
+		const c = loadDialectConfig(allRules);
 		expect(c.warnings).toEqual([]);
 		for (const d of dialects) expect(c.dialectFor(`models/x.${d}.sql`)).toBe(d);
-		rmSync(eight, { recursive: true, force: true });
+		rmSync(allRules, { recursive: true, force: true });
 	});
 
 	it("an engine name resolves through the derived-dialect map (athena → trino, fabric → tsql)", () => {

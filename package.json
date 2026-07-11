@@ -1,7 +1,7 @@
 {
 	"name": "sqllens",
 	"version": "1.0.0",
-	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across many SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino).",
+	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across many SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL).",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {
@@ -44,6 +44,9 @@
 		"postgres",
 		"duckdb",
 		"trino",
+		"sqlite",
+		"mysql",
+		"mariadb",
 		"antlr"
 	],
 	"author": "Niclas Olofsson",
@@ -57,7 +60,7 @@
 	"homepage": "https://github.com/NiclasOlofsson/sqllens#readme",
 	"scripts": {
 		"gen": "node tools/gen.mjs",
-		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino && npm run gen -- minijinja",
+		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino && npm run gen -- sqlite && npm run gen -- mysql && npm run gen -- minijinja",
 		"build": "npm run gen:all && tsc -p tsconfig.build.json",
 		"prepublishOnly": "npm run build",
 		"lsp": "node --import tsx src/lsp/main.ts",
