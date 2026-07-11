@@ -1,15 +1,18 @@
 name: Refresh Context7 Docs
 
 on:
-  push:
-    branches:
-      - master
+  workflow_run: # after CI, so a red commit never gets indexed
+    workflows: [CI]
+    types: [completed]
+    branches: [master]
   workflow_dispatch: # manual: re-index without a push
 
 permissions: {} # curl-only job; no repo token needed
 
 jobs:
   refresh:
+    # workflow_run fires on failure too — refresh only when CI was green
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       # Context7 auto-refresh is popularity-gated, so a low-traffic library
