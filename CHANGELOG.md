@@ -1,3 +1,46 @@
+# [1.1.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.0.0...v1.1.0) (2026-07-11)
+
+
+### Bug Fixes
+
+* context7.json description under the 200-char schema cap (validation rejected the whole file) ([c67a25c](https://github.com/NiclasOlofsson/sqllens/commit/c67a25cbac0a528d2afdbf95cdb8bb98bf8af043))
+* **mysql:** bar reserved LEFT/RIGHT as identifiers so bare LEFT/RIGHT JOIN parse ([d9cdcae](https://github.com/NiclasOlofsson/sqllens/commit/d9cdcae1b98d2fa7c3c49d4565a051bae8b9e922))
+* **mysql:** bounded docs-corpus grammar gaps — 13 cited constructs (wave 1) ([5a8e47a](https://github.com/NiclasOlofsson/sqllens/commit/5a8e47a55a74acb57c0662d1941f2c380f146c5f))
+* **mysql:** collect union trailing into-tail arm; pin join/order-by-subquery tests ([d67c8be](https://github.com/NiclasOlofsson/sqllens/commit/d67c8be146a0ba54ccb436ae1bc12ac7b76248ed))
+* **mysql:** compute part spans for fused DOT_ID tokens — a.b gets per-part addressability (no grammar change needed) ([5f84cbe](https://github.com/NiclasOlofsson/sqllens/commit/5f84cbe3f443f19d4450ab9afccd7989bb594198))
+* **mysql:** DOT_ID part spans for unspaced a.b — per-part editor addressability restored ([52b39ed](https://github.com/NiclasOlofsson/sqllens/commit/52b39edcefa378549f80f24462933569f9fcd8ca))
+* **mysql:** fractional literal without exponent is DECIMAL, not double ([f5b5482](https://github.com/NiclasOlofsson/sqllens/commit/f5b5482635fc12ed67fb49ceb6b058461971739b))
+* **mysql:** require SEMI between batch statements — quantified-subquery mis-split root fix (SLL floors 11→6, 612→33) ([2d93aa1](https://github.com/NiclasOlofsson/sqllens/commit/2d93aa1ba18ad51e9fcc309870d10c25b1342323))
+* **mysql:** reserved-word audit + SEMI-required batching — the completion round ([f83e75d](https://github.com/NiclasOlofsson/sqllens/commit/f83e75dd6b3ebc470d21583312a7ec22bf530103))
+* **mysql:** reserved-word identifier audit, the LEFT/RIGHT class checked systematically ([f3f2cb7](https://github.com/NiclasOlofsson/sqllens/commit/f3f2cb728f117fb6d8c6701cea1b9576011f12ca))
+* **sqlite:** docs scraper sees past leading comments; bucketed corpus layout ([81daa91](https://github.com/NiclasOlofsson/sqllens/commit/81daa91396d8f592d067370778c7aad20700e5ab))
+* **sqlite:** join_step sub-rule — Join.cst spans the full construct (grammar corrected in place per repo policy) ([2d3e1c1](https://github.com/NiclasOlofsson/sqllens/commit/2d3e1c1fefa72cc990e27fd01538d5c2545a6a47))
+* **sqlite:** populate SelectExpr.subqueries with expression subqueries (scalar/IN/EXISTS) ([05300c9](https://github.com/NiclasOlofsson/sqllens/commit/05300c97fe744e1de80e93c2d9cb33a4916f34bc))
+* **sqlite:** register sign() in SQLITE_FUNCTION_RETURNS ([d39d25f](https://github.com/NiclasOlofsson/sqllens/commit/d39d25fb6ad819c06774c7d5e50bc9c579ce1b8c))
+
+
+### Features
+
+* **dialects:** sqlite + mysql — two new first-class dialects (grammar → parse → lower → full semantic layer) ([a421559](https://github.com/NiclasOlofsson/sqllens/commit/a42155953566618966d4658731b7fa066ec25dc7))
+* **mysql:** corpus gate green ([b687271](https://github.com/NiclasOlofsson/sqllens/commit/b6872714091737fb832b9241eb4b94db18478a48))
+* **mysql:** docs-corpus scraper for the MySQL 8.4 reference manual ([5dd2b9f](https://github.com/NiclasOlofsson/sqllens/commit/5dd2b9f79e3245f7b61bf0f0cc24c8d1deec9dce))
+* **mysql:** docs-corpus tier green — the second gate ([5aeb132](https://github.com/NiclasOlofsson/sqllens/commit/5aeb132473114eca2d3099e5228b5cf6a9f05b2a))
+* **mysql:** fork + split grammar from grammars-v4 ([63a4dc4](https://github.com/NiclasOlofsson/sqllens/commit/63a4dc4ca16b80674fee04351aa7b084211b53dc))
+* **mysql:** inference, fold rule, derived-dialect wiring ([d7c1c76](https://github.com/NiclasOlofsson/sqllens/commit/d7c1c76cef8a4601e52e50510d1952cbae38ffb6))
+* **mysql:** lower CST to IR ([055af7f](https://github.com/NiclasOlofsson/sqllens/commit/055af7f2aea1aa32ad05c403b0cb3c8417b8a665))
+* **mysql:** parse wrapper + smoke test ([cde9ff3](https://github.com/NiclasOlofsson/sqllens/commit/cde9ff33460da4ca4cdb85136e632d00d87a8ce6))
+* **mysql:** register in compile-enforced dialect maps ([5a17648](https://github.com/NiclasOlofsson/sqllens/commit/5a17648942755638435abe99c361f75f40fe173f))
+* **mysql:** test matrix, tool registries, docs — Track B finisher (R7) ([0074bd4](https://github.com/NiclasOlofsson/sqllens/commit/0074bd405d2dee27708868179ee1ad1ad3befebd))
+* **mysql:** the 8.0.19+ query-expression restructure (wave 2) ([71df3e4](https://github.com/NiclasOlofsson/sqllens/commit/71df3e43ab8054ebab817e5d6a2331404e9745f1))
+* **sqlite:** corpus gate green ([8d28524](https://github.com/NiclasOlofsson/sqllens/commit/8d285245261deb8f03c6e68860933602fbe6eb8f))
+* **sqlite:** docs-corpus tier green ([e0c1923](https://github.com/NiclasOlofsson/sqllens/commit/e0c19231bd45581fcea3300d6c873444da3abbe9))
+* **sqlite:** fork + split grammar from grammars-v4 ([7a32407](https://github.com/NiclasOlofsson/sqllens/commit/7a324070ff99dd7c74bb3d7f3f66b057a68b9ec1))
+* **sqlite:** inference, fold rule, derived-dialect wiring ([d87000e](https://github.com/NiclasOlofsson/sqllens/commit/d87000eb8f1af4a3b72a826133ac803eb12485f4))
+* **sqlite:** lower CST to IR ([8ac1a37](https://github.com/NiclasOlofsson/sqllens/commit/8ac1a37526de34a2963ca9aaa5af0857845812b0))
+* **sqlite:** parse wrapper + smoke test ([c296dd7](https://github.com/NiclasOlofsson/sqllens/commit/c296dd7f9c3555aa8b45905f9e17bcec53056ad0))
+* **sqlite:** register in compile-enforced dialect maps ([65faaba](https://github.com/NiclasOlofsson/sqllens/commit/65faaba684bb8c04a5d17ea9df85f7f299c41e9e))
+* **sqlite:** test matrix, tool registries, docs ([b698904](https://github.com/NiclasOlofsson/sqllens/commit/b6989047b59a2f9ebd66aa2b197e65939da552e1))
+
 # [1.0.0](https://github.com/NiclasOlofsson/sqllens/compare/v0.1.1...v1.0.0) (2026-07-10)
 
 
