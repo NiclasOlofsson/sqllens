@@ -851,6 +851,21 @@ function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	// constantExpressionAtom
 	const c = directChildrenOfRule(node, P.RULE_constant)[0];
 	if (c && atoms.length === 0) return { kind: "literal", text: c.getText(), cst: node };
+	// matchAgainstExpressionAtom: MATCH '(' cols ')' AGAINST '(' expr searchModifier? ')' — modelled as
+	// a function call so EVERY matched column and the against-expression contribute column refs (a MATCH
+	// atom has direct fullColumnName children, so this must run before the bare-column branch below).
+	if (hasDirectToken(node, P.MATCH)) {
+		const cols = directChildrenOfRule(node, P.RULE_fullColumnName).map(columnRef);
+		const against = directChildrenOfRule(node, P.RULE_expression)[0];
+		return {
+			kind: "function",
+			name: "match",
+			args: [...cols, ...(against ? [lowerExpr(against)] : [])],
+			aggregate: false,
+			distinct: false,
+			cst: node,
+		};
+	}
 	// fullColumnNameExpressionAtom
 	const fcn = directChildrenOfRule(node, P.RULE_fullColumnName)[0];
 	if (fcn && atoms.length === 0) return columnRef(fcn);

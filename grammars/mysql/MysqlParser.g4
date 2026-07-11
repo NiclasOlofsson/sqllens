@@ -115,6 +115,7 @@ dmlStatement
     | callStatement
     | loadDataStatement
     | loadXmlStatement
+    | importTableStatement
     | doStatement
     | handlerStatement
     | valuesStatement
@@ -461,6 +462,9 @@ columnConstraint
     | (GENERATED ALWAYS)? AS '(' expression ')' (VIRTUAL | STORED)? # generatedColumnConstraint
     | SERIAL DEFAULT VALUE                                          # serialDefaultColumnConstraint
     | (CONSTRAINT name = uid?)? CHECK '(' expression ')'            # checkColumnConstraint
+    // Column-level [SECONDARY_]ENGINE_ATTRIBUTE [=] 'json' (8.0.21+), part of column_definition on
+    // dev.mysql.com/doc/refman/8.4/en/create-table.html; upstream modelled it only as a table option.
+    | attr = (ENGINE_ATTRIBUTE | SECONDARY_ENGINE_ATTRIBUTE) '='? STRING_LITERAL # engineAttributeColumnConstraint
     ;
 
 tableConstraint
@@ -832,13 +836,22 @@ insertStatement
     : INSERT priority = (LOW_PRIORITY | DELAYED | HIGH_PRIORITY)? IGNORE? INTO? tableName (
         PARTITION '(' partitions = uidList? ')'
     )? (
-        ('(' columns = fullColumnNameList? ')')? insertStatementValue (AS? uid)?
-        | SET setFirst = updatedElement (',' setElements += updatedElement)*
+        // The row alias may carry a column-alias list — VALUES (...) AS new(m, n, p) — and the SET
+        // form takes the alias too (both 8.0.19+): dev.mysql.com/doc/refman/8.4/en/insert.html and
+        // dev.mysql.com/doc/refman/8.4/en/insert-on-duplicate.html.
+        ('(' columns = fullColumnNameList? ')')? insertStatementValue (AS? uid ('(' uidList ')')?)?
+        | SET setFirst = updatedElement (',' setElements += updatedElement)* (AS? uid ('(' uidList ')')?)?
     ) (
         ON DUPLICATE KEY UPDATE duplicatedFirst = updatedElement (
             ',' duplicatedElements += updatedElement
         )*
     )?
+    ;
+
+// IMPORT TABLE FROM sdi_file [, sdi_file] ... — imports tables from their .sdi metadata files
+// (dev.mysql.com/doc/refman/8.4/en/import-table.html); a whole statement upstream lacked.
+importTableStatement
+    : IMPORT TABLE FROM STRING_LITERAL (',' STRING_LITERAL)*
     ;
 
 loadDataStatement
@@ -857,7 +870,10 @@ loadXmlStatement
         REPLACE
         | IGNORE
     )? INTO TABLE tableName (CHARACTER SET charset = charsetName)? (
-        ROWS IDENTIFIED BY '<' tag = STRING_LITERAL '>'
+        // The tag is ONE string literal that contains the angle brackets — ROWS IDENTIFIED BY '<person>'
+        // (dev.mysql.com/doc/refman/8.4/en/load-xml.html); upstream wrote '<' 'person' '>' (three
+        // tokens), which no real LOAD XML statement can produce.
+        ROWS IDENTIFIED BY tag = STRING_LITERAL
     )? (IGNORE decimalLiteral linesFormat = (LINES | ROWS))? (
         '(' assignmentField (',' assignmentField)* ')'
     )? (SET updatedElement (',' updatedElement)*)?
@@ -873,8 +889,8 @@ replaceStatement
     ;
 
 selectStatement
-    : querySpecification lockClause? # simpleSelect
-    | queryExpression lockClause?    # parenthesisSelect
+    : querySpecification lockClause* # simpleSelect
+    | queryExpression lockClause*    # parenthesisSelect
     | (querySpecificationNointo | queryExpressionNointo) unionStatement+ (
         UNION unionType = (ALL | DISTINCT)? (querySpecification | queryExpression)
     )? orderByClause? limitClause? lockClause?                                                                                               # unionSelect
@@ -911,8 +927,12 @@ assignmentField
     | LOCAL_ID
     ;
 
+// Locking reads (dev.mysql.com/doc/refman/8.4/en/select.html):
+//   FOR {UPDATE | SHARE} [OF tbl_name [, tbl_name] ...] [NOWAIT | SKIP LOCKED] | LOCK IN SHARE MODE
+// FOR SHARE / OF / NOWAIT / SKIP LOCKED are 8.0+ forms upstream never modelled; a SELECT may stack
+// several FOR clauses (e.g. `FOR SHARE OF t1 FOR UPDATE OF t2`), hence lockClause* at the call sites.
 lockClause
-    : FOR UPDATE
+    : FOR lockMode = (UPDATE | SHARE) (OF tableName (',' tableName)*)? (NOWAIT | SKIP_ LOCKED)?
     | LOCK IN SHARE MODE
     ;
 
@@ -987,6 +1007,10 @@ tableSourceItem
     | sequenceFunctionName '(' DECIMAL_LITERAL ')' (AS? alias = uid)?                         # sequenceTableItem
     | (selectStatement | '(' parenthesisSubquery = selectStatement ')') AS? alias = uid       # subqueryTableItem
     | '(' tableSources ')'                                                                    # tableSourcesItem
+    // JSON_TABLE is a full table factor, usable as a join operand — `t JOIN JSON_TABLE(...) jt ON ...`
+    // (dev.mysql.com/doc/refman/8.4/en/json-table-functions.html); upstream admitted it only as a
+    // top-level tableSource alternative, never behind a JOIN.
+    | jsonTable                                                                               # jsonTableItem
     ;
 
 indexHint
@@ -2198,7 +2222,13 @@ constant
     | hexadecimalLiteral
     | booleanLiteral
     | REAL_LITERAL
-    | BIT_STRING
+    // A bit-value literal takes an optional charset introducer like the hex/string forms:
+    // _binary b'01001111' — dev.mysql.com/doc/refman/8.4/en/bit-value-literals.html.
+    | STRING_CHARSET_NAME? BIT_STRING
+    // Typed temporal literals: DATE 'str' / TIME 'str' / TIMESTAMP 'str'
+    // (dev.mysql.com/doc/refman/8.4/en/date-and-time-literals.html), e.g. CAST(TIME "11:35:00" AS YEAR)
+    // on dev.mysql.com/doc/refman/8.4/en/cast-functions.html. Upstream never modelled them.
+    | (DATE | TIME | TIMESTAMP) stringLiteral
     | NOT? nullLiteral = (NULL_LITERAL | NULL_SPEC_LITERAL)
     ;
 
@@ -2272,7 +2302,10 @@ convertedDataType
     : (
         typeName = (BINARY | NCHAR | FLOAT) lengthOneDimension?
         | typeName = CHAR lengthOneDimension? (charSet charsetName)?
-        | typeName = (DATE | DATETIME | TIME | YEAR | JSON | INT | INTEGER | DOUBLE)
+        // DATETIME / TIME take an optional fractional-seconds precision — CAST(x AS DATETIME(2)) —
+        // dev.mysql.com/doc/refman/8.4/en/cast-functions.html#function_cast.
+        | typeName = (DATETIME | TIME) lengthOneDimension?
+        | typeName = (DATE | YEAR | JSON | INT | INTEGER | DOUBLE)
         | typeName = (DECIMAL | DEC) lengthTwoOptionalDimension?
         | (SIGNED | UNSIGNED) (INTEGER | INT)?
     ) ARRAY?
@@ -2376,16 +2409,26 @@ functionCall
     | (scalarFunctionName | LEFT | RIGHT) '(' functionArgs? ')' # scalarFunctionCall
     | fullId '(' functionArgs? ')'                             # udfFunctionCall
     | passwordFunctionClause                                   # passwordFunctionCall
+    // The INTERVAL(N, N1, N2, ...) comparison function
+    // (dev.mysql.com/doc/refman/8.4/en/comparison-operators.html#function_interval). Two-plus
+    // arguments by construction — that is both the function's real arity (one comparison subject,
+    // >=1 boundaries) and what keeps `INTERVAL (expr) unit` (intervalExpressionAtom) unambiguous.
+    | INTERVAL '(' expression (',' expression)+ ')'            # intervalFunctionCall
     ;
 
 specificFunction
-    : (CURRENT_DATE | CURRENT_TIME | CURRENT_TIMESTAMP | LOCALTIME | UTC_TIMESTAMP | SCHEMA) (
+    // CURRENT_ROLE() added: a documented information function
+    // (dev.mysql.com/doc/refman/8.4/en/information-functions.html#function_current-role); the lexer
+    // token existed but no parser rule admitted it.
+    : (CURRENT_DATE | CURRENT_TIME | CURRENT_TIMESTAMP | CURRENT_ROLE | LOCALTIME | UTC_TIMESTAMP | SCHEMA) (
         '(' ')'
     )?                                                                       # simpleFunctionCall
     | currentUserExpression                                                  # currentUser
     | CONVERT '(' expression separator = ',' convertedDataType ')'           # dataTypeFunctionCall
     | CONVERT '(' expression USING charsetName ')'                           # dataTypeFunctionCall
-    | CAST '(' expression AS convertedDataType ')'                           # dataTypeFunctionCall
+    // The optional AT TIME ZONE [INTERVAL] 'tz' clause (8.0.22+) converts a TIMESTAMP argument's zone:
+    // CAST(ts AT TIME ZONE '+00:00' AS DATETIME) — dev.mysql.com/doc/refman/8.4/en/cast-functions.html#function_cast.
+    | CAST '(' expression (AT TIME ZONE INTERVAL? stringLiteral)? AS convertedDataType ')' # dataTypeFunctionCall
     | VALUES '(' fullColumnName ')'                                          # valuesFunctionCall
     | CASE expression caseFuncAlternative+ (ELSE elseArg = functionArg)? END # caseExpressionFunctionCall
     | CASE caseFuncAlternative+ (ELSE elseArg = functionArg)? END            # caseFunctionCall
@@ -2586,6 +2629,10 @@ expressionAtom
     | EXISTS '(' selectStatement ')'                            # existsExpressionAtom
     | '(' selectStatement ')'                                   # subqueryExpressionAtom
     | INTERVAL expression intervalType                          # intervalExpressionAtom
+    // Fulltext search: MATCH (col [, col] ...) AGAINST (expr [search_modifier])
+    // (dev.mysql.com/doc/refman/8.4/en/fulltext-search.html) — legal anywhere an expression is
+    // (select list, WHERE, HAVING, GROUP BY, ORDER BY). Upstream never modelled it.
+    | MATCH '(' fullColumnName (',' fullColumnName)* ')' AGAINST '(' expression searchModifier? ')' # matchAgainstExpressionAtom
     | left = expressionAtom bitOperator right = expressionAtom  # bitExpressionAtom
     | left = expressionAtom multOperator right = expressionAtom # mathExpressionAtom
     | left = expressionAtom addOperator right = expressionAtom  # mathExpressionAtom
@@ -2598,6 +2645,14 @@ unaryOperator
     | '+'
     | '-'
     | NOT
+    ;
+
+// The fulltext search_modifier (dev.mysql.com/doc/refman/8.4/en/fulltext-search.html):
+//   IN NATURAL LANGUAGE MODE [WITH QUERY EXPANSION] | IN BOOLEAN MODE | WITH QUERY EXPANSION
+searchModifier
+    : IN NATURAL LANGUAGE MODE (WITH QUERY EXPANSION)?
+    | IN BOOLEAN MODE
+    | WITH QUERY EXPANSION
     ;
 
 comparisonOperator
@@ -2738,6 +2793,9 @@ keywordsCanBeId
     | ACTION
     | ADMIN
     | AFTER
+    // AGAINST / EXPANSION / ZONE are new fork tokens (fulltext search, CAST AT TIME ZONE) and are
+    // non-reserved words (dev.mysql.com/doc/refman/8.4/en/keywords.html), so they stay identifiers.
+    | AGAINST
     | AGGREGATE
     | ALGORITHM
     | ANY
@@ -2849,6 +2907,7 @@ keywordsCanBeId
     | EXCEPT
     | EXCHANGE
     | EXCLUSIVE
+    | EXPANSION
     | EXPIRE
     | EXPORT
     | EXTENDED
@@ -3069,6 +3128,11 @@ keywordsCanBeId
     | SECURITY
     | SECONDARY_ENGINE_ATTRIBUTE
     | SENSITIVE_VARIABLES_OBSERVER
+    // SEQUENCE is NOT a MySQL keyword at all (dev.mysql.com/doc/refman/8.4/en/keywords.html has no
+    // SEQUENCE entry) — the lexer token existed but was orphaned, silently reserving the word and
+    // rejecting `CREATE TABLE sequence` (a documented example on
+    // dev.mysql.com/doc/refman/8.4/en/information-functions.html). Same defect class as LEFT/RIGHT.
+    | SEQUENCE
     | SEQUENCE_TABLE
     | SERIAL
     | SERVER
@@ -3165,6 +3229,7 @@ keywordsCanBeId
     | XA_RECOVER_ADMIN
     | XML
     | YES
+    | ZONE
     ;
 
 functionNameBase

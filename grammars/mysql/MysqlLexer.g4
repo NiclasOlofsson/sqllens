@@ -405,6 +405,9 @@ UTC_TIMESTAMP     : 'UTC_TIMESTAMP';
 ACCOUNT                     : 'ACCOUNT';
 ACTION                      : 'ACTION';
 AFTER                       : 'AFTER';
+// AGAINST added for fulltext MATCH (...) AGAINST (...) (dev.mysql.com/doc/refman/8.4/en/fulltext-search.html);
+// non-reserved (dev.mysql.com/doc/refman/8.4/en/keywords.html), so it is also in keywordsCanBeId.
+AGAINST                     : 'AGAINST';
 AGGREGATE                   : 'AGGREGATE';
 ALGORITHM                   : 'ALGORITHM';
 ANY                         : 'ANY';
@@ -490,6 +493,9 @@ EVENTS                      : 'EVENTS';
 EVERY                       : 'EVERY';
 EXCHANGE                    : 'EXCHANGE';
 EXCLUSIVE                   : 'EXCLUSIVE';
+// EXPANSION added for fulltext WITH QUERY EXPANSION (dev.mysql.com/doc/refman/8.4/en/fulltext-query-expansion.html);
+// non-reserved (dev.mysql.com/doc/refman/8.4/en/keywords.html), so it is also in keywordsCanBeId.
+EXPANSION                   : 'EXPANSION';
 EXPIRE                      : 'EXPIRE';
 EXPORT                      : 'EXPORT';
 EXTENDED                    : 'EXTENDED';
@@ -754,6 +760,9 @@ X509                        : 'X509';
 XA                          : 'XA';
 XML                         : 'XML';
 YES                         : 'YES';
+// ZONE added for CAST(... AT TIME ZONE ... AS DATETIME) (dev.mysql.com/doc/refman/8.4/en/cast-functions.html,
+// 8.0.22+); non-reserved (dev.mysql.com/doc/refman/8.4/en/keywords.html), so it is also in keywordsCanBeId.
+ZONE                        : 'ZONE';
 
 // Date format Keywords
 
