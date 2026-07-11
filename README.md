@@ -2,13 +2,16 @@
 
 [![npm version](https://img.shields.io/npm/v/sqllens)](https://www.npmjs.com/package/sqllens) [![license](https://img.shields.io/npm/l/sqllens)](LICENSE)
 
-A TypeScript SQL parser and static analyzer. It parses SQL into a tree, lowers it
-to a dialect-neutral intermediate representation (IR), and runs a semantic layer
-over that IR: name resolution (scope), schema-fed qualification, type inference,
-and column lineage. Give it a
+A TypeScript SQL parser and static analyzer. It parses SQL into a syntax tree
+(AST), lowers it to a dialect-neutral intermediate representation (IR), and runs
+a semantic layer over that IR: name resolution (scope), schema-fed qualification,
+type inference, and column lineage. Give it a
 query and it tells you the query's sources, its output columns, their types, and
 where each column comes from. The parsers are generated TypeScript on the
-[antlr4ng](https://github.com/mike-lischke/antlr4ng) runtime.
+[antlr4ng](https://github.com/mike-lischke/antlr4ng) runtime. Dialects covered:
+Databricks (Spark SQL), T-SQL, Snowflake, BigQuery (GoogleSQL), Redshift,
+PostgreSQL, DuckDB, Trino, SQLite, and MySQL, plus derived engines such as
+Athena, Fabric, and MariaDB — see [Dialects](#dialects).
 
 The front end is error-tolerant and token-first, so the library drives editor
 features (completion, hover, diagnostics, go-to-definition) over incomplete,
@@ -60,9 +63,21 @@ the primary dialect's. Microsoft Fabric runs a restricted subset of T-SQL, Amazo
 Athena's engine is Trino, and AWS Glue runs Spark. Each one is checked against real
 SQL from that engine before it goes on the list.
 
-In code, the `dialect` argument is one of `"databricks" | "tsql" | "snowflake" | "bigquery" | "redshift" | "postgres" | "duckdb" | "trino" | "sqlite" | "mysql"`. `resolveDialect` turns an
-engine name (or a dialect name) into the one that parses it: `resolveDialect("athena")`
-returns `"trino"`.
+In code, the `dialect` argument is a plain string, and `resolveDialect` turns an
+engine name (or a dialect name) into the dialect that parses its SQL:
+
+```ts
+import { parse, resolveDialect } from "sqllens";
+
+// dialect strings: "databricks" | "tsql" | "snowflake" | "bigquery" |
+// "redshift" | "postgres" | "duckdb" | "trino" | "sqlite" | "mysql"
+parse("SELECT 1", "snowflake");
+
+// engine name → the dialect that parses it
+resolveDialect("athena"); // "trino"
+resolveDialect("fabric"); // "tsql"
+resolveDialect("mariadb"); // "mysql"
+```
 
 The semantic layer is dialect-agnostic: it operates on the shared IR and runs
 unchanged on every dialect. Only the parse and lower stages are dialect-specific.
@@ -287,6 +302,41 @@ invariants the conformance gates check. Tokens tile the source byte-for-byte, ev
 span is in original document coordinates, broken input never throws, and tag-free
 text is identical to a plain parse.
 
+## Broken and incomplete SQL
+
+sqllens is error-tolerant by construction, because its first consumer is an
+editor and editor input is mid-keystroke most of the time. Parsing broken,
+partial, or invalid SQL never throws: syntax errors come back as positioned
+diagnostics (line, column, offset, length — squiggle-ready), and the rest of
+the result stays usable.
+
+```ts
+import { parse } from "sqllens";
+
+// mid-edit input: a dangling comma and an unfinished WHERE
+const r = parse("SELECT total, FROM orders WHERE", "postgres");
+
+r.errors; // 1 — counted, not thrown
+r.diagnostics[0]; // { message: "mismatched input ','…", line: 1, column: 12, offset: 12, length: 1 }
+r.ast; // still a usable IR — lower() is total on broken input
+r.tokens.length; // 10 — the full token stream, exact spans intact
+```
+
+Every downstream pass keeps the same contract: `lower()` yields a flagged IR
+instead of throwing, statement-level containment keeps one broken statement
+from taking down its neighbors, and the interactive features run on the
+broken text directly:
+
+```ts
+import { SqlSession, Schema } from "sqllens";
+
+const schema = new Schema({ orders: { id: "int", total: "decimal" } });
+
+// the projection slot is empty — the user just hasn't typed it yet
+const s = SqlSession.create("SELECT  FROM orders", "postgres", { schema });
+s.completeAt(7); // candidates for the empty slot: total, id, keywords, functions
+```
+
 ## Editor / language tooling
 
 The front end is error-tolerant and token-first, so it serves editor features
@@ -310,6 +360,17 @@ that run on incomplete, mid-edit text. They never need a clean parse:
 - `referencesAt(scopes, offset, schema?)`: every occurrence (plus the declaration)
   of the symbol under the cursor; backs find-references, document highlight, and
   code-lens reference counts.
+
+To tokenize SQL without parsing at all, `tokenize` is lexer-only and works on
+any text — including text no parser would accept:
+
+```ts
+import { tokenize } from "sqllens";
+
+const tokens = tokenize("SELECT amount FROM sales", "snowflake");
+tokens[0]; // { text: "SELECT", start: 0, stop: 5, line: 1, column: 0, role: "keyword", channel: 0, … }
+tokens[1]; // whitespace rides the hidden channel: { text: " ", channel: 1, role: "whitespace", … }
+```
 
 ```ts
 import { SqlDocument, Schema } from "sqllens";
@@ -389,6 +450,25 @@ Legend: ✅ implemented · ◻️ not yet / deferred · — not applicable to SQ
 deferred items are tracked work: rename and
 code actions are the next LSP phase, workspace symbols need the project model,
 and formatting is expected to wrap an existing external formatter.
+
+## How sqllens compares
+
+The SQL-parser field splits into parse-only libraries and semantic tools bound
+to a single borrowed parser. The full survey, with the whole field catalogued,
+is in [docs/sql-parser-landscape.md](docs/sql-parser-landscape.md); the short
+version against the libraries people usually reach for:
+
+| | Language | Dialect breadth | Semantic analysis | Error-tolerant, editor-grade |
+|---|---|---|---|---|
+| **sqllens** | TypeScript | Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL | scope, schema qualification, type inference, column lineage, symbols | yes — parses mid-keystroke input, positioned diagnostics, total pipeline |
+| [sqlglot](https://github.com/tobymao/sqlglot) | Python | 31 dialects | transpile, optimize, qualify, lineage | no — a batch library, not built for per-keystroke reparse |
+| [node-sql-parser](https://github.com/taozhi8833998/node-sql-parser) | JS/TS | MySQL, PostgreSQL, and more | table/column lists only — no lineage, no types | no |
+| [sqllineage](https://github.com/reata/sqllineage) | Python | via sqlfluff's parser | column lineage only | no |
+| [libpg_query](https://github.com/pganalyze/libpg_query) | C (bindings) | PostgreSQL, exact | parse only | no — one syntax error fails the whole buffer |
+
+The corner sqllens occupies: multi-dialect breadth, schema-fed semantics, and
+editor-grade error tolerance in one TypeScript library. Each piece exists
+elsewhere; the combination did not.
 
 ## Architecture
 
