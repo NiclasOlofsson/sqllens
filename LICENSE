@@ -19,13 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-This MIT license covers the original sqllens source: everything under src/
-(excluding generated output), tools/, tests/, and the project documentation.
-
-The hand-maintained ANTLR grammars under grammars/ are forks of third-party
-grammars and remain under their upstream licenses (Apache-2.0, BSD-3-Clause, and
-MIT, depending on the grammar). Each grammar file retains its original license
-header, and the full per-grammar attributions are in THIRD-PARTY-NOTICES.md.
