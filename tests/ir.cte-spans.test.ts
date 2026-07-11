@@ -12,6 +12,7 @@ const DIALECTS = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ] as const;
 
 describe("CteDef.nameCst", () => {

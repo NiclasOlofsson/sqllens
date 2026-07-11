@@ -24,6 +24,7 @@ const DIALECTS = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ] as const;
 
 let h: LspHarness;

@@ -18,6 +18,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 // The CTE body carries an inner ORDER BY with the SAME column names as the root's (line 1

@@ -32,6 +32,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 /** Strip one trailing CR/LF/CRLF, if a comment token captured it (databricks/trino/bigquery do). */

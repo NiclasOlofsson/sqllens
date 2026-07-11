@@ -19,6 +19,8 @@ import { parseDuckdb } from "../src/duckdb/parse.js";
 import { parseTrino } from "../src/trino/parse.js";
 import { lower as lowerSqlite } from "../src/sqlite/lower.js";
 import { parseSqlite } from "../src/sqlite/parse.js";
+import { lower as lowerMysql } from "../src/mysql/lower.js";
+import { parseMysql } from "../src/mysql/parse.js";
 
 // P1 (Anvil): the additive Join[] view over the FROM join chain. Per dialect: a 3-join chain (spans
 // ordered left-to-right, each covering its own JOIN…ON text), a USING join where the grammar has one,
@@ -57,6 +59,7 @@ const DIALECTS: Record<string, Dialect> = {
 	duckdb: { name: "duckdb", parse: parseDuckdb, lower: lowerDuckdb as LowerFn },
 	trino: { name: "trino", parse: parseTrino, lower: lowerTrino as LowerFn, cumulativeSpans: true },
 	sqlite: { name: "sqlite", parse: parseSqlite, lower: lowerSqlite as LowerFn },
+	mysql: { name: "mysql", parse: parseMysql, lower: lowerMysql as LowerFn },
 };
 
 // --- Shared per-dialect assertions ------------------------------------------
@@ -134,6 +137,7 @@ const USING_CASES: Record<string, string> = {
 	duckdb: "SELECT * FROM a JOIN b USING (x)",
 	trino: "SELECT * FROM a JOIN b USING (x)",
 	sqlite: "SELECT * FROM a JOIN b USING (x)",
+	mysql: "SELECT * FROM a JOIN b USING (x)",
 };
 for (const key of Object.keys(USING_CASES)) {
 	const d = DIALECTS[key];
@@ -247,5 +251,23 @@ describe("Join kind coverage", () => {
 		const nat = sel(d, "SELECT * FROM a NATURAL JOIN b");
 		expect(nat.joins?.[0].kind).toBe("natural");
 		expect(nat.joins?.[0].natural).toBe(true);
+	});
+
+	it("mysql: left/right/cross/inner + natural flag; no FULL (grammar has no FULL JOIN production)", () => {
+		const d = DIALECTS.mysql;
+		expect(kindsOf(d, "SELECT * FROM a LEFT JOIN b ON a.x = b.x")).toEqual(["left"]);
+		expect(kindsOf(d, "SELECT * FROM a RIGHT JOIN b ON a.x = b.x")).toEqual(["right"]);
+		expect(kindsOf(d, "SELECT * FROM a CROSS JOIN b")).toEqual(["cross"]);
+		expect(kindsOf(d, "SELECT * FROM a INNER JOIN b ON a.x = b.x")).toEqual(["inner"]);
+		const nat = sel(d, "SELECT * FROM a NATURAL JOIN b");
+		expect(nat.joins?.[0].kind).toBe("natural");
+		expect(nat.joins?.[0].natural).toBe(true);
+		// MySQL's joinPart production only has INNER/CROSS/LEFT/RIGHT/NATURAL/STRAIGHT_JOIN alternatives
+		// (grammars/mysql/MySqlParser.g4) — no FULL keyword branch, matching real MySQL (no FULL OUTER
+		// JOIN until you emulate it with a UNION). A genuine grammar gap, not a lowering omission.
+		expect(parseMysql("SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x").errors).toBeGreaterThan(0);
+		// STRAIGHT_JOIN is MySQL-specific (a join-order hint) and lowers to "inner" — documented in
+		// src/mysql/lower.ts's joinKind() doc comment.
+		expect(kindsOf(d, "SELECT * FROM a STRAIGHT_JOIN b ON a.x = b.x")).toEqual(["inner"]);
 	});
 });

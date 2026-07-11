@@ -23,13 +23,13 @@ string.
 
 ## The contract
 
-| IR field            | databricks | tsql   | snowflake | bigquery       | redshift | postgres | duckdb | trino  | sqlite |
-| -------------------- | ---------- | ------ | --------- | -------------- | -------- | -------- | ------ | ------ | ------ |
-| `ColumnRef.parts`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
-| `TableSource.name`    | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
-| `TableSource.alias`   | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
-| `CteDef.name`         | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
-| `Projection.name`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   |
+| IR field            | databricks | tsql   | snowflake | bigquery       | redshift | postgres | duckdb | trino  | sqlite | mysql |
+| -------------------- | ---------- | ------ | --------- | -------------- | -------- | -------- | ------ | ------ | ------ | ----- |
+| `ColumnRef.parts`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   | kept  |
+| `TableSource.name`    | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   | kept  |
+| `TableSource.alias`   | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   | kept  |
+| `CteDef.name`         | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   | kept  |
+| `Projection.name`     | kept       | kept   | kept      | **stripped**   | kept     | kept     | kept   | kept   | kept   | kept  |
 
 "Kept" means `` `col` ``/`"col"`/`[col]` arrives in the string with its delimiters
 still on it. "Stripped" means the delimiters are gone and the string is the bare
@@ -66,6 +66,26 @@ contexts). The SQLite-specific quirk lives downstream in `foldIdentifier`
 folds a *quoted* identifier case-insensitively too (`"Foo"` and `"foo"` name
 the same column) — quoting suppresses SQLite's normal keyword handling, not its
 case-insensitivity.
+
+MySQL follows the same "keep raw" pattern too: its `lower.ts` reads identifier
+text through plain `.getText()`, delimiters intact across all five fields. Its
+only identifier-quoting delimiter is `` `backtick-quoted` `` — a bare `"..."` is
+a STRING_LITERAL by default (`MySqlLexer.g4` only defines `REVERSE_QUOTE_ID` for
+identifiers; `DOUBLE_QUOTE_ID` is commented out, matching MySQL's own
+`ANSI_QUOTES`-off default). The fold rule (`src/ident/fold.ts`'s `mysql` entry)
+folds both unquoted AND backtick-quoted identifiers case-insensitively for
+column/alias/CTE/field names (`` `Amount` `` and `amount` name the same column)
+— MySQL's own docs are explicit that this holds "on any platform" for those
+kinds. Table/database names are the one exception, and it's platform-dependent
+(`lower_case_table_names`, not discoverable from SQL text alone): see the
+`mysql` entry's doc comment in `src/ident/fold.ts` for the exact default-per-OS
+breakdown and the narrow case it gets wrong. Separately, an UNSPACED dot (`a.b`,
+how it's normally written) lexes as one fused `DOT_ID` token in this grammar
+fork, which costs `ColumnRef.partSpans`/`TableSource.namePartSpans` for the
+part after the dot (see `dottedParts` in `src/mysql/lower.ts`) — a raw-field
+`kept`/`stripped` question this table answers either way, but the recovery path
+in the next section is unavailable for that part until the source is spaced out
+or grammar-fixed.
 
 ## Recovering the raw form regardless of a field's own stripping
 

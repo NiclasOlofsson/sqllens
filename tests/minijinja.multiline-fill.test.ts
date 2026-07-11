@@ -24,6 +24,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 // The anvil minimal repro: a macro call spread across multiple lines.
@@ -37,7 +38,7 @@ function newlineOffsets(s: string): number[] {
 	return out;
 }
 
-describe("minijinja multi-line {{ }} fill — parse across all 9 dialects", () => {
+describe("minijinja multi-line {{ }} fill — parse across all dialects", () => {
 	for (const dialect of DIALECTS) {
 		it(`multi-line macro-call tag parses with 0 errors (${dialect})`, () => {
 			const r = parseTemplated(MULTILINE, dialect);

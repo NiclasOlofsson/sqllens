@@ -32,7 +32,7 @@ describe("loadDialectConfig", () => {
 		expect(c.dialectFor("models/x.sql")).toBe("databricks");
 	});
 
-	it("accepts every wired dialect (all nine), none skipped as unknown", () => {
+	it("accepts every wired dialect, none skipped as unknown", () => {
 		const all = mkdtempSync(join(tmpdir(), "sqllens-all-"));
 		const dialects = [
 			"databricks",
@@ -44,6 +44,7 @@ describe("loadDialectConfig", () => {
 			"duckdb",
 			"trino",
 			"sqlite",
+			"mysql",
 		];
 		writeFileSync(
 			join(all, ".sqllens.json"),
@@ -107,8 +108,8 @@ describe("loadDialectConfig", () => {
 		rmSync(unk, { recursive: true, force: true });
 	});
 
-	it("all nine dialects are accepted in rules (regression: postgres/duckdb/trino were silently dropped)", () => {
-		const nine = mkdtempSync(join(tmpdir(), "sqllens-nine-"));
+	it("all dialects are accepted in rules (regression: postgres/duckdb/trino were silently dropped)", () => {
+		const allRules = mkdtempSync(join(tmpdir(), "sqllens-allrules-"));
 		const dialects = [
 			"databricks",
 			"tsql",
@@ -119,15 +120,16 @@ describe("loadDialectConfig", () => {
 			"duckdb",
 			"trino",
 			"sqlite",
+			"mysql",
 		];
 		writeFileSync(
-			join(nine, ".sqllens.json"),
+			join(allRules, ".sqllens.json"),
 			JSON.stringify({ dialects: dialects.map((d) => ({ files: `**/*.${d}.sql`, dialect: d })) }),
 		);
-		const c = loadDialectConfig(nine);
+		const c = loadDialectConfig(allRules);
 		expect(c.warnings).toEqual([]);
 		for (const d of dialects) expect(c.dialectFor(`models/x.${d}.sql`)).toBe(d);
-		rmSync(nine, { recursive: true, force: true });
+		rmSync(allRules, { recursive: true, force: true });
 	});
 
 	it("an engine name resolves through the derived-dialect map (athena → trino, fabric → tsql)", () => {

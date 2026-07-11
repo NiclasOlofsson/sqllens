@@ -64,9 +64,9 @@ shared IR and runs unchanged on every dialect.
 Anything not yet built is a **visible Open Gap** — a tracked, known limitation,
 never a silent scope boundary.
 
-## The eight dialects
+## The dialects
 
-All eight parse + lower at their corpus gates, and the semantic layer runs
+All parse + lower at their corpus gates, and the semantic layer runs
 unchanged on each. Every grammar is a standalone split pair
 (`grammars/<dialect>/<Dialect>Lexer.g4` + `<Dialect>Parser.g4`), forked in place.
 
@@ -80,6 +80,8 @@ unchanged on each. Every grammar is a standalone split pair
 | PostgreSQL | `bytebase/parser` `postgresql/` (PG18 keywords) | BSD-3 | `root` |
 | DuckDB | this repo's own `grammars/postgres/` pair | BSD-3 (inherited) | `root` |
 | Trino | first-party `trinodb/trino` `SqlBase.g4` (rel. 482), mechanically split | Apache-2.0 | `root` |
+| SQLite | `antlr/grammars-v4` `sql/sqlite` (Martin Mirchev) | MIT | `parse` |
+| MySQL | `antlr/grammars-v4` `sql/mysql/Positive-Technologies` (Ivan Kochurkin) | MIT | `root` |
 
 Notes on the less obvious lineages:
 
@@ -91,13 +93,17 @@ Notes on the less obvious lineages:
   to TS, a batch `root` entry added — the whole delta is in the grammar headers), so
   upstream parity is by construction. On a new Trino release, diff upstream's
   `SqlBase.g4` against ours and re-apply the small header-documented split delta.
+- **MySQL** has a derived-dialect alias, `mariadb`, mapped to the same grammar
+  (MariaDB forked from MySQL 5.1 and is a near-superset for ordinary DQL/DML). It
+  is a PARTIAL alias, not full coverage — MariaDB-only extensions (sequences,
+  `RETURNING`) are unmodeled; see `src/derived-dialects.ts`'s `mariadb` entry.
 
 Third-party grammar attributions are in [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md);
 each `.g4` also retains its upstream license header.
 
 There is also an additive **jinja-SQL front end** under `src/minijinja/` (grammar at
 `grammars/minijinja/`, hand-authored — no upstream fork exists) that parses raw dbt
-templates. It is reachable only through the public barrel and leaves the eight SQL
+templates. It is reachable only through the public barrel and leaves the SQL
 grammars untouched. The oracle is **minijinja** (the Rust engine dbt Fusion uses,
 not Jinja2). See [docs/minijinja-front-end.md](docs/minijinja-front-end.md).
 
@@ -142,7 +148,7 @@ not Jinja2). See [docs/minijinja-front-end.md](docs/minijinja-front-end.md).
 ## Commands
 
 ```bash
-npm run gen -- <dialect>             # antlr-ng → TS into src/generated/<dialect>/ (databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino); dialect arg required
+npm run gen -- <dialect>             # antlr-ng → TS into src/generated/<dialect>/ (databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino | sqlite | mysql); dialect arg required
 npm run typecheck                    # tsgo -p tsconfig.json (noEmit; tsc is the fallback compiler)
 npm test                             # tier 1 — the fast inner loop: units + features + LSP (corpus gates excluded); well under a minute
 npm run test:corpus                  # tier 2 — the conformance gates (tests/corpus/**); ~3–5 min. Green required before any merge to master

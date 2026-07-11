@@ -162,6 +162,17 @@ const DIALECTS: DialectCfg[] = [
 			return { L: SqliteLexer as unknown as LexerCtor, P: SqliteParser as unknown as ParserCtor };
 		},
 	},
+	{
+		name: "mysql",
+		dir: "mysql/docs/parser/positive/query",
+		entry: "root",
+		loadParse: async () => (await import("../src/mysql/parse.js")).parseMysql,
+		loadRaw: async () => {
+			const { MysqlLexer } = await import("../src/generated/mysql/MysqlLexer.js");
+			const { MysqlParser } = await import("../src/generated/mysql/MysqlParser.js");
+			return { L: MysqlLexer as unknown as LexerCtor, P: MysqlParser as unknown as ParserCtor };
+		},
+	},
 ];
 
 function sample<T>(xs: T[], cap: number): T[] {

@@ -5,7 +5,7 @@ title: ""
 labels: bug
 ---
 
-**Dialect:** <!-- databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino -->
+**Dialect:** <!-- databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino | sqlite | mysql -->
 
 **SQL that triggers it**
 

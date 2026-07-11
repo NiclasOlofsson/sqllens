@@ -16,6 +16,7 @@ const DIALECTS: Dialect[] = [
 	"duckdb",
 	"trino",
 	"sqlite",
+	"mysql",
 ];
 
 describe("dialectSymbols — brief smoke examples", () => {

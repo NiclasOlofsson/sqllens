@@ -120,6 +120,7 @@ const CORPORA: Corpus[] = [
 	{ rootRel: "sqlite/grammars-v4", dialect: "sqlite" },
 	{ rootRel: "sqlite/docs", dialect: "sqlite" },
 	{ rootRel: "mysql/grammars-v4", dialect: "mysql" },
+	{ rootRel: "mysql/docs", dialect: "mysql" },
 ];
 
 function sqlFiles(root: string): string[] {

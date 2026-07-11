@@ -143,3 +143,22 @@ describe.each(["redshift", "duckdb", "trino", "sqlite"] as const)('%s — quoted
 		expect(a.diagnostics).toEqual([]);
 	});
 });
+
+// mysql is the SAME "quoted folds insensitively too" family as redshift/duckdb/trino/sqlite above, but
+// its identifier quote char is the backtick, not `"` — MySqlLexer.g4 treats a double-quoted literal as
+// a STRING_LITERAL by default (ANSI_QUOTES mode, which repurposes `"` as an identifier quote, is a
+// session/server setting invisible in SQL text — src/ident/fold.ts's mysql rule comment). So mysql gets
+// its own block with backtick-quoted source instead of joining the shared describe.each above.
+describe('mysql — backtick-quoted `FOO` ≡ unquoted foo (both fold lower)', () => {
+	const schema = new Schema({ t: { foo: "int" } });
+
+	it("SELECT `FOO` FROM t resolves against the unquoted foo column", () => {
+		const a = analyze("SELECT `FOO` FROM t", "mysql", { schema });
+		expect(a.diagnostics).toEqual([]);
+	});
+
+	it("SELECT foo FROM t still resolves (control)", () => {
+		const a = analyze("SELECT foo FROM t", "mysql", { schema });
+		expect(a.diagnostics).toEqual([]);
+	});
+});
