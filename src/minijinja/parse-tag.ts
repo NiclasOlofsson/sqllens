@@ -4,7 +4,7 @@ import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 
 // ---------------------------------------------------------------------------
-// The first file of the jinja front-end module (docs/minijinja-front-end.md, inc1).
+// The first file of the jinja front-end module (docs/minijinja-front-end.md).
 // A minimal wrapper that lexes + parses ONE jinja tag's text (delimiters
 // included) with the generated island grammar. Unlike the SQL wrappers this
 // uses the DEFAULT recovering error strategy (not BailErrorStrategy), so a

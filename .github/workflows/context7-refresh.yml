@@ -16,13 +16,20 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # Context7 auto-refresh is popularity-gated, so a low-traffic library
-      # goes stale; this pings their refresh API on every push instead.
+      # goes stale; this pings their refresh API after every green CI run.
       # libraryName is the Context7 ID (lowercase), not github.repository.
-      # --fail-with-body turns an HTTP error into a red job (plain -s would
-      # stay green while refreshes silently never happen).
+      # An HTTP error fails the job (a silent non-refresh is worse than red) —
+      # except 429: owners get 10 refreshes/day, so hitting the cap on a busy
+      # push day is expected and the next day's first push catches up.
       - name: Trigger Context7 refresh
         run: |
-          curl -sS --fail-with-body -X POST https://context7.com/api/v1/refresh \
+          http=$(curl -sS -o response.json -w "%{http_code}" -X POST https://context7.com/api/v1/refresh \
             -H "Content-Type: application/json" \
             -H "Authorization: Bearer ${{ secrets.CONTEXT7_API_KEY }}" \
-            -d '{"libraryName": "/niclasolofsson/sqllens"}'
+            -d '{"libraryName": "/niclasolofsson/sqllens"}')
+          cat response.json; echo
+          if [ "$http" = "429" ]; then
+            echo "::notice::Context7 daily refresh limit reached — skipped; next refresh catches up"
+            exit 0
+          fi
+          [ "$http" -ge 200 ] && [ "$http" -lt 300 ]

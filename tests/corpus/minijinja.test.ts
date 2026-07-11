@@ -15,7 +15,7 @@ import type { PartSpan } from "../../src/ir/part-span.js";
 import type { QueryExpr, QueryBody, Source, TableSource } from "../../src/ir/ir.js";
 
 // ---------------------------------------------------------------------------
-// inc1 jinja corpus gate (docs/minijinja-front-end.md §inc1 gates). A focused,
+// The jinja corpus gate (docs/minijinja-front-end.md §The gates). A focused,
 // in-repo fixture set of real-shaped dbt model snippets (NOT the big corpus —
 // raw jinja templates aren't in sqllens-corpus, which holds COMPILED SQL). Over
 // every fixture it proves the four hard inc1 contracts:

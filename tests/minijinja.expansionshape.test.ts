@@ -6,8 +6,8 @@ import { parseTemplated } from "../src/minijinja/index.js";
 import { shaped } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
-// inc3.2 — `expansionShape`: shaped, length- AND newline-preserving placeholders
-// (docs/minijinja-front-end.md § inc3 increment 2). The residual class it kills:
+// `expansionShape`: shaped, length- AND newline-preserving placeholders
+// (docs/minijinja-front-end.md §The hole / §The seam). The residual class it kills:
 // an UNKNOWN CALLABLE at STATEMENT position — `{{ macro() }}` standalone, or a
 // macro-generated CTE body `with c as ({{ macro() }})`. inc1's single-identifier
 // fill can't fuse into valid SQL there, so the SQL parse FAILS. With a catalog

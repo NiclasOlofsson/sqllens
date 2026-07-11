@@ -1,6 +1,6 @@
 // ---------------------------------------------------------------------------
 // Task 3 — parseTemplated / tokenizeTemplated: the unified SQL+jinja token stream
-// (docs/minijinja-front-end.md §mechanism steps 3-6, §R1 — the inc1 deliverable).
+// (docs/minijinja-front-end.md §mechanism steps 3-6, §R1).
 //
 // This is the INTEGRATION stage. It composes three pieces that each stay in their
 // lane:

@@ -11,7 +11,7 @@ where each column comes from. The parsers are generated TypeScript on the
 [antlr4ng](https://github.com/mike-lischke/antlr4ng) runtime. Dialects covered:
 Databricks (Spark SQL), T-SQL, Snowflake, BigQuery (GoogleSQL), Redshift,
 PostgreSQL, DuckDB, Trino, SQLite, and MySQL, plus derived engines such as
-Athena, Fabric, and MariaDB — see [Dialects](#dialects).
+Athena, Fabric, and MariaDB (see [Dialects](#dialects)).
 
 The front end is error-tolerant and token-first, so the library drives editor
 features (completion, hover, diagnostics, go-to-definition) over incomplete,
@@ -307,8 +307,8 @@ text is identical to a plain parse.
 sqllens is error-tolerant by construction, because its first consumer is an
 editor and editor input is mid-keystroke most of the time. Parsing broken,
 partial, or invalid SQL never throws: syntax errors come back as positioned
-diagnostics (line, column, offset, length — squiggle-ready), and the rest of
-the result stays usable.
+diagnostics (line, column, offset, length), ready for editor squiggles, and
+the rest of the result stays usable.
 
 ```ts
 import { parse } from "sqllens";
@@ -362,7 +362,7 @@ that run on incomplete, mid-edit text. They never need a clean parse:
   code-lens reference counts.
 
 To tokenize SQL without parsing at all, `tokenize` is lexer-only and works on
-any text — including text no parser would accept:
+any text, including text no parser would accept:
 
 ```ts
 import { tokenize } from "sqllens";
@@ -460,11 +460,11 @@ version against the libraries people usually reach for:
 
 | | Language | Dialect breadth | Semantic analysis | Error-tolerant, editor-grade |
 |---|---|---|---|---|
-| **sqllens** | TypeScript | Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL | scope, schema qualification, type inference, column lineage, symbols | yes — parses mid-keystroke input, positioned diagnostics, total pipeline |
-| [sqlglot](https://github.com/tobymao/sqlglot) | Python | 31 dialects | transpile, optimize, qualify, lineage | no — a batch library, not built for per-keystroke reparse |
-| [node-sql-parser](https://github.com/taozhi8833998/node-sql-parser) | JS/TS | MySQL, PostgreSQL, and more | table/column lists only — no lineage, no types | no |
+| **sqllens** | TypeScript | Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL | scope, schema qualification, type inference, column lineage, symbols | yes: parses mid-keystroke input, positioned diagnostics, total pipeline |
+| [sqlglot](https://github.com/tobymao/sqlglot) | Python | 31 dialects | transpile, optimize, qualify, lineage | no: a batch library, not built for per-keystroke reparse |
+| [node-sql-parser](https://github.com/taozhi8833998/node-sql-parser) | JS/TS | MySQL, PostgreSQL, and more | table/column lists only; no lineage, no types | no |
 | [sqllineage](https://github.com/reata/sqllineage) | Python | via sqlfluff's parser | column lineage only | no |
-| [libpg_query](https://github.com/pganalyze/libpg_query) | C (bindings) | PostgreSQL, exact | parse only | no — one syntax error fails the whole buffer |
+| [libpg_query](https://github.com/pganalyze/libpg_query) | C (bindings) | PostgreSQL, exact | parse only | no: one syntax error fails the whole buffer |
 
 The corner sqllens occupies: multi-dialect breadth, schema-fed semantics, and
 editor-grade error tolerance in one TypeScript library. Each piece exists
