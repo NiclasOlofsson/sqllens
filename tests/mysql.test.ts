@@ -131,6 +131,62 @@ describe("Mysql lower -> IR", () => {
 		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"], alias: "`LEFT`" });
 	});
 
+	// Reserved-word identifier audit (dev.mysql.com/doc/refman/8.4/en/keywords.html): the
+	// LEFT/RIGHT class, checked systematically. Several RESERVED words are dual-role — a function name
+	// AND a statement keyword — and reach the keyword-as-identifier path (scalarFunctionName / IF,
+	// INSERT, REPLACE, REPEAT). The audit probed each: none mis-parses a VALID query the way bare LEFT
+	// JOIN did (LEFT/RIGHT were the only such case, already fixed). These pin the two positions that must
+	// keep working per the manual — the function CALL and, for the INSERT/REPLACE dual-role pair, the
+	// statement — so a future edit that pulls one from its call position (as the LEFT/RIGHT fix had to be
+	// surgical about) is caught. CONVERT is a specificFunction (CAST-family), never admission-reachable.
+	it("keeps dual-role reserved words IF/CONVERT/REPLACE/INSERT/REPEAT parsing as functions in call position", () => {
+		expect(selectBody("SELECT IF(a > 0, 1, 2) AS r FROM t").body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "if",
+		});
+		// CONVERT(expr, type) and CONVERT(expr USING charset) — cast-functions.html — lower to a cast.
+		expect(selectBody("SELECT CONVERT(x, CHAR) AS c FROM t").body.projections[0].expr).toMatchObject({
+			kind: "cast",
+		});
+		expect(selectBody("SELECT CONVERT(x USING utf8mb4) AS c FROM t").body.projections[0].expr).toMatchObject({
+			kind: "cast",
+		});
+		expect(selectBody("SELECT REPLACE(s, 'a', 'b') AS r FROM t").body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "replace",
+		});
+		expect(selectBody("SELECT INSERT(s, 1, 2, 'x') AS r FROM t").body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "insert",
+		});
+		expect(selectBody("SELECT REPEAT('x', 3) AS r FROM t").body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "repeat",
+		});
+	});
+
+	it("keeps the INSERT/REPLACE statement forms parsing as DML (the other half of the dual role)", () => {
+		// REPLACE INTO / INSERT INTO (replace.html, insert.html) — the same words that are string
+		// functions above are also statement verbs; both roles must survive.
+		expect(ir("REPLACE INTO t (a) VALUES (1)").q.statement).toBe("dml");
+		expect(ir("INSERT INTO t (a) VALUES (1)").q.statement).toBe("dml");
+	});
+
+	it("keeps reserved window-function names (RANK / ROW_NUMBER) parsing as calls, not swallowed identifiers", () => {
+		// RANK / ROW_NUMBER / DENSE_RANK … are RESERVED (window-function-descriptions.html) and reach
+		// functionNameBase; their OVER() call form must not degrade to a bare-identifier read.
+		expect(selectBody("SELECT RANK() OVER (ORDER BY a) AS r FROM t").body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "rank",
+		});
+		expect(selectBody("SELECT ROW_NUMBER() OVER (ORDER BY a) AS rn FROM t").body.projections[0].expr).toMatchObject(
+			{
+				kind: "function",
+				name: "row_number",
+			},
+		);
+	});
+
 	it("captures RIGHT OUTER, CROSS and NATURAL join kinds", () => {
 		const right = selectBody("SELECT * FROM a RIGHT OUTER JOIN b ON a.id = b.id").body;
 		expect(right.joins?.[0]).toMatchObject({ kind: "right" });
@@ -358,10 +414,11 @@ describe("Mysql 8.0.19+ query expressions", () => {
 		expect(exists.subqueries).toHaveLength(1);
 		const inq = selectBody("SELECT s1 FROM t1 WHERE s1 IN (TABLE t2)").body;
 		expect(inq.where).toMatchObject({ kind: "predicate", op: "in" });
-		// The `;` matters: a semicolon-less quantified comparison in statement-FINAL position still
-		// mis-splits into two statements (the inherited sqlStatements loop-commitment quirk — see the
-		// predicate rule's note in the grammar); every `;`-terminated statement parses correctly.
-		const any = selectBody("SELECT * FROM tt WHERE b > ANY (VALUES ROW(2), ROW(4));").body;
+		// A quantified comparison at statement-FINAL position parses as ONE query with NO trailing
+		// semicolon — sqlStatements now requires a SEMI between statements, so the parenthesized subquery
+		// can only continue this statement, not open a second one (the prior mis-split is gone; grammar
+		// citation at the predicate rule / sqlStatements). Held without the `;` on purpose.
+		const any = selectBody("SELECT * FROM tt WHERE b > ANY (VALUES ROW(2), ROW(4))").body;
 		expect(any.where).toMatchObject({ kind: "binary", op: ">" });
 		const anyRight = (any.where as { right?: { kind?: string } }).right;
 		expect(anyRight).toMatchObject({ kind: "subquery" });

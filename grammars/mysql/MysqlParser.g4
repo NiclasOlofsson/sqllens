@@ -44,11 +44,27 @@ root
     : sqlStatements? (MINUS MINUS)? EOF
     ;
 
+// A `;`-separated batch. Real MySQL REQUIRES a semicolon (statement delimiter) between adjacent
+// statements — `SELECT 1 SELECT 2` is a syntax error, and the client splits a script on `;`
+// (dev.mysql.com/doc/refman/8.4/en/mysql-batch-commands.html, .../stored-programs-defining.html on the
+// delimiter). Upstream's `SEMI?` made the separator OPTIONAL, so a trailing parenthesized construct
+// could be claimed as a fresh statement: `... WHERE a > ANY (SELECT ...)` split at `> ANY` into a bare
+// column plus a second `(SELECT ...)` statement (the quantifiedSubqueryAtom mis-split). Requiring SEMI
+// between statements (trailing SEMI on the last is optional) removes that: with no `;`, the parenthesized
+// query can only continue the current statement, so the quantified comparison parses as one statement.
 sqlStatements
-    : (sqlStatement (MINUS MINUS)? SEMI? | emptyStatement_)* (
-        sqlStatement ((MINUS MINUS)? SEMI)?
-        | emptyStatement_
-    )
+    : (statementItem (MINUS MINUS)? SEMI | emptyStatement_)* (statementItem ((MINUS MINUS)? SEMI)? | emptyStatement_)
+    ;
+
+// One batch element. The upstream Positive-Technologies grammar models `WITH cte AS (...) SELECT ...`
+// as a bare `withStatement` (the WITH clause only) followed by its query — the two are NOT joined by a
+// rule, and MySQL writes them with NO separating semicolon (the CTE binds to the query that follows).
+// So the ONE no-semicolon statement adjacency real MySQL has is `withStatement` → its query; admit
+// exactly that here and require SEMI for every other pair. lower() rejoins the pair into one CTE query.
+statementItem
+    : withStatement sqlStatement
+    | sqlStatement
+    | emptyStatement_
     ;
 
 sqlStatement
@@ -2673,17 +2689,12 @@ predicate
     // queries are legal in IN / quantified-comparison position (see subqueryBody's citations).
     // There is deliberately NO separate `comparisonOperator quantifier '(' subqueryBody ')'`
     // alternative: quantified comparisons (`> ANY (SELECT ...)`) are quantifiedSubqueryAtom in
-    // expressionAtom instead. As a predicate alternative the form can never win — ANY/SOME are also
-    // keywordsCanBeId members, so the input is ambiguous with `> ANY` (a bare column) followed by a
-    // parenthesized second statement (the batch rule's SEMI is optional), and ANTLR's left-recursion
-    // transform orders binary loop alternatives before suffix alternatives, which hands the ambiguity
-    // to binaryComparisonPredicate regardless of source order (upstream's shape mis-parsed this too).
-    // Residual quirk (inherited, documented): in the semicolon-less statement-FINAL position the
-    // sqlStatements rule has already committed the statement to its loop branch at token 0 (the
-    // `(A)* A` shape is ambiguous there and ANTLR takes the loop), which REQUIRES a following
-    // statement — so `... WHERE b > ANY (SELECT 1)<EOF>` still splits in two. Any `;`-terminated
-    // statement (every real batch) parses the quantified form correctly. The root fix — requiring
-    // SEMI between statements — needs the WITH/SELECT adjacency restructure first; tracked, not done.
+    // expressionAtom instead. ANY/SOME are also keywordsCanBeId members, so `a > ANY (SELECT ...)` was
+    // once ambiguous with `a > ANY` (a bare column) followed by a parenthesized second statement — but
+    // that second reading needed the batch rule to admit an adjacent statement with NO separating
+    // semicolon. sqlStatements now REQUIRES a SEMI between statements (see its citation), so at
+    // statement-final position the parenthesized query can only continue the current statement, and the
+    // quantified comparison parses correctly whether or not a trailing `;` is present.
     : predicate NOT? IN '(' (subqueryBody | expressions) ')'                               # inPredicate
     | predicate IS nullNotnull                                                             # isNullPredicate
     | left = predicate comparisonOperator right = predicate                                # binaryComparisonPredicate
@@ -2878,6 +2889,19 @@ dataTypeBase
     | TEXT
     ;
 
+// Non-reserved keywords usable as identifiers (dev.mysql.com/doc/refman/8.4/en/keywords.html).
+// Reserved-word audit (the LEFT/RIGHT defect class, checked systematically 2026-07-11): this set —
+// and functionNameBase / scalarFunctionName, which also feed simpleId — still admit a number of words
+// the 8.4 manual marks RESERVED (R) as bare identifiers (e.g. GROUP, ORDER, PRIMARY, ROW(S), RECURSIVE,
+// LATERAL, OF, EMPTY here; the window-function names and IF/INSERT/REPLACE/REPEAT via the function
+// rules). Each was probed as a real parse+lower: unlike bare LEFT/RIGHT JOIN (which silently mis-parsed
+// LEFT as a table alias and was fixed — see functionNameBase / functionCall), none of the remaining
+// reserved words mis-parses a VALID query — the admission only OVER-accepts an invalid one
+// (`SELECT a group FROM t` takes `group` as an alias where real MySQL would reject it), and the correct
+// production always wins for legal input. Left as a deliberate, inert over-acceptance: removing them is a
+// large, upstream-diverging change with no valid-query benefit that would regress the grammars-v4 corpus
+// (real dumps quote reserved identifiers). Words that caused actual damage were removed at their source
+// (LEFT/RIGHT above; EXCEPT / SEQUENCE below).
 keywordsCanBeId
     : ACCOUNT
     | ACTION

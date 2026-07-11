@@ -35,13 +35,14 @@ const VENDOR_EXAMPLES = corpusPath("mysql/grammars-v4");
 const DOCS_CORPUS = corpusPath("mysql/docs");
 
 // The SLL→LL fallback health floor over this corpus. parseMysql tries fast SLL prediction first and
-// falls back to full LL only on a conflict; a fallback is a cost signal, not an error. Measured over
-// these 24 files against the fixed grammar (2026-07-11): 11 files fall back — the Positive-Technologies
-// grammar (95 KB, real-world DDL/DML) has genuine SLL/LL prediction conflicts on this corpus
-// (ddl_alter, ddl_create, dml_delete/insert/update, dml_select/union/with, ext_tests, smoke_tests,
-// bitrix_queries_cut). This is far messier than SQLite's clean 0, as expected for the larger grammar.
-// Seed honest, ratchet down: only rise if a fork edit makes prediction sicker.
-const FALLBACK_FLOOR = 11;
+// falls back to full LL only on a conflict; a fallback is a cost signal, not an error. Re-measured
+// 2026-07-11 after the SEMI-required batch restructure (see sqlStatements in the grammar): 6 files fall
+// back, down from 11 — the optional statement separator was a prediction conflict at every statement
+// boundary, and requiring the SEMI removed it. The residual 6 (ddl_alter, ddl_create, dml_insert,
+// dml_select, dml_union, dml_with) are in-statement conflicts of the big Positive-Technologies grammar
+// (95 KB, real-world DDL/DML). Seed honest, ratchet down: only rise if a fork edit makes prediction
+// sicker.
+const FALLBACK_FLOOR = 6;
 
 function* sqlFiles(dir: string): Generator<string> {
 	for (const e of readdirSync(dir, { withFileTypes: true })) {
@@ -94,13 +95,15 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("MySQL grammar vs the grammars-v4 
 
 // The SLL→LL fallback floor over the docs corpus, counted only over the files that SHOULD parse
 // (KNOWN_BAD_DOCS excluded — a failing parse always falls back, so counting them would just measure
-// the known-bad set). Measured over the 1257 scraped files (2026-07-11): 612 of the 1252 parseable
-// files fall back — dominated by two conflicts INHERITED from upstream, verified present on the
-// pre-restructure grammar: the scalar-vs-UDF function-call ambiguity (simpleId includes
-// scalarFunctionName, so every `fn(...)` predicts both ways) and the UNION trailing-vs-level chain
-// nesting; the docs corpus is function-example-heavy, so it measures them at full strength. Seed
-// honest, ratchet down — SLL surgery on those two classes is the tracked follow-up.
-const DOCS_FALLBACK_FLOOR = 612;
+// the known-bad set). Re-measured 2026-07-11 after the SEMI-required batch restructure: 33 of the 1252
+// parseable files fall back, down from 612 — the SEMI requirement was the ONLY change between the two
+// measurements, so the optional statement separator (an SLL conflict at nearly every statement boundary)
+// was the real driver, not the function-call/UNION-chain shapes previously blamed. The residual 33
+// concentrate in WITH/CTE-shaped files (14 under query/with — the withStatement→query adjacency is the
+// one no-semicolon statement pair the batch rule still admits) and set-operation chains (5 under
+// set-operations/union), with a 14-file long tail of singleton pages. Seed honest, ratchet down — the
+// WITH-adjacency prediction is the remaining SLL-surgery candidate.
+const DOCS_FALLBACK_FLOOR = 33;
 
 describe.skipIf(!existsSync(DOCS_CORPUS))("MySQL grammar vs the scraped official-docs corpus", () => {
 	it(
