@@ -81,11 +81,12 @@ kinds. Table/database names are the one exception, and it's platform-dependent
 `mysql` entry's doc comment in `src/ident/fold.ts` for the exact default-per-OS
 breakdown and the narrow case it gets wrong. Separately, an UNSPACED dot (`a.b`,
 how it's normally written) lexes as one fused `DOT_ID` token in this grammar
-fork, which costs `ColumnRef.partSpans`/`TableSource.namePartSpans` for the
-part after the dot (see `dottedParts` in `src/mysql/lower.ts`) — a raw-field
-`kept`/`stripped` question this table answers either way, but the recovery path
-in the next section is unavailable for that part until the source is spaced out
-or grammar-fixed.
+fork; the part after the dot still gets a real `PartSpan` — `dottedParts` in
+`src/mysql/lower.ts` computes it from the token (one char past the dot; the
+lexer admits only plain identifier chars there, so no delimiter can hide in
+it), field-identical to the span a spaced `a . b` produces. Both
+`ColumnRef.partSpans` and `TableSource.namePartSpans` are present for either
+spelling, and the recovery path in the next section applies normally.
 
 ## Recovering the raw form regardless of a field's own stripping
 
