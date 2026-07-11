@@ -208,7 +208,7 @@ import { parse, qualify, lineage, deriveSymbols, toScopes, Schema } from "sqllen
 const { ast, errors, cst } = parse("SELECT a, b FROM t", "snowflake");
 // ast = dialect-neutral IR (frozen); cst = the raw antlr tree (escape hatch)
 
-const scopes = toScopes(ast, { dialect: "snowflake" }); // idempotent lift
+const scopes = toScopes(ast); // idempotent lift
 qualify(scopes, schema);   // reuses scopes — never re-parses or re-resolves
 lineage(scopes, schema);   // safe on the same scopes, in any order
 deriveSymbols(scopes);     // independent results
