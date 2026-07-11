@@ -1,0 +1,14 @@
+{
+	"$schema": "https://context7.com/schema/context7.json",
+	"projectTitle": "sqllens - SQL Parser, Analyzer & Column Lineage for TypeScript",
+	"description": "A TypeScript SQL parser and static analyzer: parse SQL into an AST, resolve names against a schema, infer output column types, and trace column-level lineage. Error-tolerant for editors, LSP and language tooling: parses broken, mid-keystroke SQL with positioned diagnostics. Dialects: Databricks (Spark SQL), T-SQL (SQL Server), Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL, MariaDB. Also parses dbt/Jinja templated SQL.",
+	"folders": [],
+	"excludeFolders": [".github", ".claude", ".superpowers", "docs/superpowers", "tests", "tools", "grammars"],
+	"excludeFiles": ["CLAUDE.md", "CHANGELOG.md", "CONTRIBUTING.md", "THIRD-PARTY-NOTICES.md", "snowflake-backlog.md"],
+	"rules": [
+		"Every parse/analyze/tokenize call takes a dialect string, e.g. 'snowflake', 'tsql', 'databricks'",
+		"An inferred type of 'unknown' means no inference rule exists for that function; do not substitute a guessed type",
+		"parse() and analyze() never throw on broken SQL; read the returned diagnostics instead of wrapping in try/catch",
+		"For editors or repeated edits to the same SQL, use SqlSession/SqlDocument instead of re-calling analyze()"
+	]
+}
