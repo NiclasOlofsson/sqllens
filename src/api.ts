@@ -299,7 +299,13 @@ export type { Token, TokenRole } from "./token/token.js";
 // It composes the surface above (parse/toScopes/qualify/deriveSymbols/TypeInfo); the import cycle
 // (api re-exports SqlDocument, document imports from api) is safe because document.ts only calls
 // these at call time, never at module-eval time.
-export { SqlDocument, type DocumentAnalysis, type StatementCell, type DocumentVariant } from "./document/document.js";
+export {
+	SqlDocument,
+	type DocumentAnalysis,
+	type StatementCell,
+	type DocumentVariant,
+	type UnionCte,
+} from "./document/document.js";
 export { LineIndex } from "./document/line-index.js";
 export type { StatementCellSpan } from "./document/split.js";
 

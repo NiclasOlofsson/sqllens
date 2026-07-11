@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
-import { SqlDocument } from "../src/index.js";
+import { SqlDocument, Schema } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
+import { TestRelationProvider, relKey } from "./helpers/providers.js";
 
 const A3 = "SELECT {% if v %}col_a{% else %}col_b{% endif %}, c FROM anchor_table";
 
@@ -11,6 +12,8 @@ describe("doc.variants — per-arm sub-documents", () => {
 			SqlDocument.create("select * from {{ ref('t') }}", "duckdb", { templating: minijinja() }).variants,
 		).toEqual([]);
 	});
+	// Development pin — the canonical acceptance version of this A3 assertion lives in
+	// tests/variant-acceptance.test.ts's "A3 — coordinate preservation outside arms".
 	it("each arm is a full document; coordinates are document-true (A3 anchor)", () => {
 		const doc = SqlDocument.create(A3, "duckdb", { templating: minijinja() });
 		expect(doc.variants.length).toBe(2);
@@ -49,5 +52,162 @@ describe("doc.variants — per-arm sub-documents", () => {
 		const inColA = NESTED.indexOf("col_a");
 		expect(doc.variantAt(inColA)).toBe(doc.variants[0]);
 		expect(doc.variants[0].text()).toContain("col_a");
+	});
+});
+
+describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOutputColumns", () => {
+	// Development pin — the canonical acceptance version of this A4 (and its A3 anchor re-check)
+	// lives in tests/variant-acceptance.test.ts's "A3"/"A4" describes.
+	it("unionSymbols carries arm-local symbols, deduped (A4)", () => {
+		const doc = SqlDocument.create(A3, "duckdb", { templating: minijinja() });
+		const syms = doc.unionSymbols();
+		const names = syms.map((s) => s.name);
+		expect(names).toContain("col_a");
+		expect(names).toContain("col_b");
+		expect(names.filter((n) => n === "c").length).toBe(1);
+		expect(names.filter((n) => n === "anchor_table").length).toBe(1);
+		const anchor = syms.find((s) => s.name === "anchor_table")!;
+		expect([anchor.span.start, anchor.span.end]).toEqual([57, 69]); // A3 anchor holds in the union
+	});
+
+	// Development pin — the canonical acceptance version of this A5 assertion lives in
+	// tests/variant-acceptance.test.ts's "A5 — zero-width star-Sym expansion survives the union key".
+	it("zero-width star-Sym expansion survives the union key (A5)", async () => {
+		// Brief adjustment point, resolved: the plan's own filter (`.includes("star")` alone) also
+		// matches the ALWAYS-emitted opaque `*` Sym (symbols.ts emitColumns pushes it unconditionally,
+		// modifiers ["star"] with no "reference") — every existing precedent for isolating the
+		// EXPANDED star columns (tests/symbols.test.ts) filters on BOTH "star" and "reference"; used
+		// here too so the assertion actually targets the 3 expanded columns, not 4.
+		const provider = new TestRelationProvider();
+		const doc = SqlDocument.create("select * from {{ ref('t') }}", "duckdb", {
+			templating: minijinja(),
+			provider,
+		});
+		// Warm the provider exactly as tests/document.templated.test.ts's invalidation test does:
+		// a cold `ref('t')` records a miss during the parse above, then prime() drains it.
+		provider.pending.set(relKey("ref", ["t"]), { nameParts: ["t"] });
+		provider.tableColumns.set("t", [{ name: "a" }, { name: "b" }, { name: "c" }]);
+		expect(await provider.prime()).toBe(true);
+		const cols = doc
+			.unionSymbols(provider)
+			.filter((s) => s.modifiers.includes("star") && s.modifiers.includes("reference"));
+		expect(cols.map((s) => s.name).sort()).toEqual(["a", "b", "c"]); // span-only key would collapse to one
+	});
+
+	// Development pin — the canonical acceptance version of this A6 half (plus the brief's OTHER
+	// half — same-position, both arms -> one entry) lives in tests/variant-acceptance.test.ts's
+	// "A6 — diagnostics union: span+identity, not message text".
+	it("diagnostics dedup by position+identity, not message (A6)", () => {
+		const SQL = "{% if v %}select x.nope1 from t x{% else %}select  x.nope1 from t x{% endif %}";
+		const doc = SqlDocument.create(SQL, "duckdb", { templating: minijinja() });
+		const schema = new Schema({ t: { a: "int" } });
+		const diags = doc
+			.unionDiagnostics(schema)
+			.filter((d) => String((d as { message?: string }).message ?? "").includes("nope1"));
+		expect(diags.length).toBe(2); // same message, different offsets — the wart-fix regression pin
+	});
+
+	it("lexer errors (offset-undefined) at different positions stay two union entries", () => {
+		// A LEXER "token recognition error" carries NO offending symbol, so its offset is undefined
+		// (parse-diagnostics.ts; pinned by tests/parse-diagnostics.test.ts). An offset-keyed dedup
+		// alone would collapse two same-character lexer errors from DIFFERENT arms at DIFFERENT
+		// positions into one — the A6 message-only bug reintroduced for one diagnostic subclass.
+		// tsql's lexer has no catch-all error rule, so ¤ provably takes this path (duckdb/postgres
+		// recover with an offset-carrying "no viable alternative" instead — probed, not guessed).
+		const SQL = "{% if v %}select ¤a from t{% else %}select  ¤a from t{% endif %}";
+		const doc = SqlDocument.create(SQL, "tsql", { templating: minijinja() });
+		const armDiags = doc.variants.map((v) =>
+			v.doc().diagnostics.filter((d) => d.message.includes("token recognition")),
+		);
+		expect(armDiags.map((a) => a.length)).toEqual([1, 1]); // one per arm...
+		expect(armDiags[0][0].offset).toBeUndefined(); // ...provably offset-undefined...
+		expect(armDiags[0][0].column).not.toBe(armDiags[1][0].column); // ...at different positions
+		const union = doc
+			.unionDiagnostics()
+			.filter((d) => String((d as { message?: string }).message ?? "").includes("token recognition"));
+		expect(union.length).toBe(2); // line:column in the key keeps both
+	});
+
+	it("a no-variant doc's union views deep-equal the plain single-doc answers", () => {
+		const plain = SqlDocument.create("select a, b from t", "duckdb");
+		expect(plain.unionSymbols()).toEqual(plain.analyze().symbols);
+		expect(plain.unionDiagnostics()).toEqual([...plain.diagnostics, ...plain.analyze().diagnostics]);
+
+		const noRegion = SqlDocument.create("select * from {{ ref('t') }}", "duckdb", { templating: minijinja() });
+		expect(noRegion.unionSymbols()).toEqual(noRegion.analyze().symbols);
+	});
+
+	// Development pin (smoke only) — the exact-line acceptance version lives in
+	// tests/variant-acceptance.test.ts's "A8a — column union with shared-column dedup".
+	it("unionCtes unions one CTE's columns across arms by name (A8a smoke)", () => {
+		const SQL =
+			"with data as (\n" +
+			"    SELECT\n" +
+			"        {% if is_incremental() %}incremental_col{% else %}full_col{% endif %},\n" +
+			"        shared_col\n" +
+			"    FROM raw_table\n" +
+			")\n" +
+			"SELECT * FROM data";
+		const doc = SqlDocument.create(SQL, "duckdb", { templating: minijinja() });
+		const ctes = doc.unionCtes();
+		expect(ctes.length).toBe(1);
+		const data = ctes[0];
+		expect(data.name).toBe("data");
+		const names = data.columns.map((c) => c.name);
+		expect(names.filter((n) => n === "incremental_col").length).toBe(1);
+		expect(names.filter((n) => n === "full_col").length).toBe(1);
+		expect(names.filter((n) => n === "shared_col").length).toBe(1);
+	});
+
+	it("unionCtes/unionOutputColumns fall through to the single-arm answer with no variants", () => {
+		const doc = SqlDocument.create("with data as (select a, b from t) select * from data", "duckdb");
+		const ctes = doc.unionCtes();
+		expect(ctes.length).toBe(1);
+		expect(ctes[0].columns.map((c) => c.name)).toEqual(["a", "b"]);
+		expect(doc.unionOutputColumns().map((c) => c.name)).toEqual(["a", "b"]);
+
+		// A region-free TEMPLATED doc (tags but no control flow) is also a no-variant doc — the
+		// fall-through must hold through the templated door too, not just the plain one.
+		const templated = SqlDocument.create(
+			"with data as (select a, b from {{ ref('t') }}) select * from data",
+			"duckdb",
+			{ templating: minijinja() },
+		);
+		expect(templated.variants).toEqual([]);
+		const tctes = templated.unionCtes();
+		expect(tctes.length).toBe(1);
+		expect(tctes[0].name).toBe("data");
+		expect(tctes[0].columns.map((c) => c.name)).toEqual(["a", "b"]);
+		expect(templated.unionOutputColumns().map((c) => c.name)).toEqual(["a", "b"]);
+	});
+
+	it("a setop root answers output columns: names per SQL setop semantics, spans from the declaring branch", () => {
+		// Positional UNION: output names are the LEFT branch's; the span is the left `a`'s own token.
+		const SQL = "select a from t union all select b from u";
+		const doc = SqlDocument.create(SQL, "duckdb");
+		const cols = doc.unionOutputColumns();
+		expect(cols.map((c) => c.name)).toEqual(["a"]);
+		expect(cols[0].span.start).toBe(SQL.indexOf("a"));
+
+		// The dbt incremental shape: the else arm's realization has a setop root — its outputs must
+		// reach the union, not silently vanish (the visible-gap rule).
+		const TPL =
+			"{% if inc %}select a, c from t{% else %}select a, c from t union all select a, c from u{% endif %}";
+		const tdoc = SqlDocument.create(TPL, "duckdb", { templating: minijinja() });
+		const names = tdoc.unionOutputColumns().map((c) => c.name);
+		expect(names.filter((n) => n === "a").length).toBe(1);
+		expect(names.filter((n) => n === "c").length).toBe(1);
+	});
+
+	it("quoted setop projections survive on asymmetric-fold dialects (raw-name fold provenance)", () => {
+		// snowflake folds an UNQUOTED name by upper-casing but PRESERVES a quoted one — so folding
+		// the display form (delimiters stripped -> the unquoted rule fires: MYCOL) can never match
+		// folding the raw form ("MyCol" kept -> the quoted rule fires: MyCol). Both sides of the
+		// setop name<->span match must fold the RAW projection name; displayName's own contract says
+		// never use it for comparison (src/ident/fold.ts).
+		const SQL = 'select "MyCol" from t union all select "MyCol" from u';
+		const cols = SqlDocument.create(SQL, "snowflake").unionOutputColumns();
+		expect(cols.map((c) => c.name)).toEqual(["MyCol"]); // display form, not dropped
+		expect(cols[0].span.start).toBe(SQL.indexOf('"MyCol"')); // the LEFT branch's own token
 	});
 });

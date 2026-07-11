@@ -23,7 +23,7 @@ where a fork fixes a real bug in an upstream grammar the fix is contributed back
 signature help, semantic tokens) and a **SQL debugger**. That makes editor-shaped
 requirements first-class: positional diagnostics (line/column for squiggles, not a
 bare error count), small per-dialect load (an extension bundles one dialect, not
-all eight), and stable analysis results that survive incremental edits. Non-editor
+all of them), and stable analysis results that survive incremental edits. Non-editor
 / batch programmatic use is supported but secondary; when a design choice trades
 off, favor the editor/LSP consumer.
 
@@ -66,7 +66,7 @@ never a silent scope boundary.
 
 ## The dialects
 
-All parse + lower at their corpus gates, and the semantic layer runs
+All of them parse + lower at their corpus gates, and the semantic layer runs
 unchanged on each. Every grammar is a standalone split pair
 (`grammars/<dialect>/<Dialect>Lexer.g4` + `<Dialect>Parser.g4`), forked in place.
 
@@ -203,7 +203,7 @@ src/lineage/               lineage/originsOf — base-table origins per output c
 src/references/            referencesAt(scopes, offset, schema?, ast?) → Occurrences — the occurrence engine: declaration + every reference of the symbol under the cursor. Total: never throws; null off-symbol
 src/symbols/               deriveSymbols — kind×modifier symbol model over the scope tree; carries types/origins when given a schema
 src/document/              the living-document model — document.ts (SqlDocument), line-index.ts (LineIndex: O(log n) position↔offset), node-at.ts (CST node at an offset)
-src/completion/            scope-aware completion over a SqlDocument — own ATN candidate walk (atn-walk.ts), NO antlr4-c3 dependency; complete.ts (all eight dialects). Total: never throws
+src/completion/            scope-aware completion over a SqlDocument — own ATN candidate walk (atn-walk.ts), NO antlr4-c3 dependency; complete.ts (all dialects). Total: never throws
 src/signature/             signature help — curated per-dialect signature tables plus a harvested doc-derived long tail; signatureAt() is a pure token scan; total
 src/api.ts                 the public surface: Dialect, parse, analyze, tokenize, SqlDocument, complete/signatureAt, composable qualify/lineage/deriveSymbols, referencesAt, typed result wrappers
 src/index.ts               public barrel: re-exports src/api.ts + the per-dialect parse*/lower building blocks and the raw shared passes

@@ -1,7 +1,7 @@
 {
 	"name": "sqllens",
-	"version": "0.1.1",
-	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL).",
+	"version": "1.0.0",
+	"description": "A TypeScript SQL parser and static analyzer: parse, resolve names, infer types, and trace column lineage across many SQL dialects (Databricks, T-SQL, Snowflake, BigQuery, Redshift, PostgreSQL, DuckDB, Trino, SQLite, MySQL).",
 	"main": "./dist/index.js",
 	"types": "./dist/index.d.ts",
 	"exports": {

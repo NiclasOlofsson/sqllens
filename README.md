@@ -32,9 +32,9 @@ q.lineage.originsOf("total");  // → orders.total
 
 ## Dialects
 
-sqllens implements SQL dialects directly, each with its own grammar. More
-engines are covered as *derived dialects*: their SQL is already parsed by one
-of those grammars.
+sqllens implements the major SQL dialects directly, each with its own grammar.
+More engines are covered as *derived dialects*: their SQL is already parsed by
+one of the primary grammars.
 
 | Dialect | Derived dialects | Parse + lower | Semantic layer | Notes |
 |---|---|---|---|---|
@@ -127,6 +127,8 @@ list and code-lens annotations.
 Two ways in: `analyze` for one-shot analysis of a string, and a session for a
 document you hold open and edit. Templated SQL (dbt models) is the same API with
 one more option; it changes the input, not the shape of what you get back.
+For a step-by-step walkthrough of the templated path, from a raw dbt model to
+branch variants, see [TUTORIAL.md](TUTORIAL.md).
 
 ### One-shot: `analyze`
 

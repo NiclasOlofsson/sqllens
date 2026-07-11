@@ -55,6 +55,11 @@ export const DERIVED_DIALECTS: Readonly<Record<string, Dialect>> = {
 	// A plain `SELECT a, b FROM t WHERE a = 1` control probe parses with 0 errors, confirming
 	// ordinary DQL still works — the alias covers that surface, not MariaDB's own additions.
 	mariadb: "mysql",
+	// Alternate spelling of the engine name (alias class, same as our own dialect
+	// names above). Admitted 2026-07-10 on the anvil channel's request; caveat noted
+	// there: no dbt adapter is attested to emit `postgresql` as its adapter_type —
+	// it is inherited consumer vocabulary, admitted as a cheap, honest alias.
+	postgresql: "postgres",
 };
 
 /**

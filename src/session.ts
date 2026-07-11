@@ -13,7 +13,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ParserRuleContext } from "antlr4ng";
-import { SqlDocument, type DocumentAnalysis, type DocumentVariant } from "./document/document.js";
+import { SqlDocument, type DocumentAnalysis, type DocumentVariant, type UnionCte } from "./document/document.js";
 import type { NodeHit } from "./document/node-at.js";
 import { lineage, type Lineage, type TypeInfo } from "./api.js";
 import type { Dialect } from "./dialect.js";
@@ -31,7 +31,7 @@ import type { Occurrences } from "./references/references.js";
 import type { LineageHop } from "./lineage/hops.js";
 import { signatureAt, type SignatureInfo } from "./signature/signature.js";
 import type { Scope, ScopeTree } from "./scope/scope.js";
-import type { Sym } from "./symbols/symbols.js";
+import type { Span, Sym } from "./symbols/symbols.js";
 import type { TemplateEngine } from "./template/engine.js";
 import type { Token } from "./token/token.js";
 
@@ -175,5 +175,17 @@ export class SqlSession {
 	}
 	variantAt(offset: number): DocumentVariant | undefined {
 		return this.doc.variantAt(offset);
+	}
+	unionSymbols(): Sym[] {
+		return this.doc.unionSymbols(this.schema);
+	}
+	unionDiagnostics(): (SyntaxDiagnostic | Diagnostic)[] {
+		return this.doc.unionDiagnostics(this.schema);
+	}
+	unionCtes(): UnionCte[] {
+		return this.doc.unionCtes(this.schema);
+	}
+	unionOutputColumns(): { name: string; span: Span }[] {
+		return this.doc.unionOutputColumns(this.schema);
 	}
 }
