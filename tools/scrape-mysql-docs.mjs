@@ -52,35 +52,90 @@ const OUT = corpusPath("mysql/docs");
 // 404s is recorded in the manifest and skipped (keeps the list forgiving across manual revisions).
 const PAGES = [
 	// Query surface
-	"select.html", "join.html", "union.html", "parenthesized-query-expressions.html",
-	"subqueries.html", "comparisons-using-subqueries.html", "any-in-some-subqueries.html",
-	"all-subqueries.html", "exists-and-not-exists-subqueries.html", "correlated-subqueries.html",
-	"row-subqueries.html", "scalar-subqueries.html", "derived-tables.html", "lateral-derived-tables.html",
-	"with.html", "values.html", "table.html", "set-operations.html", "intersect.html", "except.html",
+	"select.html",
+	"join.html",
+	"union.html",
+	"parenthesized-query-expressions.html",
+	"subqueries.html",
+	"comparisons-using-subqueries.html",
+	"any-in-some-subqueries.html",
+	"all-subqueries.html",
+	"exists-and-not-exists-subqueries.html",
+	"correlated-subqueries.html",
+	"row-subqueries.html",
+	"scalar-subqueries.html",
+	"derived-tables.html",
+	"lateral-derived-tables.html",
+	"with.html",
+	"values.html",
+	"table.html",
+	"set-operations.html",
+	"intersect.html",
+	"except.html",
 	// DML
-	"insert.html", "insert-select.html", "insert-on-duplicate.html", "update.html", "delete.html",
-	"replace.html", "load-data.html", "load-xml.html", "do.html", "handler.html", "import-table.html",
-	"truncate-table.html", "call.html",
+	"insert.html",
+	"insert-select.html",
+	"insert-on-duplicate.html",
+	"update.html",
+	"delete.html",
+	"replace.html",
+	"load-data.html",
+	"load-xml.html",
+	"do.html",
+	"handler.html",
+	"import-table.html",
+	"truncate-table.html",
+	"call.html",
 	// DDL that parses
-	"create-table.html", "create-table-select.html", "create-table-like.html", "create-view.html",
-	"create-index.html", "create-temporary-table.html",
+	"create-table.html",
+	"create-table-select.html",
+	"create-table-like.html",
+	"create-view.html",
+	"create-index.html",
+	"create-temporary-table.html",
 	// Expressions / operators
-	"expressions.html", "operator-precedence.html", "comparison-operators.html", "logical-operators.html",
-	"assignment-operators.html", "arithmetic-functions.html", "mathematical-functions.html",
+	"expressions.html",
+	"operator-precedence.html",
+	"comparison-operators.html",
+	"logical-operators.html",
+	"assignment-operators.html",
+	"arithmetic-functions.html",
+	"mathematical-functions.html",
 	// Functions
-	"string-functions.html", "string-comparison-functions.html", "regexp.html", "character-set-functions.html",
-	"date-and-time-functions.html", "flow-control-functions.html", "cast-functions.html", "bit-functions.html",
-	"encryption-functions.html", "information-functions.html", "locking-functions.html",
-	"miscellaneous-functions.html", "aggregate-functions.html", "group-by-modifiers.html",
+	"string-functions.html",
+	"string-comparison-functions.html",
+	"regexp.html",
+	"character-set-functions.html",
+	"date-and-time-functions.html",
+	"flow-control-functions.html",
+	"cast-functions.html",
+	"bit-functions.html",
+	"encryption-functions.html",
+	"information-functions.html",
+	"locking-functions.html",
+	"miscellaneous-functions.html",
+	"aggregate-functions.html",
+	"group-by-modifiers.html",
 	// JSON
-	"json-functions.html", "json-creation-functions.html", "json-search-functions.html",
-	"json-modification-functions.html", "json-attribute-functions.html", "json-utility-functions.html",
-	"json-table-functions.html", "json-validation-functions.html",
+	"json-functions.html",
+	"json-creation-functions.html",
+	"json-search-functions.html",
+	"json-modification-functions.html",
+	"json-attribute-functions.html",
+	"json-utility-functions.html",
+	"json-table-functions.html",
+	"json-validation-functions.html",
 	// Window functions
-	"window-functions.html", "window-functions-usage.html", "window-function-descriptions.html",
-	"window-functions-frames.html", "window-functions-named-windows.html",
+	"window-functions.html",
+	"window-functions-usage.html",
+	"window-function-descriptions.html",
+	"window-functions-frames.html",
+	"window-functions-named-windows.html",
 	// Full-text
-	"fulltext-search.html", "fulltext-boolean.html", "fulltext-natural-language.html", "fulltext-query-expansion.html",
+	"fulltext-search.html",
+	"fulltext-boolean.html",
+	"fulltext-natural-language.html",
+	"fulltext-query-expansion.html",
 ];
 
 function unescapeHtml(s) {
@@ -105,8 +160,10 @@ function isResultBorder(line) {
 	return /^[\s\-+=|]+$/.test(line) && /-{3,}/.test(line) && /[+|]/.test(line);
 }
 // The MySQL client's result footers and the English prose lines the docs put under a statement.
-const ROWS_FOOTER = /^\s*(\d+ rows? in set|Query OK|Empty set|Records:|Rows matched:|Affected rows:|\d+ rows? affected)/i;
-const PROSE_LINE = /^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:|In this|If |When |Suppose |Assume |Compare )/;
+const ROWS_FOOTER =
+	/^\s*(\d+ rows? in set|Query OK|Empty set|Records:|Rows matched:|Affected rows:|\d+ rows? affected)/i;
+const PROSE_LINE =
+	/^\s*(The |This |These |Note:|For example|Here |Output:|Returns? |Result:|Where:|In this|If |When |Suppose |Assume |Compare )/;
 // A leaked terse-result arrow line (`        -> 2`) in a block that carries results WITHOUT a `mysql>`
 // prompt, so splitTranscript never saw it. `->` at line start is never SQL (the JSON `->`/`->>` operator
 // is always inline), so cutting here drops the leaked result and keeps the statement above it.
@@ -172,7 +229,10 @@ function splitTranscript(text) {
 	const out = [];
 	let i = 0;
 	while (i < lines.length) {
-		if (!PROMPT.test(lines[i])) { i++; continue; }
+		if (!PROMPT.test(lines[i])) {
+			i++;
+			continue;
+		}
 		let stmt = lines[i].replace(PROMPT, "");
 		i++;
 		while (!isTerminated(stmt) && i < lines.length && CONT.test(lines[i])) {

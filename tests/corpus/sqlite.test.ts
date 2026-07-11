@@ -54,7 +54,10 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("SQLite grammar vs the grammars-v4
 		let fallbacks = 0;
 		for (const f of sqlFiles(VENDOR_EXAMPLES)) {
 			n++;
-			const rel = f.slice(VENDOR_EXAMPLES.length + 1).split("\\").join("/");
+			const rel = f
+				.slice(VENDOR_EXAMPLES.length + 1)
+				.split("\\")
+				.join("/");
 			const known = rel in KNOWN_BAD;
 			const r = parseSqlite(readFileSync(f, "utf8"));
 			if (r.sllFallback) fallbacks++;
@@ -101,7 +104,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("SQLite grammar vs the scraped officia
 			let fallbacks = 0;
 			for (const f of sqlFiles(DOCS_CORPUS)) {
 				n++;
-				const rel = f.slice(DOCS_CORPUS.length + 1).split("\\").join("/");
+				const rel = f
+					.slice(DOCS_CORPUS.length + 1)
+					.split("\\")
+					.join("/");
 				const known = rel in KNOWN_BAD_DOCS;
 				const r = parseSqlite(readFileSync(f, "utf8"));
 				// KNOWN_BAD_DOCS examples must STILL fail (self-policing: if a re-scrape fixes one, flag it stale).

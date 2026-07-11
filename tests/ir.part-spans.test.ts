@@ -39,12 +39,6 @@ interface Dialect {
 	/** The dialect's quoted-identifier form: source for `<quoted>.c` plus the exact delimited token the
 	 *  first part's span must cover (delimiters included). */
 	quoted: { sql: string; rawQualifier: string };
-	/** MySQL genuine-shape gap: an unspaced dot lexes as ONE fused `DOT_ID` token (`.b` —
-	 *  MysqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), so a dotted part after it has no clean span
-	 *  excluding the dot. `dottedParts` (src/mysql/lower.ts) pushes `undefined` for that part, and
-	 *  `partSpansOf`'s all-or-nothing rule drops the WHOLE array — not just the affected part. A real,
-	 *  currently-standing limitation of the upstream grammar fork, not a lower.ts bug. */
-	noPartSpans?: boolean;
 }
 
 const DIALECTS: Dialect[] = [
@@ -107,7 +101,6 @@ const DIALECTS: Dialect[] = [
 		parse: parseMysql,
 		lower: lowerMysql as LowerFn,
 		quoted: { sql: "SELECT `a b`.c FROM t", rawQualifier: "`a b`" },
-		noPartSpans: true,
 	},
 ];
 
@@ -141,11 +134,6 @@ describe("per-part spans on column references (P2)", () => {
 				const sql = "SELECT a.b.c FROM t";
 				const ref = projected(d, sql);
 				expect(ref.parts).toEqual(["a", "b", "c"]);
-				if (d.noPartSpans) {
-					// See the Dialect.noPartSpans doc comment — mysql fused DOT_ID drops all spans.
-					expect(ref.partSpans).toBeUndefined();
-					return;
-				}
 				expect(ref.partSpans, "partSpans present").toBeDefined();
 				expect(ref.partSpans!.length).toBe(3);
 				expectSpan(sql, ref.partSpans![0], "a");
@@ -157,11 +145,6 @@ describe("per-part spans on column references (P2)", () => {
 				const { sql, rawQualifier } = d.quoted;
 				const ref = projected(d, sql);
 				expect(ref.parts.length).toBe(2);
-				if (d.noPartSpans) {
-					// The second part (after the unspaced dot) lexes into the fused DOT_ID token too.
-					expect(ref.partSpans).toBeUndefined();
-					return;
-				}
 				expect(ref.partSpans, "partSpans present").toBeDefined();
 				expect(ref.partSpans!.length).toBe(2);
 				// The qualifier span covers the whole delimited token (quotes/brackets/backticks included).
@@ -204,5 +187,36 @@ describe("per-part spans on column references (P2)", () => {
 		expect(sym, "the o.order_id reference symbol exists").toBeDefined();
 		expect(sym!.partSpans, "the Sym carries partSpans").toBeDefined();
 		expect(sym!.partSpans!.length).toBe(2);
+	});
+
+	// The DOT_ID fix, pinned by exact offsets. mysql lexes the unspaced `a.b` style as fused DOT_ID
+	// tokens (`.b`, `.c` -- `DOT_ID: '.' ID_LITERAL`), not a `.` + identifier. dotIdPartSpanOf computes
+	// each part's span one char past the leading dot, so the offsets are interchangeable with a
+	// node-derived span. Hand-computed so an off-by-one on the dot cannot pass.
+	describe("mysql fused DOT_ID part offsets", () => {
+		const my = DIALECTS.find((x) => x.name === "mysql")!;
+
+		it("SELECT a.b FROM t -> `a` at [7,8), `b` (from DOT_ID `.b`) at [9,10), line/column exact", () => {
+			const sql = "SELECT a.b FROM t";
+			const ref = projected(my, sql);
+			expect(ref.parts).toEqual(["a", "b"]);
+			expect(ref.partSpans!.length).toBe(2);
+			expect(ref.partSpans![0]).toEqual({ start: 7, end: 8, line: 1, column: 7, endLine: 1, endColumn: 8 });
+			// `b` comes from the fused DOT_ID `.b`: span starts one past the dot, ends at the token end.
+			expect(ref.partSpans![1]).toEqual({ start: 9, end: 10, line: 1, column: 9, endLine: 1, endColumn: 10 });
+		});
+
+		it("SELECT a.b.c FROM t -> both dotted parts computed past their own dots", () => {
+			const sql = "SELECT a.b.c FROM t";
+			const ref = projected(my, sql);
+			expect(ref.partSpans!.map((sp) => [sp.start, sp.end])).toEqual([
+				[7, 8],
+				[9, 10],
+				[11, 12],
+			]);
+			// each DOT_ID identifier sits one column past its dot, never on it
+			expect(ref.partSpans![1].column).toBe(9);
+			expect(ref.partSpans![2].column).toBe(11);
+		});
 	});
 });
