@@ -214,7 +214,7 @@ tools/gen.mjs              generation driver (sorts .g4 so the lexer generates b
 Adding a dialect is not a four-file change: the real surface is ~22 touchpoints —
 the compile-enforced `Dialect`-union maps the TypeScript compiler catches, plus a
 longer tail of silent-gap registries and test/tool matrices it doesn't. See
-`docs/superpowers/plans/2026-07-10-mysql-sqlite-dialects.md` for the itemized
+`.claude/plans/2026-07-10-mysql-sqlite-dialects.md` for the itemized
 routine. A missing function rule in a registry yields `unknown`, never a wrong
 type — that's the contract; don't guess return types.
 
