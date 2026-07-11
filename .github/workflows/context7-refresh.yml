@@ -1,0 +1,25 @@
+name: Refresh Context7 Docs
+
+on:
+  push:
+    branches:
+      - master
+  workflow_dispatch: # manual: re-index without a push
+
+permissions: {} # curl-only job; no repo token needed
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    steps:
+      # Context7 auto-refresh is popularity-gated, so a low-traffic library
+      # goes stale; this pings their refresh API on every push instead.
+      # libraryName is the Context7 ID (lowercase), not github.repository.
+      # --fail-with-body turns an HTTP error into a red job (plain -s would
+      # stay green while refreshes silently never happen).
+      - name: Trigger Context7 refresh
+        run: |
+          curl -sS --fail-with-body -X POST https://context7.com/api/v1/refresh \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${{ secrets.CONTEXT7_API_KEY }}" \
+            -d '{"libraryName": "/niclasolofsson/sqllens"}'
