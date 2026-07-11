@@ -1,4 +1,4 @@
-import { ParserRuleContext, TerminalNode, type ParseTree } from "antlr4ng";
+import { ParserRuleContext, TerminalNode, type ParseTree, type Token } from "antlr4ng";
 import { MysqlParser as P } from "../generated/mysql/MysqlParser.js";
 import type {
 	Clause,
@@ -17,7 +17,7 @@ import type {
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
-import { partSpansOf } from "../ir/part-span.js";
+import { collapsePartSpans, dotIdPartSpanOf, partSpanOf, type PartSpan } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 
 // ---------------------------------------------------------------------------
@@ -744,11 +744,11 @@ function tableSourceFromName(
 	cst: ParserRuleContext,
 ): Source {
 	const fullId = directChildrenOfRule(tn, P.RULE_fullId)[0] ?? tn;
-	const { parts, spanNodes } = dottedParts(fullId);
+	const { parts, spans } = dottedParts(fullId);
 	return {
 		kind: "table",
 		name: parts.length ? parts : [tn.getText()],
-		namePartSpans: partSpansOf(spanNodes),
+		namePartSpans: collapsePartSpans(spans),
 		alias: alias?.getText(),
 		aliasCst: alias,
 		cst,
@@ -1182,39 +1182,57 @@ function lowerOver(over: ParserRuleContext): WindowSpec {
 
 /** A fullColumnName / fullId as a column Expr — RAW parts (delimiters intact, dots stripped). */
 function columnRef(node: ParserRuleContext): Expr {
-	const { parts, spanNodes } = dottedParts(node);
-	return { kind: "column", parts: parts.length ? parts : [node.getText()], partSpans: partSpansOf(spanNodes), cst: node };
+	const { parts, spans } = dottedParts(node);
+	return { kind: "column", parts: parts.length ? parts : [node.getText()], partSpans: collapsePartSpans(spans), cst: node };
 }
 
-/** The dotted parts of a fullColumnName / fullId (and their per-part span nodes, all-or-nothing). A
- *  `uid` rule contributes its raw text (a `.uid` dottedId strips only the leading dot); a glued
- *  DOT_ID token strips its leading dot but yields NO clean per-part span (so partSpans is dropped). */
-function dottedParts(node: ParserRuleContext): { parts: string[]; spanNodes: (ParserRuleContext | undefined)[] } {
+/** The dotted parts of a fullColumnName / fullId, each with its own `PartSpan` (all-or-nothing per
+ *  ref, collapsed by the caller). A `uid` rule and a `.uid` dottedId go through the shared
+ *  `partSpanOf`; a glued `DOT_ID` token (the unspaced `a.b` style, `DOT_ID: '.' ID_LITERAL`) is a
+ *  single lexer token, not a node, so its identifier span is computed past the leading dot via
+ *  `dotIdPartSpanOf`. `DOT_ID` reaches this two ways, both handled: as a direct terminal child of
+ *  `fullId` (`uid (DOT_ID | '.' uid)?`), and nested inside a `dottedId` of `fullColumnName`
+ *  (`uid (dottedId dottedId?)?` where `dottedId: DOT_ID | '.' uid`). Both strip the leading dot from
+ *  the emitted part text. A span is `undefined` only for a part that genuinely carries no token. */
+function dottedParts(node: ParserRuleContext): { parts: string[]; spans: (PartSpan | undefined)[] } {
 	const parts: string[] = [];
-	const spanNodes: (ParserRuleContext | undefined)[] = [];
+	const spans: (PartSpan | undefined)[] = [];
+	const pushDotId = (sym: Token): void => {
+		const t = sym.text ?? "";
+		parts.push(t.startsWith(".") ? t.slice(1) : t);
+		spans.push(dotIdPartSpanOf(sym));
+	};
 	for (const c of kidsOf(node)) {
 		if (c instanceof ParserRuleContext) {
 			if (c.ruleIndex === P.RULE_uid) {
 				parts.push(c.getText());
-				spanNodes.push(c);
+				spans.push(partSpanOf(c));
 			} else if (c.ruleIndex === P.RULE_dottedId) {
 				const iu = directChildrenOfRule(c, P.RULE_uid)[0];
+				const dotId = dotIdTerminalOf(c);
 				if (iu) {
 					parts.push(iu.getText());
-					spanNodes.push(iu);
+					spans.push(partSpanOf(iu));
+				} else if (dotId) {
+					pushDotId(dotId.symbol);
 				} else {
 					const t = c.getText();
 					parts.push(t.startsWith(".") ? t.slice(1) : t);
-					spanNodes.push(undefined);
+					spans.push(undefined);
 				}
 			}
 		} else if (c instanceof TerminalNode && c.symbol.type === P.DOT_ID) {
-			const t = c.getText();
-			parts.push(t.startsWith(".") ? t.slice(1) : t);
-			spanNodes.push(undefined);
+			pushDotId(c.symbol);
 		}
 	}
-	return { parts, spanNodes };
+	return { parts, spans };
+}
+
+/** The `DOT_ID` terminal directly under a `dottedId` (its `: DOT_ID` alternative), else `undefined`
+ *  (the `'.' uid` alternative). */
+function dotIdTerminalOf(node: ParserRuleContext): TerminalNode | undefined {
+	for (const c of kidsOf(node)) if (c instanceof TerminalNode && c.symbol.type === P.DOT_ID) return c;
+	return undefined;
 }
 
 function lastPart(parts: string[]): string {
