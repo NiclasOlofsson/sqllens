@@ -1,22 +1,22 @@
 name: Refresh Context7 Docs
 
 on:
-  workflow_run: # after CI, so a red commit never gets indexed
-    workflows: [CI]
+  workflow_run: # after a release, so the index tracks shipped states (owners get 10 refreshes/day)
+    workflows: [Release]
     types: [completed]
     branches: [master]
-  workflow_dispatch: # manual: re-index without a push
+  workflow_dispatch: # manual: re-index without a release
 
 permissions: {} # curl-only job; no repo token needed
 
 jobs:
   refresh:
-    # workflow_run fires on failure too — refresh only when CI was green
+    # workflow_run fires on failure too — refresh only when the release succeeded
     if: ${{ github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success' }}
     runs-on: ubuntu-latest
     steps:
       # Context7 auto-refresh is popularity-gated, so a low-traffic library
-      # goes stale; this pings their refresh API after every green CI run.
+      # goes stale; this pings their refresh API after every successful release.
       # libraryName is the Context7 ID (lowercase), not github.repository.
       # An HTTP error fails the job (a silent non-refresh is worse than red) —
       # except 429: owners get 10 refreshes/day, so hitting the cap on a busy
