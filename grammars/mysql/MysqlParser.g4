@@ -268,9 +268,11 @@ createTable
         LIKE tableName
         | '(' LIKE parenthesisTable = tableName ')'
     ) # copyCreateTable
+    // CREATE TABLE ... [AS] query_expression takes any query primary — SELECT, TABLE t, or
+    // VALUES ROW(...) (dev.mysql.com/doc/refman/8.4/en/create-table-select.html), hence subqueryBody.
     | CREATE TEMPORARY? TABLE ifNotExists? tableName createDefinitions? (
         tableOption (','? tableOption)*
-    )? partitionDefinitions? keyViolate = (IGNORE | REPLACE)? AS? selectStatement # queryCreateTable
+    )? partitionDefinitions? keyViolate = (IGNORE | REPLACE)? AS? subqueryBody # queryCreateTable
     | CREATE TEMPORARY? TABLE ifNotExists? tableName createDefinitions (
         tableOption (','? tableOption)*
     )? partitionDefinitions? # columnCreateTable
@@ -888,13 +890,19 @@ replaceStatement
     )
     ;
 
+// The 8.0.19+ query-expression surface (dev.mysql.com/doc/refman/8.4/en/set-operations.html,
+// .../table.html, .../values.html, .../parenthesized-query-expressions.html): set-operation chains
+// take UNION / EXCEPT / INTERSECT; TABLE and VALUES ROW(...) are query primaries (leading cores and
+// operands, via explicitTable / tableValueConstructor); a parenthesized query expression may carry
+// trailing ORDER BY / LIMIT (parenthesisSelect). INTERSECT-over-UNION/EXCEPT precedence is realized
+// in lowering (the CST chain is flat, like upstream's UNION-only shape).
 selectStatement
-    : querySpecification lockClause* # simpleSelect
-    | queryExpression lockClause*    # parenthesisSelect
-    | (querySpecificationNointo | queryExpressionNointo) unionStatement+ (
-        UNION unionType = (ALL | DISTINCT)? (querySpecification | queryExpression)
+    : querySpecification lockClause*                        # simpleSelect
+    | queryExpression orderByClause? limitClause? lockClause* # parenthesisSelect
+    | (querySpecificationNointo | queryExpressionNointo | explicitTable | tableValueConstructor) unionStatement+ (
+        (UNION | EXCEPT | INTERSECT) unionType = (ALL | DISTINCT)? (querySpecification | queryExpression)
     )? orderByClause? limitClause? lockClause?                                                                                               # unionSelect
-    | queryExpressionNointo unionParenthesis+ (UNION unionType = (ALL | DISTINCT)? queryExpression)? orderByClause? limitClause? lockClause? #
+    | queryExpressionNointo unionParenthesis+ ((UNION | EXCEPT | INTERSECT) unionType = (ALL | DISTINCT)? queryExpression)? orderByClause? limitClause? lockClause? #
         unionParenthesisSelect
     | querySpecificationNointo (',' lateralStatement)+ # withLateralStatement
     ;
@@ -904,17 +912,38 @@ updateStatement
     | multipleUpdateStatement
     ;
 
-// https://dev.mysql.com/doc/refman/8.0/en/values.html
+// The VALUES statement (dev.mysql.com/doc/refman/8.4/en/values.html, 8.0.19+):
+// VALUES row_constructor_list [ORDER BY column_designator] [LIMIT n]. The bare constructor is split
+// out as tableValueConstructor so set-operation operands stay bare — a trailing ORDER BY / LIMIT after
+// an unparenthesized operand belongs to the set-operation RESULT
+// (dev.mysql.com/doc/refman/8.4/en/set-operations.html), never to the operand.
 valuesStatement
-    : VALUES '(' expressionsWithDefaults? ')' (',' '(' expressionsWithDefaults? ')')*
+    : tableValueConstructor orderByClause? limitClause?
+    ;
+
+// VALUES ROW(...), ROW(...) — dev.mysql.com/doc/refman/8.4/en/values.html. ROW? keeps upstream's
+// bare `VALUES (...)` form parsing (the pre-8.0.19 shape this grammar shipped with).
+tableValueConstructor
+    : VALUES ROW? '(' expressionsWithDefaults? ')' (',' ROW? '(' expressionsWithDefaults? ')')*
+    ;
+
+// The 8.0.19 "explicit table" query primary: TABLE tbl (dev.mysql.com/doc/refman/8.4/en/table.html).
+// Bare on purpose (see tableValueConstructor's note); tableStatement adds ORDER BY / LIMIT for the
+// standalone-statement form.
+explicitTable
+    : TABLE tableName
     ;
 
 // details
 
 insertStatementValue
     : selectStatement
-    | insertFormat = (VALUES | VALUE) '(' expressionsWithDefaults? ')' (
-        ',' '(' expressionsWithDefaults? ')'
+    // INSERT ... TABLE t is a documented source form (dev.mysql.com/doc/refman/8.4/en/insert.html).
+    | tableStatement
+    // Each value list may be a ROW(...) row constructor (8.0.19+, same page):
+    // INSERT INTO t VALUES ROW(1,2), ROW(3,4).
+    | insertFormat = (VALUES | VALUE) ROW? '(' expressionsWithDefaults? ')' (
+        ',' ROW? '(' expressionsWithDefaults? ')'
     )*
     ;
 
@@ -1005,7 +1034,12 @@ tableSource
 tableSourceItem
     : tableName (PARTITION '(' uidList ')')? (AS? alias = uid)? (indexHint (',' indexHint)*)? # atomTableItem
     | sequenceFunctionName '(' DECIMAL_LITERAL ')' (AS? alias = uid)?                         # sequenceTableItem
-    | (selectStatement | '(' parenthesisSubquery = selectStatement ')') AS? alias = uid       # subqueryTableItem
+    // The parenthesized derived-table body is subqueryBody (TABLE / VALUES / WITH-prefixed queries are
+    // legal derived tables — dev.mysql.com/doc/refman/8.4/en/derived-tables.html), and the alias may
+    // carry a column-alias list: `(SELECT 1, 2) AS dt (a, b)` (same page).
+    | (selectStatement | '(' parenthesisSubquery = subqueryBody ')') AS? alias = uid (
+        '(' uidList ')'
+    )?                                                                                        # subqueryTableItem
     | '(' tableSources ')'                                                                    # tableSourcesItem
     // JSON_TABLE is a full table factor, usable as a join operand — `t JOIN JSON_TABLE(...) jt ON ...`
     // (dev.mysql.com/doc/refman/8.4/en/json-table-functions.html); upstream admitted it only as a
@@ -1035,16 +1069,41 @@ joinSpec
     | USING '(' uidList ')'
     ;
 
+// The query forms admissible inside subquery parentheses — scalar/IN/EXISTS/quantified operands and
+// parenthesized derived tables: a full SELECT (set-op chains ride querySpecificationNointo's trailing
+// unionStatement), an explicit TABLE, a VALUES table value constructor (both 8.0.19+ query primaries:
+// dev.mysql.com/doc/refman/8.4/en/table.html, .../values.html — e.g. `WHERE a IN (TABLE t)`,
+// `> ANY (VALUES ROW(2))`), or a WITH-prefixed query (CTEs are legal in derived tables/subqueries:
+// dev.mysql.com/doc/refman/8.4/en/with.html).
+subqueryBody
+    : withClause? selectStatement
+    | tableStatement
+    | valuesStatement
+    ;
+
 //    Select Statement's Details
 
+// Parenthesized query expressions (dev.mysql.com/doc/refman/8.4/en/parenthesized-query-expressions.html,
+// 8.0.19+): the parens may wrap a whole set-operation chain, an explicit TABLE, or a VALUES table
+// value constructor — each with ORDER BY / LIMIT inside the parens applying to that operand. A
+// SELECT-led chain needs no explicit alternative here: it rides querySpecificationNointo's trailing
+// unionStatement (hence the extra Nointo alternative under queryExpression, whose querySpecification
+// has no trailing operator).
 queryExpression
     : '(' querySpecification ')'
     | '(' queryExpression ')'
+    | '(' querySpecificationNointo ')'
+    | '(' (explicitTable | tableValueConstructor) unionStatement+ orderByClause? limitClause? ')'
+    | '(' tableStatement ')'
+    | '(' valuesStatement ')'
     ;
 
 queryExpressionNointo
     : '(' querySpecificationNointo ')'
     | '(' queryExpressionNointo ')'
+    | '(' (explicitTable | tableValueConstructor) unionStatement+ orderByClause? limitClause? ')'
+    | '(' tableStatement ')'
+    | '(' valuesStatement ')'
     ;
 
 querySpecification
@@ -1056,12 +1115,20 @@ querySpecificationNointo
     : SELECT selectSpec* selectElements fromClause? groupByClause? havingClause? windowClause? orderByClause? limitClause? unionStatement?
     ;
 
+// Both set-operator rules take all three operators (UNION / EXCEPT / INTERSECT [ALL | DISTINCT] —
+// dev.mysql.com/doc/refman/8.4/en/set-operations.html), and unionStatement's operand set covers all
+// four query primaries. Rule names kept from upstream (they are the lowering's navigation anchors).
 unionParenthesis
-    : UNION unionType = (ALL | DISTINCT)? queryExpressionNointo
+    : op = (UNION | EXCEPT | INTERSECT) unionType = (ALL | DISTINCT)? queryExpressionNointo
     ;
 
 unionStatement
-    : UNION unionType = (ALL | DISTINCT)? (querySpecificationNointo | queryExpressionNointo)
+    : op = (UNION | EXCEPT | INTERSECT) unionType = (ALL | DISTINCT)? (
+        querySpecificationNointo
+        | queryExpressionNointo
+        | explicitTable
+        | tableValueConstructor
+    )
     ;
 
 lateralStatement
@@ -2017,7 +2084,7 @@ withStatement
     ;
 
 tableStatement
-    : TABLE tableName orderByClause? limitClause?
+    : explicitTable orderByClause? limitClause?
     ;
 
 diagnosticsStatement
@@ -2602,10 +2669,24 @@ expression
     ;
 
 predicate
-    : predicate NOT? IN '(' (selectStatement | expressions) ')'                            # inPredicate
+    // Subquery operands are subqueryBody (not bare selectStatement) so TABLE / VALUES / WITH-prefixed
+    // queries are legal in IN / quantified-comparison position (see subqueryBody's citations).
+    // There is deliberately NO separate `comparisonOperator quantifier '(' subqueryBody ')'`
+    // alternative: quantified comparisons (`> ANY (SELECT ...)`) are quantifiedSubqueryAtom in
+    // expressionAtom instead. As a predicate alternative the form can never win — ANY/SOME are also
+    // keywordsCanBeId members, so the input is ambiguous with `> ANY` (a bare column) followed by a
+    // parenthesized second statement (the batch rule's SEMI is optional), and ANTLR's left-recursion
+    // transform orders binary loop alternatives before suffix alternatives, which hands the ambiguity
+    // to binaryComparisonPredicate regardless of source order (upstream's shape mis-parsed this too).
+    // Residual quirk (inherited, documented): in the semicolon-less statement-FINAL position the
+    // sqlStatements rule has already committed the statement to its loop branch at token 0 (the
+    // `(A)* A` shape is ambiguous there and ANTLR takes the loop), which REQUIRES a following
+    // statement — so `... WHERE b > ANY (SELECT 1)<EOF>` still splits in two. Any `;`-terminated
+    // statement (every real batch) parses the quantified form correctly. The root fix — requiring
+    // SEMI between statements — needs the WITH/SELECT adjacency restructure first; tracked, not done.
+    : predicate NOT? IN '(' (subqueryBody | expressions) ')'                               # inPredicate
     | predicate IS nullNotnull                                                             # isNullPredicate
     | left = predicate comparisonOperator right = predicate                                # binaryComparisonPredicate
-    | predicate comparisonOperator quantifier = (ALL | ANY | SOME) '(' selectStatement ')' # subqueryComparisonPredicate
     | predicate NOT? BETWEEN predicate AND predicate                                       # betweenPredicate
     | predicate SOUNDS LIKE predicate                                                      # soundsLikePredicate
     | predicate NOT? LIKE predicate (ESCAPE STRING_LITERAL)?                               # likePredicate
@@ -2616,7 +2697,13 @@ predicate
 
 // Add in ASTVisitor nullNotnull in constant
 expressionAtom
-    : constant                                                  # constantExpressionAtom
+    // The quantified-comparison subquery, `ANY (SELECT ...)` / `ALL (TABLE t)` / `SOME (...)`
+    // (dev.mysql.com/doc/refman/8.4/en/any-in-some-subqueries.html, .../all-subqueries.html). FIRST
+    // alternative on purpose: ANY/SOME are keywordsCanBeId members, so this must beat the
+    // fullColumnName alternative for `ANY (` — a primary-alternative decision resolves an ambiguity
+    // by source order (unlike predicate's left-recursion loop; see the note there).
+    : quantifier = (ALL | ANY | SOME) '(' subqueryBody ')'      # quantifiedSubqueryAtom
+    | constant                                                  # constantExpressionAtom
     | fullColumnName                                            # fullColumnNameExpressionAtom
     | functionCall                                              # functionCallExpressionAtom
     | expressionAtom COLLATE collationName                      # collateExpressionAtom
@@ -2626,8 +2713,11 @@ expressionAtom
     | LOCAL_ID VAR_ASSIGN expressionAtom                        # variableAssignExpressionAtom
     | '(' expression (',' expression)* ')'                      # nestedExpressionAtom
     | ROW '(' expression (',' expression)+ ')'                  # nestedRowExpressionAtom
-    | EXISTS '(' selectStatement ')'                            # existsExpressionAtom
-    | '(' selectStatement ')'                                   # subqueryExpressionAtom
+    // EXISTS/scalar subqueries take subqueryBody (not bare selectStatement) so TABLE / VALUES /
+    // WITH-prefixed queries are legal: `EXISTS (TABLE t)`, `SELECT (TABLE t2) FROM t1`
+    // (see subqueryBody's citations).
+    | EXISTS '(' subqueryBody ')'                               # existsExpressionAtom
+    | '(' subqueryBody ')'                                      # subqueryExpressionAtom
     | INTERVAL expression intervalType                          # intervalExpressionAtom
     // Fulltext search: MATCH (col [, col] ...) AGAINST (expr [search_modifier])
     // (dev.mysql.com/doc/refman/8.4/en/fulltext-search.html) — legal anywhere an expression is
@@ -2904,7 +2994,9 @@ keywordsCanBeId
     | EVENT
     | EVENTS
     | EVERY
-    | EXCEPT
+    // EXCEPT removed: it is a RESERVED word (dev.mysql.com/doc/refman/8.4/en/keywords.html) and must
+    // not reach simpleId as a bare identifier/alias — as an identifier candidate it fights the
+    // EXCEPT set operator (dev.mysql.com/doc/refman/8.4/en/except.html). Same class as LEFT/RIGHT.
     | EXCHANGE
     | EXCLUSIVE
     | EXPANSION

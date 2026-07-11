@@ -280,3 +280,112 @@ describe("Mysql lower -> IR", () => {
 		}
 	});
 });
+
+// The 8.0.19+ query-expression forms the fork restructure added (docs-corpus wave 2):
+// INTERSECT / EXCEPT set operators, TABLE and VALUES ROW(...) as query primaries and operands,
+// parenthesized query expressions, and the subqueryBody operand positions. These pin the IR the
+// semantic layer consumes — a lowering change that mis-shapes them breaks scope/lineage downstream.
+describe("Mysql 8.0.19+ query expressions", () => {
+	it("lowers INTERSECT and EXCEPT to setop bodies with the right op", () => {
+		const ix = ir("SELECT a FROM t1 INTERSECT SELECT a FROM t2").q;
+		if (ix.body.kind !== "setop") throw new Error(`expected setop, got ${ix.body.kind}`);
+		expect(ix.body.op).toBe("intersect");
+		expect(ix.body.all).toBe(false);
+		const ex = ir("TABLE c EXCEPT ALL TABLE a").q;
+		if (ex.body.kind !== "setop") throw new Error(`expected setop, got ${ex.body.kind}`);
+		expect(ex.body.op).toBe("except");
+		expect(ex.body.all).toBe(true);
+	});
+
+	it("gives INTERSECT higher precedence than UNION/EXCEPT (set-operations.html)", () => {
+		// a UNION b INTERSECT c ≡ a UNION (b INTERSECT c) — the INTERSECT run folds first.
+		const q = ir("SELECT a FROM t1 UNION SELECT b FROM t2 INTERSECT SELECT c FROM t3").q;
+		if (q.body.kind !== "setop") throw new Error("setop");
+		expect(q.body.op).toBe("union");
+		expect(q.body.left.kind).toBe("select");
+		if (q.body.right.kind !== "setop") throw new Error("expected the INTERSECT to bind right");
+		expect(q.body.right.op).toBe("intersect");
+	});
+
+	it("folds a parenthesized chain as a unit (parens override precedence)", () => {
+		// (a EXCEPT b) INTERSECT c — the parens force the EXCEPT to fold first.
+		const q = ir("(SELECT a FROM t1 EXCEPT SELECT b FROM t2) INTERSECT (SELECT c FROM t3)").q;
+		if (q.body.kind !== "setop") throw new Error("setop");
+		expect(q.body.op).toBe("intersect");
+		if (q.body.left.kind !== "setop") throw new Error("expected the parenthesized EXCEPT as the left unit");
+		expect(q.body.left.op).toBe("except");
+	});
+
+	it("lowers TABLE as a query primary and set-operation operand (table.html)", () => {
+		const { q, body } = selectBody("TABLE t1");
+		expect(body.projections[0].isStar).toBe(true);
+		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"] });
+		expect(q.statement).toBe("query");
+		const un = ir("TABLE t1 UNION TABLE t2 ORDER BY x LIMIT 10").q;
+		if (un.body.kind !== "setop") throw new Error("setop");
+		expect(un.body.left).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["t1"] }] });
+		expect(un.body.right).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["t2"] }] });
+		expect(un.orderBy).toHaveLength(1); // the trailing ORDER BY belongs to the RESULT, not the operand
+		expect(un.limit?.top).toMatchObject({ text: "10" });
+	});
+
+	it("lowers VALUES ROW(...) with hoisted ORDER BY/LIMIT (values.html)", () => {
+		const { q, body } = selectBody("VALUES ROW(1,-2,3), ROW(5,7,9) ORDER BY column_1 LIMIT 2");
+		expect(body.projections.map((p) => p.name)).toEqual(["column_0", "column_1", "column_2"]);
+		expect(body.projections[0].expr).toMatchObject({ kind: "literal", text: "1" });
+		expect(q.orderBy).toHaveLength(1);
+		expect(q.limit?.top).toMatchObject({ text: "2" });
+	});
+
+	it("takes VALUES ROW(...) as a set-operation operand", () => {
+		const q = ir("VALUES ROW(4,-2), ROW(5,9) UNION VALUES ROW(1,2), ROW(3,4)").q;
+		if (q.body.kind !== "setop") throw new Error("setop");
+		expect(q.body.left).toMatchObject({ kind: "select" });
+		expect(q.body.right).toMatchObject({ kind: "select" });
+	});
+
+	it("takes TABLE and VALUES in subquery operand positions (EXISTS / IN / quantified / scalar)", () => {
+		const exists = selectBody("SELECT column1 FROM t1 WHERE EXISTS (TABLE t2)").body;
+		expect(exists.where).toMatchObject({ kind: "exists" });
+		expect(exists.subqueries).toHaveLength(1);
+		const inq = selectBody("SELECT s1 FROM t1 WHERE s1 IN (TABLE t2)").body;
+		expect(inq.where).toMatchObject({ kind: "predicate", op: "in" });
+		// The `;` matters: a semicolon-less quantified comparison in statement-FINAL position still
+		// mis-splits into two statements (the inherited sqlStatements loop-commitment quirk — see the
+		// predicate rule's note in the grammar); every `;`-terminated statement parses correctly.
+		const any = selectBody("SELECT * FROM tt WHERE b > ANY (VALUES ROW(2), ROW(4));").body;
+		expect(any.where).toMatchObject({ kind: "binary", op: ">" });
+		const anyRight = (any.where as { right?: { kind?: string } }).right;
+		expect(anyRight).toMatchObject({ kind: "subquery" });
+		const scalar = selectBody("SELECT (TABLE t2) FROM t1").body;
+		expect(scalar.projections[0].expr).toMatchObject({ kind: "subquery" });
+		expect(scalar.subqueries).toHaveLength(1);
+	});
+
+	it("captures derived-table column aliases: (SELECT ...) AS dt (a, b) (derived-tables.html)", () => {
+		const { body } = selectBody("SELECT * FROM (SELECT 1, 2) AS dt (a, b)");
+		expect(body.from[0]).toMatchObject({ kind: "subquery", alias: "dt", columnAliases: ["a", "b"] });
+	});
+
+	it("attaches a derived table's own WITH clause to the subquery (with.html)", () => {
+		const { body } = selectBody("SELECT * FROM (WITH cte2 AS (SELECT 2) SELECT * FROM cte2) AS dt");
+		if (body.from[0].kind !== "subquery") throw new Error("expected subquery source");
+		expect(body.from[0].query.ctes).toHaveLength(1);
+		expect(body.from[0].query.ctes[0].name).toBe("cte2");
+	});
+
+	it("lowers MATCH ... AGAINST as a `match` call carrying every matched column (fulltext-search.html)", () => {
+		const { body } = selectBody("SELECT id FROM articles WHERE MATCH (title, body) AGAINST ('db' IN BOOLEAN MODE)");
+		expect(body.where).toMatchObject({ kind: "function", name: "match" });
+		const cols = body.columns.filter((c) => c.clause === "where").map((c) => c.parts.join("."));
+		expect(cols).toContain("title");
+		expect(cols).toContain("body");
+	});
+
+	it("hoists ORDER BY/LIMIT of a parenthesized query expression: (SELECT ... UNION ...) LIMIT n", () => {
+		const q = ir("(SELECT 1 AS r UNION SELECT 2) LIMIT 1 OFFSET 1").q;
+		if (q.body.kind !== "setop") throw new Error("expected the inner chain folded as a setop");
+		expect(q.limit?.top).toMatchObject({ text: "1" });
+		expect(q.limit?.offset).toMatchObject({ text: "1" });
+	});
+});

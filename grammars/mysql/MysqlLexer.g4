@@ -137,6 +137,9 @@ INFILE                        : 'INFILE';
 INNER                         : 'INNER';
 INOUT                         : 'INOUT';
 INSERT                        : 'INSERT';
+// INTERSECT added for the 8.0.31+ set operator (dev.mysql.com/doc/refman/8.4/en/intersect.html);
+// RESERVED (dev.mysql.com/doc/refman/8.4/en/keywords.html), so deliberately NOT in keywordsCanBeId.
+INTERSECT                     : 'INTERSECT';
 INTERVAL                      : 'INTERVAL';
 INTO                          : 'INTO';
 IS                            : 'IS';

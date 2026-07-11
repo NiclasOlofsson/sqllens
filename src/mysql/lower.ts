@@ -35,8 +35,9 @@ import { freezeIR } from "../ir/freeze.js";
 // Two grammar realities shape this lowering (see the R3 report):
 //  1. WITH/SELECT split — MySQL-PT parses `WITH cte AS (...) SELECT ...` as TWO
 //     adjacent statements (a bare `withStatement`, then the `selectStatement`);
-//     lowerImpl rejoins them into one CTE query. No INTERSECT/EXCEPT set ops
-//     exist (only UNION), and CTEs live only on the fork's withStatement rule.
+//     lowerImpl rejoins them into one CTE query. Set operations are a flat
+//     linearized chain (UNION / EXCEPT / INTERSECT since the 8.0.19+ fork
+//     restructure); INTERSECT's higher precedence is realized in foldSetop.
 //  2. Bare `LEFT`/`RIGHT` before JOIN now parse as an outer join, not a swallowed
 //     table alias — our fork removed the reserved words LEFT/RIGHT from the
 //     keyword-as-identifier path (upstream let them alias); joinPart carries the token.
@@ -74,12 +75,19 @@ const AGGREGATES = new Set([
 	"variance",
 ]);
 
-/** The core query "primary" rules the union linearizer treats as branch cores. */
+/** The core query "primary" rules the union linearizer treats as branch cores. Beyond the four
+ *  upstream select shapes: the 8.0.19+ query primaries (explicitTable / tableValueConstructor, i.e.
+ *  `TABLE t` and `VALUES ROW(...)`) and their statement wrappers (tableStatement / valuesStatement,
+ *  reachable as parenthesized operands `(TABLE t ORDER BY x)`). */
 const CORE_RULES = new Set<number>([
 	P.RULE_querySpecification,
 	P.RULE_querySpecificationNointo,
 	P.RULE_queryExpression,
 	P.RULE_queryExpressionNointo,
+	P.RULE_explicitTable,
+	P.RULE_tableValueConstructor,
+	P.RULE_tableStatement,
+	P.RULE_valuesStatement,
 ]);
 
 /** Lower a parsed MySQL file (`root`: a `;`-separated batch of statements) into the IR. A single
@@ -133,7 +141,7 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		}
 		const vs = directChildrenOfRule(dml, P.RULE_valuesStatement)[0];
 		if (vs) {
-			const q: QueryExpr = { kind: "query", ctes: [], body: buildValues(vs), cst: vs };
+			const q = lowerValuesQuery(vs);
 			q.statement = "query";
 			return q;
 		}
@@ -239,7 +247,7 @@ function lowerQueryDml(dml: ParserRuleContext): QueryExpr {
 	const sel = directChildrenOfRule(dml, P.RULE_selectStatement)[0];
 	if (sel) return lowerSelectStatement(sel);
 	const vs = directChildrenOfRule(dml, P.RULE_valuesStatement)[0];
-	if (vs) return { kind: "query", ctes: [], body: buildValues(vs), cst: vs };
+	if (vs) return lowerValuesQuery(vs);
 	const tblStmt = directChildrenOfRule(dml, P.RULE_tableStatement)[0];
 	if (tblStmt) return buildTableQuery(tblStmt);
 	return { kind: "query", ctes: [], body: nonQuerySelect(dml, "non-query"), cst: dml };
@@ -266,19 +274,27 @@ function lowerSelectStatement(selectStmt: ParserRuleContext): QueryExpr {
 	return { kind: "query", ctes: [], body, orderBy, limit, cst: selectStmt };
 }
 
-/** One linearized UNION operator: its ALL flag and the CST node anchoring the setop's span (the
- *  unionStatement/unionParenthesis rule node, or — for the trailing into-tail arm, whose UNION/ALL
- *  are loose tokens — the trailing branch core itself). */
-type UnionOp = { all: boolean; cst: ParserRuleContext };
+/** One linearized set operator: its kind (union / except / intersect), ALL flag, and the CST node
+ *  anchoring the setop's span (the unionStatement/unionParenthesis rule node, or — for the trailing
+ *  into-tail arm, whose operator/ALL are loose tokens — the trailing branch core itself). */
+type SetOpKind = "union" | "except" | "intersect";
+type UnionOp = { op: SetOpKind; all: boolean; cst: ParserRuleContext };
 
-/** Linearize the union chain of a selectStatement into ordered branch cores + operator entries. The
- *  grammar nests the union operator both directly under selectStatement AND as the trailing child of a
- *  querySpecificationNointo core, so each core is followed ONLY into its trailing union operator (never
- *  into a queryExpression's parenthesized inner core, which is unwrapping, not a second branch).
- *  unionSelect/unionParenthesisSelect additionally allow ONE trailing `UNION (ALL|DISTINCT)?
- *  (querySpecification|queryExpression)` into-tail arm whose UNION/ALL are LOOSE direct tokens of
- *  selectStatement and whose branch is a bare direct core — collected here as a branch of its own
- *  (previously silently dropped; B-R3 review finding). */
+function opKindOf(n: ParserRuleContext): SetOpKind {
+	if (hasDirectToken(n, P.EXCEPT)) return "except";
+	if (hasDirectToken(n, P.INTERSECT)) return "intersect";
+	return "union";
+}
+
+/** Linearize the set-operation chain of a selectStatement (or a parenthesized query-expression core —
+ *  buildCoreBody folds those as their own unit) into ordered branch cores + operator entries. The
+ *  grammar nests the operator both directly under selectStatement AND as the trailing child of a
+ *  querySpecificationNointo core, so ONLY the querySpecification(Nointo) cores are followed into a
+ *  trailing operator (a parenthesized core's operators belong to ITS chain, never this level).
+ *  unionSelect/unionParenthesisSelect additionally allow ONE trailing `(UNION|EXCEPT|INTERSECT)
+ *  (ALL|DISTINCT)? (querySpecification|queryExpression)` into-tail arm whose operator/ALL are LOOSE
+ *  direct tokens of selectStatement and whose branch is a bare direct core — collected here as a
+ *  branch of its own (previously silently dropped; B-R3 review finding). */
 function collectUnion(selectStmt: ParserRuleContext): { cores: ParserRuleContext[]; ops: UnionOp[] } {
 	const cores: ParserRuleContext[] = [];
 	const ops: UnionOp[] = [];
@@ -287,67 +303,116 @@ function collectUnion(selectStmt: ParserRuleContext): { cores: ParserRuleContext
 
 	const processCore = (core: ParserRuleContext): void => {
 		cores.push(core);
-		// A querySpecificationNointo may carry a trailing union operator as a DIRECT child.
-		for (const c of kidsOf(core)) if (c instanceof ParserRuleContext && isOp(c)) processOp(c);
+		// Only querySpecification(Nointo) may carry a trailing set operator as a DIRECT child.
+		if (core.ruleIndex === P.RULE_querySpecification || core.ruleIndex === P.RULE_querySpecificationNointo) {
+			for (const c of kidsOf(core)) if (c instanceof ParserRuleContext && isOp(c)) processOp(c);
+		}
 	};
 	const processOp = (op: ParserRuleContext): void => {
-		ops.push({ all: hasDirectToken(op, P.ALL), cst: op });
+		ops.push({ op: opKindOf(op), all: hasDirectToken(op, P.ALL), cst: op });
 		const core = firstCoreChild(op);
 		if (core) processCore(core);
 	};
 
 	let pendingAll = false; // the loose ALL token preceding the trailing into-tail branch
+	let pendingOp: SetOpKind = "union"; // the loose operator token preceding it
 	for (const c of kidsOf(selectStmt)) {
 		if (c instanceof TerminalNode) {
 			if (c.symbol.type === P.ALL) pendingAll = true;
+			else if (c.symbol.type === P.EXCEPT) pendingOp = "except";
+			else if (c.symbol.type === P.INTERSECT) pendingOp = "intersect";
 			continue;
 		}
 		if (!(c instanceof ParserRuleContext)) continue;
 		if (isOp(c)) {
 			processOp(c);
 			pendingAll = false;
+			pendingOp = "union";
 		} else if (CORE_RULES.has(c.ruleIndex)) {
-			if (cores.length > 0) ops.push({ all: pendingAll, cst: c }); // the trailing into-tail branch
+			if (cores.length > 0) ops.push({ op: pendingOp, all: pendingAll, cst: c }); // the trailing into-tail branch
 			processCore(c);
 			pendingAll = false;
+			pendingOp = "union";
 		}
 	}
 	return { cores, ops };
 }
 
-/** Left-fold union branch bodies. MySQL has only UNION (no INTERSECT/EXCEPT); each op entry carries
- *  its ALL flag (a missing entry — never expected, cores always lead ops by one — folds as the
- *  DISTINCT default). */
+/** Fold the linearized branch bodies with MySQL's set-operator precedence: INTERSECT binds tighter
+ *  than UNION / EXCEPT (dev.mysql.com/doc/refman/8.4/en/set-operations.html); equal-precedence
+ *  operators group left-to-right. Pass 1 collapses INTERSECT runs into their left neighbor; pass 2
+ *  left-folds the remaining UNION/EXCEPT chain. A missing op entry (never expected — cores always
+ *  lead ops by one) folds as the UNION DISTINCT default. */
 function foldSetop(cores: ParserRuleContext[], ops: UnionOp[], cst: ParserRuleContext): QueryBody {
 	const bodies = cores.map(buildCoreBody);
-	let body: QueryBody = bodies[0] ?? emptyBody(cst);
+	const groups: QueryBody[] = [bodies[0] ?? emptyBody(cst)];
+	const outer: (UnionOp | undefined)[] = [];
 	for (let i = 1; i < bodies.length; i++) {
 		const op = ops[i - 1];
-		body = {
-			kind: "setop",
-			op: "union",
-			all: op?.all ?? false,
-			left: body,
-			right: bodies[i],
-			columns: [],
-			cst: op?.cst ?? cst,
-		};
+		if (op?.op === "intersect") {
+			groups[groups.length - 1] = setopNode(op, groups[groups.length - 1], bodies[i], cst);
+		} else {
+			outer.push(op);
+			groups.push(bodies[i]);
+		}
+	}
+	let body = groups[0];
+	for (let i = 1; i < groups.length; i++) {
+		body = setopNode(outer[i - 1], body, groups[i], cst);
 	}
 	return body;
 }
 
-/** A branch core -> QueryBody. querySpecification(Nointo) builds a select; queryExpression(Nointo)
- *  unwraps its parenthesized inner core. */
+function setopNode(
+	op: UnionOp | undefined,
+	left: QueryBody,
+	right: QueryBody,
+	fallback: ParserRuleContext,
+): QueryBody {
+	return {
+		kind: "setop",
+		op: op?.op ?? "union",
+		all: op?.all ?? false,
+		left,
+		right,
+		columns: [],
+		cst: op?.cst ?? fallback,
+	};
+}
+
+/** A branch core -> QueryBody. querySpecification(Nointo) builds a select; explicitTable /
+ *  tableValueConstructor (and their statement wrappers, reachable as parenthesized operands) build
+ *  TABLE/VALUES bodies; queryExpression(Nointo) folds its OWN parenthesized chain as a unit (parens
+ *  grouping survives the flat outer linearization) or unwraps a single inner core. A parenthesized
+ *  branch's own ORDER BY / LIMIT (`(TABLE t ORDER BY x) UNION ...`) have no per-branch IR slot — an
+ *  accepted boundary (the refs stay CST-addressable). */
 function buildCoreBody(core: ParserRuleContext): QueryBody {
 	if (core.ruleIndex === P.RULE_querySpecification || core.ruleIndex === P.RULE_querySpecificationNointo) {
 		return buildSelect(core);
 	}
-	const inner = firstCoreChild(core);
-	return inner ? buildCoreBody(inner) : emptyBody(core);
+	if (core.ruleIndex === P.RULE_explicitTable) return buildTableBody(core);
+	if (core.ruleIndex === P.RULE_tableStatement) {
+		const et = directChildrenOfRule(core, P.RULE_explicitTable)[0];
+		return et ? buildTableBody(et) : emptyBody(core);
+	}
+	if (core.ruleIndex === P.RULE_tableValueConstructor || core.ruleIndex === P.RULE_valuesStatement) {
+		return buildValues(core);
+	}
+	// queryExpression(Nointo): fold the parenthesized chain (single inner core -> plain recursion).
+	const { cores, ops } = collectUnion(core);
+	if (cores.length > 1) return foldSetop(cores, ops, core);
+	return cores[0] ? buildCoreBody(cores[0]) : emptyBody(core);
 }
 
 function unwrapCore(core: ParserRuleContext): ParserRuleContext {
-	if (core.ruleIndex === P.RULE_querySpecification || core.ruleIndex === P.RULE_querySpecificationNointo) return core;
+	if (
+		core.ruleIndex === P.RULE_querySpecification ||
+		core.ruleIndex === P.RULE_querySpecificationNointo ||
+		core.ruleIndex === P.RULE_tableStatement ||
+		core.ruleIndex === P.RULE_valuesStatement
+	) {
+		return core;
+	}
 	const inner = firstCoreChild(core);
 	return inner ? unwrapCore(inner) : core;
 }
@@ -491,11 +556,14 @@ function extractGroupBy(clause: ParserRuleContext): Expr[] | undefined {
 
 // --- VALUES / TABLE -----------------------------------------------------------
 
-/** valuesStatement: VALUES '(' expressionsWithDefaults? ')' (',' '(' … ')')*. Lowers to a modelled
- *  select whose projections carry the FIRST row's exprs, named column_0…column_N (MySQL's default
- *  table-value-constructor output names). */
+/** A valuesStatement (tableValueConstructor orderByClause? limitClause?) or a bare
+ *  tableValueConstructor: VALUES ROW(1,-2,3), ROW(5,7,9) — the 8.0.19 VALUES statement
+ *  (dev.mysql.com/doc/refman/8.4/en/values.html; ROW? also admits upstream's bare `VALUES (...)`
+ *  shape). Lowers to a modelled select whose projections carry the FIRST row's exprs, named
+ *  column_0…column_N (MySQL's default table-value-constructor output names). */
 function buildValues(vs: ParserRuleContext): SelectExpr {
-	const firstRow = directChildrenOfRule(vs, P.RULE_expressionsWithDefaults)[0];
+	const host = directChildrenOfRule(vs, P.RULE_tableValueConstructor)[0] ?? vs;
+	const firstRow = directChildrenOfRule(host, P.RULE_expressionsWithDefaults)[0];
 	const items = firstRow ? directChildrenOfRule(firstRow, P.RULE_expressionOrDefault) : [];
 	const projections: Projection[] = items.map((eod, i) => {
 		const e = directChildrenOfRule(eod, P.RULE_expression)[0];
@@ -511,21 +579,65 @@ function buildValues(vs: ParserRuleContext): SelectExpr {
 	return { kind: "select", projections, from: [], columns, aggregated: false, cst: vs };
 }
 
-/** tableStatement: TABLE tableName orderByClause? limitClause?  — equivalent to `SELECT * FROM t`. */
-function buildTableQuery(ts: ParserRuleContext): QueryExpr {
-	const tn = directChildrenOfRule(ts, P.RULE_tableName)[0];
-	const from = tn ? [tableSourceFromName(tn, undefined, ts)] : [];
-	const body: SelectExpr = {
+/** explicitTable: TABLE tableName — the 8.0.19 explicit-table query primary, equivalent to
+ *  `SELECT * FROM t` (dev.mysql.com/doc/refman/8.4/en/table.html). */
+function buildTableBody(et: ParserRuleContext): SelectExpr {
+	const tn = directChildrenOfRule(et, P.RULE_tableName)[0];
+	const from = tn ? [tableSourceFromName(tn, undefined, et)] : [];
+	return {
 		kind: "select",
-		projections: [{ name: undefined, isStar: true, expr: { kind: "star", cst: ts }, cst: ts }],
+		projections: [{ name: undefined, isStar: true, expr: { kind: "star", cst: et }, cst: et }],
 		from,
 		columns: [],
 		aggregated: false,
-		cst: ts,
+		cst: et,
 	};
+}
+
+/** tableStatement: explicitTable orderByClause? limitClause? — the standalone TABLE statement. */
+function buildTableQuery(ts: ParserRuleContext): QueryExpr {
+	const et = directChildrenOfRule(ts, P.RULE_explicitTable)[0];
+	const body = et ? buildTableBody(et) : emptyBody(ts);
 	const orderBy = extractOrderBy(ts);
 	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
 	return { kind: "query", ctes: [], body, orderBy, limit: extractLimit(ts), cst: ts };
+}
+
+/** valuesStatement as a standalone statement: the VALUES body plus hoisted ORDER BY / LIMIT
+ *  (dev.mysql.com/doc/refman/8.4/en/values.html). */
+function lowerValuesQuery(vs: ParserRuleContext): QueryExpr {
+	const body = buildValues(vs);
+	const orderBy = extractOrderBy(vs);
+	if (orderBy) for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
+	return { kind: "query", ctes: [], body, orderBy, limit: extractLimit(vs), cst: vs };
+}
+
+/** subqueryBody (withClause? selectStatement | tableStatement | valuesStatement) — the query forms
+ *  admissible inside subquery/derived-table parentheses — to a QueryExpr. A withClause's CTEs attach
+ *  to the query they prefix (CTEs are legal in derived tables/subqueries,
+ *  dev.mysql.com/doc/refman/8.4/en/with.html). */
+function lowerSubqueryBody(sb: ParserRuleContext): QueryExpr {
+	const sel = directChildrenOfRule(sb, P.RULE_selectStatement)[0];
+	if (sel) {
+		const q = lowerSelectStatement(sel);
+		const wc = directChildrenOfRule(sb, P.RULE_withClause)[0];
+		if (wc) q.ctes = collectCteNodes(wc).map(lowerCteNode);
+		return q;
+	}
+	const ts = directChildrenOfRule(sb, P.RULE_tableStatement)[0];
+	if (ts) return buildTableQuery(ts);
+	const vs = directChildrenOfRule(sb, P.RULE_valuesStatement)[0];
+	if (vs) return lowerValuesQuery(vs);
+	return emptyQuery(sb);
+}
+
+/** The subquery of an operand node — its direct subqueryBody ('(' … ')' forms) or bare selectStatement
+ *  child — with the node that anchors it. */
+function subqueryOf(node: ParserRuleContext): { query: QueryExpr; cst: ParserRuleContext } | undefined {
+	const sb = directChildrenOfRule(node, P.RULE_subqueryBody)[0];
+	if (sb) return { query: lowerSubqueryBody(sb), cst: sb };
+	const sel = directChildrenOfRule(node, P.RULE_selectStatement)[0];
+	return sel ? { query: lowerSelectStatement(sel), cst: sel } : undefined;
 }
 
 // --- sources ------------------------------------------------------------------
@@ -568,17 +680,30 @@ function buildFrom(fromClause: ParserRuleContext): {
 }
 
 /** tableSourceItem:
- *    tableName (PARTITION …)? (AS? alias=uid)? (indexHint …)*    (atomTableItem)
- *  | sequenceFunctionName '(' DECIMAL_LITERAL ')' (AS? alias)?    (sequenceTableItem)
- *  | (selectStatement | '(' selectStatement ')') AS? alias=uid    (subqueryTableItem)
- *  | '(' tableSources ')'                                         (tableSourcesItem — flattened) */
+ *    tableName (PARTITION …)? (AS? alias=uid)? (indexHint …)*             (atomTableItem)
+ *  | sequenceFunctionName '(' DECIMAL_LITERAL ')' (AS? alias)?             (sequenceTableItem)
+ *  | (selectStatement | '(' subqueryBody ')') AS? alias=uid ('(' uidList ')')?  (subqueryTableItem)
+ *  | '(' tableSources ')'                                                  (tableSourcesItem — flattened)
+ *  | jsonTable                                                             (jsonTableItem) */
 function buildSourceItem(item: ParserRuleContext, fromSubqueries: Set<ParserRuleContext>): Source[] {
-	const sel = directChildrenOfRule(item, P.RULE_selectStatement)[0];
+	const sb: ParserRuleContext | undefined = directChildrenOfRule(item, P.RULE_subqueryBody)[0];
+	const sel = sb ?? directChildrenOfRule(item, P.RULE_selectStatement)[0];
 	if (sel) {
 		fromSubqueries.add(sel);
 		const alias = directChildrenOfRule(item, P.RULE_uid)[0];
+		// The derived-table column-alias list: `(SELECT 1, 2) AS dt (a, b)` — its uidList is a direct
+		// child (the PARTITION uidList lives on atomTableItem, a different branch).
+		const ul = directChildrenOfRule(item, P.RULE_uidList)[0];
+		const columnAliases = ul ? directChildrenOfRule(ul, P.RULE_uid).map((u) => u.getText()) : undefined;
 		return [
-			{ kind: "subquery", query: lowerSelectStatement(sel), alias: alias?.getText(), aliasCst: alias, cst: item },
+			{
+				kind: "subquery",
+				query: sb ? lowerSubqueryBody(sb) : lowerSelectStatement(sel),
+				alias: alias?.getText(),
+				aliasCst: alias,
+				...(columnAliases?.length ? { columnAliases } : {}),
+				cst: item,
+			},
 		];
 	}
 
@@ -790,11 +915,11 @@ function lowerPredicate(node: ParserRuleContext): Expr {
 	const operand = lowerExpr(preds[0]);
 	const negated = hasDirectToken(node, P.NOT);
 
-	// predicate NOT? IN '(' (selectStatement | expressions) ')'
+	// predicate NOT? IN '(' (subqueryBody | expressions) ')'
 	if (hasDirectToken(node, P.IN)) {
-		const sel = directChildrenOfRule(node, P.RULE_selectStatement)[0];
-		const args = sel
-			? [{ kind: "subquery" as const, query: lowerSelectStatement(sel), cst: sel }]
+		const sub = subqueryOf(node);
+		const args = sub
+			? [{ kind: "subquery" as const, query: sub.query, cst: sub.cst }]
 			: expressionsExprs(node).map(lowerExpr);
 		return { kind: "predicate", op: "in", negated, operand, args, cst: node };
 	}
@@ -830,12 +955,12 @@ function lowerPredicate(node: ParserRuleContext): Expr {
 	if (hasDirectToken(node, P.MEMBER)) {
 		return { kind: "predicate", op: "member of", negated: false, operand, args: preds[1] ? [lowerExpr(preds[1])] : [], cst: node };
 	}
-	// binaryComparisonPredicate / subqueryComparisonPredicate: left comparisonOperator (right | ANY/ALL/SOME (sel))
+	// binaryComparisonPredicate / subqueryComparisonPredicate: left comparisonOperator (right | ANY/ALL/SOME (subqueryBody))
 	const cmp = directChildrenOfRule(node, P.RULE_comparisonOperator)[0];
 	if (cmp) {
-		const sel = directChildrenOfRule(node, P.RULE_selectStatement)[0];
-		const right: Expr = sel
-			? { kind: "subquery", query: lowerSelectStatement(sel), cst: sel }
+		const sub = subqueryOf(node);
+		const right: Expr = sub
+			? { kind: "subquery", query: sub.query, cst: sub.cst }
 			: preds[1]
 				? lowerExpr(preds[1])
 				: otherExpr(node);
@@ -876,14 +1001,14 @@ function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	const mv = directChildrenOfRule(node, P.RULE_mysqlVariable)[0];
 	if (mv && atoms.length === 0) return { kind: "literal", text: mv.getText(), cst: node };
 
-	// existsExpressionAtom: EXISTS '(' selectStatement ')'
+	// existsExpressionAtom: EXISTS '(' subqueryBody ')'
 	if (hasDirectToken(node, P.EXISTS)) {
-		const sel = directChildrenOfRule(node, P.RULE_selectStatement)[0];
-		return sel ? { kind: "exists", query: lowerSelectStatement(sel), cst: node } : otherExpr(node);
+		const sub = subqueryOf(node);
+		return sub ? { kind: "exists", query: sub.query, cst: node } : otherExpr(node);
 	}
-	// subqueryExpressionAtom: '(' selectStatement ')'
-	const sel = directChildrenOfRule(node, P.RULE_selectStatement)[0];
-	if (sel) return { kind: "subquery", query: lowerSelectStatement(sel), cst: node };
+	// subqueryExpressionAtom: '(' subqueryBody ')'
+	const sub = subqueryOf(node);
+	if (sub) return { kind: "subquery", query: sub.query, cst: node };
 
 	// collateExpressionAtom / binaryExpressionAtom / variableAssignExpressionAtom — passthroughs.
 	if (atoms.length === 1 && (hasDirectToken(node, P.COLLATE) || hasDirectToken(node, P.BINARY) || hasDirectToken(node, P.VAR_ASSIGN))) {
@@ -1098,17 +1223,20 @@ function lastPart(parts: string[]): string {
 
 // --- expression subqueries (scalar / IN / EXISTS) -----------------------------
 
-/** Scalar / IN / EXISTS subqueries in this query spec's expressions — every nested `selectStatement`
- *  that is NOT a FROM source. Rooted at the querySpecification, so SELECT-list / WHERE / GROUP BY /
- *  HAVING / ORDER BY / LIMIT expressions are all covered. `continue` at each selectStatement so an
- *  inner query collects its own expression subqueries in its own scope. */
+/** Scalar / IN / EXISTS subqueries in this query spec's expressions — every nested `subqueryBody` /
+ *  `selectStatement` that is NOT a FROM source. Rooted at the querySpecification, so SELECT-list /
+ *  WHERE / GROUP BY / HAVING / ORDER BY / LIMIT expressions are all covered. `continue` at each
+ *  boundary so an inner query collects its own expression subqueries in its own scope (a subqueryBody
+ *  is the boundary for the '(' … ')' operand forms — its inner selectStatement is never re-visited). */
 function extractExpressionSubqueries(qspec: ParserRuleContext, fromSubqueries: Set<ParserRuleContext>): QueryExpr[] {
 	const out: QueryExpr[] = [];
 	const walk = (n: ParseTree): void => {
 		for (const c of kidsOf(n)) {
 			if (!(c instanceof ParserRuleContext)) continue;
-			if (c.ruleIndex === P.RULE_selectStatement) {
-				if (!fromSubqueries.has(c)) out.push(lowerSelectStatement(c));
+			if (c.ruleIndex === P.RULE_selectStatement || c.ruleIndex === P.RULE_subqueryBody) {
+				if (!fromSubqueries.has(c)) {
+					out.push(c.ruleIndex === P.RULE_subqueryBody ? lowerSubqueryBody(c) : lowerSelectStatement(c));
+				}
 				continue; // its own scope — don't descend
 			}
 			walk(c);
@@ -1163,11 +1291,11 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 }
 
 /** Fallback: recover column references from inside an unmodelled `other` node — descend the CST,
- *  lowering any fullColumnName, but never into a nested selectStatement (its own scope). */
+ *  lowering any fullColumnName, but never into a nested selectStatement / subqueryBody (own scope). */
 function cstColumnRefs(node: ParseTree, acc: ColumnRef[], clause: Clause): void {
 	for (const child of kidsOf(node)) {
 		if (!(child instanceof ParserRuleContext)) continue;
-		if (child.ruleIndex === P.RULE_selectStatement) continue;
+		if (child.ruleIndex === P.RULE_selectStatement || child.ruleIndex === P.RULE_subqueryBody) continue;
 		if (child.ruleIndex === P.RULE_fullColumnName) {
 			const e = columnRef(child);
 			if (e.kind === "column") {
