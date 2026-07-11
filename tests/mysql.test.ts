@@ -414,10 +414,11 @@ describe("Mysql 8.0.19+ query expressions", () => {
 		expect(exists.subqueries).toHaveLength(1);
 		const inq = selectBody("SELECT s1 FROM t1 WHERE s1 IN (TABLE t2)").body;
 		expect(inq.where).toMatchObject({ kind: "predicate", op: "in" });
-		// The `;` matters: a semicolon-less quantified comparison in statement-FINAL position still
-		// mis-splits into two statements (the inherited sqlStatements loop-commitment quirk — see the
-		// predicate rule's note in the grammar); every `;`-terminated statement parses correctly.
-		const any = selectBody("SELECT * FROM tt WHERE b > ANY (VALUES ROW(2), ROW(4));").body;
+		// A quantified comparison at statement-FINAL position parses as ONE query with NO trailing
+		// semicolon — sqlStatements now requires a SEMI between statements, so the parenthesized subquery
+		// can only continue this statement, not open a second one (the prior mis-split is gone; grammar
+		// citation at the predicate rule / sqlStatements). Held without the `;` on purpose.
+		const any = selectBody("SELECT * FROM tt WHERE b > ANY (VALUES ROW(2), ROW(4))").body;
 		expect(any.where).toMatchObject({ kind: "binary", op: ">" });
 		const anyRight = (any.where as { right?: { kind?: string } }).right;
 		expect(anyRight).toMatchObject({ kind: "subquery" });

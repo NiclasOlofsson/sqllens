@@ -33,11 +33,13 @@ import { freezeIR } from "../ir/freeze.js";
 // scope, so shallow walks never descend into them.
 //
 // Two grammar realities shape this lowering (see the R3 report):
-//  1. WITH/SELECT split — MySQL-PT parses `WITH cte AS (...) SELECT ...` as TWO
-//     adjacent statements (a bare `withStatement`, then the `selectStatement`);
-//     lowerImpl rejoins them into one CTE query. Set operations are a flat
-//     linearized chain (UNION / EXCEPT / INTERSECT since the 8.0.19+ fork
-//     restructure); INTERSECT's higher precedence is realized in foldSetop.
+//  1. WITH/SELECT split — MySQL-PT models `WITH cte AS (...) SELECT ...` as a bare
+//     `withStatement` (the CTE clause only) immediately followed by its query. The
+//     batch rule requires a SEMI between every other statement pair, so this is the
+//     one no-semicolon adjacency, carried by statementItem's `withStatement
+//     sqlStatement` alternative; lowerImpl rejoins the two into one CTE query. Set
+//     operations are a flat linearized chain (UNION / EXCEPT / INTERSECT since the
+//     8.0.19+ fork restructure); INTERSECT's higher precedence is realized in foldSetop.
 //  2. Bare `LEFT`/`RIGHT` before JOIN now parse as an outer join, not a swallowed
 //     table alias — our fork removed the reserved words LEFT/RIGHT from the
 //     keyword-as-identifier path (upstream let them alias); joinPart carries the token.
@@ -102,15 +104,21 @@ export function lower(tree: ParserRuleContext): QueryExpr {
 
 function lowerImpl(tree: ParserRuleContext): QueryExpr {
 	const statementsNode = firstOfRule(tree, P.RULE_sqlStatements);
-	const stmts = statementsNode ? directChildrenOfRule(statementsNode, P.RULE_sqlStatement) : [];
+	const stmts = statementsNode ? collectStatements(statementsNode) : [];
 	// Recovery-swallowed statements count toward batch-ness (a broken statement dumps the rest of the
 	// batch as flat error nodes, under-reporting the sqlStatement count).
 	const swallowed = swallowedStatements(tree);
 
-	// WITH/SELECT rejoin: MySQL-PT splits `WITH cte AS (...) SELECT ...` into two adjacent statements —
-	// a bare withStatement then the query. Merge them into one CTE query so the CTE resolves downstream.
+	// WITH/SELECT rejoin: MySQL-PT models `WITH cte AS (...) SELECT ...` as a bare withStatement (the CTE
+	// clause only) immediately followed by its query — the one no-semicolon statement adjacency real
+	// MySQL has, carried by statementItem's `withStatement sqlStatement` alternative. collectStatements
+	// surfaces it as the two adjacent statements stmts[0] (the withStatement) and stmts[1] (the query);
+	// merge them into one CTE query so the CTE resolves downstream. Because a SEMI is now REQUIRED between
+	// every other statement pair, this adjacency is unambiguous: `WITH ...; SELECT ...` (semicolon
+	// between — invalid MySQL, the WITH is left dangling) arrives instead as a lone withStatement + a
+	// separate statement (stmts[0] is a sqlStatement, not a bare withStatement), so it is NOT rejoined.
 	if (stmts.length === 2 && swallowed === 0) {
-		const withStmt = withStatementOf(stmts[0]);
+		const withStmt = stmts[0].ruleIndex === P.RULE_withStatement ? stmts[0] : undefined;
 		const trailingDml = dmlOf(stmts[1]);
 		if (withStmt && trailingDml && isQueryDml(trailingDml)) {
 			const q = lowerQueryDml(trailingDml);
@@ -177,8 +185,25 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
  *  entries even though lowerImpl rejoins them into one query. */
 export function statementCategories(tree: ParserRuleContext): StatementCategory[] {
 	const statementsNode = firstOfRule(tree, P.RULE_sqlStatements);
-	const stmts = statementsNode ? directChildrenOfRule(statementsNode, P.RULE_sqlStatement) : [];
+	const stmts = statementsNode ? collectStatements(statementsNode) : [];
 	return [...stmts.map(stmtCategory), ...swallowedCategories(tree)];
+}
+
+/** The batch's statement contexts, in source order, flattened out of the statementItem wrappers
+ *  (sqlStatements is now a SEMI-separated list of statementItem — see the grammar). A `withStatement
+ *  sqlStatement` item (MySQL's one no-semicolon adjacency: a CTE clause bound to its query) contributes
+ *  BOTH nodes — the bare withStatement then its query — so a lone `WITH cte AS (...) SELECT ...` still
+ *  arrives as the two adjacent statements the WITH/SELECT rejoin expects. A bare withStatement head
+ *  categorizes as "query" via stmtCategory's keyword fallback, matching the split's prior two entries. */
+function collectStatements(statementsNode: ParserRuleContext): ParserRuleContext[] {
+	const out: ParserRuleContext[] = [];
+	for (const item of directChildrenOfRule(statementsNode, P.RULE_statementItem)) {
+		const withHead = directChildrenOfRule(item, P.RULE_withStatement)[0];
+		if (withHead) out.push(withHead);
+		const stmt = directChildrenOfRule(item, P.RULE_sqlStatement)[0];
+		if (stmt) out.push(stmt);
+	}
+	return out;
 }
 
 function statementCategory(tree: ParserRuleContext): StatementCategory {
@@ -225,11 +250,6 @@ function isQueryDml(dml: ParserRuleContext): boolean {
 
 function dmlOf(stmt: ParserRuleContext): ParserRuleContext | undefined {
 	return directChildrenOfRule(stmt, P.RULE_dmlStatement)[0];
-}
-
-function withStatementOf(stmt: ParserRuleContext): ParserRuleContext | undefined {
-	const dml = dmlOf(stmt);
-	return dml ? directChildrenOfRule(dml, P.RULE_withStatement)[0] : undefined;
 }
 
 function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
