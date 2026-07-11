@@ -2878,6 +2878,19 @@ dataTypeBase
     | TEXT
     ;
 
+// Non-reserved keywords usable as identifiers (dev.mysql.com/doc/refman/8.4/en/keywords.html).
+// Reserved-word audit (the LEFT/RIGHT defect class, checked systematically 2026-07-11): this set —
+// and functionNameBase / scalarFunctionName, which also feed simpleId — still admit a number of words
+// the 8.4 manual marks RESERVED (R) as bare identifiers (e.g. GROUP, ORDER, PRIMARY, ROW(S), RECURSIVE,
+// LATERAL, OF, EMPTY here; the window-function names and IF/INSERT/REPLACE/REPEAT via the function
+// rules). Each was probed as a real parse+lower: unlike bare LEFT/RIGHT JOIN (which silently mis-parsed
+// LEFT as a table alias and was fixed — see functionNameBase / functionCall), none of the remaining
+// reserved words mis-parses a VALID query — the admission only OVER-accepts an invalid one
+// (`SELECT a group FROM t` takes `group` as an alias where real MySQL would reject it), and the correct
+// production always wins for legal input. Left as a deliberate, inert over-acceptance: removing them is a
+// large, upstream-diverging change with no valid-query benefit that would regress the grammars-v4 corpus
+// (real dumps quote reserved identifiers). Words that caused actual damage were removed at their source
+// (LEFT/RIGHT above; EXCEPT / SEQUENCE below).
 keywordsCanBeId
     : ACCOUNT
     | ACTION
