@@ -263,7 +263,7 @@ describe("Join kind coverage", () => {
 		expect(nat.joins?.[0].kind).toBe("natural");
 		expect(nat.joins?.[0].natural).toBe(true);
 		// MySQL's joinPart production only has INNER/CROSS/LEFT/RIGHT/NATURAL/STRAIGHT_JOIN alternatives
-		// (grammars/mysql/MySqlParser.g4) — no FULL keyword branch, matching real MySQL (no FULL OUTER
+		// (grammars/mysql/MysqlParser.g4) — no FULL keyword branch, matching real MySQL (no FULL OUTER
 		// JOIN until you emulate it with a UNION). A genuine grammar gap, not a lowering omission.
 		expect(parseMysql("SELECT * FROM a FULL OUTER JOIN b ON a.x = b.x").errors).toBeGreaterThan(0);
 		// STRAIGHT_JOIN is MySQL-specific (a join-order hint) and lowers to "inner" — documented in

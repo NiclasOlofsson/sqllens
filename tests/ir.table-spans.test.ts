@@ -4,11 +4,11 @@ import type { Dialect, SelectExpr, TableSource } from "../src/index.js";
 
 // SQLite's grammar caps a table reference at two parts (`(schema_name '.')? table_name`) — there is
 // no catalog level — so its multipart case is `a.b`, not the three-part `a.b.c` of the other dialects.
-// MySQL's grammar is the same shape: `fullId: uid (DOT_ID | '.' uid)?` (grammars/mysql/MySqlParser.g4)
+// MySQL's grammar is the same shape: `fullId: uid (DOT_ID | '.' uid)?` (grammars/mysql/MysqlParser.g4)
 // caps a table reference at `schema.table`, no catalog level either.
 //
 // MySQL genuine-shape gap: an UNSPACED dot (`a.b`, the way everyone actually writes it) lexes as ONE
-// fused `DOT_ID` token (`.b` — MySqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), not a separate `.` + identifier.
+// fused `DOT_ID` token (`.b` — MysqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), not a separate `.` + identifier.
 // `dottedParts` (src/mysql/lower.ts) documents this: a DOT_ID-sourced part has no clean per-part span
 // excluding the dot, so it pushes `undefined` — and `partSpansOf`'s all-or-nothing rule then drops the
 // WHOLE array, not just that one part. `namePartSpans` is `undefined` for `a.b`, not a 2-element array.

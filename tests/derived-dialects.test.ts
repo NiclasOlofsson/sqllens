@@ -1,4 +1,4 @@
-// tests/derived-dialects.test.ts — the derived-dialect → dialect map. The eight grammars parse ~15
+// tests/derived-dialects.test.ts — the derived-dialect → dialect map. The grammars parse many more
 // engines; this table is where that family knowledge lives, so consumers (the LSP config, an editor
 // reading an engine name) never re-derive it. The map must stay exact: an engine we don't genuinely
 // serve resolves to undefined, never to a guess.

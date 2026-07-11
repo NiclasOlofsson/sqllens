@@ -54,7 +54,7 @@ text, RAW — delimiters intact (quotedness must survive into the IR; comparison
 fold via `foldIdentifier`, display via `displayName`)."* Case-folding and
 delimiter-stripping for identity/display purposes happen downstream, in
 `src/ident/fold.ts`'s `foldIdentifier`/`displayName`, never inside `lower()`
-itself for these eight dialects.
+itself for these dialects.
 
 SQLite (added after the original eight-dialect audit) follows the same "keep
 raw" pattern: its `lower.ts` reads identifier text through plain `.getText()`,
@@ -70,7 +70,7 @@ case-insensitivity.
 MySQL follows the same "keep raw" pattern too: its `lower.ts` reads identifier
 text through plain `.getText()`, delimiters intact across all five fields. Its
 only identifier-quoting delimiter is `` `backtick-quoted` `` — a bare `"..."` is
-a STRING_LITERAL by default (`MySqlLexer.g4` only defines `REVERSE_QUOTE_ID` for
+a STRING_LITERAL by default (`MysqlLexer.g4` only defines `REVERSE_QUOTE_ID` for
 identifiers; `DOUBLE_QUOTE_ID` is commented out, matching MySQL's own
 `ANSI_QUOTES`-off default). The fold rule (`src/ident/fold.ts`'s `mysql` entry)
 folds both unquoted AND backtick-quoted identifiers case-insensitively for

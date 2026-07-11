@@ -41,7 +41,7 @@ const CATS: Record<Dialect, (tree: ParserRuleContext) => StatementCategory[]> = 
 };
 const DIALECTS = Object.keys(CATS) as Dialect[];
 
-// `group by` cannot start a statement in any of the nine grammars, so the middle
+// `group by` cannot start a statement in any of the dialect grammars, so the middle
 // statement is genuinely broken everywhere (unlike e.g. `select where`, which is a
 // valid identifier select on databricks).
 const BROKEN_MIDDLE = "select a from t; group by ; select b from u";

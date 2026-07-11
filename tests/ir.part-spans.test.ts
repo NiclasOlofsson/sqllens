@@ -40,7 +40,7 @@ interface Dialect {
 	 *  first part's span must cover (delimiters included). */
 	quoted: { sql: string; rawQualifier: string };
 	/** MySQL genuine-shape gap: an unspaced dot lexes as ONE fused `DOT_ID` token (`.b` —
-	 *  MySqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), so a dotted part after it has no clean span
+	 *  MysqlLexer.g4's `DOT_ID: '.' ID_LITERAL`), so a dotted part after it has no clean span
 	 *  excluding the dot. `dottedParts` (src/mysql/lower.ts) pushes `undefined` for that part, and
 	 *  `partSpansOf`'s all-or-nothing rule drops the WHOLE array — not just the affected part. A real,
 	 *  currently-standing limitation of the upstream grammar fork, not a lower.ts bug. */

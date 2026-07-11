@@ -145,7 +145,7 @@ describe.each(["redshift", "duckdb", "trino", "sqlite"] as const)('%s — quoted
 });
 
 // mysql is the SAME "quoted folds insensitively too" family as redshift/duckdb/trino/sqlite above, but
-// its identifier quote char is the backtick, not `"` — MySqlLexer.g4 treats a double-quoted literal as
+// its identifier quote char is the backtick, not `"` — MysqlLexer.g4 treats a double-quoted literal as
 // a STRING_LITERAL by default (ANSI_QUOTES mode, which repurposes `"` as an identifier quote, is a
 // session/server setting invisible in SQL text — src/ident/fold.ts's mysql rule comment). So mysql gets
 // its own block with backtick-quoted source instead of joining the shared describe.each above.
