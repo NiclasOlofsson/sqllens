@@ -275,7 +275,15 @@ describe("Mysql lower -> IR", () => {
 
 	// lower() is TOTAL — never throws, even on the broken/partial input the editor feeds it.
 	it("never throws on deliberately broken input", () => {
-		for (const sql of ["SELECT", "SELECT FROM WHERE", "SELECT a FROM", "WITH x AS (", ")(;;", "", "SELECT a FROM t JOIN"]) {
+		for (const sql of [
+			"SELECT",
+			"SELECT FROM WHERE",
+			"SELECT a FROM",
+			"WITH x AS (",
+			")(;;",
+			"",
+			"SELECT a FROM t JOIN",
+		]) {
 			expect(() => lower(parseMysql(sql).tree)).not.toThrow();
 		}
 	});

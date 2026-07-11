@@ -149,7 +149,7 @@ describe.each(["redshift", "duckdb", "trino", "sqlite"] as const)('%s — quoted
 // a STRING_LITERAL by default (ANSI_QUOTES mode, which repurposes `"` as an identifier quote, is a
 // session/server setting invisible in SQL text — src/ident/fold.ts's mysql rule comment). So mysql gets
 // its own block with backtick-quoted source instead of joining the shared describe.each above.
-describe('mysql — backtick-quoted `FOO` ≡ unquoted foo (both fold lower)', () => {
+describe("mysql — backtick-quoted `FOO` ≡ unquoted foo (both fold lower)", () => {
 	const schema = new Schema({ t: { foo: "int" } });
 
 	it("SELECT `FOO` FROM t resolves against the unquoted foo column", () => {

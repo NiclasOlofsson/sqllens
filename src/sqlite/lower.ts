@@ -149,9 +149,7 @@ function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 /** select_stmt: with_clause? select_core (compound_operator select_core)* order_clause? limit_clause? */
 function lowerSelectStmt(stmt: ParserRuleContext): QueryExpr {
 	const withClause = directChildrenOfRule(stmt, P.RULE_with_clause)[0];
-	const ctes = withClause
-		? directChildrenOfRule(withClause, P.RULE_common_table_expression).map(lowerCte)
-		: [];
+	const ctes = withClause ? directChildrenOfRule(withClause, P.RULE_common_table_expression).map(lowerCte) : [];
 	const cores = directChildrenOfRule(stmt, P.RULE_select_core);
 	const ops = directChildrenOfRule(stmt, P.RULE_compound_operator);
 	const body = foldCompound(cores, ops, stmt);
@@ -616,7 +614,8 @@ function lowerNot(node: ParserRuleContext): Expr {
 	const inner = directChildrenOfRule(node, P.RULE_expr_binary)[0];
 	let e = inner ? lowerExpr(inner) : otherExpr(node);
 	for (const c of kidsOf(node)) {
-		if (c instanceof TerminalNode && c.symbol.type === P.NOT_) e = { kind: "unary", op: "not", operand: e, cst: node };
+		if (c instanceof TerminalNode && c.symbol.type === P.NOT_)
+			e = { kind: "unary", op: "not", operand: e, cst: node };
 	}
 	return e;
 }
@@ -633,7 +632,10 @@ function lowerUnary(node: ParserRuleContext): Expr {
 	let e = base ? lowerExpr(base) : otherExpr(node);
 	const signs: number[] = [];
 	for (const c of kidsOf(node)) {
-		if (c instanceof TerminalNode && (c.symbol.type === P.MINUS || c.symbol.type === P.PLUS || c.symbol.type === P.TILDE)) {
+		if (
+			c instanceof TerminalNode &&
+			(c.symbol.type === P.MINUS || c.symbol.type === P.PLUS || c.symbol.type === P.TILDE)
+		) {
 			signs.push(c.symbol.type);
 		}
 	}
@@ -659,7 +661,12 @@ function lowerExprBase(node: ParserRuleContext): Expr {
 		const schemaName = directChildrenOfRule(node, P.RULE_schema_name)[0];
 		const tableName = directChildrenOfRule(node, P.RULE_table_name)[0];
 		const partNodes = [schemaName, tableName, colName].filter((n): n is ParserRuleContext => n !== undefined);
-		return { kind: "column", parts: partNodes.map((n) => n.getText()), partSpans: partSpansOf(partNodes), cst: node };
+		return {
+			kind: "column",
+			parts: partNodes.map((n) => n.getText()),
+			partSpans: partSpansOf(partNodes),
+			cst: node,
+		};
 	}
 	// column_name_excluding_string — a bare (unqualified) column reference.
 	const bareCol = directChildrenOfRule(node, P.RULE_column_name_excluding_string)[0];
@@ -691,7 +698,12 @@ function lowerExprRecursive(node: ParserRuleContext): Expr {
 	if (hasDirectToken(node, P.CAST_)) {
 		const inner = directChildrenOfRule(node, P.RULE_expr)[0];
 		const tn = directChildrenOfRule(node, P.RULE_type_name)[0];
-		return { kind: "cast", expr: inner ? lowerExpr(inner) : otherExpr(node), typeText: tn ? tn.getText() : "", cst: node };
+		return {
+			kind: "cast",
+			expr: inner ? lowerExpr(inner) : otherExpr(node),
+			typeText: tn ? tn.getText() : "",
+			cst: node,
+		};
 	}
 	if (hasDirectToken(node, P.CASE_)) return lowerCase(node);
 	// '(' expr (',' expr)* ')' — a parenthesized single expr is grouping (passthrough); a comma tuple
@@ -1113,7 +1125,15 @@ function otherExpr(node: ParserRuleContext): Expr {
 }
 
 function emptyBody(cst: ParserRuleContext): SelectExpr {
-	return { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: ["unparsed"], cst };
+	return {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["unparsed"],
+		cst,
+	};
 }
 
 function emptyQuery(cst: ParserRuleContext): QueryExpr {

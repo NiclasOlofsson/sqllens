@@ -363,12 +363,7 @@ function foldSetop(cores: ParserRuleContext[], ops: UnionOp[], cst: ParserRuleCo
 	return body;
 }
 
-function setopNode(
-	op: UnionOp | undefined,
-	left: QueryBody,
-	right: QueryBody,
-	fallback: ParserRuleContext,
-): QueryBody {
+function setopNode(op: UnionOp | undefined, left: QueryBody, right: QueryBody, fallback: ParserRuleContext): QueryBody {
 	return {
 		kind: "setop",
 		op: op?.op ?? "union",
@@ -464,7 +459,12 @@ function buildSelect(qspec: ParserRuleContext): SelectExpr {
 	const fromClause = directChildrenOfRule(qspec, P.RULE_fromClause)[0];
 	const { from, joins, joinConditions, fromSubqueries } = fromClause
 		? buildFrom(fromClause)
-		: { from: [] as Source[], joins: [] as Join[], joinConditions: [] as Expr[], fromSubqueries: new Set<ParserRuleContext>() };
+		: {
+				from: [] as Source[],
+				joins: [] as Join[],
+				joinConditions: [] as Expr[],
+				fromSubqueries: new Set<ParserRuleContext>(),
+			};
 
 	// fromClause: (FROM tableSources)? (WHERE whereExpr=expression)? — the WHERE is fromClause's own
 	// direct expression child (join ON / source exprs are nested deeper).
@@ -514,7 +514,8 @@ function buildProjections(qspec: ParserRuleContext): Projection[] {
 	if (!se) return [];
 	const out: Projection[] = [];
 	// A bare leading '*' is a direct token of selectElements, not wrapped in a selectElement.
-	if (hasDirectToken(se, P.STAR)) out.push({ name: undefined, isStar: true, expr: { kind: "star", cst: se }, cst: se });
+	if (hasDirectToken(se, P.STAR))
+		out.push({ name: undefined, isStar: true, expr: { kind: "star", cst: se }, cst: se });
 	for (const el of directChildrenOfRule(se, P.RULE_selectElement)) out.push(buildProjection(el));
 	return out;
 }
@@ -889,7 +890,14 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	if (pred && hasDirectToken(node, P.IS)) {
 		// isExpression: IS [NOT] TRUE/FALSE/UNKNOWN.
 		const op = hasDirectToken(node, P.TRUE) ? "true" : hasDirectToken(node, P.FALSE) ? "false" : "unknown";
-		return { kind: "predicate", op, negated: hasDirectToken(node, P.NOT), operand: lowerExpr(pred), args: [], cst: node };
+		return {
+			kind: "predicate",
+			op,
+			negated: hasDirectToken(node, P.NOT),
+			operand: lowerExpr(pred),
+			args: [],
+			cst: node,
+		};
 	}
 	return pred ? lowerExpr(pred) : otherExpr(node);
 }
@@ -941,19 +949,47 @@ function lowerPredicate(node: ParserRuleContext): Expr {
 	}
 	// predicate SOUNDS LIKE predicate
 	if (hasDirectToken(node, P.SOUNDS)) {
-		return { kind: "predicate", op: "like", negated: false, operand, args: preds[1] ? [lowerExpr(preds[1])] : [], cst: node };
+		return {
+			kind: "predicate",
+			op: "like",
+			negated: false,
+			operand,
+			args: preds[1] ? [lowerExpr(preds[1])] : [],
+			cst: node,
+		};
 	}
 	// predicate NOT? LIKE predicate (ESCAPE STRING_LITERAL)?
 	if (hasDirectToken(node, P.LIKE)) {
-		return { kind: "predicate", op: "like", negated, operand, args: preds[1] ? [lowerExpr(preds[1])] : [], cst: node };
+		return {
+			kind: "predicate",
+			op: "like",
+			negated,
+			operand,
+			args: preds[1] ? [lowerExpr(preds[1])] : [],
+			cst: node,
+		};
 	}
 	// predicate NOT? (REGEXP | RLIKE) predicate
 	if (hasDirectToken(node, P.REGEXP) || hasDirectToken(node, P.RLIKE)) {
-		return { kind: "predicate", op: "rlike", negated, operand, args: preds[1] ? [lowerExpr(preds[1])] : [], cst: node };
+		return {
+			kind: "predicate",
+			op: "rlike",
+			negated,
+			operand,
+			args: preds[1] ? [lowerExpr(preds[1])] : [],
+			cst: node,
+		};
 	}
 	// predicate MEMBER OF '(' predicate ')'
 	if (hasDirectToken(node, P.MEMBER)) {
-		return { kind: "predicate", op: "member of", negated: false, operand, args: preds[1] ? [lowerExpr(preds[1])] : [], cst: node };
+		return {
+			kind: "predicate",
+			op: "member of",
+			negated: false,
+			operand,
+			args: preds[1] ? [lowerExpr(preds[1])] : [],
+			cst: node,
+		};
 	}
 	// binaryComparisonPredicate / subqueryComparisonPredicate: left comparisonOperator (right | ANY/ALL/SOME (subqueryBody))
 	const cmp = directChildrenOfRule(node, P.RULE_comparisonOperator)[0];
@@ -1011,7 +1047,10 @@ function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	if (sub) return { kind: "subquery", query: sub.query, cst: node };
 
 	// collateExpressionAtom / binaryExpressionAtom / variableAssignExpressionAtom — passthroughs.
-	if (atoms.length === 1 && (hasDirectToken(node, P.COLLATE) || hasDirectToken(node, P.BINARY) || hasDirectToken(node, P.VAR_ASSIGN))) {
+	if (
+		atoms.length === 1 &&
+		(hasDirectToken(node, P.COLLATE) || hasDirectToken(node, P.BINARY) || hasDirectToken(node, P.VAR_ASSIGN))
+	) {
 		return lowerExpr(atoms[0]);
 	}
 	// unaryExpressionAtom: unaryOperator expressionAtom
@@ -1026,7 +1065,13 @@ function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	}
 	// bitExpressionAtom / mathExpressionAtom / jsonExpressionAtom: left OP right
 	if (atoms.length === 2) {
-		return { kind: "binary", op: binaryAtomOp(node), left: lowerExpr(atoms[0]), right: lowerExpr(atoms[1]), cst: node };
+		return {
+			kind: "binary",
+			op: binaryAtomOp(node),
+			left: lowerExpr(atoms[0]),
+			right: lowerExpr(atoms[1]),
+			cst: node,
+		};
 	}
 
 	// nestedExpressionAtom: '(' expression (',' expression)* ')' — a single expr is grouping
@@ -1104,7 +1149,12 @@ function lowerSpecificFunction(spec: ParserRuleContext): Expr {
 	if (hasDirectToken(spec, P.CAST) || hasDirectToken(spec, P.CONVERT)) {
 		const inner = directChildrenOfRule(spec, P.RULE_expression)[0];
 		const dt = directChildrenOfRule(spec, P.RULE_convertedDataType)[0];
-		return { kind: "cast", expr: inner ? lowerExpr(inner) : otherExpr(spec), typeText: dt ? dt.getText() : "", cst: spec };
+		return {
+			kind: "cast",
+			expr: inner ? lowerExpr(inner) : otherExpr(spec),
+			typeText: dt ? dt.getText() : "",
+			cst: spec,
+		};
 	}
 	const name = (leftmostToken(spec) ?? "").toLowerCase();
 	return { kind: "function", name, args: argsOf(spec), aggregate: false, distinct: false, cst: spec };
@@ -1183,7 +1233,12 @@ function lowerOver(over: ParserRuleContext): WindowSpec {
 /** A fullColumnName / fullId as a column Expr — RAW parts (delimiters intact, dots stripped). */
 function columnRef(node: ParserRuleContext): Expr {
 	const { parts, spans } = dottedParts(node);
-	return { kind: "column", parts: parts.length ? parts : [node.getText()], partSpans: collapsePartSpans(spans), cst: node };
+	return {
+		kind: "column",
+		parts: parts.length ? parts : [node.getText()],
+		partSpans: collapsePartSpans(spans),
+		cst: node,
+	};
 }
 
 /** The dotted parts of a fullColumnName / fullId, each with its own `PartSpan` (all-or-nothing per
@@ -1406,7 +1461,15 @@ function otherExpr(node: ParserRuleContext): Expr {
 }
 
 function emptyBody(cst: ParserRuleContext): SelectExpr {
-	return { kind: "select", projections: [], from: [], columns: [], aggregated: false, unsupported: ["unparsed"], cst };
+	return {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["unparsed"],
+		cst,
+	};
 }
 
 function emptyQuery(cst: ParserRuleContext): QueryExpr {

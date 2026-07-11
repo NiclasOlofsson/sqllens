@@ -73,9 +73,7 @@ export function cleanSql(sql) {
 	sql = sql.replace(/ /g, " ").replace(/[​­﻿]/g, "");
 	const lines = sql.split("\n");
 	// Cut at the first result border, `(N rows)` footer, or prose line that sits UNDER the statement.
-	let cut = lines.findIndex(
-		(l, i) => i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || PROSE_LINE.test(l)),
-	);
+	let cut = lines.findIndex((l, i) => i > 0 && (isResultBorder(l) || ROWS_FOOTER.test(l) || PROSE_LINE.test(l)));
 	const kept = (cut === -1 ? lines : lines.slice(0, cut)).join("\n").trim();
 	if (kept === "") return null;
 	if (/^[[{]/.test(kept)) return null; // JSON output block
