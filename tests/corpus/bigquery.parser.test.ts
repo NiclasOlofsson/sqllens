@@ -108,9 +108,10 @@ const negatives = () => [...sqlFiles(join(CORPUS, "negative"))];
 // parseBigQuery as syntax errors (ZetaSQL's ParseStringLiteral/CUnescapeInternal, src/bigquery/
 // literal-escapes.ts) — both corpora reject invalid escapes now.
 //
-// Measured 2026-06-14: of 3543 positives, 881 are detect-only/empty-script (excluded); in-scope
-// positives parse at 2662/2662 (100%). Negatives: of 2520, 485 detect-only/empty-script excluded;
-// the 2035 in-scope negatives are ALL rejected (0 accepted) — exact join_processor balance, numeric/
+// Measured 2026-06-14, reconciled 2026-07-12 (issue #10): of 3543 positives, 881 are detect-only/
+// empty-script (excluded); in-scope positives parse at 2662/2662 (100%). Negatives: of 2519, 485
+// detect-only/empty-script excluded; the 2034 in-scope negatives are ALL rejected (0 accepted); exact
+// join_processor balance, numeric/
 // string-method bases, INSERT modes, STRICT/CORRESPONDING set-op rules, dot-star precedence (post-
 // parse), graph quantifier/hint/prop-spec/endpoint-chain/FOR-OFFSET/cost/CALL rules, pipe CREATE/
 // join/aggregate/call edges, lambda arg lists, replace_fields, WITH-kind OPTIONS, ANALYZE OPTIONS,
@@ -119,7 +120,7 @@ const negatives = () => [...sqlFiles(join(CORPUS, "negative"))];
 // extractor (bare QUALIFY, PIPES-off FROM-queries and outer-query aliases, ALLOW_CONSECUTIVE_ON
 // subjoins, no_reserve_graph_table, ALLOW_DASHES_IN_TABLE_NAME), per CLAUDE.md, not wrongly rejected.
 const IN_SCOPE_POSITIVE_BASELINE = 2662; // in-scope parsed of 2662 — 100% of the in-scope query/DML/script surface
-const IN_SCOPE_NEGATIVE_BASELINE = 2035; // in-scope rejected of 2035 — 100%, zero accepted
+const IN_SCOPE_NEGATIVE_BASELINE = 2034; // in-scope rejected of 2034 (100%, zero accepted). Was 2035 until 2026-07-12, when reconciling with the current extractor (issue #10) dropped negative/unparsed/parser_7.sql (`\# Comment without query.`), a stale `\#`-escaped comment-only case the post-Task-6 cleanQuery no longer emits.
 
 describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpus", () => {
 	it("parses the in-scope positive cases (ratchet; DDL detect-only excluded)", { timeout: 600000 }, () => {
