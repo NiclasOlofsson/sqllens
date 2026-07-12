@@ -66,9 +66,17 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	const cellScopes = cell ? cell.scopes : doc.scopes;
 	const cellAst = cell ? cell.ast : doc.ast;
 
+	// The text the ATN re-parse lexes. A TEMPLATED document's raw text still holds the jinja `{{ }}`
+	// tags, and the dialect lexer dies on the braces from char 0, so the walk finds nothing (0
+	// candidates on a dbt model that opens with a `{{ config() }}` block). Its length-preserving
+	// `placeholder` (the same blanked SQL the document's OWN parse already ran on) keeps the caret
+	// offset exact while giving the lexer real SQL. A templated document is always a single cell
+	// spanning the whole text (SqlDocument.buildTemplatedCell), so the placeholder aligns with cellText.
+	const walkText = doc.templated ? doc.templated.placeholder : cellText;
+
 	// Completion runs its own error-tolerant parse to position the walk (expected — the walk needs
 	// a parser whose ATN we DFS, not the document's valid-parse CST).
-	const m = makeParser(cellText, dialect);
+	const m = makeParser(walkText, dialect);
 	// runEntry() first: the CommonTokenStream fills lazily, so the full token list (needed to find
 	// the caret token) only exists after the parse drives it.
 	m.runEntry();
