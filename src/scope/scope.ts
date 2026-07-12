@@ -17,6 +17,7 @@ import type {
 } from "../ir/ir.js";
 import type { StatementCategory } from "../ir/statement.js";
 import { foldIdentifier } from "../ident/fold.js";
+import { likePatternToRegExp } from "./like-pattern.js";
 
 // ---------------------------------------------------------------------------
 // Scope — the symbol table over the IR. One Scope per query block; it records
@@ -578,14 +579,9 @@ export function applyStarModifiers(
 	return out;
 }
 
-/** SQL LIKE pattern → an anchored case-insensitive RegExp (`%` → `.*`, `_` → `.`). */
-export function likePatternToRegExp(pattern: string): RegExp {
-	const escaped = pattern
-		.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
-		.replace(/%/g, ".*")
-		.replace(/_/g, ".");
-	return new RegExp(`^${escaped}$`, "i");
-}
+// likePatternToRegExp moved to ./like-pattern.js (leaf module, breaks the scope->carrier->registry
+// cycle); re-exported here so existing importers keep resolving it from scope.ts.
+export { likePatternToRegExp };
 
 function outputsOf(body: SelectExpr): string[] | "unknown" {
 	if (body.projections.length === 0) return "unknown";
