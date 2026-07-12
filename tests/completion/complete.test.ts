@@ -12,7 +12,18 @@ const labels = (items: Completion[], kind: Completion["kind"]): string[] =>
 // value/column position (the empty projection of `SELECT  FROM sales`), the FROM relation's schema
 // columns must be offered. Every dialect parses this same string, so one parametrized case proves
 // the per-dialect parser-factory + config entries discovered by probing each grammar.
-describe.each<Dialect>(["databricks", "tsql", "snowflake", "bigquery", "redshift"])(
+describe.each<Dialect>([
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+])(
 	"complete — column position, %s",
 	(dialect) => {
 		it("offers the FROM relation's columns at an empty-projection caret", () => {
