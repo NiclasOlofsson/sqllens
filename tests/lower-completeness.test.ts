@@ -16,19 +16,34 @@ import { RedshiftParser } from "../src/generated/redshift/RedshiftParser.js";
 import { RedshiftLexer } from "../src/generated/redshift/RedshiftLexer.js";
 import { lower as lowerRedshift } from "../src/redshift/lower.js";
 import { parseRedshift } from "../src/redshift/parse.js";
+import { PostgresParser } from "../src/generated/postgres/PostgresParser.js";
+import { PostgresLexer } from "../src/generated/postgres/PostgresLexer.js";
+import { lower as lowerPostgres } from "../src/postgres/lower.js";
+import { DuckdbParser } from "../src/generated/duckdb/DuckdbParser.js";
+import { DuckdbLexer } from "../src/generated/duckdb/DuckdbLexer.js";
+import { lower as lowerDuckdb } from "../src/duckdb/lower.js";
+import { TrinoParser } from "../src/generated/trino/TrinoParser.js";
+import { TrinoLexer } from "../src/generated/trino/TrinoLexer.js";
+import { lower as lowerTrino } from "../src/trino/lower.js";
+import { SqliteParser } from "../src/generated/sqlite/SqliteParser.js";
+import { SqliteLexer } from "../src/generated/sqlite/SqliteLexer.js";
+import { lower as lowerSqlite } from "../src/sqlite/lower.js";
+import { MysqlParser } from "../src/generated/mysql/MysqlParser.js";
+import { MysqlLexer } from "../src/generated/mysql/MysqlLexer.js";
+import { lower as lowerMysql } from "../src/mysql/lower.js";
 
 // What this asserts — and DELIBERATELY does NOT:
 //
 // The engine (tests/helpers/grammar-coverage.ts) fuzzes each dialect: it walks the grammar from the
 // query entry rule and mechanically generates statements (recursive holes from a generic pool, DDL/graph
-// excluded). We assert only the two things that are real SIGNAL about lower():
-//   1. lower() NEVER THROWS on grammar-legal input (it's contractually total) — a genuine robustness guard.
-//   2. lower() COVERS at least a floor of the query construct rules — catches a refactor that makes it
-//      silently stop handling constructs. A FLOOR (>=), not an exact count, so generator wiggle can't trip it.
+// excluded). The one real SIGNAL about lower() we assert is:
+//   lower() NEVER THROWS on grammar-legal input — it is contractually total. A genuine robustness guard.
 //
-// We do NOT pin the raw `flagged` count or the never-reached set. Those are generator artifacts/NOISE —
-// most flags are malformed combinations the grammar accepts, not gaps (verified for Databricks). Real
-// gaps are asserted separately below, as CURATED CLEAN REPROS — the only honest gap signal.
+// We do NOT assert `covered` or `flagged`; both are logged as NOISE only. `covered` counts what the RANDOM
+// GENERATOR reached — a function of grammar shape + seed, computed before lower() even runs, so a lower()
+// regression cannot move it (it made a poor coverage floor and was dropped). `flagged` is mostly malformed
+// combinations the grammar accepts, not gaps. Real lower() coverage is pinned by the curated clean-repro
+// tests below and the per-dialect corpus gates.
 
 const DBX_POOL = {
 	namedExpression: ["a", "a AS x", "count(a)"],
@@ -73,16 +88,38 @@ const RS_POOL = {
 	collabel: ["p1"],
 	qualified_name: ["t1", "t2"],
 };
+// postgres + duckdb are the bytebase pg-derived pair — same rule names as redshift.
+const PG_POOL = RS_POOL;
+const TRINO_POOL = {
+	expression: ["a", "a + 1", "1"],
+	booleanExpression: ["a > 0", "a"],
+	valueExpression: ["a", "a + 1", "1"],
+	primaryExpression: ["a", "count(a)", "1"],
+	identifier: ["x"],
+	qualifiedName: ["t1", "t2"],
+};
+const SQLITE_POOL = {
+	expr: ["a", "a + 1", "1", "count(a)"],
+	column_name: ["a", "b"],
+	table_name: ["t1", "t2"],
+	any_name: ["x"],
+};
+const MYSQL_POOL = {
+	expression: ["a", "a > 0", "1"],
+	predicate: ["a", "a + 1", "1"],
+	expressionAtom: ["a", "count(a)", "1"],
+	fullColumnName: ["a", "b"],
+	tableName: ["t1", "t2"],
+	uid: ["x"],
+};
 
 interface DialectCfg {
 	label: string;
 	cfg: CoverageConfig;
-	coverFloor: number;
 }
 const DIALECTS: DialectCfg[] = [
 	{
 		label: "Databricks",
-		coverFloor: 115,
 		cfg: {
 			Parser: DatabricksParser as never,
 			Lexer: DatabricksLexer as never,
@@ -94,7 +131,6 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "T-SQL",
-		coverFloor: 99,
 		cfg: {
 			Parser: TSqlParser as never,
 			Lexer: TSqlLexer as never,
@@ -106,11 +142,6 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Snowflake",
-		// 59 after the SLL-surgery wave (2026-07-03): deleting subset alternatives (round_expr, the
-		// builtin-arity call forms, predicate's expr-duplicated forms, order_item's id_/num) shrank
-		// the fuzzer's reachable-rule graph. lower() did not regress — the docs corpus gate proves
-		// 0 throws and the `other` ratchet held at 0 over all 2,976 query files.
-		coverFloor: 59,
 		cfg: {
 			Parser: SnowflakeParser as never,
 			Lexer: SnowflakeLexer as never,
@@ -122,10 +153,6 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "BigQuery",
-		// 289 after the task-6 grammar edits: restructuring aggregate_group_by_modifier from a direct
-		// `expression` list to `grouping_item` shifted the fuzzer's reachable-rule graph by one construct.
-		// lower() itself did not regress — the analyzer corpus gate proves 0 throws and `other` held at 234.
-		coverFloor: 289,
 		cfg: {
 			Parser: GoogleSQLParser as never,
 			Lexer: GoogleSQLLexer as never,
@@ -137,12 +164,6 @@ const DIALECTS: DialectCfg[] = [
 	},
 	{
 		label: "Redshift",
-		// 151 after the task-6 SLL-surgery select-list left-factor: merging simple_select_pramary's three
-		// overlapping branches removed the redundant `distinct_clause target_list` subset alternative, so
-		// the fuzzer's reachable-rule graph lost one node. lower() did NOT regress — throws stays 0 and the
-		// docs corpus gate proves full coverage + 0 `other` over the real query bucket; the deleted branch's
-		// language is covered identically by the merged alternative (lower reads target_list via firstShallow).
-		coverFloor: 151,
 		cfg: {
 			Parser: RedshiftParser as never,
 			Lexer: RedshiftLexer as never,
@@ -152,34 +173,92 @@ const DIALECTS: DialectCfg[] = [
 			pool: RS_POOL,
 		},
 	},
+	{
+		label: "Postgres",
+		cfg: {
+			Parser: PostgresParser as never,
+			Lexer: PostgresLexer as never,
+			parseEntry: "root",
+			lower: lowerPostgres as never,
+			entryRule: "RULE_select_no_parens",
+			pool: PG_POOL,
+		},
+	},
+	{
+		label: "DuckDB",
+		cfg: {
+			Parser: DuckdbParser as never,
+			Lexer: DuckdbLexer as never,
+			parseEntry: "root",
+			lower: lowerDuckdb as never,
+			entryRule: "RULE_select_no_parens",
+			pool: PG_POOL,
+		},
+	},
+	{
+		label: "Trino",
+		cfg: {
+			Parser: TrinoParser as never,
+			Lexer: TrinoLexer as never,
+			parseEntry: "root",
+			lower: lowerTrino as never,
+			entryRule: "RULE_query",
+			pool: TRINO_POOL,
+		},
+	},
+	{
+		label: "SQLite",
+		cfg: {
+			Parser: SqliteParser as never,
+			Lexer: SqliteLexer as never,
+			parseEntry: "parse",
+			lower: lowerSqlite as never,
+			entryRule: "RULE_select_stmt",
+			pool: SQLITE_POOL,
+		},
+	},
+	{
+		label: "MySQL",
+		cfg: {
+			Parser: MysqlParser as never,
+			Lexer: MysqlLexer as never,
+			parseEntry: "root",
+			lower: lowerMysql as never,
+			entryRule: "RULE_selectStatement",
+			pool: MYSQL_POOL,
+		},
+	},
 ];
 
 describe("lower() robustness + coverage over generated queries", { sequential: true }, () => {
 	for (const d of DIALECTS) {
-		it(`${d.label}: lower never throws; covers >= floor`, { timeout: 60_000 }, () => {
+		it(`${d.label}: lower never throws on generated queries`, { timeout: 60_000 }, () => {
 			const r = grammarCoverage(d.cfg);
 			// eslint-disable-next-line no-console
 			console.log(
-				`${d.label}: covered ${r.covered}/${r.denom}, throws ${r.throws}, flagged ${r.flagged}/${r.parsed} (flagged = NOISE, not pinned)`,
+				`${d.label}: covered ${r.covered}/${r.denom}, throws ${r.throws}, flagged ${r.flagged}/${r.parsed} (covered/flagged = NOISE, not asserted)`,
 			);
 			expect(r.throws, `lower() THREW on generated ${d.label} queries — it must be total`).toBe(0);
-			expect(r.covered, `${d.label} query-construct coverage regressed below floor`).toBeGreaterThanOrEqual(
-				d.coverFloor,
+			// Not a floor: guards that the fuzzer actually produced parseable statements, so throws===0
+			// above is a real result and not vacuously true on a mis-wired entryRule.
+			expect(r.parsed, `${d.label} fuzzer parsed nothing — entryRule/parseEntry likely mis-wired`).toBeGreaterThan(
+				0,
 			);
 		});
 	}
 });
 
-// Curated REAL gaps — clean repros, the only honest gap signal (not generator garbage).
-describe("known lower() gaps (curated clean repros)", () => {
+// Curated clean repros: specific constructs must lower to real IR, never flagged. A regression guard that
+// closed gaps STAY closed — intent-bearing, unlike the generator's covered count.
+describe("lower() models specific constructs (curated clean repros)", () => {
 	const rsFlags = (sql: string): string[] => {
 		const { tree, errors } = parseRedshift(sql);
 		if (errors !== 0) throw new Error("repro did not parse");
 		return (lowerRedshift(tree).body as { unsupported?: string[] }).unsupported ?? [];
 	};
-	it("Redshift PIVOT / UNPIVOT / CONNECT BY are modelled onto the shared IR (no longer flagged)", () => {
-		// Flipped from asserts-flagged to asserts-modelled (Task 5): these lower to PivotInfo/UnpivotInfo
-		// and conserved CONNECT BY predicate columns, the same shapes the sibling dialects produce.
+	it("Redshift PIVOT / UNPIVOT / CONNECT BY are modelled onto the shared IR (not flagged)", () => {
+		// These lower to PivotInfo/UnpivotInfo and conserved CONNECT BY predicate columns — the same shapes
+		// the sibling dialects produce. Asserts they are modelled, never flagged unsupported.
 		expect(rsFlags("SELECT * FROM t1 PIVOT (sum(a) FOR b IN (1, 2))"), "redshift pivot should model").not.toContain(
 			"pivot",
 		);

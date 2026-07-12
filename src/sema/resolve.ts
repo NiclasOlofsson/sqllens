@@ -223,7 +223,9 @@ function computeOutputNames(scope: Scope, schema: SchemaProvider, visited: Set<S
 	// A PIVOT/UNPIVOT with no result alias reshapes the FROM relation — expand the sources, transform.
 	if (body.pivot && !body.pivot.alias) {
 		const base = sourceColumnsAll(scope, schema, visited);
-		return base ? applyPivotCols(base, body.pivot, scope.dialect) : undefined;
+		if (!base) return undefined;
+		const out = applyPivotCols(base, body.pivot, scope.dialect);
+		return out === "unknown" ? undefined : out; // dynamic pivot → unknown, resolved as undefined here
 	}
 	if (body.unpivot && !body.unpivot.alias) {
 		const base = sourceColumnsAll(scope, schema, visited);

@@ -158,6 +158,11 @@ export interface PivotInfo {
 	/** The pivoted relation's alias (T-SQL `… PIVOT (…) AS pvt`), referenced by later columns.
 	 *  Absent for Spark, where the pivot transforms the SELECT directly. */
 	alias?: string;
+	/** True when the output columns are data-dependent and cannot be enumerated statically (DuckDB's
+	 *  statement `PIVOT … ON … USING` with no fixed IN-list — the distinct ON-values become columns).
+	 *  The reshape is still modelled (source + consumed columns visible); downstream resolves the output
+	 *  to "unknown" rather than guessing a column set. */
+	dynamic?: boolean;
 }
 
 export interface UnpivotInfo {

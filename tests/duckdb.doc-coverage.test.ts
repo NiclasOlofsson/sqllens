@@ -68,8 +68,8 @@ const PROBES: Record<string, Probe[]> = {
 		["string-relation", "SELECT * FROM 'file.parquet'", "query"], // sql/query_syntax/from
 		["using-sample", "SELECT * FROM t USING SAMPLE 10%", "query"], // sql/samples
 		["tablesample", "SELECT * FROM t TABLESAMPLE 10%", "query"], // sql/samples
-		["pivot", "PIVOT t ON k USING sum(v)", "nonquery"], // sql/statements/pivot
-		["unpivot", "UNPIVOT t ON c1, c2 INTO NAME k VALUE v", "nonquery"], // sql/statements/unpivot
+		["pivot", "PIVOT t ON k USING sum(v)", "query"], // sql/statements/pivot (modelled: dynamic PivotInfo)
+		["unpivot", "UNPIVOT t ON c1, c2 INTO NAME k VALUE v", "query"], // sql/statements/unpivot (modelled: UnpivotInfo)
 	],
 	expressions: [
 		["case", "SELECT CASE WHEN a > 1 THEN 'x' ELSE 'y' END FROM t", "query"], // sql/expressions/case

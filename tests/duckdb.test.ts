@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parse } from "../src/index.js";
+import { parse, qualify, resolveScopes, Schema } from "../src/index.js";
 import { lower } from "../src/duckdb/lower.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 
@@ -204,11 +204,40 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		expect(plain.body.kind === "setop" && plain.body.byName).toBeUndefined();
 	});
 
-	it("PIVOT/UNPIVOT statements are queries with a visible flag (pivot.md, unpivot.md)", () => {
+	it("PIVOT statement models the reshape onto PivotInfo (dynamic output), not flagged unsupported", () => {
 		const { ast } = parse("PIVOT cities ON year USING sum(population) GROUP BY country;", "duckdb");
 		expect(ast.statement).toBe("query");
-		expect(ast.body.kind === "select" && ast.body.unsupported).toEqual(["pivot"]);
-		ok("UNPIVOT monthly_sales ON jan, feb INTO NAME month VALUE sales;");
+		if (ast.body.kind !== "select") throw new Error("expected select body");
+		expect(ast.body.unsupported).toBeUndefined();
+		expect(ast.body.pivot?.forColumns).toEqual(["year"]);
+		expect(ast.body.pivot?.aggColumns).toEqual(["population"]);
+		// DuckDB's statement PIVOT produces data-dependent columns (the distinct ON-values become
+		// columns) — modelled as dynamic so a schema resolves the output to unknown, never a wrong set.
+		expect(ast.body.pivot?.dynamic).toBe(true);
+	});
+
+	it("UNPIVOT statement models the reshape onto UnpivotInfo, not flagged unsupported", () => {
+		const { ast } = parse("UNPIVOT monthly_sales ON jan, feb INTO NAME month VALUE sales;", "duckdb");
+		expect(ast.statement).toBe("query");
+		if (ast.body.kind !== "select") throw new Error("expected select body");
+		expect(ast.body.unsupported).toBeUndefined();
+		expect(ast.body.unpivot?.nameColumn).toBe("month");
+		expect(ast.body.unpivot?.valueColumn).toBe("sales");
+		expect(ast.body.unpivot?.removed).toEqual(["jan", "feb"]);
+	});
+
+	it("PIVOT/UNPIVOT statement output is never-wrong under a schema", () => {
+		// PIVOT: data-dependent output → unknown, never the raw base columns.
+		const ps = resolveScopes(parse("PIVOT cities ON year USING sum(population) GROUP BY country;", "duckdb").ast, "duckdb");
+		const pCols = qualify(ps, new Schema({ cities: { country: "string", year: "int", population: "int" } })).columnsOf(ps.root);
+		expect(pCols).toBe("unknown");
+		// UNPIVOT: static reshape → passthrough (product) + the name/value columns.
+		const us = resolveScopes(parse("UNPIVOT monthly_sales ON jan, feb INTO NAME month VALUE sales;", "duckdb").ast, "duckdb");
+		const uCols = qualify(us, new Schema({ monthly_sales: { product: "string", jan: "int", feb: "int" } })).columnsOf(us.root);
+		expect(uCols).toEqual(["product", "month", "sales"]);
+	});
+
+	it("PIVOT statement forms still parse (with-CTE + FROM-suffix)", () => {
 		ok("WITH p AS (PIVOT cities ON year USING sum(population) GROUP BY country) SELECT * FROM p;");
 		ok("SELECT * FROM cities PIVOT (sum(population) FOR year IN (2000, 2010) GROUP BY country);");
 		ok(`SELECT * FROM cities PIVOT (sum(population) AS total, count(population) AS count

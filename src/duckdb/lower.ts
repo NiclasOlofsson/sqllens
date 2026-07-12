@@ -8,11 +8,13 @@ import type {
 	Join,
 	JoinKind,
 	LimitInfo,
+	PivotInfo,
 	Projection,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,
 	Source,
+	UnpivotInfo,
 	UnsupportedFlag,
 	WindowSpec,
 } from "../ir/ir.js";
@@ -31,8 +33,8 @@ import { displayName } from "../ident/fold.js";
 // QUALIFY, GROUP BY ALL, star EXCLUDE/REPLACE/RENAME + COLUMNS(), prefix
 // aliases (x: 42, alias: tbl), list/struct/map literals + comprehensions,
 // `lambda x:` lambdas, method chaining (x.f(y) → f(x, y)), string-literal
-// relations (FROM 'file.parquet'), and the PIVOT/UNPIVOT statements (flagged
-// `pivot`/`unpivot` — visible gaps, not silent drops).
+// relations (FROM 'file.parquet'), and the PIVOT/UNPIVOT statements (modelled
+// onto the shared PivotInfo/UnpivotInfo; the statement PIVOT is `dynamic`).
 // ---------------------------------------------------------------------------
 
 // https://duckdb.org/docs/current/sql/functions/aggregates.html — general + approximate +
@@ -285,10 +287,15 @@ function nonQuery(cst: ParserRuleContext, reason: UnsupportedFlag): QueryExpr {
 	};
 }
 
-/** PIVOT/UNPIVOT statement — keep the source relation + ON/USING column refs visible, flag the
- *  reshape as unsupported (duckdb.org/docs/current/sql/statements/pivot.md, unpivot.md). */
+/** PIVOT/UNPIVOT statement — modelled onto the shared PivotInfo/UnpivotInfo IR, the same shapes the
+ *  sibling dialects produce (duckdb.org/docs/current/sql/statements/pivot.md, unpivot.md).
+ *
+ *  PIVOT `⟨rel⟩ ON ⟨cols⟩ USING ⟨aggs⟩ [GROUP BY ⟨rows⟩]`: the distinct ON-values become output columns,
+ *  so the output is data-dependent — modelled as a `dynamic` PivotInfo (structure captured; output
+ *  resolves to unknown, never a wrong set). UNPIVOT `⟨rel⟩ ON ⟨cols⟩ [INTO NAME ⟨n⟩ VALUE ⟨v⟩]` is a
+ *  static reshape (passthrough minus the ON columns, plus the name/value columns), modelled exactly. */
 function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
-	const kind = stmt.ruleIndex === P.RULE_pivotstmt ? "pivot" : "unpivot";
+	const isPivot = stmt.ruleIndex === P.RULE_pivotstmt;
 	const from: Source[] = [];
 	const qn = directChildrenOfRule(stmt, P.RULE_qualified_name)[0];
 	if (qn) from.push({ kind: "table", name: nameParts(qn), namePartSpans: columnPartSpans(qn), cst: qn });
@@ -297,21 +304,51 @@ function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
 		const inner = innerSelect(sw);
 		from.push({ kind: "subquery", query: inner ? lowerSelectStmt(inner) : emptyQuery(sw), cst: sw });
 	}
+
 	const columns: ColumnRef[] = [];
-	for (const on of [
-		...collectOfRule(stmt, P.RULE_pivot_on),
-		...collectOfRule(stmt, P.RULE_unpivot_on),
-		...collectOfRule(stmt, P.RULE_target_el),
-	]) {
-		for (const a of directChildrenOfRule(on, P.RULE_a_expr)) columnsOf(lowerExpr(a), columns, "projection");
+	// Column names referenced by a clause's a_expr children, recorded into `columns` for lineage.
+	const colNames = (clauseRule: number, clause: Clause): string[] => {
+		const names: string[] = [];
+		for (const node of collectOfRule(stmt, clauseRule))
+			for (const a of directChildrenOfRule(node, P.RULE_a_expr)) {
+				const refs: ColumnRef[] = [];
+				columnsOf(lowerExpr(a), refs, clause);
+				for (const r of refs) {
+					columns.push(r);
+					names.push(r.parts[r.parts.length - 1]);
+				}
+			}
+		return names;
+	};
+
+	let pivot: PivotInfo | undefined;
+	let unpivot: UnpivotInfo | undefined;
+	if (isPivot) {
+		const forColumns = colNames(P.RULE_pivot_on, "projection"); // ON columns → the pivot key
+		const aggColumns = colNames(P.RULE_target_el, "projection"); // USING aggregate arguments
+		colNames(P.RULE_group_by_list, "groupBy"); // GROUP BY dims → referenced, kept visible for lineage
+		pivot = { values: [], forColumns, aggColumns, dynamic: true };
+	} else {
+		const removed = colNames(P.RULE_unpivot_on, "projection"); // ON columns consumed into rows
+		// INTO NAME ⟨colid⟩ VALUE ⟨name_list⟩; default DuckDB column names are "name"/"value".
+		const nameColumn = directChildrenOfRule(stmt, P.RULE_colid)[0];
+		const valueList = directChildrenOfRule(stmt, P.RULE_name_list)[0];
+		const valueName = valueList ? collectOfRule(valueList, P.RULE_name)[0] : undefined;
+		unpivot = {
+			valueColumn: valueName ? textOf(valueName) : "value",
+			nameColumn: nameColumn ? textOf(nameColumn) : "name",
+			removed,
+		};
 	}
+
 	const body: SelectExpr = {
 		kind: "select",
 		projections: [{ isStar: true, expr: { kind: "star", cst: stmt }, cst: stmt }],
 		from,
 		columns,
 		aggregated: false,
-		unsupported: [kind],
+		pivot,
+		unpivot,
 		cst: stmt,
 	};
 	return { kind: "query", ctes: [], body, cst: stmt };

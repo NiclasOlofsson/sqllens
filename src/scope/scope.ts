@@ -519,7 +519,9 @@ function baseRelationColumns(scope: Scope): string[] | "unknown" {
 // AND the schema-fed qualify / resolve passes, so the pivot reshape is consistent everywhere (not just
 // in scope.outputs). PIVOT consumes the FOR + aggregate columns and adds the IN-list value columns;
 // UNPIVOT consumes the IN-list columns and adds the name + value columns; both keep the passthrough rest.
-export function applyPivotCols(base: string[], p: PivotInfo, dialect?: string): string[] {
+export function applyPivotCols(base: string[], p: PivotInfo, dialect?: string): string[] | "unknown" {
+	// Data-dependent pivot (no static IN-list): output columns are not enumerable — never guess.
+	if (p.dynamic) return "unknown";
 	const fold = (n: string) => foldIdentifier(n, dialect);
 	const consumed = new Set([...p.forColumns, ...p.aggColumns].map(fold));
 	return [...base.filter((c) => !consumed.has(fold(c))), ...p.values];

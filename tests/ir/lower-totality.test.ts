@@ -19,7 +19,18 @@ const BROKEN = [
 	"SELECT * FORM x",
 ];
 
-const DIALECTS = ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const;
+const DIALECTS = [
+	"databricks",
+	"tsql",
+	"snowflake",
+	"bigquery",
+	"redshift",
+	"postgres",
+	"duckdb",
+	"trino",
+	"sqlite",
+	"mysql",
+] as const;
 
 describe("lower() totality on broken input", () => {
 	for (const dialect of DIALECTS) {
