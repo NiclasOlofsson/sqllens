@@ -3,12 +3,13 @@ import { completeAt, SqlDocument } from "../../src/api.js";
 import { minijinja } from "../../src/minijinja/index.js";
 import { Schema } from "../../src/qualify/schema.js";
 
-// A templated SqlDocument's raw text still holds jinja `{{ }}` tags. completeAt runs its OWN
-// error-tolerant re-parse to drive the ATN candidate walk; feeding it the RAW text made the dialect
-// lexer die on the braces from char 0, so the walk found nothing and completion returned 0 candidates
-// on any dbt model that opens with a `{{ config(...) }}` block (anvil bug report, 2026-07-12). The fix:
-// the re-parse lexes the document's length-preserving `placeholder` (the same blanked SQL its own parse
-// ran on), so the caret offset stays exact and the walk sees real SQL.
+// A templated SqlDocument's raw text still holds jinja `{{ }}` tags. completeAt used to run its OWN
+// re-parse over that raw text to drive the ATN candidate walk, so the dialect lexer died on the braces
+// from char 0 and the walk found nothing: 0 candidates on any dbt model that opens with a
+// `{{ config(...) }}` block (anvil bug report, 2026-07-12). The fix: the walk now consumes the
+// document's OWN already-lexed token stream (cell.tokens) instead of re-parsing. For a templated
+// document those are the SQL-over-placeholder tokens (jinja tags are channel-2 tokens the walk skips),
+// so completion sees real SQL at document-true offsets with no re-parse and no jinja to trip over.
 describe("completeAt on a templated document (jinja-blindness regression)", () => {
 	// The exact shape anvil reported: a databricks dbt model opening with a config block, caret at an
 	// empty value slot inside a CASE.
@@ -27,8 +28,12 @@ describe("completeAt on a templated document (jinja-blindness regression)", () =
 		const placeholderDoc = SqlDocument.create(doc.templated!.placeholder, "databricks");
 		// Placeholder is length-preserving, so the caret offset is identical in both.
 		expect(doc.templated!.placeholder.length).toBe(MODEL.length);
-		const templated = completeAt(doc, caret).map((c) => `${c.kind}\0${c.label}`).sort();
-		const plain = completeAt(placeholderDoc, caret).map((c) => `${c.kind}\0${c.label}`).sort();
+		const templated = completeAt(doc, caret)
+			.map((c) => `${c.kind}\0${c.label}`)
+			.sort();
+		const plain = completeAt(placeholderDoc, caret)
+			.map((c) => `${c.kind}\0${c.label}`)
+			.sort();
 		expect(templated).toEqual(plain);
 	});
 
@@ -37,7 +42,9 @@ describe("completeAt on a templated document (jinja-blindness regression)", () =
 		const sql = "{{ config(materialized='table') }}\nselect  from sales";
 		const doc = SqlDocument.create(sql, "databricks", { templating: minijinja() });
 		const offset = sql.indexOf("select ") + "select ".length;
-		const cols = completeAt(doc, offset, schema).filter((c) => c.kind === "column").map((c) => c.label);
+		const cols = completeAt(doc, offset, schema)
+			.filter((c) => c.kind === "column")
+			.map((c) => c.label);
 		expect(cols).toContain("amount");
 		expect(cols).toContain("id");
 	});

@@ -1,10 +1,12 @@
 import {
+	type ATN,
 	CharStream,
 	CommonTokenStream,
 	DefaultErrorStrategy,
 	type Lexer,
 	type Parser,
 	type ParserRuleContext,
+	type Vocabulary,
 } from "antlr4ng";
 import type { Dialect } from "../dialect.js";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
@@ -232,4 +234,28 @@ const FACTORIES: Record<Dialect, Factory> = {
 /** Build a fresh error-tolerant parser for `dialect`, lexing `sql`. */
 export function makeParser(sql: string, dialect: Dialect): MadeParser {
 	return FACTORIES[dialect](sql);
+}
+
+/** The input-INDEPENDENT parser facts the ATN candidate walk needs: the dialect's parser ATN, the
+ *  lexer vocabulary (for keyword literal labels), and the batch entry rule's index. All three are
+ *  per-dialect statics (the ATN and vocabulary are shared across every parser/lexer instance), so
+ *  they are grabbed once from a throwaway empty-input factory and reused; no source is re-lexed. */
+export interface CompletionMeta {
+	atn: ATN;
+	vocabulary: Vocabulary;
+	entryRuleIndex: number;
+}
+
+const META_CACHE = new Map<Dialect, CompletionMeta>();
+
+/** The cached {@link CompletionMeta} for `dialect`, built once. Completion drives the walk over the
+ *  document's own token stream plus this meta, instead of re-parsing the source text. */
+export function completionMeta(dialect: Dialect): CompletionMeta {
+	let meta = META_CACHE.get(dialect);
+	if (!meta) {
+		const m = makeParser("", dialect);
+		meta = { atn: m.parser.atn, vocabulary: m.lexer.vocabulary, entryRuleIndex: m.entryRuleIndex };
+		META_CACHE.set(dialect, meta);
+	}
+	return meta;
 }

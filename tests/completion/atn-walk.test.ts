@@ -28,7 +28,14 @@ function candidatesAtEnd(sql: string) {
 	m.runEntry();
 	const caretIdx = caretIndexAt(m, sql.length);
 	const cfg = COMPLETION_CONFIG.databricks;
-	return collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
+	return collectCandidates(
+		m.parser.atn,
+		m.entryRuleIndex,
+		m.tokenStream.getTokens(),
+		caretIdx,
+		cfg.preferredRules,
+		cfg.ignoredTokens,
+	);
 }
 
 describe("collectCandidates — databricks ATN walk", () => {
@@ -56,7 +63,14 @@ describe("collectCandidates — databricks ATN walk", () => {
 		m.runEntry();
 		const caretIdx = caretIndexAt(m, 3);
 		const cfg = COMPLETION_CONFIG.databricks;
-		const c = collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
+		const c = collectCandidates(
+			m.parser.atn,
+			m.entryRuleIndex,
+			m.tokenStream.getTokens(),
+			caretIdx,
+			cfg.preferredRules,
+			cfg.ignoredTokens,
+		);
 		expect(c.tokens).toBeInstanceOf(Set);
 		expect(c.rules).toBeInstanceOf(Set);
 	});

@@ -1,8 +1,8 @@
 import {
+	type ATN,
 	type ATNState,
 	AtomTransition,
 	NotSetTransition,
-	type Parser,
 	RangeTransition,
 	RuleStartState,
 	RuleStopState,
@@ -24,6 +24,14 @@ export interface Candidates {
 	rules: Set<number>;
 }
 
+/** The minimal token view the walk needs: each token's antlr type + channel, in source order. Both
+ *  antlr's `Token` and our neutral `Token` (src/token/token.ts) satisfy it, so the walk runs over
+ *  the document's OWN already-lexed token stream, never a re-parse. */
+export interface WalkToken {
+	type: number;
+	channel: number;
+}
+
 /**
  * Our own ATN candidate-collection walk — a reimplementation of antlr4-c3's
  * `CodeCompletionCore` (`collectCandidates` / `processRule` / `translateStackToRuleIndex`),
@@ -35,15 +43,20 @@ export interface Candidates {
  * (`tokenListIndex === caretListIndex`) every terminal transition's label contributes its token
  * types as candidates — unless the current rule call stack is inside a preferred (name/column)
  * rule, in which case we record that rule and suppress the raw tokens it subsumes.
+ *
+ * `atn` is the dialect's parser ATN (input-independent, a per-dialect static) and `tokens` is the
+ * document's own lexed token stream up to (at least) the caret; the walk consumes only their `type`
+ * and `channel`, so it reuses the already-parsed tokens rather than re-lexing the source.
  */
 export function collectCandidates(
-	parser: Parser,
+	atn: ATN,
 	startRuleIndex: number,
+	tokens: readonly WalkToken[],
 	caretTokenIndex: number,
 	preferredRules: Set<number>,
 	ignoredTokens: Set<number>,
 ): Candidates {
-	const walk = new CandidateWalk(parser, caretTokenIndex, preferredRules, ignoredTokens);
+	const walk = new CandidateWalk(atn, tokens, caretTokenIndex, preferredRules, ignoredTokens);
 	return walk.run(startRuleIndex);
 }
 
@@ -82,7 +95,8 @@ class CandidateWalk {
 	private readonly shortcutMap = new Map<number, Map<number, RuleEndStatus>>();
 
 	constructor(
-		private readonly parser: Parser,
+		private readonly atn: ATN,
+		tokens: readonly WalkToken[],
 		caretTokenIndex: number,
 		private readonly preferredRules: Set<number>,
 		private readonly ignoredTokens: Set<number>,
@@ -90,9 +104,8 @@ class CandidateWalk {
 		// Precompute the on-channel token types from 0 up to the caret token. The walk consumes
 		// these to prune paths that cannot match what the user already typed. Mirrors c3's
 		// `tokens` array built in `collectCandidates`.
-		const stream = this.parser.inputStream;
-		for (let i = 0; i <= caretTokenIndex; i++) {
-			const tok = stream.get(i);
+		for (let i = 0; i <= caretTokenIndex && i < tokens.length; i++) {
+			const tok = tokens[i]!;
 			if (tok.channel !== Token.DEFAULT_CHANNEL) continue;
 			this.inputTypes.push(tok.type);
 			if (tok.type === Token.EOF) break;
@@ -102,7 +115,7 @@ class CandidateWalk {
 	}
 
 	run(startRuleIndex: number): Candidates {
-		const startState = this.parser.atn.ruleToStartState[startRuleIndex];
+		const startState = this.atn.ruleToStartState[startRuleIndex];
 		if (startState) this.processRule(startState, 0, []);
 		return this.tokens;
 	}
@@ -260,7 +273,7 @@ class CandidateWalk {
 	}
 
 	private collectComplement(transition: Transition): void {
-		const max = this.parser.atn.maxTokenType;
+		const max = this.atn.maxTokenType;
 		// Cap the enumeration: a wide-open NotSet/Wildcard is not a useful keyword list.
 		const COMPLEMENT_CAP = 64;
 		const excluded = transition instanceof NotSetTransition && transition.label ? transition.label : null;

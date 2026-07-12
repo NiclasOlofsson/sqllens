@@ -2,9 +2,11 @@
 // completeAt() — scope-aware completion over a SqlDocument.
 //
 // The interactive editor feature that lives in the BROKEN-input world: the user
-// is mid-keystroke, so this runs its OWN error-tolerant lex+parse of the current
-// text (via makeParser), positions the ATN candidate walk at the caret, and turns
-// the raw {tokens, rules} the walk reports into editor completion items:
+// is mid-keystroke, so this drives an ATN candidate walk over the DOCUMENT'S OWN
+// already-lexed token stream (cell.tokens, reused not re-parsed; the document's
+// error-tolerant parse already ran, and for a templated document over the jinja
+// placeholder), positions it at the caret, and turns the raw {tokens, rules} the
+// walk reports into editor completion items:
 //   - keywords  — candidate token types whose grammar literal is a word (FROM, …)
 //   - tables    — schema table names, when the caret is at a relation-name slot
 //   - columns   — the scope's visible columns, when at a value/column slot
@@ -14,7 +16,7 @@
 // throws — broken input still yields at least the keyword candidates.
 // ---------------------------------------------------------------------------
 
-import { Token } from "antlr4ng";
+import { Token, type Vocabulary } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
 import { displayName, foldIdentifier } from "../ident/fold.js";
@@ -24,7 +26,16 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
 import { COMPLETION_CONFIG, type CompletionConfig } from "./config.js";
-import { makeParser, type MadeParser } from "./parser-factory.js";
+import { completionMeta } from "./parser-factory.js";
+
+/** The token fields the ATN walk and the FROM-relation fallback read. The document's neutral
+ *  `cell.tokens` satisfy it directly; the appended EOF sentinel is built to it. */
+interface WalkTok {
+	type: number;
+	channel: number;
+	start: number;
+	text: string;
+}
 
 /** One completion candidate. The editor filters this list by the typed prefix and applies the
  *  chosen label at the caret; we only produce the labels, anchored at the caret offset. */
@@ -56,32 +67,40 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	const dialect = doc.dialect;
 	const cfg = COMPLETION_CONFIG[dialect];
 
-	// Route to the statement CELL owning the caret: the ATN walk parses that cell's text (with a
-	// cell-relative caret) and the visible-column lookup runs over that cell's own scope tree — so a
-	// caret in statement 2 of a multi-statement document completes through its real scope, not the
-	// compound facade. Single-cell: the cell IS the document, so this is identical to a whole-doc walk.
+	// Route to the statement CELL owning the caret: the visible-column lookup runs over that cell's
+	// own scope tree (cell-relative caret) and the ATN walk over that cell's own tokens, so a caret
+	// in statement 2 of a multi-statement document completes through its real scope, not the compound
+	// facade. Single-cell: the cell IS the document, so this is identical to a whole-doc walk.
 	const cell = doc.cellAt(offset);
-	const cellText = cell ? cell.text : doc.text;
-	const cellOffset = cell ? offset - cell.span.start : offset;
 	const cellScopes = cell ? cell.scopes : doc.scopes;
 	const cellAst = cell ? cell.ast : doc.ast;
+	// Two coordinate spaces: the scope/column lookup is CELL-relative (cell.scopes/cell.ast carry
+	// cell-relative spans), the token walk is DOCUMENT-relative (cell.tokens are shifted to doc
+	// coordinates), so `offset` drives the walk and `cellOffset` the scope lookup.
+	const cellOffset = cell ? offset - cell.span.start : offset;
 
-	// The text the ATN re-parse lexes. A TEMPLATED document's raw text still holds the jinja `{{ }}`
-	// tags, and the dialect lexer dies on the braces from char 0, so the walk finds nothing (0
-	// candidates on a dbt model that opens with a `{{ config() }}` block). Its length-preserving
-	// `placeholder` (the same blanked SQL the document's OWN parse already ran on) keeps the caret
-	// offset exact while giving the lexer real SQL. A templated document is always a single cell
-	// spanning the whole text (SqlDocument.buildTemplatedCell), so the placeholder aligns with cellText.
-	const walkText = doc.templated ? doc.templated.placeholder : cellText;
-
-	// Completion runs its own error-tolerant parse to position the walk (expected — the walk needs
-	// a parser whose ATN we DFS, not the document's valid-parse CST).
-	const m = makeParser(walkText, dialect);
-	// runEntry() first: the CommonTokenStream fills lazily, so the full token list (needed to find
-	// the caret token) only exists after the parse drives it.
-	m.runEntry();
-	const caretIdx = caretTokenIndex(m, cellOffset);
-	const cand = collectCandidates(m.parser, m.entryRuleIndex, caretIdx, cfg.preferredRules, cfg.ignoredTokens);
+	// The ATN walk reuses the DOCUMENT'S OWN already-lexed token stream instead of re-parsing the
+	// text. For a TEMPLATED document those tokens are the SQL-over-placeholder stream (the jinja tags
+	// are channel-2 tokens the walk skips), so completion sees real SQL at document-true offsets and
+	// never has to re-derive the placeholder; the raw `{{ }}` text that made a fresh lexer die from
+	// char 0 is never handed to a lexer again. A synthetic EOF closes the stream (mapTokens drops
+	// antlr's EOF sentinel), matching the entry rule's EOF anchor; its `start` past every real token
+	// keeps it the caret-index fallback for an end-of-input caret.
+	const meta = completionMeta(dialect);
+	const end = cell ? cell.span.end : doc.text.length;
+	const walkTokens: WalkTok[] = [
+		...(cell ? cell.tokens : doc.tokens),
+		{ type: Token.EOF, channel: Token.DEFAULT_CHANNEL, start: end, text: "" },
+	];
+	const caretIdx = caretTokenIndex(walkTokens, offset);
+	const cand = collectCandidates(
+		meta.atn,
+		meta.entryRuleIndex,
+		walkTokens,
+		caretIdx,
+		cfg.preferredRules,
+		cfg.ignoredTokens,
+	);
 
 	const out: Completion[] = [];
 	const seen = new Set<string>(); // dedup by `${kind}\0${label}`
@@ -94,7 +113,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 
 	// keywords — from candidate token types whose grammar literal is a word.
 	for (const type of cand.tokens) {
-		const label = keywordLabel(m, type);
+		const label = keywordLabel(meta.vocabulary, type);
 		if (label) add({ label, kind: "keyword" });
 	}
 
@@ -111,7 +130,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
 		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
-		if (schema) for (const c of fromRelationColumns(m, cfg, schema, dialect)) add(c);
+		if (schema) for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect)) add(c);
 	}
 
 	// functions — value/column slot: the dialect's inference-registry function names.
@@ -123,9 +142,9 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 }
 
 /** The walk's caret token index: the first default-channel token whose `.start >= offset`; for an
- *  end-of-input caret that is the EOF token's index. Mirrors Task 10's tests' caret helper. */
-function caretTokenIndex(m: MadeParser, offset: number): number {
-	const toks = m.tokenStream.getTokens();
+ *  end-of-input caret that is the EOF sentinel's index (last entry). Mirrors Task 10's tests' caret
+ *  helper. `toks` is the document's own token stream (doc coordinates) with the EOF sentinel appended. */
+function caretTokenIndex(toks: readonly WalkTok[], offset: number): number {
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i];
 		if (!t || t.channel !== Token.DEFAULT_CHANNEL) continue;
@@ -137,8 +156,8 @@ function caretTokenIndex(m: MadeParser, offset: number): number {
 /** A candidate token type → a keyword label, or undefined if it is punctuation/operator or has no
  *  literal name. The grammar literal is single-quoted (`"'FROM'"`); strip the quotes and keep it
  *  only when it starts with a letter/underscore. */
-function keywordLabel(m: MadeParser, type: number): string | undefined {
-	const literal = m.lexer.vocabulary.getLiteralName(type);
+function keywordLabel(vocabulary: Vocabulary, type: number): string | undefined {
+	const literal = vocabulary.getLiteralName(type);
 	if (!literal) return undefined;
 	const unquoted = literal.startsWith("'") && literal.endsWith("'") ? literal.slice(1, -1) : literal;
 	return /^[A-Za-z_]/.test(unquoted) ? unquoted : undefined;
@@ -159,14 +178,14 @@ function intersects(a: Set<number>, b: Set<number>): boolean {
  * token sets, so the core stays dialect-neutral.
  */
 function fromRelationColumns(
-	m: MadeParser,
+	walkTokens: readonly WalkTok[],
 	cfg: CompletionConfig,
 	schema: SchemaProvider,
 	dialect?: string,
 ): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
 	// Default-channel tokens only — hidden whitespace/comments sit between FROM and the name.
-	const toks = m.tokenStream.getTokens().filter((t) => t.channel === Token.DEFAULT_CHANNEL);
+	const toks = walkTokens.filter((t) => t.channel === Token.DEFAULT_CHANNEL);
 	const out: Completion[] = [];
 	for (let i = 0; i + 1 < toks.length; i++) {
 		const t = toks[i];
