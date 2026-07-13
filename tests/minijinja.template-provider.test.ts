@@ -1,17 +1,18 @@
 import { describe, expect, it } from "vitest";
-import { DefaultTemplateProvider, type ExpansionShape, type TemplateCall } from "../src/index.js";
+import { DbtTemplateProvider, DefaultTemplateProvider, type ExpansionShape, type TemplateCall } from "../src/index.js";
 import { TestRelationProvider, relKey } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
-// DefaultTemplateProvider — the shipped default implementation of the ONE
-// template-resolution seam (the catalog-unification redesign). These pin:
-//   1. the builtin knowledge (the zero-consumer strategy, readable in one class):
-//      ref/source → a logical relation; env_var → a string value; the no-output
-//      builtins → shape "nothing"; everything else → unknown;
-//   2. the shape-derivation precedence (explicit wins; relation → "relation",
-//      columns → "column-list", value → "expr");
+// The shipped template-resolution seam (the catalog-unification redesign). These pin:
+//   1. the dbt builtin knowledge — carried by `DbtTemplateProvider`, NOT the neutral default
+//      (ref/source are dbt macros, not minijinja knowledge): ref/source → a logical relation;
+//      env_var → a string value; the no-output builtins → shape "nothing"; everything else → unknown;
+//   2. the shape-derivation precedence in `DefaultTemplateProvider.expansion` (explicit wins;
+//      relation → "relation", columns → "column-list", value → "expr");
 //   3. the lazy machinery (recordMiss → misses → prime() → fetch → re-probe →
 //      version bump, with in-flight coalescing).
+// The neutral `DefaultTemplateProvider` knowing NONE of the dbt vocabulary is pinned in
+// tests/minijinja.dbt-provider.test.ts.
 // ---------------------------------------------------------------------------
 
 describe("DefaultTemplateProvider — statelessness (safe to share as OPEN_PROVIDER)", () => {
@@ -35,8 +36,8 @@ const call = (name: string, args: (string | null)[] = [], extra?: Partial<Templa
 	...extra,
 });
 
-describe("DefaultTemplateProvider — builtin knowledge", () => {
-	const dp = new DefaultTemplateProvider();
+describe("DbtTemplateProvider — builtin knowledge", () => {
+	const dp = new DbtTemplateProvider();
 
 	it("ref('x') is a relation logically named x; ref('pkg','x') takes the LAST positional", () => {
 		expect(dp.expansion(call("ref", ["orders"]))?.relation?.nameParts).toEqual(["orders"]);
@@ -77,7 +78,7 @@ describe("DefaultTemplateProvider — builtin knowledge", () => {
 
 describe("DefaultTemplateProvider — shape derivation precedence", () => {
 	it("relation derives 'relation', value derives 'expr'; an explicit shapeOf always wins", () => {
-		const dp = new DefaultTemplateProvider();
+		const dp = new DbtTemplateProvider();
 		expect(dp.expansion(call("ref", ["x"]))?.shape).toBe("relation");
 		expect(dp.expansion(call("env_var", ["X"]))?.shape).toBe("expr");
 

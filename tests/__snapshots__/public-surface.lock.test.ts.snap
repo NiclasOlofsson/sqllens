@@ -38,6 +38,7 @@ exports[`public surface is frozen > index.ts exports exactly the expected names 
 [
   "CallbackSchema",
   "DERIVED_DIALECTS",
+  "DbtTemplateProvider",
   "DefaultTemplateProvider",
   "FUNCTION_SIGNATURES",
   "HARVESTED_SIGNATURES",

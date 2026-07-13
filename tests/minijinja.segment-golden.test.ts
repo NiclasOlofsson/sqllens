@@ -3,7 +3,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { segment } from "../src/minijinja/segment.js";
-import { DefaultTemplateProvider } from "../src/index.js";
+import { DbtTemplateProvider } from "../src/index.js";
 import { NamedShapeProvider } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
@@ -26,8 +26,9 @@ const here = dirname(fileURLToPath(import.meta.url));
 const fixtureDir = join(here, "fixtures", "minijinja");
 const goldenPath = join(here, "golden", "minijinja-segment.golden.json");
 
-/** The shipped default provider — the zero-consumer strategy the unshaped cases pin. */
-const DP = new DefaultTemplateProvider();
+/** A dbt-aware provider — the unshaped golden cases pin the dbt fills (config -> whitespace,
+ *  ref/source -> a relation body). The neutral default knows none of it (pinned separately). */
+const DP = new DbtTemplateProvider();
 
 /** Stub provider for the shaped-fill cases: shapes by macro name, like a host classifier.
  *  `ref` is force-shaped "statement" (the old buggy-catalog case): the explicit shape now WINS

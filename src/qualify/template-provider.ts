@@ -18,15 +18,16 @@
 // overrides only the parts it knows (manifest lookups, var values, shape
 // classification) and inherits the conservative default for the rest.
 //
-// The default provider also carries the DBT-BUILTIN knowledge that used to be
-// hardcoded inside the segmenter (NO_OUTPUT_BUILTINS / SHAPE_EXCLUDED string
-// sets): `config`/`docs`/`print`/`log`/`return`/`exceptions` produce nothing;
-// `ref`/`source` produce a relation logically named by their literal args;
-// `env_var` produces a string. Domain knowledge lives in the provider; the
-// ENGINE keeps only the positional machinery (length-/newline-preserving
-// fills, slot guards, statement-slot handling) — non-overridable on purpose: a
-// provider states WHAT a call produces, never how it is spliced, so a buggy
-// provider can make meanings unknown but can never corrupt a parse.
+// The DBT-BUILTIN knowledge (config/docs/print/log/return/exceptions produce
+// nothing; ref/source produce a relation logically named by their literal args;
+// env_var produces a string) is NOT minijinja knowledge and does NOT live in the
+// neutral default: it lives in `DbtTemplateProvider` (below), the shipped dbt
+// overlay a consumer extends. The neutral `DefaultTemplateProvider` knows no
+// macro vocabulary at all. Domain knowledge lives in the provider; the ENGINE
+// keeps only the positional machinery (length-/newline-preserving fills, slot
+// guards, statement-slot handling) — non-overridable on purpose: a provider
+// states WHAT a call produces, never how it is spliced, so a buggy provider can
+// make meanings unknown but can never corrupt a parse.
 //
 // Contract points (agreed on the channel):
 //   - SYNC-ONLY: every method answers from a warm cache; misses are recorded
@@ -182,37 +183,23 @@ export class DefaultTemplateProvider implements SchemaProvider {
 
 	// --- Granular expansion knowledge (the C#-style virtuals — override the parts you know). ---
 
-	/** The relation a call produces. Default knowledge: `ref(...)` → the dbt-LOGICAL model name,
-	 *  `source(a,b)` → the logical [source, table] — literal args only, never fabricated. An
-	 *  overriding provider answers the PHYSICAL relation (+columns) from its manifest/describe. */
-	relationOf(call: TemplateCall): ResolvedRelation | undefined {
-		if (call.packageParts !== undefined) return undefined;
-		if (call.name === "ref") {
-			const model = refModel(call);
-			return typeof model === "string" ? { nameParts: [model] } : undefined;
-		}
-		if (call.name === "source") {
-			const parts = sourceParts(call);
-			if (parts && typeof parts[0] === "string" && typeof parts[1] === "string") {
-				return { nameParts: [parts[0], parts[1]] };
-			}
-		}
+	/** The relation a call produces. The NEUTRAL floor knows no macro vocabulary, so it answers
+	 *  undefined for everything: `ref`/`source` are dbt macros, not minijinja knowledge, and live in
+	 *  `DbtTemplateProvider`. An overriding provider answers the relation (+columns) it knows. */
+	relationOf(_call: TemplateCall): ResolvedRelation | undefined {
 		return undefined;
 	}
 
-	/** The scalar value a call yields. Default knowledge: `env_var` returns a string (dbt docs);
-	 *  `var` and user macros are unknown. */
-	valueOf(call: TemplateCall): { type: ValueType } | undefined {
-		if (call.packageParts === undefined && call.name === "env_var") return { type: "string" };
+	/** The scalar value a call yields. Neutral floor: unknown (no macro vocabulary). `env_var` is a
+	 *  dbt builtin known by `DbtTemplateProvider`. */
+	valueOf(_call: TemplateCall): { type: ValueType } | undefined {
 		return undefined;
 	}
 
-	/** The rendered-output shape of a call. Default knowledge: the no-output builtins → "nothing".
-	 *  Everything else unknown (the engine derives a shape from stronger fields, or falls back to
-	 *  its positional fill). */
-	shapeOf(call: TemplateCall): ExpansionShape | undefined {
-		if (call.packageParts === undefined && NO_OUTPUT_BUILTINS.has(call.name)) return "nothing";
-		if (call.packageParts !== undefined && NO_OUTPUT_BUILTINS.has(call.packageParts[0] ?? "")) return "nothing";
+	/** The rendered-output shape of a call. Neutral floor: unknown (the engine derives a shape from
+	 *  stronger fields, or falls back to its positional fill). The dbt no-output builtins → "nothing"
+	 *  is `DbtTemplateProvider` knowledge. */
+	shapeOf(_call: TemplateCall): ExpansionShape | undefined {
 		return undefined;
 	}
 
@@ -338,7 +325,46 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	}
 }
 
-/** The provider type the engine consults — the shipped base (or any subclass of it). */
+/**
+ * The shipped dbt overlay: a `DefaultTemplateProvider` that knows dbt's built-in macros and nothing
+ * more. `ref(...)` resolves to the dbt-LOGICAL model name, `source(a,b)` to the logical
+ * [source, table], `env_var` to a string, and the no-output builtins
+ * (config/docs/print/log/return/exceptions) render nothing. Static famous-macro knowledge ONLY: no
+ * manifest, no warehouse, no project config, no runtime. A dbt consumer with runtime knowledge
+ * extends THIS (not the neutral `DefaultTemplateProvider`) and overrides the granular methods with
+ * what its manifest / describe cache resolve to. This class is where the dbt vocabulary lives so the
+ * neutral core and default do not carry it.
+ */
+export class DbtTemplateProvider extends DefaultTemplateProvider {
+	override relationOf(call: TemplateCall): ResolvedRelation | undefined {
+		if (call.packageParts !== undefined) return undefined;
+		if (call.name === "ref") {
+			const model = refModel(call);
+			return typeof model === "string" ? { nameParts: [model] } : undefined;
+		}
+		if (call.name === "source") {
+			const parts = sourceParts(call);
+			if (parts && typeof parts[0] === "string" && typeof parts[1] === "string") {
+				return { nameParts: [parts[0], parts[1]] };
+			}
+		}
+		return undefined;
+	}
+
+	override valueOf(call: TemplateCall): { type: ValueType } | undefined {
+		if (call.packageParts === undefined && call.name === "env_var") return { type: "string" };
+		return undefined;
+	}
+
+	override shapeOf(call: TemplateCall): ExpansionShape | undefined {
+		if (call.packageParts === undefined && NO_OUTPUT_BUILTINS.has(call.name)) return "nothing";
+		if (call.packageParts !== undefined && NO_OUTPUT_BUILTINS.has(call.packageParts[0] ?? "")) return "nothing";
+		return undefined;
+	}
+}
+
+/** The provider type the engine consults — the shipped base (or any subclass of it, e.g.
+ *  `DbtTemplateProvider`). */
 export type TemplateProvider = DefaultTemplateProvider;
 
 /**

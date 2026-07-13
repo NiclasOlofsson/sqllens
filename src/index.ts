@@ -172,11 +172,14 @@ export { Schema, type Column, type SchemaMapping, type SchemaLeaf } from "./qual
 
 // The template PROVIDER (the catalog-unification redesign): ONE resolution seam —
 // `expansion(call)` — for every template expression. `DefaultTemplateProvider` is the shipped,
-// concrete, inheritance-designed default (fully functional with zero input; override the granular
-// methods with what your host knows; misses + prime() warm lazily). Pass the SAME per-document
-// instance to parseTemplated (fills) and qualify/analyze (semantics).
+// concrete, inheritance-designed NEUTRAL default (fully functional with zero input, knows no macro
+// vocabulary; override the granular methods with what your host knows; misses + prime() warm
+// lazily). `DbtTemplateProvider` is the shipped dbt overlay (ref/source/env_var/no-output builtins) a
+// dbt consumer extends. Pass the SAME per-document instance to parseTemplated (fills) and
+// qualify/analyze (semantics).
 export {
 	DefaultTemplateProvider,
+	DbtTemplateProvider,
 	OPEN_PROVIDER,
 	NO_OUTPUT_BUILTINS,
 	type TemplateProvider,

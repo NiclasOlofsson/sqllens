@@ -5,15 +5,20 @@
 
 import type { Column } from "../../src/index.js";
 import {
-	DefaultTemplateProvider,
+	DbtTemplateProvider,
 	type ExpansionShape,
 	type ResolvedRelation,
 	type TemplateCall,
 } from "../../src/index.js";
 
-/** Forces `shape` for every call the DEFAULT provider has no answer for (builtins keep their
+// These doubles emulate a DBT-AWARE host (the shape anvil's provider takes): they extend
+// DbtTemplateProvider so the dbt builtin shapes (config -> "nothing", env_var -> string,
+// ref/source -> relation) are the base, exactly as a real dbt consumer's provider inherits them.
+// The neutral DefaultTemplateProvider knows none of that.
+
+/** Forces `shape` for every call the base provider has no answer for (builtins keep their
  *  real shapes — config stays "nothing", exactly like a host classifier that answers by name). */
-export class AlwaysShapeProvider extends DefaultTemplateProvider {
+export class AlwaysShapeProvider extends DbtTemplateProvider {
 	constructor(private readonly shape: ExpansionShape) {
 		super();
 	}
@@ -23,12 +28,12 @@ export class AlwaysShapeProvider extends DefaultTemplateProvider {
 }
 
 /** `{ provider }` options forcing one shape — the successor of the old `{ shapeOf: always(x) }`. */
-export function shaped(shape: ExpansionShape): { provider: DefaultTemplateProvider } {
+export function shaped(shape: ExpansionShape): { provider: DbtTemplateProvider } {
 	return { provider: new AlwaysShapeProvider(shape) };
 }
 
 /** Answers `shape` per call name (the old name-keyed shapeOf callback pattern). */
-export class NamedShapeProvider extends DefaultTemplateProvider {
+export class NamedShapeProvider extends DbtTemplateProvider {
 	constructor(private readonly shapes: Record<string, ExpansionShape>) {
 		super();
 	}
@@ -47,7 +52,7 @@ export function relKey(name: string, parts: readonly (string | null)[]): string 
  * (recording a miss when cold), `fetchExpansions` moves `pending` entries into the cache so
  * `prime()` warms them and bumps `version`.
  */
-export class TestRelationProvider extends DefaultTemplateProvider {
+export class TestRelationProvider extends DbtTemplateProvider {
 	/** A host describe-cache is a CLOSED world (misses are transiently wrong at worst, healed by
 	 *  prime + re-publish) — so miss-driven unknown-table diagnostics fire, like the host's would. */
 	override readonly world = "closed" as const;

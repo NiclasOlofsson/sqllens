@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { segment, NO_OUTPUT_BUILTINS, type Segment } from "../src/minijinja/segment.js";
-import { DefaultTemplateProvider } from "../src/index.js";
+import { DbtTemplateProvider } from "../src/index.js";
 
-// The shipped default provider — the zero-consumer strategy these tests pin.
-const DP = new DefaultTemplateProvider();
+// The segmenter picks placeholder fills from the provider's shape knowledge. These tests exercise the
+// dbt-aware fills (config -> whitespace, ref -> a relation body), so the provider is a dbt one; the
+// neutral DefaultTemplateProvider knows none of that (pinned in minijinja.dbt-provider.test.ts).
+const DP = new DbtTemplateProvider();
 
 // ---------------------------------------------------------------------------
 // Task 2 — the document-level segmenter + placeholder substitution

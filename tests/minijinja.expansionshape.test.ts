@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { DefaultTemplateProvider, type TemplateCall } from "../src/index.js";
+import { DbtTemplateProvider, DefaultTemplateProvider, type TemplateCall } from "../src/index.js";
 import type { Dialect } from "../src/api.js";
 import type { ExpansionShape } from "../src/index.js";
 import { parseTemplated } from "../src/minijinja/index.js";
@@ -322,11 +322,12 @@ describe("statement-slot blank default (no shapeOf)", () => {
 		expect(r.sql.errors).toBe(0);
 	});
 
-	it("ref at BOF: the default provider's relation answer derives a statement-slot SELECT 1 (parses clean)", () => {
+	it("ref at BOF: a dbt provider's relation answer derives a statement-slot SELECT 1 (parses clean)", () => {
 		// Successor of the old SHAPE_EXCLUDED pin: `{{ ref('x') }}` alone used to be a guaranteed
-		// identifier-fill error; the default provider knows ref produces a relation, the derived
-		// shape fills SELECT 1 at the admitted statement slot, and the parse is clean.
-		const r = parseTemplated("{{ ref('x') }}", "databricks");
+		// identifier-fill error; a DbtTemplateProvider knows ref produces a relation, the derived
+		// shape fills SELECT 1 at the admitted statement slot, and the parse is clean. (The NEUTRAL
+		// default knows no ref, so without a dbt provider this stays the positional identifier fill.)
+		const r = parseTemplated("{{ ref('x') }}", "databricks", { provider: new DbtTemplateProvider() });
 		expect(r.placeholder).toContain("SELECT 1");
 		expect(r.sql.errors).toBe(0);
 	});
