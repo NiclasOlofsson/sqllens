@@ -82,7 +82,7 @@ import { MysqlLexer } from "./generated/mysql/MysqlLexer.js";
 import { resolveBehavior } from "./dialect-behavior/registry.js";
 import { HOF_LAMBDA_ARG } from "./infer/infer.js";
 import { SCALAR_ALIASES, TSQL_ALIASES } from "./infer/types.js";
-import { SNOWFLAKE_ALIASES } from "./infer/snowflake.js";
+import { SNOWFLAKE_ALIASES } from "./snowflake/infer.js";
 import { BQ_ALIASES } from "./infer/bigquery.js";
 import { REDSHIFT_ALIASES } from "./infer/redshift.js";
 import { POSTGRES_ALIASES } from "./infer/postgres.js";

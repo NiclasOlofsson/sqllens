@@ -69,11 +69,7 @@ const RULES: Record<string, FoldRule> = {
 	// quoted identifiers — "the case of the identifier is preserved when storing and resolving the
 	// identifier" (case-sensitive). Doubled-quote escape: "To use the double quote character inside
 	// a quoted identifier, use two quotes."
-	snowflake: {
-		delimiters: [DOUBLE_QUOTE],
-		unquoted: "upper",
-		quoted: "preserve",
-	},
+	// snowflake's fold rule moved to src/snowflake/fold.ts (colocated). Its behavior resolves it there.
 
 	// cloud.google.com/bigquery/docs/reference/standard-sql/lexical — verified live (via search,
 	// the JS-rendered page would not return body text to WebFetch): "table names are case-sensitive,

@@ -22,8 +22,13 @@ describe("dialect-behavior registry", () => {
 		for (const d of DIALECTS) expect(BEHAVIORS[d]).toBeDefined();
 	});
 
-	it("fold delegates identically to foldIdentifier for every dialect", () => {
-		for (const d of DIALECTS) {
+	// Dialects still assembled centrally by makeBehavior — the parity oracles below. As a dialect is
+	// colocated into src/<dialect>/ it drops off this list (its central-table entries are gone) and
+	// gets its own direct assertion instead.
+	const CENTRAL = DIALECTS.filter((d) => d !== "snowflake");
+
+	it("fold delegates identically to foldIdentifier for centrally-assembled dialects", () => {
+		for (const d of CENTRAL) {
 			const b = resolveBehavior(d);
 			for (const raw of ["Col", '"Col"', "`Col`", "[Col]", "t.Col"]) {
 				expect(b.fold(raw)).toBe(foldIdentifier(raw, d));
@@ -32,8 +37,8 @@ describe("dialect-behavior registry", () => {
 		}
 	});
 
-	it("type-inference facets delegate identically to inferDialect", () => {
-		for (const d of DIALECTS) {
+	it("type-inference facets delegate identically to inferDialect for centrally-assembled dialects", () => {
+		for (const d of CENTRAL) {
 			const b = resolveBehavior(d);
 			const id = inferDialect(d);
 			expect(b.division).toBe(id.division);
@@ -41,6 +46,18 @@ describe("dialect-behavior registry", () => {
 			expect(b.parseType("array<int>")).toEqual(id.parseType("array<int>"));
 			expect(b.functions).toBe(id.functions); // same registry object
 		}
+	});
+
+	it("snowflake resolves from its colocated module (src/snowflake/)", () => {
+		const b = resolveBehavior("snowflake");
+		expect(b.fold("col")).toBe("COL"); // snowflake unquoted -> upper
+		expect(b.fold('"Col"')).toBe("Col"); // quoted -> preserve
+		expect(b.division).toBe("decimal");
+		// parseType folds struct field names with snowflake's own (upper) fold
+		expect(b.parseType("struct<a:int>")).toEqual({
+			kind: "struct",
+			fields: [{ name: "A", type: { kind: "scalar", name: "int" } }],
+		});
 	});
 
 	it("likeMatch honours SQL `%`/`_` wildcards", () => {

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { displayName, foldIdentifier } from "../src/ident/fold.js";
+import { fold as snowflakeFold } from "../src/snowflake/fold.js";
 
 // Case-folding is the identity key for name comparison across the pipeline (scope/qualify/
 // references/…). Each dialect's rule is doc-cited in src/ident/fold.ts; this suite pins the
@@ -35,20 +36,22 @@ describe("tsql", () => {
 	});
 });
 
-describe("snowflake", () => {
+// snowflake's fold is colocated in src/snowflake/fold.ts (it left the central RULES table), so this
+// block tests that module directly. Same doc-cited rule: unquoted -> UPPER, quoted -> preserve.
+describe("snowflake (colocated)", () => {
 	it("folds unquoted mixed case to UPPER", () => {
-		expect(foldIdentifier("foo", "snowflake")).toBe("FOO");
+		expect(snowflakeFold("foo")).toBe("FOO");
 	});
 	it("preserves case inside quotes (case-sensitive)", () => {
-		expect(foldIdentifier('"foo"', "snowflake")).toBe("foo");
+		expect(snowflakeFold('"foo"')).toBe("foo");
 	});
 	it("unescapes a doubled double-quote inside a quoted identifier", () => {
-		expect(foldIdentifier('"a""b"', "snowflake")).toBe('a"b');
+		expect(snowflakeFold('"a""b"')).toBe('a"b');
 	});
 	it('unquoted foo equals quoted "FOO" but not quoted "foo"', () => {
-		const unquoted = foldIdentifier("foo", "snowflake");
-		expect(unquoted).toBe(foldIdentifier('"FOO"', "snowflake"));
-		expect(unquoted).not.toBe(foldIdentifier('"foo"', "snowflake"));
+		const unquoted = snowflakeFold("foo");
+		expect(unquoted).toBe(snowflakeFold('"FOO"'));
+		expect(unquoted).not.toBe(snowflakeFold('"foo"'));
 	});
 });
 

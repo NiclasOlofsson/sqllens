@@ -1,8 +1,8 @@
-import { commonType, widenSum } from "./coerce.js";
+import { commonType, widenSum } from "../infer/coerce.js";
 import type { Expr } from "../ir/ir.js";
-import type { FnRule } from "./functions.js";
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import { foldIdentifier } from "../ident/fold.js";
+import type { FnRule } from "../infer/functions.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import { fold } from "./fold.js";
 
 // Snowflake inference knowledge — function return types, literal forms, and scalar-type
 // aliases — from the SQL function reference (docs.snowflake.com/en/sql-reference/functions).
@@ -576,7 +576,7 @@ export const SNOWFLAKE_ALIASES: Record<string, string> = {
 };
 
 export function snowflakeParseType(text: string): Type {
-	return parseType(text, SNOWFLAKE_ALIASES, (n) => foldIdentifier(n, "snowflake"));
+	return parseType(text, SNOWFLAKE_ALIASES, fold);
 }
 
 /** Pre-registry hook for calls a plain FnRule can't key. `<seq>.NEXTVAL` carries the sequence as a

@@ -20,7 +20,7 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "../ident/fold.js";
+import { displayName } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Snowflake (grammars-v4 sql/snowflake fork) CST -> the shared,
@@ -1295,7 +1295,7 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 	const agg = directChildrenOfRule(node, P.RULE_aggregate_function)[0];
 	if (agg) {
 		const id = directChildrenOfRule(agg, P.RULE_id_)[0];
-		const name = (id ? displayName(id.getText(), "snowflake") : (leftmostToken(agg) ?? "")).toLowerCase();
+		const name = (id ? displayName(id.getText()) : (leftmostToken(agg) ?? "")).toLowerCase();
 		const args = [
 			...exprListExprs(agg).map(lowerExpr),
 			...directChildrenOfRule(agg, P.RULE_expr).map(lowerExpr),

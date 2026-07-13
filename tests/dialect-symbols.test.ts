@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { dialectSymbols } from "../src/dialect-symbols.js";
 import type { Dialect } from "../src/api.js";
-import { inferDialect } from "../src/infer/dialect.js";
+import { resolveBehavior } from "../src/dialect-behavior/registry.js";
 
 // dbt Anvil lint-rule membership checks (.superpowers/sdd/anvil-phase0-brief.md item 3):
 // "is this identifier a known function / reserved keyword / type name for this dialect?"
@@ -64,7 +64,7 @@ describe.each(DIALECTS)("dialectSymbols(%s)", (dialect) => {
 
 	it("functions is a superset of the dialect's own inference-registry entries", () => {
 		const { functions } = dialectSymbols(dialect);
-		const registryNames = Object.keys(inferDialect(dialect).functions);
+		const registryNames = Object.keys(resolveBehavior(dialect).functions);
 		expect(registryNames.length).toBeGreaterThan(0);
 		// Sample a couple rather than every entry (registries run into the hundreds).
 		for (const name of registryNames.slice(0, 2)) {

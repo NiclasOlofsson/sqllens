@@ -12,6 +12,7 @@ import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES } from "../signature/signatures.js";
 import type { DialectBehavior } from "./behavior.js";
 import { acceptsFor, IMPLICIT_BOOL_NUM, IMPLICIT_STR_TO_NUM } from "./coerce-rules.js";
+import { snowflakeBehavior } from "../snowflake/behavior.js";
 
 // Risk-flag: harvested signatures don't encode optional/variadic reliably, so an arity check over them
 // fires on valid SQL. All false today; flip per dialect once its harvested table earns it. (Mirrors the
@@ -65,8 +66,14 @@ const DIALECT_NAMES: Dialect[] = [
 	"mysql",
 ];
 
+// Dialects whose knowledge has been colocated into src/<dialect>/ provide their behavior directly;
+// the rest are still assembled centrally by makeBehavior. As each dialect moves, add it here.
+const COLOCATED: Partial<Record<Dialect, DialectBehavior>> = {
+	snowflake: snowflakeBehavior,
+};
+
 export const BEHAVIORS: Record<Dialect, DialectBehavior> = Object.fromEntries(
-	DIALECT_NAMES.map((d) => [d, makeBehavior(d)]),
+	DIALECT_NAMES.map((d) => [d, COLOCATED[d] ?? makeBehavior(d)]),
 ) as Record<Dialect, DialectBehavior>;
 
 /** Resolve a dialect string (the IR/Scope tag) to its behavior. Throws on an unregistered/absent

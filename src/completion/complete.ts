@@ -19,7 +19,6 @@
 import { Token, type Vocabulary } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
-import { displayName, foldIdentifier } from "../ident/fold.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
@@ -212,15 +211,16 @@ function visibleColumns(
 ): Completion[] {
 	const scope = enclosingScope(scopes, ast, offset);
 	if (!scope) return [];
+	const behavior = resolveBehavior(dialect);
 	const out: Completion[] = [];
 	const seen = new Set<string>();
 	for (const src of scope.sources.values()) {
 		for (const col of columnsOf(src, dialect, schema)) {
 			// Dedup by folded IDENTITY (quoted/unquoted twins collapse); labels render via displayName.
-			const key = foldIdentifier(col.label, dialect);
+			const key = behavior.fold(col.label);
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push({ ...col, label: displayName(col.label, dialect) });
+			out.push({ ...col, label: behavior.displayName(col.label) });
 		}
 	}
 	return out;
