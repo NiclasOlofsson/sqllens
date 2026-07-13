@@ -1,4 +1,5 @@
-import { foldIdentifier, foldTableName, matchesSourceKey } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
@@ -109,12 +110,12 @@ function pipeStageLineage(scope: Scope, schema: SchemaProvider, seen: Set<Scope>
 			return [...aggs, ...keys];
 		}
 		case "drop": {
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			const dropped = new Set(stage.drop.map(fold));
 			return passthrough().filter((l) => !dropped.has(fold(l.output)));
 		}
 		case "rename": {
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			const map = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
 			return passthrough().map((l) => ({
 				output: map.get(fold(l.output)) ?? l.output,
@@ -122,7 +123,7 @@ function pipeStageLineage(scope: Scope, schema: SchemaProvider, seen: Set<Scope>
 			}));
 		}
 		case "set": {
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			const set = new Map(stage.assignments.map((a) => [fold(a.column), a.expr]));
 			return passthrough().map((l) => {
 				const e = set.get(fold(l.output));
@@ -157,7 +158,7 @@ function starLineage(
 	const want = qualifier ? (qualifier[qualifier.length - 1] ?? "") : undefined;
 	const out: ColumnLineage[] = [];
 	for (const [key, src] of scope.sources) {
-		if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
+		if (want !== undefined && !behaviorOf(scope).matchesSourceKey(key, want)) continue;
 		for (const col of columnNamesOf(src, schema, undefined, scope.dialect) ?? []) {
 			out.push({ output: col, origins: dedup(columnOrigins(src, col, schema, seen), scope.dialect) });
 		}
@@ -263,13 +264,15 @@ function subqueryOrigins(query: QueryExpr, schema: SchemaProvider, seen: Set<Sco
 }
 
 function dedup(origins: Origin[], dialect?: string): Origin[] {
+	const b = resolveBehavior(dialect);
 	const byKey = new Map<string, Origin>();
 	for (const o of origins) {
-		byKey.set(`${foldTableName(o.table, dialect).join(".")}.${foldIdentifier(o.column, dialect)}`, o);
+		byKey.set(`${b.foldTableName(o.table).join(".")}.${b.fold(o.column)}`, o);
 	}
 	return [...byKey.values()];
 }
 
 function eq(a: string, b: string, dialect?: string): boolean {
-	return foldIdentifier(a, dialect) === foldIdentifier(b, dialect);
+	const bh = resolveBehavior(dialect);
+	return bh.fold(a) === bh.fold(b);
 }

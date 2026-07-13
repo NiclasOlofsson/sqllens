@@ -1,4 +1,5 @@
-import { foldIdentifier, foldTableName } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection } from "../ir/ir.js";
 import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
@@ -226,7 +227,7 @@ function followColumn(scope: Scope, parts: string[], walk: Walk, trail: ViaStep[
 	const { source, column } = binding;
 	if (source.kind === "table") {
 		// A recursive CTE's self-reference is a plain table here (see Walk.activeCtes) — cycle-guard it.
-		if (source.name.length === 1 && walk.activeCtes.has(foldIdentifier(source.name[0], scope.dialect)))
+		if (source.name.length === 1 && walk.activeCtes.has(behaviorOf(scope).fold(source.name[0])))
 			return [{ kind: "unresolved", via }];
 		return [{ kind: "origin", origin: { table: source.name, column }, via }];
 	}
@@ -239,7 +240,7 @@ function followColumn(scope: Scope, parts: string[], walk: Walk, trail: ViaStep[
 	}
 	if (walk.seen.has(child)) return [{ kind: "unresolved", via }]; // recursive-CTE cycle guard
 
-	const cteName = source.kind === "cte" ? foldIdentifier(source.ref.def.name, scope.dialect) : undefined;
+	const cteName = source.kind === "cte" ? behaviorOf(scope).fold(source.ref.def.name) : undefined;
 	walk.seen.add(child);
 	if (cteName) walk.activeCtes.add(cteName);
 	try {
@@ -296,10 +297,11 @@ function forkLegs(
 /** The position of `column` in a set-op's output: via declared CTE aliases if given, else the set-op's
  *  own output names (the left branch's, positionally). -1 when not determinable (falls back to name). */
 function columnIndex(setopScope: Scope, column: string, aliases: string[] | undefined, dialect: string): number {
-	const want = foldIdentifier(column, dialect);
-	if (aliases) return aliases.findIndex((a) => foldIdentifier(a, dialect) === want);
+	const bh = resolveBehavior(dialect);
+	const want = bh.fold(column);
+	if (aliases) return aliases.findIndex((a) => bh.fold(a) === want);
 	const outs = setopScope.outputs;
-	return outs !== "unknown" ? outs.findIndex((o) => foldIdentifier(o, dialect) === want) : -1;
+	return outs !== "unknown" ? outs.findIndex((o) => bh.fold(o) === want) : -1;
 }
 
 /** The projection producing `column` in one set-op leg — by name for BY NAME, else by position with a
@@ -313,13 +315,10 @@ function legProducer(
 ): Projection | undefined {
 	if (leg.body.kind !== "select") return undefined;
 	const projs = leg.body.projections;
+	const bh = resolveBehavior(dialect);
+	const wantName = bh.fold(column);
 	const byNameHit = (): Projection | undefined =>
-		projs.find(
-			(p) =>
-				!p.isStar &&
-				p.name !== undefined &&
-				foldIdentifier(p.name, dialect) === foldIdentifier(column, dialect),
-		);
+		projs.find((p) => !p.isStar && p.name !== undefined && bh.fold(p.name) === wantName);
 	if (byName) return byNameHit();
 	if (idx >= 0 && idx < projs.length && !projs[idx].isStar) return projs[idx];
 	return byNameHit();
@@ -514,8 +513,9 @@ function childExprs(expr: Expr): Expr[] {
 }
 
 function dedupOrigins(origins: Origin[], dialect: string): Origin[] {
+	const b = resolveBehavior(dialect);
 	const by = new Map<string, Origin>();
 	for (const o of origins)
-		by.set(`${foldTableName(o.table, dialect).join(".")}.${foldIdentifier(o.column, dialect)}`, o);
+		by.set(`${b.foldTableName(o.table).join(".")}.${b.fold(o.column)}`, o);
 	return [...by.values()];
 }
