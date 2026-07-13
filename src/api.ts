@@ -346,4 +346,5 @@ export { DERIVED_DIALECTS, resolveDialect } from "./derived-dialects.js";
 // The dialect-true identifier fold — the identity key for name comparison (unquote + case-fold per
 // the dialect's documented rules) and its display twin (unquote only). Exported so an embedding
 // consumer comparing names against IR/scope output folds the same way the pipeline does.
-export { foldIdentifier, displayName, type IdentKind } from "./ident/fold.js";
+export { foldIdentifier, displayName } from "./dialect-behavior/public-fold.js";
+export type { IdentKind } from "./ident/fold.js";
