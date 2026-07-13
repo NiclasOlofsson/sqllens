@@ -79,7 +79,7 @@ import { DuckdbLexer } from "./generated/duckdb/DuckdbLexer.js";
 import { TrinoLexer } from "./generated/trino/TrinoLexer.js";
 import { SqliteLexer } from "./generated/sqlite/SqliteLexer.js";
 import { MysqlLexer } from "./generated/mysql/MysqlLexer.js";
-import { inferDialect } from "./infer/dialect.js";
+import { resolveBehavior } from "./dialect-behavior/registry.js";
 import { HOF_LAMBDA_ARG } from "./infer/infer.js";
 import { SCALAR_ALIASES, TSQL_ALIASES } from "./infer/types.js";
 import { SNOWFLAKE_ALIASES } from "./infer/snowflake.js";
@@ -149,7 +149,7 @@ function keywordsFor(dialect: Dialect): Set<string> {
 
 function functionsFor(dialect: Dialect): Set<string> {
 	const out = new Set<string>();
-	for (const name of Object.keys(inferDialect(dialect).functions)) out.add(name.toUpperCase());
+	for (const name of Object.keys(resolveBehavior(dialect).functions)) out.add(name.toUpperCase());
 	for (const name of Object.keys(FUNCTION_SIGNATURES[dialect])) out.add(name.toUpperCase());
 	for (const name of Object.keys(HARVESTED_SIGNATURES[dialect])) out.add(name.toUpperCase());
 	if (dialect === "databricks") {

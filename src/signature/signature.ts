@@ -24,7 +24,7 @@
 import type { SqlDocument } from "../document/document.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { Token } from "../token/token.js";
-import { inferDialect } from "../infer/dialect.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { hasSignature, lookupSignature, type FnSignature, type ParamSig } from "./signatures.js";
 
 /** What the editor shows while typing inside a call's parens. */
@@ -129,7 +129,7 @@ function functionName(tok: Token | undefined, dialect: SqlDocument["dialect"]): 
 	if (tok.role === "keyword") {
 		const lower = text.toLowerCase();
 		if (hasSignature(dialect, lower)) return text; // curated or harvested
-		if (lower in inferDialect(dialect).functions) return text;
+		if (lower in resolveBehavior(dialect).functions) return text;
 		return null;
 	}
 	return null; // punctuation / operator / string / number / comment / whitespace → not a call

@@ -20,7 +20,7 @@ import { Token, type Vocabulary } from "antlr4ng";
 import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
 import { displayName, foldIdentifier } from "../ident/fold.js";
-import { inferDialect } from "../infer/dialect.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
@@ -135,7 +135,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 
 	// functions — value/column slot: the dialect's inference-registry function names.
 	if (atColumn) {
-		for (const fn of Object.keys(inferDialect(dialect).functions)) add({ label: fn, kind: "function" });
+		for (const fn of Object.keys(resolveBehavior(dialect).functions)) add({ label: fn, kind: "function" });
 	}
 
 	return out;
