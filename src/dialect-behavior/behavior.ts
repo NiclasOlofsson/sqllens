@@ -1,9 +1,6 @@
 // The internal per-dialect decision surface the semantic layer (everything downstream of lower())
 // depends on. Bound once at resolveScopes and carried on the Scope via the carrier. NOT part of the
 // public API — never re-exported from src/api.ts or src/index.ts.
-//
-// The `accepts` (implicit-coercion) facet is added in the check-calls cutover (plan Task 3.2), where
-// the coercion tables it needs are extracted; the interface grows there.
 import type { IdentKind } from "../ident/fold.js";
 import type { FnRule } from "../infer/functions.js";
 import type { Type } from "../infer/types.js";
@@ -31,4 +28,6 @@ export interface DialectBehavior {
 	curatedSignatures: Record<string, FnSignature>;
 	harvestedSignatures: Record<string, FnSignature>;
 	arityUsesHarvested: boolean;
+	/** Whether an argument type is acceptable for a declared param (dialect implicit-coercion rules). */
+	accepts(argType: Type, paramText: string | undefined): boolean;
 }

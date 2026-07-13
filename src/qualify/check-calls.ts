@@ -2,11 +2,10 @@ import type { ParseTree, ParserRuleContext } from "antlr4ng";
 import type { Expr, PipeStage, Projection } from "../ir/ir.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
-import { inferDialect } from "../infer/dialect.js";
 import type { Type } from "../infer/types.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
-import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES, type FnSignature } from "../signature/signatures.js";
-import type { Dialect } from "../dialect.js";
+import type { FnSignature } from "../signature/signatures.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
 import type { Diagnostic } from "./qualify.js";
 import type { SchemaProvider } from "./schema-provider.js";
 
@@ -40,23 +39,6 @@ import type { SchemaProvider } from "./schema-provider.js";
 // child scope is visited), so an argument's type is inferred in the scope where
 // the call actually lives.
 // ---------------------------------------------------------------------------
-
-/** Risk-flag (c) escape hatch. Harvested arity data (T-SQL's 151-entry generated table is the only
- *  one today) does not encode which params are optional, nor mark variadic reliably, so an arity
- *  check over it fires on valid SQL. Kept curated-only, VISIBLY, for every dialect. Flip a dialect
- *  on only once its harvested table earns it (optional/variadic encoding proven against the corpus). */
-const ARITY_USES_HARVESTED: Record<Dialect, boolean> = {
-	databricks: false,
-	tsql: false,
-	snowflake: false,
-	bigquery: false,
-	redshift: false,
-	postgres: false,
-	duckdb: false,
-	trino: false,
-	sqlite: false,
-	mysql: false,
-};
 
 export function checkCalls(tree: ScopeTree, schema: SchemaProvider, diagnostics: Diagnostic[]): void {
 	const visit = (scope: Scope): void => {
@@ -171,17 +153,17 @@ function checkOneCall(
 	// positional arg count isn't a reliable signal. Per the never-wrong contract, stay SILENT on them.
 	if (fn.aggregate || fn.window || fn.distinct) return;
 
-	const dialect = scope.dialect as Dialect;
+	const b = behaviorOf(scope);
 	const name = fn.name.toLowerCase();
-	const curated = FUNCTION_SIGNATURES[dialect]?.[name];
+	const curated = b.curatedSignatures[name];
 
 	// Arity overloads: the curated signature always; the harvested one ONLY for a dialect whose
 	// harvested arity data is trusted (none today — see ARITY_USES_HARVESTED). The rule fires when NO
 	// overload accepts the arg count.
 	const overloads: FnSignature[] = [];
 	if (curated) overloads.push(curated);
-	if (ARITY_USES_HARVESTED[dialect]) {
-		const harvested = HARVESTED_SIGNATURES[dialect]?.[name];
+	if (b.arityUsesHarvested) {
+		const harvested = b.harvestedSignatures[name];
 		if (harvested && harvested !== curated) overloads.push(harvested);
 	}
 	if (overloads.length === 0) return; // uncurated (and no trusted harvested) — silent
@@ -209,7 +191,7 @@ function checkOneCall(
 	if (types.some((t) => t.kind === "unknown")) return; // any unknown → silent
 	for (let i = 0; i < types.length; i++) {
 		const param = curated.variadic ? curated.params[Math.min(i, curated.params.length - 1)] : curated.params[i];
-		if (param && !accepts(types[i], param.type, dialect)) {
+		if (param && !b.accepts(types[i], param.type)) {
 			diagnostics.push(
 				callDiag("wrong-argument-type", fn.cst, argMessage(curated, i, param.type ?? "?", types[i])),
 			);
@@ -224,103 +206,6 @@ function arityAccepts(sig: FnSignature, n: number): boolean {
 	if (sig.variadic) return true;
 	const min = sig.params.filter((p) => !p.optional).length;
 	return n >= min && n <= sig.params.length;
-}
-
-// ---------------------------------------------------------------------------
-// Coercion — conservative acceptance of an argument type for a declared param type. Never-wrong:
-// return true (accept) unless we are CONFIDENT the two are incompatible FOR THIS DIALECT. Implicit
-// conversion rules are dialect law, not shared SQL law — the same str→num mismatch is a hard type
-// error in BigQuery and perfectly valid Spark — so the reject decision is per-dialect capability,
-// not a global set. `string` is a universal sink (any scalar renders as text), so a widening TO
-// string is always accepted; only two directional mismatches are ever rejected, each gated on the
-// dialect NOT bridging it implicitly.
-// ---------------------------------------------------------------------------
-
-type Family = "num" | "str" | "bool" | "temporal" | "binary" | "other";
-
-const NUMERIC = new Set(["tinyint", "smallint", "int", "bigint", "float", "double", "decimal"]);
-const TEMPORAL = new Set(["date", "timestamp", "time", "interval"]);
-
-function familyOf(name: string): Family {
-	if (NUMERIC.has(name)) return "num";
-	if (name === "string") return "str";
-	if (name === "boolean") return "bool";
-	if (TEMPORAL.has(name)) return "temporal";
-	if (name === "binary") return "binary";
-	return "other";
-}
-
-/** Dialects that implicitly bridge STRING→numeric in a function argument, so a str→num mismatch must
- *  NOT be flagged. Doc-cited per dialect:
- *  - databricks: implicit crosscasting casts STRING to the expected numeric type
- *    (docs.databricks.com/sql/language-manual/sql-ref-datatype-rules — the docs corpus itself carries
- *    `substring('hello', '1', 2)` and `date_add(date'2011-11-30', '5')` as documented-valid examples);
- *  - tsql: char/varchar→int/decimal is an implicit conversion in the CAST/CONVERT conversion chart
- *    (learn.microsoft.com/sql/t-sql/functions/cast-and-convert-transact-sql) — `ABS('1')` is valid;
- *  - snowflake: VARCHAR containing a number coerces to NUMBER
- *    (docs.snowflake.com/en/sql-reference/data-type-conversion — implicit casting/coercion);
- *  - redshift: PG-8.0 lineage keeps pre-8.3 implicit text→numeric casts
- *    (docs.aws.amazon.com/redshift/latest/dg/c_Supported_data_types.html — type compatibility:
- *    CHAR/VARCHAR→numeric implicit);
- *  - postgres / duckdb: a quoted constant is initially of UNKNOWN type (postgresql.org/docs/18
- *    sql-syntax-lexical §4.1.2.1) and coerces to whatever the call needs — `abs('1')` is valid — but
- *    our inference types every quoted literal as `string`, so a str-typed arg may really be an
- *    untyped literal; rejecting would false-fire on valid SQL.
- *  NOT in the set (rejection stays live, corpus-proven): bigquery — no STRING→numeric coercion in the
- *  conversion rules (`ABS('1')` is "No matching signature"; 14.7k analyzer positives sweep clean);
- *  trino — implicit coercion is numeric/character widening only (`abs('1')` is "Unexpected
- *  parameters"; 635 docs-corpus positives sweep clean). */
-const IMPLICIT_STR_TO_NUM: ReadonlySet<Dialect> = new Set([
-	"databricks",
-	"tsql",
-	"snowflake",
-	"redshift",
-	"postgres",
-	"duckdb",
-	// sqlite: dynamic/flexible typing with TEXT<->NUMERIC type affinity — a TEXT value coerces
-	// against a numeric column/argument automatically (sqlite.org/datatype3.html "Type Affinity");
-	// there is no strict typing to reject a str-shaped argument against.
-	"sqlite",
-	// mysql: implicit string<->number coercion in arithmetic/comparison — "if one of the operands
-	// is a string, ... it is not treated as a number" is the ONLY exception (comparing two hex
-	// strings); numeric context otherwise converts a string operand to a number automatically
-	// (dev.mysql.com/doc/refman/8.4/en/type-conversion.html "Type Conversion in Expression
-	// Evaluation").
-	"mysql",
-]);
-
-/** Dialects that implicitly bridge boolean↔numeric. T-SQL: `bit` (aliased to boolean by
- *  TSQL_ALIASES) converts to/from int implicitly per the same CAST/CONVERT chart. mysql (B-R5.4):
- *  MySQL has no dedicated boolean storage class either — BOOL/BOOLEAN is a documented TINYINT(1)
- *  synonym (dev.mysql.com/doc/refman/8.4/en/numeric-type-syntax.html), and a comparison's result
- *  "is 1, 0, or NULL" (.../comparison-operators.html), directly assignable anywhere an integer is
- *  expected — `ABS(a > b)`, an int-flag `IF(a > b, 1, 0)` condition, etc. are ordinary valid MySQL.
- *  MYSQL_ALIASES (src/infer/mysql.ts) maps bool/boolean to `tinyint`, not this module's shared
- *  `boolean` scalar, so a *declared* BOOL column never trips this path — but the dialect-agnostic
- *  inference engine (src/infer/infer.ts) types every comparison/predicate expression `boolean`
- *  regardless of dialect, and THAT is what reaches a numeric mysql argument here. Verification of
- *  "no false positives" is B-R6's corpus sweep, not this task. Everywhere else bool→num / num→bool
- *  rejection is safe (Spark: "cannot resolve 'abs(true)' due to data type mismatch"; Snowflake:
- *  "Invalid argument types for function 'ABS': (BOOLEAN)"; PG/DuckDB/BigQuery/Trino likewise reject)
- *  — corpus-proven across all eight non-mysql sweeps. sqlite is left out: it has no dedicated
- *  boolean storage class at all (TRUE/FALSE are literal aliases for the integers 1/0 —
- *  sqlite.org/lang_expr.html#literal_values_constants_) AND SQLITE_ALIASES stays empty (no bool/
- *  boolean key at all), so this checker never sees a `boolean`-typed sqlite argument from a declared
- *  column either — only from the same universal comparison/predicate typing mysql gets, and sqlite
- *  was left out at A-R5.4 without hitting that corpus case; membership here is moot unless the
- *  corpus proves otherwise. */
-const IMPLICIT_BOOL_NUM: ReadonlySet<Dialect> = new Set(["tsql", "mysql"]);
-
-function accepts(argType: Type, paramText: string | undefined, dialect: Dialect): boolean {
-	if (!paramText) return true; // untyped param → no information, accept
-	const param = inferDialect(dialect).parseType(paramText);
-	if (param.kind !== "scalar" || argType.kind !== "scalar") return true; // complex/unknown → accept
-	const fa = familyOf(argType.name);
-	const fp = familyOf(param.name);
-	if (fa === fp) return true; // same family → accept
-	if (fa === "str" && fp === "num") return IMPLICIT_STR_TO_NUM.has(dialect);
-	if ((fa === "bool" && fp === "num") || (fa === "num" && fp === "bool")) return IMPLICIT_BOOL_NUM.has(dialect);
-	return true; // every other cross-family pair (incl. → str, temporal, binary, other) — accept
 }
 
 // ---------------------------------------------------------------------------

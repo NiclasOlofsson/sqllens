@@ -11,6 +11,7 @@ import { inferDialect } from "../infer/dialect.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES } from "../signature/signatures.js";
 import type { DialectBehavior } from "./behavior.js";
+import { acceptsFor } from "./coerce-rules.js";
 
 // Risk-flag: harvested signatures don't encode optional/variadic reliably, so an arity check over them
 // fires on valid SQL. All false today; flip per dialect once its harvested table earns it. (Mirrors the
@@ -46,6 +47,7 @@ export function makeBehavior(name: string): DialectBehavior {
 		curatedSignatures: FUNCTION_SIGNATURES[name as Dialect] ?? {},
 		harvestedSignatures: HARVESTED_SIGNATURES[name as Dialect] ?? {},
 		arityUsesHarvested: ARITY_USES_HARVESTED[name] ?? false,
+		accepts: (argType, paramText) => acceptsFor(name, argType, paramText),
 	};
 }
 
