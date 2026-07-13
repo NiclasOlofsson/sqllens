@@ -1,5 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
-import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { ColumnRef, Projection, TemplateSourceInfo } from "../ir/ir.js";
 import {
 	applyPivotCols,
@@ -242,14 +243,14 @@ function resolvePipeStage(
 			return [...aggs, ...keys];
 		}
 		case "drop": {
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			return incoming === "unknown"
 				? "unknown"
 				: incoming.filter((c) => !stage.drop.some((d) => fold(d) === fold(c)));
 		}
 		case "rename": {
 			if (incoming === "unknown") return "unknown";
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			const map = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
 			return incoming.map((c) => map.get(fold(c)) ?? c);
 		}
@@ -297,7 +298,7 @@ function expandStarPairs(
 	const cols: { name: string; sourceKey: string }[] = [];
 	let matched = false;
 	for (const [key, src] of scope.sources) {
-		if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
+		if (want !== undefined && !behaviorOf(scope).matchesSourceKey(key, want)) continue;
 		// A pseudo-column source (Snowflake/Oracle CONNECT BY's LEVEL) resolves by name but is
 		// excluded from a bare `*` — real pseudo-column semantics. A qualified star can't target
 		// it anyway (it has no alias to qualify by), so this only affects the bare-`*` case.
@@ -331,7 +332,7 @@ function applyStarModifiersToPairs(
 	star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] },
 	dialect?: string,
 ): { name: string; sourceKey: string }[] {
-	const fold = (n: string) => foldIdentifier(n, dialect);
+	const fold = (n: string) => resolveBehavior(dialect).fold(n);
 	let out = pairs;
 	if (star.exclude) {
 		const removed = new Set(star.exclude.map(fold));
@@ -428,14 +429,14 @@ function checkColumn(
 	// path `f` against `c`'s struct type — resolved from a table schema or threaded through a
 	// derived (CTE/subquery) column; see checkFieldPath.
 	const split = splitColumnRefInScope(scope, ref.parts);
-	const name = foldIdentifier(split.column, scope.dialect);
+	const name = behaviorOf(scope).fold(split.column);
 
 	if (split.qualifier !== undefined) {
 		for (let s: Scope | undefined = scope; s; s = s.parent) {
 			const src = s.sources.get(split.qualifier);
 			if (!src) continue;
 			const cols = sourceColumns(src, schema, resolved, s.dialect);
-			if (cols && !cols.some((c) => foldIdentifier(c, s.dialect) === name)) {
+			if (cols && !cols.some((c) => behaviorOf(s).fold(c) === name)) {
 				diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
 				return; // base column missing — don't also walk its (nonexistent) fields
 			}
@@ -454,7 +455,7 @@ function checkColumn(
 		for (const src of sources) {
 			const cols = sourceColumns(src, schema, resolved, s.dialect);
 			if (!cols) unknown++;
-			else if (cols.some((c) => foldIdentifier(c, s.dialect) === name)) matches++;
+			else if (cols.some((c) => behaviorOf(s).fold(c) === name)) matches++;
 		}
 		if (matches > 1) {
 			diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${split.column}`));
@@ -492,7 +493,7 @@ function checkFieldPath(
 		if (type.kind !== "struct") return; // unknown / non-struct — don't flag
 		// Struct-field names on a Type are stored FOLDED (parseType folds them at parse time), so
 		// only the reference side folds here — re-folding a preserved-case stored name would corrupt it.
-		const hit = type.fields.find((f) => f.name === foldIdentifier(field, scope.dialect));
+		const hit = type.fields.find((f) => f.name === behaviorOf(scope).fold(field));
 		if (!hit) {
 			diagnostics.push(columnDiag("unknown-field", ref, `Unknown field: ${ref.parts.join(".")}`));
 			return;

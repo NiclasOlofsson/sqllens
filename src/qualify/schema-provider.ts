@@ -22,7 +22,7 @@
 // keys its cache by that folded path.
 // ---------------------------------------------------------------------------
 
-import { foldIdentifier } from "../ident/fold.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Column } from "./schema.js";
 
 /** The catalog interface qualify / infer / lineage / symbols / completion resolve against.
@@ -90,7 +90,7 @@ export class CallbackSchema implements SchemaProvider {
 	}
 
 	columnsFor(parts: string[], dialect?: string): Column[] | undefined {
-		const folded = parts.map((p) => foldIdentifier(p, dialect, "table"));
+		const folded = parts.map((p) => resolveBehavior(dialect).fold(p, "table"));
 		const cols = this.resolver.resolve(folded);
 		if (cols === undefined) {
 			this.recordMiss(folded);

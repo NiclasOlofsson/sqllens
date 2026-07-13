@@ -17,7 +17,7 @@
 // meant to represent a quoted/case-exact identifier) is out of scope.
 // ---------------------------------------------------------------------------
 
-import { foldIdentifier } from "../ident/fold.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { SchemaProvider } from "./schema-provider.js";
 
 export interface Column {
@@ -60,7 +60,7 @@ export class Schema implements SchemaProvider {
 	 *  (unfolded) — the fold for `dialect` happens here, once. */
 	columnsFor(parts: string[], dialect?: string): Column[] | undefined {
 		const idx = this.indexFor(dialect);
-		const fold = (p: string) => foldIdentifier(p, dialect, "table");
+		const fold = (p: string) => resolveBehavior(dialect).fold(p, "table");
 		const full = parts.map(fold).join(".");
 		return idx.byPath.get(full) ?? idx.byTable.get(fold(parts[parts.length - 1] ?? ""));
 	}
@@ -87,7 +87,7 @@ export class Schema implements SchemaProvider {
 		const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string" || isLeaf(v));
 		if (isTable) {
 			const cols: Column[] = entries.map(([name, leaf]) => toColumn(name, leaf as SchemaLeaf));
-			const fold = (p: string) => foldIdentifier(p, dialect, "table");
+			const fold = (p: string) => resolveBehavior(dialect).fold(p, "table");
 			idx.byPath.set(path.map(fold).join("."), cols);
 			const bare = fold(path[path.length - 1] ?? "");
 			if (!idx.byTable.has(bare)) idx.byTable.set(bare, cols);
