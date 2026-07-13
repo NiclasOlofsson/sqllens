@@ -202,14 +202,6 @@ const RULES: Record<string, FoldRule> = {
 	},
 };
 
-// Today's behavior — the safe default for an unrecognized/absent dialect tag: strip backticks,
-// fold to lower.
-const DEFAULT_RULE: FoldRule = {
-	delimiters: [BACKTICK],
-	unquoted: "lower",
-	quoted: "lower",
-};
-
 function applyCase(text: string, fold: CaseFold): string {
 	if (fold === "lower") return text.toLowerCase();
 	if (fold === "upper") return text.toUpperCase();
@@ -246,9 +238,12 @@ export function displayWith(rule: FoldRule, raw: string): string {
 	return unwrap(raw, rule)[0];
 }
 
-/** The rule for a dialect string (DEFAULT_RULE for unknown), during migration off the central RULES table. */
+/** The fold rule for a dialect string. Throws on an unregistered/absent dialect — sqllens applies NO
+ *  default; the consumer must supply a supported Dialect. (Migrating off the central RULES table.) */
 export function ruleFor(dialect: string | undefined): FoldRule {
-	return (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
+	const rule = dialect !== undefined && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined;
+	if (!rule) throw new Error(`sqllens: no identifier-fold rule for dialect "${dialect}" — supply a supported Dialect.`);
+	return rule;
 }
 
 /** Unquote (dialect's delimiters, doubled-delimiter unescape) + case-fold per the dialect's

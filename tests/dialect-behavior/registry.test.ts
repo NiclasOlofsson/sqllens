@@ -50,9 +50,7 @@ describe("dialect-behavior registry", () => {
 		expect(b.likeMatch("a_c", "abbc")).toBe(false);
 	});
 
-	it("preserves the unknown-dialect fallback (fold->default, infer->databricks)", () => {
-		const b = resolveBehavior("no-such-dialect");
-		expect(b.fold('"Col"')).toBe(foldIdentifier('"Col"', "no-such-dialect"));
-		expect(b.division).toBe(inferDialect("no-such-dialect").division);
+	it("throws on an unregistered dialect — sqllens applies no default fallback", () => {
+		expect(() => resolveBehavior("no-such-dialect")).toThrow(/no behavior for dialect/);
 	});
 });

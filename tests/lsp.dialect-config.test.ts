@@ -64,7 +64,7 @@ describe("loadDialectConfig", () => {
 	it("loads the schema so a known table resolves", () => {
 		const c = loadDialectConfig(dir);
 		expect(c.schema).toBeDefined();
-		expect(c.schema!.columnsFor(["sales"])?.map((col) => col.name)).toEqual(["amount", "id"]);
+		expect(c.schema!.columnsFor(["sales"], "databricks")?.map((col) => col.name)).toEqual(["amount", "id"]);
 	});
 
 	it("missing config: default databricks + a warning, never throws", () => {

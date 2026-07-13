@@ -151,7 +151,7 @@ describe("CallbackSchema — analyze over a resolve-on-demand catalog", () => {
 describe("Schema — optional per-column nullability in the mapping (Task 9)", () => {
 	it("a leaf object carries type/nullable; a bare-string leaf leaves nullable undefined", () => {
 		const schema = new Schema({ t: { a: "int", b: { type: "int", nullable: false } } });
-		const cols = schema.columnsFor(["t"]);
+		const cols = schema.columnsFor(["t"], "databricks");
 		expect(cols).toBeDefined();
 		const a = cols!.find((c) => c.name === "a");
 		const b = cols!.find((c) => c.name === "b");
@@ -164,7 +164,7 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 		const schema = new Schema({
 			db: { t: { a: "int", b: { type: "int", nullable: false }, c: { nullable: true } } },
 		});
-		const cols = schema.columnsFor(["db", "t"]);
+		const cols = schema.columnsFor(["db", "t"], "databricks");
 		expect(cols).toBeDefined();
 		expect(cols).toEqual([
 			{ name: "a", type: "int" },
@@ -179,19 +179,19 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 	// nothing the bare string doesn't, so requiring the boolean costs no expressiveness.
 	it("a table whose only column is named `type` stays a TABLE — it does not vanish", () => {
 		const schema = new Schema({ t: { type: "varchar" } });
-		expect(schema.columnsFor(["t"])).toEqual([{ name: "type", type: "varchar" }]);
-		expect(schema.tables()).toEqual(["t"]);
+		expect(schema.columnsFor(["t"], "databricks")).toEqual([{ name: "type", type: "varchar" }]);
+		expect(schema.tables("databricks")).toEqual(["t"]);
 	});
 
 	it("same two levels deep: { db: { t: { type: 'varchar' } } } reads db -> table -> column", () => {
 		const schema = new Schema({ db: { t: { type: "varchar" } } });
-		expect(schema.columnsFor(["db", "t"])).toEqual([{ name: "type", type: "varchar" }]);
-		expect(schema.tables()).toEqual(["t"]);
+		expect(schema.columnsFor(["db", "t"], "databricks")).toEqual([{ name: "type", type: "varchar" }]);
+		expect(schema.tables("databricks")).toEqual(["t"]);
 	});
 
 	it("columns named `type` AND `nullable` with string values — an all-string dict is always a table", () => {
 		const schema = new Schema({ t: { type: "varchar", nullable: "varchar" } });
-		expect(schema.columnsFor(["t"])).toEqual([
+		expect(schema.columnsFor(["t"], "databricks")).toEqual([
 			{ name: "type", type: "varchar" },
 			{ name: "nullable", type: "varchar" },
 		]);
@@ -199,7 +199,7 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 
 	it("a nullable-only leaf ({ nullable: false }) is a leaf — type absent stays unknown", () => {
 		const schema = new Schema({ t: { b: { nullable: false } } });
-		const cols = schema.columnsFor(["t"]);
+		const cols = schema.columnsFor(["t"], "databricks");
 		expect(cols).toEqual([{ name: "b", nullable: false }]);
 		expect(cols![0].type).toBeUndefined();
 	});
@@ -208,8 +208,8 @@ describe("Schema — optional per-column nullability in the mapping (Task 9)", (
 		// Pre-Task-9 behavior preserved: {} never classifies as a table (entries.length > 0)
 		// and now never as a leaf either (no boolean nullable) — the table is simply unknown.
 		const schema = new Schema({ t: {} });
-		expect(schema.columnsFor(["t"])).toBeUndefined();
-		expect(schema.tables()).toEqual([]);
+		expect(schema.columnsFor(["t"], "databricks")).toBeUndefined();
+		expect(schema.tables("databricks")).toEqual([]);
 	});
 });
 

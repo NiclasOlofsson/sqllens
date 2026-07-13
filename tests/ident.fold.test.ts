@@ -165,21 +165,15 @@ describe("mysql", () => {
 	});
 });
 
-describe("undefined/unknown dialect", () => {
-	it("folds unquoted mixed case to lower", () => {
-		expect(foldIdentifier("MyTable", undefined)).toBe("mytable");
+describe("undefined/unknown dialect throws — sqllens applies no default fallback", () => {
+	it("throws on an undefined dialect", () => {
+		expect(() => foldIdentifier("MyTable", undefined)).toThrow(/no identifier-fold rule/);
 	});
-	it("strips backticks and folds to lower", () => {
-		expect(foldIdentifier("`MyTable`", undefined)).toBe("mytable");
+	it("throws on an unrecognized dialect string", () => {
+		expect(() => foldIdentifier("`MyTable`", "not-a-real-dialect")).toThrow(/no identifier-fold rule/);
 	});
-	it("behaves the same for an unrecognized dialect string", () => {
-		expect(foldIdentifier("`MyTable`", "not-a-real-dialect")).toBe("mytable");
-	});
-	it("does not read Object.prototype keys off the rule table", () => {
-		expect(foldIdentifier("x", "constructor")).toBe("x");
-		expect(foldIdentifier("`MyTable`", "constructor")).toBe("mytable");
-	});
-	it("displayName does not read Object.prototype keys off the rule table", () => {
-		expect(displayName("`MyTable`", "constructor")).toBe("MyTable");
+	it("throws on an Object.prototype key (never reads it off the rule table)", () => {
+		expect(() => foldIdentifier("x", "constructor")).toThrow(/no identifier-fold rule/);
+		expect(() => displayName("`MyTable`", "constructor")).toThrow(/no identifier-fold rule/);
 	});
 });

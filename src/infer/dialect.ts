@@ -128,7 +128,10 @@ const DIALECTS: Record<string, InferDialect> = {
 	mysql,
 };
 
-/** Resolve a dialect tag to its inference knowledge; defaults to Databricks. */
+/** Resolve a dialect tag to its inference knowledge. Throws on an unregistered/absent dialect —
+ *  sqllens applies NO default; the consumer must supply a supported Dialect. */
 export function inferDialect(name: string | undefined): InferDialect {
-	return DIALECTS[name ?? "databricks"] ?? databricks;
+	const d = name !== undefined ? DIALECTS[name] : undefined;
+	if (!d) throw new Error(`sqllens: no inference knowledge for dialect "${name}" — supply a supported Dialect.`);
+	return d;
 }

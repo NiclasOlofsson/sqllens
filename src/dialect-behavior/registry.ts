@@ -68,16 +68,10 @@ export const BEHAVIORS: Record<Dialect, DialectBehavior> = Object.fromEntries(
 	DIALECT_NAMES.map((d) => [d, makeBehavior(d)]),
 ) as Record<Dialect, DialectBehavior>;
 
-const CACHE = new Map<string, DialectBehavior>(Object.entries(BEHAVIORS));
-
-/** Resolve a dialect string (or the loose IR/Scope tag) to its behavior; caches unknown names so an
- *  odd tag delegates to the same fallback path each time. Mirrors inferDialect's tolerance of any string. */
+/** Resolve a dialect string (the IR/Scope tag) to its behavior. Throws on an unregistered/absent
+ *  dialect — sqllens applies NO default; the consumer must supply a supported Dialect. */
 export function resolveBehavior(name: string | undefined): DialectBehavior {
-	const key = name ?? "databricks";
-	let b = CACHE.get(key);
-	if (!b) {
-		b = makeBehavior(key);
-		CACHE.set(key, b);
-	}
+	const b = name !== undefined ? (BEHAVIORS as Record<string, DialectBehavior>)[name] : undefined;
+	if (!b) throw new Error(`sqllens: no behavior for dialect "${name}" — supply a supported Dialect.`);
 	return b;
 }

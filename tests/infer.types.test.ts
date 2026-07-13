@@ -29,7 +29,7 @@ describe("parseType", () => {
 	});
 
 	it("parses struct<...> with nested types", () => {
-		expect(parseType("struct<a:int, b:array<string>>")).toEqual({
+		expect(parseType("struct<a:int, b:array<string>>", undefined, "databricks")).toEqual({
 			kind: "struct",
 			fields: [
 				{ name: "a", type: { kind: "scalar", name: "int" } },
