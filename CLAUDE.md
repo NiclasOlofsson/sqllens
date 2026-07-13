@@ -241,3 +241,17 @@ codebase only through `src/api.ts` / `src/index.ts` (plus `vscode-languageserver
 - The type-inference contract is **never a wrong type**. Where a documented return
   type is argument-value-dependent or unstated, the rule stays absent and the result
   is `unknown` — not a guess.
+
+## Releasing
+
+Version bumps are automatic. `semantic-release` (`.releaserc.json`) runs `commit-analyzer` with the
+default Angular preset over the commits since the last tag and picks the bump from the commit types:
+`feat:` is a minor, `fix:` / `perf:` a patch, `refactor:` / `test:` / `chore:` / `docs:` release
+nothing on their own, and a `!` after the type (e.g. `feat!:`) or a `BREAKING CHANGE:` footer forces a
+major (x.0.0).
+
+**Hard rule, no exceptions: never put a `!` after the commit type and never write a `BREAKING CHANGE:`
+footer.** A major release is decided out of band and requires the maintainer's explicit approval first;
+it must never be triggered automatically by a commit message. If a change is technically breaking,
+commit it as an ordinary `feat:` or `fix:` (describe the break in the body, no marker) so it ships as a
+minor or patch, and raise the major-version question with the maintainer separately.
