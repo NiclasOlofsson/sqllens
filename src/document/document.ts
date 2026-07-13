@@ -44,7 +44,8 @@ import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
@@ -791,7 +792,7 @@ export class SqlDocument {
 			for (const cteRef of collectCtes(doc.scopes.root)) {
 				const declarationSpan = partSpanOf(cteRef.def.nameCst ?? cteRef.def.cst);
 				if (!declarationSpan) continue; // no real token to key on — never fabricate a span
-				const name = foldIdentifier(cteRef.def.name, doc.dialect);
+				const name = resolveBehavior(doc.dialect).fold(cteRef.def.name);
 				const key = `${name}:${declarationSpan.start}`;
 				let entry = byKey.get(key);
 				if (!entry) {
@@ -945,10 +946,10 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputC
 				// zero-width convention (that exists so expanded Syms are never cursor hit-test
 				// targets; these pairs are name/position enumeration, where a real span is useful).
 				for (const pair of pairs)
-					out.push({ name: foldIdentifier(pair.name, scope.dialect), raw: pair.name, span });
+					out.push({ name: behaviorOf(scope).fold(pair.name), raw: pair.name, span });
 			} else if (p.name !== undefined) {
 				const span = partSpanOf(p.aliasCst ?? p.cst);
-				if (span) out.push({ name: foldIdentifier(p.name, scope.dialect), raw: p.name, span });
+				if (span) out.push({ name: behaviorOf(scope).fold(p.name), raw: p.name, span });
 			}
 			// else: anonymous expression — no determinable name, skip
 		}
@@ -970,13 +971,13 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputC
 		const declared = new Map<string, OutputColumn>();
 		for (const branch of [scope.branches.left, scope.branches.right]) {
 			for (const col of scopeOutputColumns(branch, qualification)) {
-				const key = foldIdentifier(col.raw, scope.dialect);
+				const key = behaviorOf(scope).fold(col.raw);
 				if (!declared.has(key)) declared.set(key, col);
 			}
 		}
 		const out: OutputColumn[] = [];
 		for (const name of names) {
-			const hit = declared.get(foldIdentifier(name, scope.dialect));
+			const hit = declared.get(behaviorOf(scope).fold(name));
 			if (hit) out.push(hit); // a name no branch declares a span for is skipped, never fabricated
 		}
 		return out;
