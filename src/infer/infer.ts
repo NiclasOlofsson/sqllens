@@ -6,7 +6,7 @@ import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
 import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
-import { inferDialect, type InferDialect } from "./dialect.js";
+import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
 // ---------------------------------------------------------------------------
@@ -32,7 +32,7 @@ const INT = scalar("int");
 const freshCtx = (): Ctx => ({ seen: new Set(), env: new Map() });
 
 export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx: Ctx = freshCtx()): Type {
-	const d = inferDialect(scope.dialect);
+	const d = behaviorOf(scope);
 	switch (expr.kind) {
 		case "literal":
 			return d.literal(expr.text);
@@ -107,7 +107,7 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 	}
 	const found = resolveColumnSource(scope, col.parts, schema);
 	if (!found) return UNKNOWN;
-	const base = sourceColumnType(found.source, found.column, schema, ctx, inferDialect(scope.dialect), scope.dialect);
+	const base = sourceColumnType(found.source, found.column, schema, ctx, behaviorOf(scope), scope.dialect);
 	return found.fields.length ? fieldType(base, found.fields, scope.dialect) : base;
 }
 
@@ -116,7 +116,7 @@ function sourceColumnType(
 	column: string,
 	schema: SchemaProvider,
 	ctx: Ctx,
-	d: InferDialect,
+	d: DialectBehavior,
 	dialect: string,
 ): Type {
 	if (src.kind === "table") {
@@ -204,7 +204,7 @@ function fieldType(type: Type, fields: string[], dialect: string): Type {
 function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, schema: SchemaProvider, ctx: Ctx): Type {
 	const name = fn.name.toLowerCase();
 	const args = fn.args;
-	const d = inferDialect(scope.dialect);
+	const d = behaviorOf(scope);
 	// Higher-order and constructor forms are BARE-name Spark/GoogleSQL builtins; a qualified/dotted
 	// call (e.g. a `dataset.transform(...)` UDF) must not borrow them.
 	if (fn.qualifier === undefined) {
