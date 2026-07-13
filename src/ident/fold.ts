@@ -16,7 +16,7 @@ export type IdentKind = "table" | "other";
 
 type CaseFold = "lower" | "upper" | "preserve";
 
-interface FoldRule {
+export interface FoldRule {
 	/** [open, close] delimiter pairs this dialect recognizes, tried in order. */
 	delimiters: readonly (readonly [string, string])[];
 	/** Case fold applied to an unquoted identifier. */
@@ -231,22 +231,38 @@ function unwrap(raw: string, rule: FoldRule): [string, boolean] {
 	return [raw, false];
 }
 
+// --- The dialect-agnostic fold ENGINE. A dialect folder owns its FoldRule and binds these; the
+// registry keeps the dialect-string lookup below for the public foldIdentifier/displayName. ---
+
+/** Fold an identifier to its identity key under an explicit rule (the engine each dialect folder binds). */
+export function foldWith(rule: FoldRule, raw: string, kind: IdentKind = "other"): string {
+	const [body, wasQuoted] = unwrap(raw, rule);
+	if (kind === "table" && rule.tableCase) return applyCase(body, rule.tableCase);
+	return applyCase(body, wasQuoted ? rule.quoted : rule.unquoted);
+}
+
+/** Presentation twin of foldWith: strip delimiters, no case change. */
+export function displayWith(rule: FoldRule, raw: string): string {
+	return unwrap(raw, rule)[0];
+}
+
+/** The rule for a dialect string (DEFAULT_RULE for unknown), during migration off the central RULES table. */
+export function ruleFor(dialect: string | undefined): FoldRule {
+	return (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
+}
+
 /** Unquote (dialect's delimiters, doubled-delimiter unescape) + case-fold per the dialect's
  *  documented identifier rules. The result is the IDENTITY KEY for name comparison — display
  *  text always comes from the raw source, never from this. */
 export function foldIdentifier(raw: string, dialect: string | undefined, kind: IdentKind = "other"): string {
-	const rule = (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
-	const [body, wasQuoted] = unwrap(raw, rule);
-	if (kind === "table" && rule.tableCase) return applyCase(body, rule.tableCase);
-	return applyCase(body, wasQuoted ? rule.quoted : rule.unquoted);
+	return foldWith(ruleFor(dialect), raw, kind);
 }
 
 /** PRESENTATION twin of foldIdentifier: strip the dialect's delimiters (unescaping the body) but
  *  apply NO case change — the string a UI shows for a name. Never use this for comparison; two
  *  displayName results being equal proves nothing about identity. */
 export function displayName(raw: string, dialect: string | undefined): string {
-	const rule = (dialect && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined) || DEFAULT_RULE;
-	return unwrap(raw, rule)[0];
+	return displayWith(ruleFor(dialect), raw);
 }
 
 /** Fold a multipart table name for a catalog lookup — every part folded with kind "table" (only
