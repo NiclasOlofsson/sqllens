@@ -1,6 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import { nodeAt } from "../document/node-at.js";
-import { displayName, foldIdentifier, foldTableName } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { endPosition } from "../ir/span.js";
 import type { ColumnRef, Expr, QueryExpr } from "../ir/ir.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
@@ -51,8 +52,10 @@ type Identity =
 	| { tag: "source"; source: ResolvedSource; column: string }
 	| { tag: "name"; scope: Scope; name: string };
 
-const originKey = (o: Origin, dialect: string | undefined): string =>
-	`${foldTableName(o.table, dialect).join(".")}.${foldIdentifier(o.column, dialect)}`;
+const originKey = (o: Origin, dialect: string | undefined): string => {
+	const b = resolveBehavior(dialect);
+	return `${b.foldTableName(o.table).join(".")}.${b.fold(o.column)}`;
+};
 
 /**
  * Find the declaration + every occurrence of the symbol under `offset`. Schema-free works for
@@ -80,7 +83,7 @@ function compute(scopes: ScopeTree, offset: number, schema: SchemaProvider, ast?
 		const ref: ColumnRef = { kind: "columnref", parts: hit.expr.parts, clause: "projection", cst: hit.expr.cst };
 		const id = columnIdentity(hit.scope, ref, schema);
 		const raw = hit.expr.parts[hit.expr.parts.length - 1] ?? "";
-		if (id) return collectColumn(scopes, id, schema, displayName(raw, scopes.root.dialect));
+		if (id) return collectColumn(scopes, id, schema, behaviorOf(scopes.root).displayName(raw));
 	}
 
 	// 2. Else: a NAME under the cursor (a CTE name, a source/table name, a source alias). Find the
@@ -102,12 +105,12 @@ function columnIdentity(scope: Scope, ref: ColumnRef, schema: SchemaProvider): I
 		return {
 			tag: "origins",
 			keys: new Set(origins.map((o) => originKey(o, d))),
-			column: foldIdentifier(last ?? "", d),
+			column: resolveBehavior(d).fold(last ?? ""),
 		};
 	}
 	// Schema-free / no origin: bind to the in-query source and key on (source object, column).
 	const bySource = resolveColumnSource(scope, ref.parts, schema) ?? boundColumn(scope, ref);
-	if (bySource) return { tag: "source", source: bySource.source, column: foldIdentifier(bySource.column, d) };
+	if (bySource) return { tag: "source", source: bySource.source, column: resolveBehavior(d).fold(bySource.column) };
 	return undefined;
 }
 
@@ -127,7 +130,7 @@ function columnMatches(id: Identity, scope: Scope, ref: ColumnRef, schema: Schem
 	}
 	// source identity: same ResolvedSource object + same column name
 	const b = resolveColumnSource(scope, ref.parts, schema) ?? boundColumn(scope, ref);
-	return b !== undefined && b.source === id.source && foldIdentifier(b.column, scope.dialect) === id.column;
+	return b !== undefined && b.source === id.source && behaviorOf(scope).fold(b.column) === id.column;
 }
 
 function collectColumn(scopes: ScopeTree, id: Identity, schema: SchemaProvider, symbol: string): Occurrences {
@@ -167,7 +170,7 @@ function columnDeclaration(root: Scope, id: Identity, schema: SchemaProvider): P
 			for (const p of scope.body.projections) {
 				if (p.isStar) continue;
 				if (p.name === undefined) continue;
-				if (foldIdentifier(p.name, scope.dialect) !== want) continue;
+				if (behaviorOf(scope).fold(p.name) !== want) continue;
 				// This projection produces a column of the target name. Confirm it shares the identity
 				// by resolving the projection's own column refs — for `origins` identity check overlap,
 				// for `source` identity require the projection to be a bare ref into that source.
@@ -250,7 +253,8 @@ function declCstFor(scope: Scope, src: ResolvedSource): ParserRuleContext | unde
 
 function collectName(scopes: ScopeTree, hit: NameHit): Occurrences {
 	const dialect = scopes.root.dialect;
-	const target = foldIdentifier(hit.name, dialect);
+	const b = resolveBehavior(dialect);
+	const target = b.fold(hit.name);
 	const occ: Occurrence[] = [];
 	const seen = new Set<string>();
 	const add = (cst: ParserRuleContext | undefined, role: Occurrence["role"]): void => {
@@ -276,7 +280,7 @@ function collectName(scopes: ScopeTree, hit: NameHit): Occurrences {
 		for (const src of scope.sources.values()) {
 			if (src.kind === "relation" || src.kind === "pivot") continue;
 			const n = sourceName(src);
-			if (n !== undefined && foldIdentifier(n, dialect) === target) {
+			if (n !== undefined && b.fold(n) === target) {
 				const cst = sourceCst(src);
 				// Don't double-count the declaration cst as a reference.
 				if (cst && cst !== declCst) add(cst, "reference");
@@ -284,7 +288,7 @@ function collectName(scopes: ScopeTree, hit: NameHit): Occurrences {
 			// An alias use also references the name when the symbol IS the alias.
 			if (hit.kind === "alias") {
 				const a = aliasName(src);
-				if (a !== undefined && foldIdentifier(a, dialect) === target) add(sourceAliasCst(src), "reference");
+				if (a !== undefined && b.fold(a) === target) add(sourceAliasCst(src), "reference");
 			}
 		}
 		for (const c of scope.children) visit(c);
@@ -292,7 +296,7 @@ function collectName(scopes: ScopeTree, hit: NameHit): Occurrences {
 	visit(scopes.root);
 
 	return {
-		symbol: displayName(hit.name, dialect),
+		symbol: b.displayName(hit.name),
 		kind: hit.kind,
 		declaration: declCst ? spanOf(declCst) : undefined,
 		occurrences: occ,
@@ -308,7 +312,7 @@ function cteDefCst(root: Scope, target: string): ParserRuleContext | undefined {
 	const visit = (scope: Scope): void => {
 		for (const [name, cteRef] of scope.ctes) {
 			// Map keys are already folded; the def name is raw and folds here.
-			if (name === target || foldIdentifier(cteRef.def.name, scope.dialect) === target) {
+			if (name === target || behaviorOf(scope).fold(cteRef.def.name) === target) {
 				found = found ?? cteRef.def.cst;
 			}
 		}

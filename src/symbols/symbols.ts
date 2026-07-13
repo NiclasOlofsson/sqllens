@@ -1,5 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
-import { displayName, foldIdentifier } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, PartSpan, Projection, QueryBody } from "../ir/ir.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
@@ -146,7 +147,7 @@ function walk(
 	// CTE declarations, and each CTE body as its own frame. The map key is the FOLDED identity;
 	// the symbol (and frame label) shows the display form of the declared name.
 	for (const [, cteRef] of scope.ctes) {
-		const name = displayName(cteRef.def.name, scope.dialect);
+		const name = behaviorOf(scope).displayName(cteRef.def.name);
 		out.push({
 			kind: "cte",
 			modifiers: ["declaration"],
@@ -187,7 +188,7 @@ function walk(
 		if (src.kind === "subquery") {
 			walk(
 				src.scope,
-				src.source.alias ? displayName(src.source.alias, scope.dialect) : "_subquery_",
+				src.source.alias ? behaviorOf(scope).displayName(src.source.alias) : "_subquery_",
 				out,
 				schema,
 				sourceSyms,
@@ -329,12 +330,12 @@ function emitColumns(
 			if (p.name === undefined) continue;
 			const last = p.expr.kind === "column" ? p.expr.parts[p.expr.parts.length - 1] : undefined;
 			const echo =
-				last !== undefined && foldIdentifier(last, scope.dialect) === foldIdentifier(p.name, scope.dialect);
+				last !== undefined && behaviorOf(scope).fold(last) === behaviorOf(scope).fold(p.name);
 			if (!echo) {
 				out.push({
 					kind: "column",
 					modifiers: ["declaration", "output"],
-					name: displayName(p.name, scope.dialect),
+					name: behaviorOf(scope).displayName(p.name),
 					span: spanOf(p.aliasCst ?? p.cst),
 					frame,
 					type: typeOrUndefined(inferType(p.expr, scope, schema)),
@@ -360,7 +361,7 @@ function emitColumns(
 		out.push({
 			kind: "column",
 			modifiers,
-			name: ref.parts.map((p) => displayName(p, scope.dialect)).join("."),
+			name: ref.parts.map((p) => behaviorOf(scope).displayName(p)).join("."),
 			span: spanOf(ref.cst),
 			frame,
 			definition: columnDefinition(res),
@@ -452,7 +453,7 @@ function aliasSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym 
 			? {
 					kind: "alias",
 					modifiers: ["declaration"],
-					name: displayName(src.source.alias, dialect),
+					name: resolveBehavior(dialect).displayName(src.source.alias),
 					span: spanOf(src.source.aliasCst ?? src.source.cst),
 					frame,
 				}
@@ -463,7 +464,7 @@ function aliasSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym 
 	return {
 		kind: "alias",
 		modifiers: ["declaration"],
-		name: displayName(s.alias, dialect),
+		name: resolveBehavior(dialect).displayName(s.alias),
 		span: spanOf(s.aliasCst ?? s.cst),
 		frame,
 	};
@@ -484,20 +485,21 @@ function columnDefinition(res: ColumnResolution): Span | undefined {
 function projectionSpan(scope: Scope, column: string, aliases: string[] | undefined): Span | undefined {
 	if (scope.body.kind !== "select") return undefined;
 	const projs = scope.body.projections;
-	const c = foldIdentifier(column, scope.dialect);
+	const b = behaviorOf(scope);
+	const c = b.fold(column);
 	let p: Projection | undefined;
 	if (aliases) {
-		const i = aliases.findIndex((a) => foldIdentifier(a, scope.dialect) === c);
+		const i = aliases.findIndex((a) => b.fold(a) === c);
 		p = i >= 0 ? projs[i] : undefined;
 	} else {
-		p = projs.find((pp) => pp.name !== undefined && foldIdentifier(pp.name, scope.dialect) === c);
+		p = projs.find((pp) => pp.name !== undefined && b.fold(pp.name) === c);
 	}
 	return p ? spanOf(p.aliasCst ?? p.cst) : undefined;
 }
 
 function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): Sym {
 	const ref = ["reference"] as SymbolModifier[];
-	const show = (n: string) => displayName(n, dialect);
+	const show = (n: string) => resolveBehavior(dialect).displayName(n);
 	// The implicit pipe-stage relation is skipped by the caller; handled here only for exhaustiveness.
 	if (src.kind === "relation") {
 		return { kind: "subquery", modifiers: ref, name: "", span: spanOf(src.scope.body.cst), frame };
