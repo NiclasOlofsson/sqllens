@@ -236,6 +236,14 @@ codebase only through `src/api.ts` / `src/index.ts` (plus `vscode-languageserver
   edit the `.g4` → regenerate → run the gate until green → commit.
 - Match this file's decisions; if a decision turns out wrong, update this file in the
   same change that departs from it.
+- **Public interface design is discuss-first.** Before committing to a final shape for any public API
+  (new types, methods, result shapes, provider contracts), discuss it with Niclas; never land a final
+  shape unilaterally. Standing invariants: reuse the parse (never add a method that re-parses or
+  re-derives what `parse()` / the `SqlDocument` already produced, the bug the completion path once had),
+  and design for real human consumers (fit for purpose, user-friendly, not AI-friendly). Get the
+  interface right while the project has no external users beyond Niclas and the anvil extension, when
+  breaking is cheap; and never autonomously land a breaking public-API change (coordinate it with the
+  live consumer, and see Releasing for the commit-marker rule).
 - Don't silently narrow scope. Work that's too big to finish now stays a visible Open
   Gap — incomplete is fine, silent is not.
 - The type-inference contract is **never a wrong type**. Where a documented return
