@@ -329,7 +329,9 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaPro
 	}
 	if (name === "from_json") {
 		const s = args[1];
-		return s?.kind === "literal" ? parseType(stringValue(s.text), undefined, scope.dialect) : UNKNOWN;
+		return s?.kind === "literal"
+			? parseType(stringValue(s.text), undefined, (n) => behaviorOf(scope).fold(n))
+			: UNKNOWN;
 	}
 	return undefined;
 }

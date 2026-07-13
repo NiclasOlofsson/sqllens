@@ -1,5 +1,6 @@
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 import type { FnRule } from "./functions.js";
+import { foldIdentifier } from "../ident/fold.js";
 
 // ---------------------------------------------------------------------------
 // MySQL inference knowledge — function return types, literal forms, and scalar-type aliases,
@@ -62,7 +63,7 @@ export const MYSQL_ALIASES: Record<string, string> = {
 };
 
 export function mysqlParseType(text: string): Type {
-	return parseType(text, MYSQL_ALIASES, "mysql");
+	return parseType(text, MYSQL_ALIASES, (n) => foldIdentifier(n, "mysql"));
 }
 
 const S = scalar("string");

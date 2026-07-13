@@ -9,8 +9,6 @@
 // stored name would corrupt a preserved-case (quoted snowflake/postgres) field.
 // ---------------------------------------------------------------------------
 
-import { foldIdentifier } from "../ident/fold.js";
-
 export type Type =
 	| { kind: "scalar"; name: string }
 	| { kind: "array"; element: Type }
@@ -35,20 +33,24 @@ export function scalar(name: string): Type {
  *  T-SQL, e.g. bit→boolean, datetime→timestamp, nvarchar→string). `dialect` folds struct field
  *  names with that dialect's identifier rules (fields are stored folded — identity keys); absent,
  *  the default fold (backtick-strip + lower) reproduces the legacy behavior. */
-export function parseType(text: string, aliases: Record<string, string> = SCALAR_ALIASES, dialect?: string): Type {
+export function parseType(
+	text: string,
+	aliases: Record<string, string> = SCALAR_ALIASES,
+	foldField?: (name: string) => string,
+): Type {
 	const s = text.trim();
 	if (s === "") return UNKNOWN;
 
 	const array = /^array\s*<(.*)>$/is.exec(s);
-	if (array) return { kind: "array", element: parseType(array[1], undefined, dialect) };
+	if (array) return { kind: "array", element: parseType(array[1], undefined, foldField) };
 
 	const map = /^map\s*<(.*)>$/is.exec(s);
 	if (map) {
 		const [key, value] = splitTopLevel(map[1]);
 		return {
 			kind: "map",
-			key: parseType(key ?? "", undefined, dialect),
-			value: parseType(value ?? "", undefined, dialect),
+			key: parseType(key ?? "", undefined, foldField),
+			value: parseType(value ?? "", undefined, foldField),
 		};
 	}
 
@@ -58,9 +60,10 @@ export function parseType(text: string, aliases: Record<string, string> = SCALAR
 		for (const part of splitTopLevel(struct[1])) {
 			const colon = topLevelColon(part);
 			if (colon < 0) continue;
-			const name = foldIdentifier(part.slice(0, colon).trim(), dialect);
+			const raw = part.slice(0, colon).trim();
+			const name = foldField ? foldField(raw) : raw;
 			if (name) {
-				fields.push({ name, type: parseType(stripComment(part.slice(colon + 1).trim()), undefined, dialect) });
+				fields.push({ name, type: parseType(stripComment(part.slice(colon + 1).trim()), undefined, foldField) });
 			}
 		}
 		return { kind: "struct", fields };

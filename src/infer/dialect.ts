@@ -10,6 +10,7 @@ import { TRINO_FUNCTION_RETURNS, trinoLiteral, trinoParseType } from "./trino.js
 import { SQLITE_FUNCTION_RETURNS, sqliteLiteral, sqliteParseType } from "./sqlite.js";
 import { MYSQL_FUNCTION_RETURNS, mysqlLiteral, mysqlParseType } from "./mysql.js";
 import { parseType, TSQL_ALIASES, type Type } from "./types.js";
+import { foldIdentifier } from "../ident/fold.js";
 
 // Per-dialect inference knowledge. The inference *engine* (src/infer/infer.ts) is dialect-agnostic;
 // this is the *knowledge* it varies by dialect — function return types, literal forms, and how a
@@ -35,14 +36,14 @@ export interface InferDialect {
 const databricks: InferDialect = {
 	functions: FUNCTION_RETURNS,
 	literal: databricksLiteral,
-	parseType: (t) => parseType(t, undefined, "databricks"),
+	parseType: (t) => parseType(t, undefined, (n) => foldIdentifier(n, "databricks")),
 	division: "float",
 };
 
 const tsql: InferDialect = {
 	functions: TSQL_FUNCTION_RETURNS,
 	literal: tsqlLiteral,
-	parseType: (t) => parseType(t, TSQL_ALIASES, "tsql"),
+	parseType: (t) => parseType(t, TSQL_ALIASES, (n) => foldIdentifier(n, "tsql")),
 	division: "integer",
 	special: tsqlSpecial, // XML data type methods: value()/exist()/query() typed by method + sqltype
 };

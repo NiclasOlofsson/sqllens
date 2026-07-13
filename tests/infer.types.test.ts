@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { parseType } from "../src/infer/types.js";
+import { foldIdentifier } from "../src/ident/fold.js";
 
 describe("parseType", () => {
 	it("parses a scalar and normalizes aliases", () => {
@@ -29,7 +30,9 @@ describe("parseType", () => {
 	});
 
 	it("parses struct<...> with nested types", () => {
-		expect(parseType("struct<a:int, b:array<string>>", undefined, "databricks")).toEqual({
+		expect(
+			parseType("struct<a:int, b:array<string>>", undefined, (n) => foldIdentifier(n, "databricks")),
+		).toEqual({
 			kind: "struct",
 			fields: [
 				{ name: "a", type: { kind: "scalar", name: "int" } },

@@ -1,6 +1,7 @@
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 import type { FnRule } from "./functions.js";
 import { commonType, widenSum } from "./coerce.js";
+import { foldIdentifier } from "../ident/fold.js";
 
 // ---------------------------------------------------------------------------
 // Redshift (Postgres-derived) inference knowledge. Scalar-name aliases map the
@@ -40,7 +41,7 @@ export const REDSHIFT_ALIASES: Record<string, string> = {
 };
 
 export function redshiftParseType(text: string): Type {
-	return parseType(text, REDSHIFT_ALIASES, "redshift");
+	return parseType(text, REDSHIFT_ALIASES, (n) => foldIdentifier(n, "redshift"));
 }
 
 const BOOLEAN = scalar("boolean");
