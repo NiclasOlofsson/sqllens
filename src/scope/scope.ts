@@ -574,8 +574,9 @@ export function applyStarModifiers(
 		out = out.filter((c) => !removed.has(fold(c)));
 	}
 	if (star.ilike !== undefined) {
-		const rx = likePatternToRegExp(star.ilike);
-		out = out.filter((c) => rx.test(fold(c)));
+		const b = resolveBehavior(dialect);
+		const pat = star.ilike;
+		out = out.filter((c) => b.likeMatch(pat, fold(c)));
 	}
 	if (star.rename) {
 		const renames = new Map(star.rename.map((r) => [fold(r.from), r.to]));

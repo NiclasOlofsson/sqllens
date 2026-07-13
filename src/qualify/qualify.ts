@@ -6,7 +6,6 @@ import {
 	applyPivotCols,
 	applyStarModifiers,
 	applyUnpivotCols,
-	likePatternToRegExp,
 	mergeByName,
 	pivotSourceOutputs,
 	splitColumnRefInScope,
@@ -339,8 +338,9 @@ function applyStarModifiersToPairs(
 		out = out.filter((p) => !removed.has(fold(p.name)));
 	}
 	if (star.ilike !== undefined) {
-		const rx = likePatternToRegExp(star.ilike);
-		out = out.filter((p) => rx.test(fold(p.name)));
+		const b = resolveBehavior(dialect);
+		const pat = star.ilike;
+		out = out.filter((p) => b.likeMatch(pat, fold(p.name)));
 	}
 	if (star.rename) {
 		const renames = new Map(star.rename.map((r) => [fold(r.from), r.to]));

@@ -2,7 +2,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, Source } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
-import { likePatternToRegExp, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -167,7 +167,7 @@ function starPassthroughNullability(child: Scope, column: string, schema: Schema
 		const under = renamedTo ? renamedTo.from : column;
 		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
 		if (star.exclude?.some((e) => eq(e, under, d))) continue;
-		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(resolveBehavior(d).fold(under))) continue;
+		if (star.ilike !== undefined && !resolveBehavior(d).likeMatch(star.ilike, resolveBehavior(d).fold(under))) continue;
 
 		ctx.seen.add(child);
 		const replaced = star.replace?.find((r) => eq(r.column, under, d));

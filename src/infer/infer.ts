@@ -3,7 +3,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
-import { likePatternToRegExp, resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType } from "./coerce.js";
 import type { DialectBehavior } from "../dialect-behavior/behavior.js";
@@ -173,7 +173,7 @@ function starPassthroughType(child: Scope, column: string, schema: SchemaProvide
 		const under = renamedTo ? renamedTo.from : column;
 		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
 		if (star.exclude?.some((e) => eq(e, under, d))) continue;
-		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(resolveBehavior(d).fold(under))) continue;
+		if (star.ilike !== undefined && !resolveBehavior(d).likeMatch(star.ilike, resolveBehavior(d).fold(under))) continue;
 
 		ctx.seen.add(child);
 		const replaced = star.replace?.find((r) => eq(r.column, under, d));
