@@ -1,4 +1,5 @@
-import { foldIdentifier, matchesSourceKey } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { ColumnRef, Projection } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
@@ -97,13 +98,13 @@ function resolveByName(
 	fields: string[],
 	schema: SchemaProvider | undefined,
 ): ColumnResolution {
-	const name = foldIdentifier(column, scope.dialect);
+	const name = behaviorOf(scope).fold(column);
 	const sources = [...scope.sources.values()];
 	const colsOf = (src: ResolvedSource): string[] | "unknown" =>
 		schema ? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown") : sourceOutputs(src);
 	const matches = sources.filter((s) => {
 		const cols = colsOf(s);
-		return cols !== "unknown" && cols.some((c) => foldIdentifier(c, scope.dialect) === name);
+		return cols !== "unknown" && cols.some((c) => behaviorOf(scope).fold(c) === name);
 	});
 	if (matches.length === 1) return { kind: "bound", source: matches[0], column, fields };
 	if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
@@ -141,12 +142,13 @@ export function findProducerProjection(
 	aliases: string[] | undefined,
 	dialect: string,
 ): Projection | undefined {
-	const want = foldIdentifier(column, dialect);
+	const b = resolveBehavior(dialect);
+	const want = b.fold(column);
 	if (aliases) {
-		const i = aliases.findIndex((a) => foldIdentifier(a, dialect) === want);
+		const i = aliases.findIndex((a) => b.fold(a) === want);
 		return i >= 0 ? projections[i] : undefined;
 	}
-	return projections.find((p) => !p.isStar && p.name !== undefined && foldIdentifier(p.name, dialect) === want);
+	return projections.find((p) => !p.isStar && p.name !== undefined && b.fold(p.name) === want);
 }
 
 /** The output column names a source exposes — schema for a table, the (schema-expanded) output
@@ -259,7 +261,7 @@ function projectionNames(
 			const want = star?.qualifier ? (star.qualifier[star.qualifier.length - 1] ?? "") : undefined;
 			const expanded: string[] = [];
 			for (const [key, src] of scope.sources) {
-				if (want !== undefined && !matchesSourceKey(key, want, scope.dialect)) continue;
+				if (want !== undefined && !behaviorOf(scope).matchesSourceKey(key, want)) continue;
 				const cols = columnNamesOf(src, schema, visited, scope.dialect);
 				if (!cols) return undefined;
 				expanded.push(...cols);
@@ -298,12 +300,12 @@ function pipeStageNames(scope: Scope, schema: SchemaProvider, visited: Set<Scope
 			return [...aggs, ...keys];
 		}
 		case "drop": {
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			return incoming ? incoming.filter((c) => !stage.drop.some((d) => fold(d) === fold(c))) : undefined;
 		}
 		case "rename": {
 			if (!incoming) return undefined;
-			const fold = (n: string) => foldIdentifier(n, scope.dialect);
+			const fold = (n: string) => behaviorOf(scope).fold(n);
 			const m = new Map(stage.renames.map((r) => [fold(r.from), r.to]));
 			return incoming.map((c) => m.get(fold(c)) ?? c);
 		}
