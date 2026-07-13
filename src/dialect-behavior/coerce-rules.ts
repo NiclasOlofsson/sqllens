@@ -6,7 +6,6 @@
 // per-dialect capability, not a global set. `string` is a universal sink (any scalar renders as text),
 // so widening TO string is always accepted; only two directional mismatches are ever rejected, each
 // gated on the dialect NOT bridging it implicitly.
-import { inferDialect } from "../infer/dialect.js";
 import type { Type } from "../infer/types.js";
 
 type Family = "num" | "str" | "bool" | "temporal" | "binary" | "other";
@@ -41,7 +40,7 @@ function familyOf(name: string): Family {
 //  - mysql: numeric context converts a string operand to a number automatically
 //    (dev.mysql.com/doc/refman/8.4/en/type-conversion.html).
 // NOT in the set (rejection stays live, corpus-proven): bigquery, trino.
-const IMPLICIT_STR_TO_NUM: ReadonlySet<string> = new Set([
+export const IMPLICIT_STR_TO_NUM: ReadonlySet<string> = new Set([
 	"databricks",
 	"tsql",
 	"snowflake",
@@ -58,17 +57,25 @@ const IMPLICIT_STR_TO_NUM: ReadonlySet<string> = new Set([
 // assignable anywhere an integer is expected. Everywhere else bool<->num rejection is corpus-proven safe;
 // sqlite is left out (TRUE/FALSE are literal aliases for 1/0 and SQLITE_ALIASES has no bool key, so this
 // checker never sees a boolean-typed sqlite argument from a declared column).
-const IMPLICIT_BOOL_NUM: ReadonlySet<string> = new Set(["tsql", "mysql"]);
+export const IMPLICIT_BOOL_NUM: ReadonlySet<string> = new Set(["tsql", "mysql"]);
 
-/** Whether `argType` is acceptable for a declared param of text `paramText` in dialect `name`. */
-export function acceptsFor(name: string, argType: Type, paramText: string | undefined): boolean {
+/** Whether `argType` is acceptable for a declared param whose type text is `paramText`. `parseType`
+ *  parses that text with the dialect's rules; `strToNum`/`boolNum` are the dialect's implicit-coercion
+ *  flags (IMPLICIT_STR_TO_NUM / IMPLICIT_BOOL_NUM membership). Pure engine, takes no dialect. */
+export function acceptsFor(
+	parseType: (text: string) => Type,
+	strToNum: boolean,
+	boolNum: boolean,
+	argType: Type,
+	paramText: string | undefined,
+): boolean {
 	if (!paramText) return true; // untyped param -> no information, accept
-	const param = inferDialect(name).parseType(paramText);
+	const param = parseType(paramText);
 	if (param.kind !== "scalar" || argType.kind !== "scalar") return true; // complex/unknown -> accept
 	const fa = familyOf(argType.name);
 	const fp = familyOf(param.name);
 	if (fa === fp) return true; // same family -> accept
-	if (fa === "str" && fp === "num") return IMPLICIT_STR_TO_NUM.has(name);
-	if ((fa === "bool" && fp === "num") || (fa === "num" && fp === "bool")) return IMPLICIT_BOOL_NUM.has(name);
+	if (fa === "str" && fp === "num") return strToNum;
+	if ((fa === "bool" && fp === "num") || (fa === "num" && fp === "bool")) return boolNum;
 	return true; // every other cross-family pair accepts
 }
