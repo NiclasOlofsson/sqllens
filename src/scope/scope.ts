@@ -16,7 +16,8 @@ import type {
 	UnpivotInfo,
 } from "../ir/ir.js";
 import type { StatementCategory } from "../ir/statement.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { likePatternToRegExp } from "./like-pattern.js";
 
 // ---------------------------------------------------------------------------
@@ -117,10 +118,11 @@ export interface SplitRef {
  * or the table fold (these differ only for BigQuery's case-preserving table identifiers).
  */
 export function splitColumnRef(parts: string[], isSource: (key: string) => boolean, dialect?: string): SplitRef {
+	const b = resolveBehavior(dialect);
 	const keyOf = (part: string): string | undefined => {
-		const k = foldIdentifier(part, dialect);
+		const k = b.fold(part);
 		if (isSource(k)) return k;
-		const kt = foldIdentifier(part, dialect, "table");
+		const kt = b.fold(part, "table");
 		return kt !== k && isSource(kt) ? kt : undefined;
 	};
 	// `schema.table.col[.field…]` — the 2-token qualifier is keyed by the table (its last part).
@@ -155,8 +157,9 @@ export function aliasVisibleClause(clause: ColumnRef["clause"] | undefined): boo
 }
 
 export function matchesProjectionAlias(scope: Scope, name: string): boolean {
-	const n = foldIdentifier(name, scope.dialect);
-	return aliasNames(scope).some((a) => foldIdentifier(a, scope.dialect) === n);
+	const b = behaviorOf(scope);
+	const n = b.fold(name);
+	return aliasNames(scope).some((a) => b.fold(a) === n);
 }
 
 /** The output alias names of a scope — a select's projection names, or (for a set op) the
@@ -191,7 +194,7 @@ function buildQueryScope(query: QueryExpr, parent?: Scope, dialect?: string): Sc
 		const cteScope = buildQueryScope(cte.body, scope);
 		// Declared column aliases (WITH c (x, y) AS …) rename what the CTE exposes.
 		if (cte.columnAliases) cteScope.outputs = cte.columnAliases;
-		scope.ctes.set(foldIdentifier(cte.name, scope.dialect), { def: cte, scope: cteScope });
+		scope.ctes.set(behaviorOf(scope).fold(cte.name), { def: cte, scope: cteScope });
 		scope.children.push(cteScope);
 	}
 	fillScope(scope);
@@ -232,7 +235,7 @@ function fillScope(scope: Scope): void {
 	const pivotAlias = body.pivot?.alias ?? body.unpivot?.alias;
 	if (pivotAlias) {
 		const base = body.from.map((source) => resolveSource(scope, source));
-		scope.sources.set(foldIdentifier(pivotAlias, scope.dialect), {
+		scope.sources.set(behaviorOf(scope).fold(pivotAlias), {
 			kind: "pivot",
 			alias: pivotAlias,
 			base,
@@ -322,7 +325,7 @@ function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): S
 		for (const cte of stage.ctes) {
 			const cteScope = buildQueryScope(cte.body, ss);
 			if (cte.columnAliases) cteScope.outputs = cte.columnAliases;
-			ss.ctes.set(foldIdentifier(cte.name, ss.dialect), { def: cte, scope: cteScope });
+			ss.ctes.set(behaviorOf(ss).fold(cte.name), { def: cte, scope: cteScope });
 			ss.children.push(cteScope);
 		}
 	}
@@ -386,7 +389,7 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 			alias: el.variable,
 			cst: el.variableCst ?? el.cst,
 		};
-		scope.sources.set(foldIdentifier(el.variable, scope.dialect), {
+		scope.sources.set(behaviorOf(scope).fold(el.variable), {
 			kind: "table",
 			name: [el.variable],
 			source: ts,
@@ -427,7 +430,7 @@ function stageOutputsFree(stage: PipeStage, incoming: string[] | "unknown", scop
 		case "drop":
 			if (incoming === "unknown") return "unknown";
 			return incoming.filter(
-				(c) => !stage.drop.some((d) => foldIdentifier(d, scope.dialect) === foldIdentifier(c, scope.dialect)),
+				(c) => !stage.drop.some((d) => behaviorOf(scope).fold(d) === behaviorOf(scope).fold(c)),
 			);
 		case "rename":
 			if (incoming === "unknown") return "unknown";
@@ -495,8 +498,9 @@ function simpleProjNames(projections: Projection[]): string[] | "unknown" {
 }
 
 function applyRenameList(cols: string[], renames: { from: string; to: string }[], dialect?: string): string[] {
-	const map = new Map(renames.map((r) => [foldIdentifier(r.from, dialect), r.to]));
-	return cols.map((c) => map.get(foldIdentifier(c, dialect)) ?? c);
+	const b = resolveBehavior(dialect);
+	const map = new Map(renames.map((r) => [b.fold(r.from), r.to]));
+	return cols.map((c) => map.get(b.fold(c)) ?? c);
 }
 
 /** A select's output columns, accounting for a PIVOT/UNPIVOT transforming the FROM relation. */
@@ -523,13 +527,13 @@ function baseRelationColumns(scope: Scope): string[] | "unknown" {
 export function applyPivotCols(base: string[], p: PivotInfo, dialect?: string): string[] | "unknown" {
 	// Data-dependent pivot (no static IN-list): output columns are not enumerable — never guess.
 	if (p.dynamic) return "unknown";
-	const fold = (n: string) => foldIdentifier(n, dialect);
+	const fold = (n: string) => resolveBehavior(dialect).fold(n);
 	const consumed = new Set([...p.forColumns, ...p.aggColumns].map(fold));
 	return [...base.filter((c) => !consumed.has(fold(c))), ...p.values];
 }
 
 export function applyUnpivotCols(base: string[], u: UnpivotInfo, dialect?: string): string[] {
-	const fold = (n: string) => foldIdentifier(n, dialect);
+	const fold = (n: string) => resolveBehavior(dialect).fold(n);
 	const removed = new Set(u.removed.map(fold));
 	return [...base.filter((c) => !removed.has(fold(c))), u.nameColumn, u.valueColumn];
 }
@@ -551,8 +555,9 @@ export function mergeByName(
 	dialect?: string,
 ): string[] | "unknown" {
 	if (left === "unknown" || right === "unknown") return "unknown";
-	const seen = new Set(left.map((c) => foldIdentifier(c, dialect)));
-	return [...left, ...right.filter((c) => !seen.has(foldIdentifier(c, dialect)))];
+	const b = resolveBehavior(dialect);
+	const seen = new Set(left.map((c) => b.fold(c)));
+	return [...left, ...right.filter((c) => !seen.has(b.fold(c)))];
 }
 
 /** Apply a star node's modifiers to an expansion: EXCLUDE/EXCEPT removes, ILIKE filters by
@@ -562,7 +567,7 @@ export function applyStarModifiers(
 	star: { exclude?: string[]; ilike?: string; rename?: { from: string; to: string }[] },
 	dialect?: string,
 ): string[] {
-	const fold = (n: string) => foldIdentifier(n, dialect);
+	const fold = (n: string) => resolveBehavior(dialect).fold(n);
 	let out = cols;
 	if (star.exclude) {
 		const removed = new Set(star.exclude.map(fold));
@@ -595,7 +600,7 @@ function outputsOf(body: SelectExpr): string[] | "unknown" {
 
 function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
 	if (!scope) return undefined;
-	const key = foldIdentifier(name, scope.dialect);
+	const key = behaviorOf(scope).fold(name);
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
 		const hit = s.ctes.get(key);
 		if (hit) return hit;
@@ -608,15 +613,16 @@ function lookupCte(scope: Scope | undefined, name: string): CteRef | undefined {
  *  `o.col` binds to `"O"` but not `"o"`). Aliases fold as "other"; a table's own name part folds
  *  as kind "table" (BigQuery preserves table case). */
 function sourceKey(source: Source, dialect: string, isCte = false): string {
-	if (source.kind === "lateral") return foldIdentifier(source.alias ?? "", dialect);
+	const b = resolveBehavior(dialect);
+	if (source.kind === "lateral") return b.fold(source.alias ?? "");
 	if (source.kind === "graphtable") {
 		return source.alias
-			? foldIdentifier(source.alias, dialect)
-			: foldIdentifier(source.graph[source.graph.length - 1] ?? "graph_table", dialect, "table");
+			? b.fold(source.alias)
+			: b.fold(source.graph[source.graph.length - 1] ?? "graph_table", "table");
 	}
-	if (source.alias) return foldIdentifier(source.alias, dialect);
+	if (source.alias) return b.fold(source.alias);
 	if (source.kind === "table") {
-		return foldIdentifier(source.name[source.name.length - 1] ?? "", dialect, isCte ? "other" : "table");
+		return b.fold(source.name[source.name.length - 1] ?? "", isCte ? "other" : "table");
 	}
 	return "";
 }
