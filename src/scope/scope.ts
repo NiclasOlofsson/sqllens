@@ -515,7 +515,7 @@ function computeOutputs(scope: Scope, body: SelectExpr): string[] | "unknown" {
 /** The columns of the relation being pivoted/unpivoted — the first non-lateral source. */
 function baseRelationColumns(scope: Scope): string[] | "unknown" {
 	for (const src of scope.sources.values()) {
-		if (src.kind !== "lateral") return sourceOutputs(src);
+		if (src.kind !== "lateral") return sourceOutputs(src, scope.dialect);
 	}
 	return "unknown";
 }
@@ -630,13 +630,13 @@ function sourceKey(source: Source, dialect: string, isCte = false): string {
 
 /** The columns a resolved source exposes, or "unknown" when it needs a schema (a bare table).
  *  Exported for the unified binder's schema-free path (src/sema/resolve.ts). */
-export function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
+export function sourceOutputs(src: ResolvedSource, dialect: string): string[] | "unknown" {
 	if (src.kind === "table") return src.source.columnAliases ?? "unknown";
 	if (src.kind === "cte") return src.ref.scope.outputs;
 	if (src.kind === "lateral") return src.source.columns;
 	if (src.kind === "relation") return src.scope.outputs; // a prior pipe stage's relation
 	if (src.kind === "graphtable") return src.scope.outputs;
-	if (src.kind === "pivot") return pivotSourceOutputs(src, (s) => sourceOutputs(s));
+	if (src.kind === "pivot") return pivotSourceOutputs(src, (s) => sourceOutputs(s, dialect), dialect);
 	return src.scope.outputs; // subquery
 }
 
@@ -647,11 +647,12 @@ export function sourceOutputs(src: ResolvedSource): string[] | "unknown" {
 export function pivotSourceOutputs(
 	src: Extract<ResolvedSource, { kind: "pivot" }>,
 	cols: (s: ResolvedSource) => string[] | "unknown",
+	dialect: string | undefined,
 ): string[] | "unknown" {
 	const parts = src.base.map(cols);
 	if (parts.some((p) => p === "unknown")) return "unknown";
 	const base = (parts as string[][]).flat();
-	if (src.pivot) return applyPivotCols(base, src.pivot);
-	if (src.unpivot) return applyUnpivotCols(base, src.unpivot);
+	if (src.pivot) return applyPivotCols(base, src.pivot, dialect);
+	if (src.unpivot) return applyUnpivotCols(base, src.unpivot, dialect);
 	return "unknown";
 }

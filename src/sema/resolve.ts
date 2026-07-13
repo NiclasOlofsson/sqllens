@@ -101,7 +101,7 @@ function resolveByName(
 	const name = behaviorOf(scope).fold(column);
 	const sources = [...scope.sources.values()];
 	const colsOf = (src: ResolvedSource): string[] | "unknown" =>
-		schema ? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown") : sourceOutputs(src);
+		schema ? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown") : sourceOutputs(src, scope.dialect);
 	const matches = sources.filter((s) => {
 		const cols = colsOf(s);
 		return cols !== "unknown" && cols.some((c) => behaviorOf(scope).fold(c) === name);
@@ -173,7 +173,7 @@ export function columnNamesOf(
 	if (src.kind === "relation") return outputNames(src.scope, schema, visited); // a prior pipe stage
 	if (src.kind === "graphtable") return outputNames(src.scope, schema, visited);
 	if (src.kind === "pivot") {
-		const r = pivotSourceOutputs(src, (s) => columnNamesOf(s, schema, visited, dialect) ?? "unknown");
+		const r = pivotSourceOutputs(src, (s) => columnNamesOf(s, schema, visited, dialect) ?? "unknown", dialect);
 		return r === "unknown" ? undefined : r;
 	}
 	return src.source.columns; // lateral

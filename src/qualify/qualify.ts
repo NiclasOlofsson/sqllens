@@ -378,7 +378,7 @@ function checkSourceColumns(
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot") {
 		return known(
-			pivotSourceOutputs(src, (s) => checkSourceColumns(s, schema, resolved, diagnostics, dialect) ?? "unknown"),
+			pivotSourceOutputs(src, (s) => checkSourceColumns(s, schema, resolved, diagnostics, dialect) ?? "unknown", dialect),
 		);
 	}
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
@@ -520,7 +520,7 @@ function sourceColumns(
 	if (src.kind === "relation") return known(resolved.get(src.scope));
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot")
-		return known(pivotSourceOutputs(src, (s) => sourceColumns(s, schema, resolved, dialect) ?? "unknown"));
+		return known(pivotSourceOutputs(src, (s) => sourceColumns(s, schema, resolved, dialect) ?? "unknown", dialect));
 	return src.source.columnAliases ?? known(resolved.get(src.scope));
 }
 
