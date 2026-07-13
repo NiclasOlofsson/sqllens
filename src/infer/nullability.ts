@@ -1,4 +1,4 @@
-import { foldIdentifier } from "../ident/fold.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, Source } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { tableSourceColumns } from "../qualify/relation-columns.js";
@@ -167,7 +167,7 @@ function starPassthroughNullability(child: Scope, column: string, schema: Schema
 		const under = renamedTo ? renamedTo.from : column;
 		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
 		if (star.exclude?.some((e) => eq(e, under, d))) continue;
-		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(foldIdentifier(under, d))) continue;
+		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(resolveBehavior(d).fold(under))) continue;
 
 		ctx.seen.add(child);
 		const replaced = star.replace?.find((r) => eq(r.column, under, d));
@@ -343,5 +343,5 @@ function functionNullability(
 // --- helpers ---------------------------------------------------------------
 
 function eq(a: string, b: string, dialect?: string): boolean {
-	return foldIdentifier(a, dialect) === foldIdentifier(b, dialect);
+	return resolveBehavior(dialect).fold(a) === resolveBehavior(dialect).fold(b);
 }

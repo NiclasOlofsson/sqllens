@@ -1,4 +1,5 @@
-import { foldIdentifier } from "../ident/fold.js";
+import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
@@ -101,7 +102,7 @@ function columnType(col: Extract<Expr, { kind: "column" }>, scope: Scope, schema
 		return v ? VALUE_TYPES[v.type] : UNKNOWN;
 	}
 	if (col.parts.length === 1) {
-		const param = ctx.env.get(foldIdentifier(col.parts[0], scope.dialect)); // a lambda parameter shadows columns
+		const param = ctx.env.get(behaviorOf(scope).fold(col.parts[0])); // a lambda parameter shadows columns
 		if (param) return param;
 	}
 	const found = resolveColumnSource(scope, col.parts, schema);
@@ -172,7 +173,7 @@ function starPassthroughType(child: Scope, column: string, schema: SchemaProvide
 		const under = renamedTo ? renamedTo.from : column;
 		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
 		if (star.exclude?.some((e) => eq(e, under, d))) continue;
-		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(foldIdentifier(under, d))) continue;
+		if (star.ilike !== undefined && !likePatternToRegExp(star.ilike).test(resolveBehavior(d).fold(under))) continue;
 
 		ctx.seen.add(child);
 		const replaced = star.replace?.find((r) => eq(r.column, under, d));
@@ -191,7 +192,7 @@ function fieldType(type: Type, fields: string[], dialect: string): Type {
 	for (const f of fields) {
 		if (t.kind !== "struct") return UNKNOWN;
 		// Struct-field names on a Type are stored FOLDED — fold only the reference side.
-		const hit = t.fields.find((ff) => ff.name === foldIdentifier(f, dialect));
+		const hit = t.fields.find((ff) => ff.name === resolveBehavior(dialect).fold(f));
 		if (!hit) return UNKNOWN;
 		t = hit.type;
 	}
@@ -289,7 +290,7 @@ function lambdaResult(
 ): Type | undefined {
 	if (lambda?.kind !== "lambda") return undefined;
 	const env = new Map(ctx.env);
-	lambda.params.forEach((p, i) => env.set(foldIdentifier(p, scope.dialect), paramTypes[i] ?? UNKNOWN));
+	lambda.params.forEach((p, i) => env.set(behaviorOf(scope).fold(p), paramTypes[i] ?? UNKNOWN));
 	return inferType(lambda.body, scope, schema, { seen: ctx.seen, env });
 }
 
@@ -311,7 +312,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaPro
 			const key = args[i];
 			const fname = key.kind === "literal" ? stringValue(key.text) : `col${i / 2 + 1}`;
 			fields.push({
-				name: foldIdentifier(fname, scope.dialect),
+				name: behaviorOf(scope).fold(fname),
 				type: inferType(args[i + 1], scope, schema, ctx),
 			});
 		}
@@ -321,7 +322,7 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaPro
 		return {
 			kind: "struct",
 			fields: args.map((a, i) => ({
-				name: a.kind === "column" ? foldIdentifier(a.parts[a.parts.length - 1], scope.dialect) : `col${i + 1}`,
+				name: a.kind === "column" ? behaviorOf(scope).fold(a.parts[a.parts.length - 1]) : `col${i + 1}`,
 				type: inferType(a, scope, schema, ctx),
 			})),
 		};
@@ -391,5 +392,5 @@ function stringValue(text: string): string {
 }
 
 function eq(a: string, b: string, dialect?: string): boolean {
-	return foldIdentifier(a, dialect) === foldIdentifier(b, dialect);
+	return resolveBehavior(dialect).fold(a) === resolveBehavior(dialect).fold(b);
 }
