@@ -1,8 +1,8 @@
 import type { Expr } from "../ir/ir.js";
-import { commonType } from "./coerce.js";
-import type { FnRule } from "./functions.js";
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { commonType } from "../infer/coerce.js";
+import type { FnRule } from "../infer/functions.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import { fold } from "./fold.js";
 
 // BigQuery / GoogleSQL inference knowledge — function return types, literal forms, and scalar-type
 // aliases — from the GoogleSQL function reference
@@ -30,7 +30,7 @@ export const BQ_ALIASES: Record<string, string> = {
 };
 
 export function bigqueryParseType(text: string): Type {
-	return parseType(text, BQ_ALIASES, (n) => foldIdentifier(n, "bigquery"));
+	return parseType(text, BQ_ALIASES, fold);
 }
 
 export function bigqueryLiteral(text: string): Type {

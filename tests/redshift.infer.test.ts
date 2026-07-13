@@ -9,7 +9,7 @@ import {
 	REDSHIFT_ALIASES,
 	redshiftLiteral,
 	REDSHIFT_FUNCTION_RETURNS,
-} from "../src/infer/redshift.js";
+} from "../src/redshift/infer.js";
 import { scalar, UNKNOWN } from "../src/infer/types.js";
 
 describe("redshift inference", () => {

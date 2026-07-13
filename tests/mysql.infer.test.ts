@@ -4,7 +4,7 @@ import { lower } from "../src/mysql/lower.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { inferType } from "../src/infer/infer.js";
 import { Schema } from "../src/qualify/schema.js";
-import { mysqlLiteral, mysqlParseType, MYSQL_FUNCTION_RETURNS } from "../src/infer/mysql.js";
+import { mysqlLiteral, mysqlParseType, MYSQL_FUNCTION_RETURNS } from "../src/mysql/infer.js";
 import { scalar, UNKNOWN } from "../src/infer/types.js";
 
 // Seeded at B-R4 with the infer STUB's unit assertions (src/infer/mysql.ts was not yet wired into

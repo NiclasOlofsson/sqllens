@@ -1,7 +1,7 @@
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import type { FnRule } from "./functions.js";
-import { commonType } from "./coerce.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import type { FnRule } from "../infer/functions.js";
+import { commonType } from "../infer/coerce.js";
+import { fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Trino inference knowledge. Scalar-name aliases map Trino's type vocabulary onto the shared
@@ -34,7 +34,7 @@ export const TRINO_ALIASES: Record<string, string> = {
 };
 
 export function trinoParseType(text: string): Type {
-	return parseType(text, TRINO_ALIASES, (n) => foldIdentifier(n, "trino"));
+	return parseType(text, TRINO_ALIASES, fold);
 }
 
 const S = scalar("string");

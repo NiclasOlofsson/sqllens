@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { displayName, foldIdentifier } from "../src/ident/fold.js";
+import { displayName, foldIdentifier } from "../src/dialect-behavior/public-fold.js";
 import { fold as snowflakeFold } from "../src/snowflake/fold.js";
 
 // Case-folding is the identity key for name comparison across the pipeline (scope/qualify/
-// references/…). Each dialect's rule is doc-cited in src/ident/fold.ts; this suite pins the
-// exact fold direction + quoted-identifier behavior per dialect against those citations.
+// references/…). Each dialect's rule is doc-cited in its own src/<dialect>/fold.ts and reached here
+// through the public foldIdentifier (registry -> behavior); this suite pins the exact fold direction +
+// quoted-identifier behavior per dialect against those citations.
 
 describe("databricks", () => {
 	it("folds unquoted mixed case to lower", () => {
@@ -170,13 +171,13 @@ describe("mysql", () => {
 
 describe("undefined/unknown dialect throws — sqllens applies no default fallback", () => {
 	it("throws on an undefined dialect", () => {
-		expect(() => foldIdentifier("MyTable", undefined)).toThrow(/no identifier-fold rule/);
+		expect(() => foldIdentifier("MyTable", undefined)).toThrow(/no behavior for dialect/);
 	});
 	it("throws on an unrecognized dialect string", () => {
-		expect(() => foldIdentifier("`MyTable`", "not-a-real-dialect")).toThrow(/no identifier-fold rule/);
+		expect(() => foldIdentifier("`MyTable`", "not-a-real-dialect")).toThrow(/no behavior for dialect/);
 	});
 	it("throws on an Object.prototype key (never reads it off the rule table)", () => {
-		expect(() => foldIdentifier("x", "constructor")).toThrow(/no identifier-fold rule/);
-		expect(() => displayName("`MyTable`", "constructor")).toThrow(/no identifier-fold rule/);
+		expect(() => foldIdentifier("x", "constructor")).toThrow(/no behavior for dialect/);
+		expect(() => displayName("`MyTable`", "constructor")).toThrow(/no behavior for dialect/);
 	});
 });

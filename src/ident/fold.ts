@@ -1,14 +1,12 @@
-// Dialect-true identifier case-folding — the single fold module every dialect's scope/qualify/
-// references pass threads through (Tasks 2-3 wire the callers; this module is self-contained).
+// The dialect-agnostic identifier case-folding ENGINE. A dialect owns its FoldRule (in
+// src/<dialect>/fold.ts) and binds it to these functions; the registry maps a dialect string to that
+// bound behavior. This module holds no per-dialect knowledge — only the rule shape and the fold/display
+// mechanics every dialect's rule runs through.
 //
-// The result of foldIdentifier() is an IDENTITY KEY for name comparison ONLY — display text
-// always comes from the raw source text, never from this function's return value. Getting the
-// fold DIRECTION wrong silently breaks equality: e.g. Snowflake's unquoted `foo` must equal
-// quoted `"FOO"` and must NOT equal quoted `"foo"` — a lowercase fold gets both wrong.
-//
-// Every rule row below was verified against the LIVE vendor page (not training data) before
-// encoding; citations note the verbatim wording that decided the direction, and any place the
-// live page diverged from the originally proposed rule.
+// The result of foldWith() is an IDENTITY KEY for name comparison ONLY — display text always comes from
+// the raw source text, never from a fold result. Getting the fold DIRECTION wrong silently breaks
+// equality: e.g. Snowflake's unquoted `foo` must equal quoted `"FOO"` and must NOT equal quoted `"foo"`
+// — a lowercase fold gets both wrong. Each dialect's rule is doc-cited in its own src/<dialect>/fold.ts.
 
 /** "table" = a table/view identifier — only BigQuery treats these differently from everything
  *  else (columns, aliases, CTE names, struct/field names, …), which is "other". */
@@ -30,173 +28,10 @@ export interface FoldRule {
 	/** How an escaped delimiter is written inside a quoted identifier's body.
 	 *  "double" (default) — the close delimiter is escaped by doubling it (`""`→`"`, `` `` ``→`` ` ``,
 	 *  `]]`→`]`).
-	 *  "backslash" — BigQuery only (see rule comment below): quoted identifiers use string-literal
-	 *  escape sequences, not doubling. */
+	 *  "backslash" — BigQuery only (see its rule comment): quoted identifiers use string-literal escape
+	 *  sequences, not doubling. */
 	escapeStyle?: "double" | "backslash";
 }
-
-const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
-const BACKTICK: readonly [string, string] = ["`", "`"];
-
-const RULES: Record<string, FoldRule> = {
-	// docs.databricks.com/en/sql/language-manual/sql-ref-identifiers.html — verified live:
-	// "Identifiers are case-insensitive when referenced." Backtick escaping is doubling, not
-	// case-quoting: "Use ` to escape ` itself" (example: `` `a``b` `` → `` a`b ``).
-	databricks: {
-		delimiters: [BACKTICK],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// learn.microsoft.com/en-us/sql/relational-databases/databases/database-identifiers +
-	// .../sql/t-sql/statements/collations — verified live: case folding is NOT a hardcoded T-SQL
-	// rule, it's a function of the identifier's COLLATION: "you can create two tables with names
-	// that differ only in case in a database that has case-sensitive collation, but you can't...
-	// in a database that has case-insensitive collation." Most SQL Server / Fabric SQL database
-	// defaults are case-insensitive (e.g. SQL_Latin1_General_CP1_CI_AS), but this is not universal
-	// — Fabric Warehouse defaults to the case-SENSITIVE Latin1_General_100_BIN2_UTF8. This module
-	// encodes the common default-collation (CI) behavior; a caller with a known case-sensitive
-	// collation is a documented boundary this module does not cross. Delimiting with `[ ]` or
-	// `" "` does not itself change case behavior — quoting only unlocks reserved words/specials.
-	tsql: {
-		delimiters: [["[", "]"], DOUBLE_QUOTE],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// docs.snowflake.com/en/sql-reference/identifiers-syntax — verified live: unquoted identifiers
-	// "are stored and resolved as uppercase characters (e.g. id is stored and resolved as ID)";
-	// quoted identifiers — "the case of the identifier is preserved when storing and resolving the
-	// identifier" (case-sensitive). Doubled-quote escape: "To use the double quote character inside
-	// a quoted identifier, use two quotes."
-	// snowflake's fold rule moved to src/snowflake/fold.ts (colocated). Its behavior resolves it there.
-
-	// cloud.google.com/bigquery/docs/reference/standard-sql/lexical — verified live (via search,
-	// the JS-rendered page would not return body text to WebFetch): "table names are case-sensitive,
-	// but column names are not" — so table identifiers preserve case and everything else (column,
-	// field, alias, CTE) folds to lower, REGARDLESS of backtick-quoting either way (backticks are
-	// required for reserved words/specials, not a case-quoting mechanism — same "not case-quoting"
-	// shape as Databricks, but the preserved/folded split is per identifier KIND here, not
-	// per-quoting). Escape mechanism corrected from the originally assumed doubling: "Quoted
-	// identifiers have the same escape sequences as string literals" (backslash-escaped, e.g.
-	// `` `a\`b` `` → `` a`b ``) — NOT doubling like every other backtick/quote dialect here. This
-	// module unescapes the identifier-relevant case (`` \` ``) plus the general `\X`→`X` pattern; it
-	// does not implement BigQuery's full string-literal escape grammar (\n, \xHH, \uXXXX, octal, …),
-	// out of scope for an identifier fold — those escapes are exotic in identifier text.
-	bigquery: {
-		delimiters: [BACKTICK],
-		unquoted: "lower",
-		quoted: "lower",
-		tableCase: "preserve",
-		escapeStyle: "backslash",
-	},
-
-	// docs.aws.amazon.com/redshift/latest/dg/r_names.html — verified live: "ASCII letters in
-	// standard and delimited identifiers are case-insensitive and are folded to lowercase in the
-	// database" — explicitly covers BOTH unquoted and quoted by default (the
-	// enable_case_sensitive_identifier parameter can flip quoted identifiers case-sensitive; this
-	// module encodes the default). Doubled-quote escape: "To use a double quotation mark in a
-	// string, you must precede it with another double quotation mark character."
-	redshift: {
-		delimiters: [DOUBLE_QUOTE],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// postgresql.org/docs/18/sql-syntax-lexical.html §4.1.1 — verified live: "unquoted names are
-	// always folded to lower case"; "Quoting an identifier also makes it case-sensitive" — example
-	// "the identifiers FOO, foo, and "foo" are considered the same by PostgreSQL, but "Foo" and
-	// "FOO" are different." Doubled-quote escape: "To include a double quote, write two double
-	// quotes."
-	postgres: {
-		delimiters: [DOUBLE_QUOTE],
-		unquoted: "lower",
-		quoted: "preserve",
-	},
-
-	// duckdb.org/docs/current/sql/dialect/keywords_and_identifiers.html — verified live: "Identifiers
-	// in DuckDB are always case-insensitive, similarly to PostgreSQL. However, unlike PostgreSQL...
-	// DuckDB also treats quoted identifiers as case-insensitive" — quoting only preserves the
-	// identifier for DISPLAY, not identity. Doubled-quote escape: "Double quotes can be escaped by
-	// repeating the quote character."
-	duckdb: {
-		delimiters: [DOUBLE_QUOTE],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// trino.io/docs/current/language/reserved.html — verified live: "Identifiers with other
-	// characters must be delimited with double quotes (\"). ... Escape a \" with another preceding
-	// double quote in a delimited identifier." and, blanket, "Identifiers are not treated as case
-	// sensitive" — no quoted/unquoted distinction is drawn, and no backtick delimiter is documented
-	// (adjusted from the originally proposed "backtick tolerated" — dropped, unconfirmed by the
-	// live page). The fold DIRECTION (lower here) is this module's choice, not vendor-documented —
-	// the live docs only commit to uniform case-insensitivity across quoted/unquoted, which lower-
-	// folding both forms reproduces; chosen for consistency with the other case-insensitive-quoted
-	// dialects (redshift/duckdb) and this module's undefined-dialect default. NOTE: Trino's own
-	// engine source is internally inconsistent with this blanket docs claim — trino-parser's
-	// Identifier.getCanonicalValue() canonicalizes unquoted to UPPER and preserves quoted verbatim
-	// (ANSI-style, would make quoted case-sensitive), while trino-main's Field field-matching does
-	// a blanket case-insensitive compare regardless of quoting. Encoding the documented behavior
-	// per this module's citation policy; flagged as a discrepancy, not resolved against a live
-	// engine.
-	trino: {
-		delimiters: [DOUBLE_QUOTE],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// sqlite.org/lang_keywords.html — verified live: SQLite recognizes three identifier-quoting
-	// delimiters, each documented only as "is an identifier" (double-quote, square-bracket, and
-	// grave-accent/backtick forms) with no case-sensitivity distinction drawn between them or
-	// against the unquoted form. SQLite's own grammar (IDENTIFIER token) treats `"x"`, `` `x` ``,
-	// `[x]` and bare `x` as the same lexical category, and SQLite's C-level identifier compare
-	// (sqlite3StrICmp) is ASCII case-insensitive regardless of how the name was spelled — the
-	// documented quirk this module's brief calls out: unlike Postgres/Snowflake, quoting an
-	// identifier does NOT make it case-sensitive in SQLite. So both unquoted AND quoted fold to
-	// lower here (same shape as redshift/duckdb/trino). SQLite's own documented fold is
-	// ASCII-only (it does not case-fold non-ASCII), but this module's shared applyCase uses JS
-	// toLowerCase() — a Unicode-wide fold — so a rare non-ASCII identifier pair (Ä vs ä) that
-	// SQLite would keep distinct conflates here: a known shared-engine limitation, consistent
-	// across every dialect in this table. Bracket delimiters have no escape mechanism (the
-	// lexer's `[`...`]` body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not
-	// unescaped, same as this module's tsql bracket handling.
-	sqlite: {
-		delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-
-	// dev.mysql.com/doc/refman/8.4/en/identifier-case-sensitivity.html — verified live. This module's
-	// fold rule is per-DIALECT, not per-identifier-KIND (only BigQuery's `tableCase` override draws
-	// that distinction), so one rule must cover both halves of a genuinely split MySQL reality:
-	// "Partition, subpartition, column, index, stored routine, event, and resource group names are
-	// not case-sensitive on any platform, nor are column aliases" — unconditional, so this module
-	// folds unquoted AND backtick-quoted identifiers to lower for equality (column/alias/CTE/field
-	// names, the identifier kinds this module actually threads through scope/qualify/infer today).
-	// KNOWN LIMITATION (documented here, not silently dropped): table/database names are genuinely
-	// platform/`lower_case_table_names`-dependent — "case sensitivity of the underlying operating
-	// system plays a part": case-SENSITIVE by default on Unix (lower_case_table_names=0), case-
-	// INSENSITIVE by default on Windows (=1) and macOS (=2), and the variable "can only be
-	// configured when initializing the server" (not discoverable from SQL text alone). A static
-	// analyzer with no server/OS context cannot resolve this per-installation choice; this module
-	// applies the same lower-fold to table identifiers too (foldTableName's kind:"table" path, since
-	// no `tableCase` override is set here) — correct for the Windows/macOS default and for Unix
-	// installs whose tables happen to be written in a single consistent case (the common case), WRONG
-	// only when a Unix-collation database genuinely holds two tables differing only in case (e.g.
-	// `Orders` and `orders` as distinct tables) — a real but narrow misresolution, called out here
-	// rather than left for a caller to discover by surprise. Identifier quote char is the backtick by
-	// default (ANSI_QUOTES mode, which repurposes `"` as the identifier quote and `` ` `` stops being
-	// special, is a session/server SQL-mode setting not visible in the SQL text either — out of
-	// scope for the same reason as lower_case_table_names). Doubled-quote escape: "To include a quote
-	// character within an identifier, quote the identifier and double the quote character" (example:
-	// `` `a``b` `` → `` a`b ``).
-	mysql: {
-		delimiters: [BACKTICK],
-		unquoted: "lower",
-		quoted: "lower",
-	},
-};
 
 function applyCase(text: string, fold: CaseFold): string {
 	if (fold === "lower") return text.toLowerCase();
@@ -219,9 +54,6 @@ function unwrap(raw: string, rule: FoldRule): [string, boolean] {
 	return [raw, false];
 }
 
-// --- The dialect-agnostic fold ENGINE. A dialect folder owns its FoldRule and binds these; the
-// registry keeps the dialect-string lookup below for the public foldIdentifier/displayName. ---
-
 /** Fold an identifier to its identity key under an explicit rule (the engine each dialect folder binds). */
 export function foldWith(rule: FoldRule, raw: string, kind: IdentKind = "other"): string {
 	const [body, wasQuoted] = unwrap(raw, rule);
@@ -232,39 +64,4 @@ export function foldWith(rule: FoldRule, raw: string, kind: IdentKind = "other")
 /** Presentation twin of foldWith: strip delimiters, no case change. */
 export function displayWith(rule: FoldRule, raw: string): string {
 	return unwrap(raw, rule)[0];
-}
-
-/** The fold rule for a dialect string. Throws on an unregistered/absent dialect — sqllens applies NO
- *  default; the consumer must supply a supported Dialect. (Migrating off the central RULES table.) */
-export function ruleFor(dialect: string | undefined): FoldRule {
-	const rule = dialect !== undefined && Object.hasOwn(RULES, dialect) ? RULES[dialect] : undefined;
-	if (!rule) throw new Error(`sqllens: no identifier-fold rule for dialect "${dialect}" — supply a supported Dialect.`);
-	return rule;
-}
-
-/** Unquote (dialect's delimiters, doubled-delimiter unescape) + case-fold per the dialect's
- *  documented identifier rules. The result is the IDENTITY KEY for name comparison — display
- *  text always comes from the raw source, never from this. */
-export function foldIdentifier(raw: string, dialect: string | undefined, kind: IdentKind = "other"): string {
-	return foldWith(ruleFor(dialect), raw, kind);
-}
-
-/** PRESENTATION twin of foldIdentifier: strip the dialect's delimiters (unescaping the body) but
- *  apply NO case change — the string a UI shows for a name. Never use this for comparison; two
- *  displayName results being equal proves nothing about identity. */
-export function displayName(raw: string, dialect: string | undefined): string {
-	return displayWith(ruleFor(dialect), raw);
-}
-
-/** Fold a multipart table name for a catalog lookup — every part folded with kind "table" (only
- *  BigQuery treats table parts specially; everywhere else this is the plain fold). */
-export function foldTableName(parts: string[], dialect: string | undefined): string[] {
-	return parts.map((p) => foldIdentifier(p, dialect, "table"));
-}
-
-/** True when a source-map KEY (already folded — an alias folded as "other", or a table's last name
- *  part folded as "table") matches a RAW qualifier part. Tries both folds; they differ only for
- *  BigQuery, whose table identifiers preserve case while aliases/columns fold lower. */
-export function matchesSourceKey(key: string, rawPart: string, dialect: string | undefined): boolean {
-	return key === foldIdentifier(rawPart, dialect) || key === foldIdentifier(rawPart, dialect, "table");
 }

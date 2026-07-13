@@ -1,7 +1,7 @@
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import type { FnRule } from "./functions.js";
-import { commonType } from "./coerce.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import type { FnRule } from "../infer/functions.js";
+import { commonType } from "../infer/coerce.js";
+import { fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // DuckDB inference knowledge. Scalar-name aliases map DuckDB's type vocabulary
@@ -53,7 +53,7 @@ export const DUCKDB_ALIASES: Record<string, string> = {
 };
 
 export function duckdbParseType(text: string): Type {
-	return parseType(text, DUCKDB_ALIASES, (n) => foldIdentifier(n, "duckdb"));
+	return parseType(text, DUCKDB_ALIASES, fold);
 }
 
 const S = scalar("string");

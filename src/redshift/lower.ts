@@ -21,7 +21,7 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "../ident/fold.js";
+import { displayName } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
@@ -1401,7 +1401,7 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	const app = directChildrenOfRule(node, P.RULE_func_application)[0];
 	if (!app) return otherExpr(node);
 	const fname = firstShallow(app, P.RULE_func_name);
-	const name = (fname ? displayName(lastName(fname), "redshift") : (leftmostToken(app) ?? "")).toLowerCase();
+	const name = (fname ? displayName(lastName(fname)) : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
 	// WITHIN GROUP (ORDER BY …) keys feed the aggregate — include as args.
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];

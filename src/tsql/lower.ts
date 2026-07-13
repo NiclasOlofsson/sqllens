@@ -20,7 +20,7 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName, foldIdentifier } from "../ident/fold.js";
+import { displayName, fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — T-SQL (grammars-v4 sql/tsql) CST -> the shared, dialect-neutral IR
@@ -473,7 +473,7 @@ function lowerUdtElem(udt: ParserRuleContext): Expr {
 		: [];
 	return {
 		kind: "function",
-		name: method ? displayName(method.getText(), "tsql").toLowerCase() : "",
+		name: method ? displayName(method.getText()).toLowerCase() : "",
 		args: [receiverExpr, ...methodArgs],
 		aggregate: false,
 		distinct: false,
@@ -976,7 +976,7 @@ function resolveNamedWindow(
 	name: string,
 	seen: Set<string>,
 ): { partitionBy: Expr[]; orderBy: Expr[] } | undefined {
-	const key = foldIdentifier(name, "tsql");
+	const key = fold(name);
 	if (seen.has(key)) return undefined;
 	seen.add(key);
 
@@ -988,7 +988,7 @@ function resolveNamedWindow(
 
 	for (const def of directChildrenOfRule(clause, P.RULE_window_definition)) {
 		const defName = directChildrenOfRule(def, P.RULE_id_)[0]?.getText();
-		if (!defName || foldIdentifier(defName, "tsql") !== key) continue;
+		if (!defName || fold(defName) !== key) continue;
 		const ws = directChildrenOfRule(def, P.RULE_window_specification)[0];
 		if (!ws) return undefined;
 		const parts = windowParts(ws);

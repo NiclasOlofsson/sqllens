@@ -1,7 +1,7 @@
-import { commonType, widenSum } from "./coerce.js";
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import type { FnRule } from "./functions.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { commonType, widenSum } from "../infer/coerce.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import type { FnRule } from "../infer/functions.js";
+import { fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // SQLite inference knowledge. Literal typing (A-R4) is storage-class-faithful (sqlite.org/
@@ -24,7 +24,7 @@ import { foldIdentifier } from "../ident/fold.js";
 export const SQLITE_ALIASES: Record<string, string> = {};
 
 export function sqliteParseType(text: string): Type {
-	return parseType(text, SQLITE_ALIASES, (n) => foldIdentifier(n, "sqlite"));
+	return parseType(text, SQLITE_ALIASES, fold);
 }
 
 const S = scalar("string");

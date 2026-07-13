@@ -83,13 +83,13 @@ import { resolveBehavior } from "./dialect-behavior/registry.js";
 import { HOF_LAMBDA_ARG } from "./infer/infer.js";
 import { SCALAR_ALIASES, TSQL_ALIASES } from "./infer/types.js";
 import { SNOWFLAKE_ALIASES } from "./snowflake/infer.js";
-import { BQ_ALIASES } from "./infer/bigquery.js";
-import { REDSHIFT_ALIASES } from "./infer/redshift.js";
-import { POSTGRES_ALIASES } from "./infer/postgres.js";
-import { DUCKDB_ALIASES } from "./infer/duckdb.js";
-import { TRINO_ALIASES } from "./infer/trino.js";
-import { SQLITE_ALIASES } from "./infer/sqlite.js";
-import { MYSQL_ALIASES } from "./infer/mysql.js";
+import { BQ_ALIASES } from "./bigquery/infer.js";
+import { REDSHIFT_ALIASES } from "./redshift/infer.js";
+import { POSTGRES_ALIASES } from "./postgres/infer.js";
+import { DUCKDB_ALIASES } from "./duckdb/infer.js";
+import { TRINO_ALIASES } from "./trino/infer.js";
+import { SQLITE_ALIASES } from "./sqlite/infer.js";
+import { MYSQL_ALIASES } from "./mysql/infer.js";
 import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES } from "./signature/signatures.js";
 
 /** Per-dialect membership sets — canonical UPPERCASE names. See module header for sources

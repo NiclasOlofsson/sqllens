@@ -436,7 +436,7 @@ function stageOutputsFree(stage: PipeStage, incoming: string[] | "unknown", scop
 			if (incoming === "unknown") return "unknown";
 			return applyRenameList(incoming, stage.renames, scope.dialect);
 		case "select":
-			return projectionOutputsFree(stage.projections, incoming);
+			return projectionOutputsFree(stage.projections, incoming, scope.dialect);
 		case "aggregate":
 			return aggregateOutputsFree(stage, incoming);
 		case "extend":
@@ -454,7 +454,11 @@ function stageOutputsFree(stage: PipeStage, incoming: string[] | "unknown", scop
 
 /** Project a star-or-named list against the incoming columns (schema-free: incoming is the only source,
  *  so a qualified `t.*` or an anonymous expression yields "unknown"). */
-function projectionOutputsFree(projections: Projection[], incoming: string[] | "unknown"): string[] | "unknown" {
+function projectionOutputsFree(
+	projections: Projection[],
+	incoming: string[] | "unknown",
+	dialect: string,
+): string[] | "unknown" {
 	if (projections.length === 0) return "unknown";
 	const names: string[] = [];
 	for (const p of projections) {
@@ -462,7 +466,7 @@ function projectionOutputsFree(projections: Projection[], incoming: string[] | "
 			if (incoming === "unknown") return "unknown";
 			const star = p.expr.kind === "star" ? p.expr : undefined;
 			if (star?.qualifier) return "unknown";
-			names.push(...(star ? applyStarModifiers(incoming, star) : incoming));
+			names.push(...(star ? applyStarModifiers(incoming, star, dialect) : incoming));
 		} else if (p.name !== undefined) {
 			names.push(p.name);
 		} else {

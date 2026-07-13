@@ -4,7 +4,7 @@ import { lower } from "../src/sqlite/lower.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { inferType } from "../src/infer/infer.js";
 import { Schema } from "../src/qualify/schema.js";
-import { sqliteLiteral, sqliteParseType, SQLITE_FUNCTION_RETURNS } from "../src/infer/sqlite.js";
+import { sqliteLiteral, sqliteParseType, SQLITE_FUNCTION_RETURNS } from "../src/sqlite/infer.js";
 import { scalar, UNKNOWN } from "../src/infer/types.js";
 
 // R5.1 wiring gate: proves inferDialect("sqlite") actually resolves to sqlite's own InferDialect

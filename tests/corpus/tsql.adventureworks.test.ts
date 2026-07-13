@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { corpusPath } from "../helpers/corpus.js";
 import { beforeAll, describe, expect, it } from "vitest";
-import { displayName, foldIdentifier } from "../../src/ident/fold.js";
+import { displayName, foldIdentifier } from "../../src/dialect-behavior/public-fold.js";
 import { inferType } from "../../src/infer/infer.js";
 import { lineage } from "../../src/lineage/lineage.js";
 import { qualify } from "../../src/qualify/qualify.js";
@@ -35,7 +35,7 @@ describe.skipIf(!existsSync(FILE))("T-SQL semantic layer vs AdventureWorks (sche
 	it("extracts the catalog from the DDL", () => {
 		expect(aw.tableCount).toBeGreaterThanOrEqual(60);
 		// a concrete table/column sanity check
-		const addr = schema.columnsFor(["Person", "Address"])?.map((c) => c.name) ?? [];
+		const addr = schema.columnsFor(["Person", "Address"], "tsql")?.map((c) => c.name) ?? [];
 		expect(addr).toContain("AddressID");
 		expect(addr).toContain("City");
 	});

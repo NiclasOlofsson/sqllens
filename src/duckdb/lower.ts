@@ -21,7 +21,7 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "../ident/fold.js";
+import { displayName } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — DuckDB (fork of this repo's grammars/postgres pair, TVL lineage)
@@ -1472,7 +1472,7 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 		directChildrenOfRule(app, P.RULE_func_name)[0] ??
 		directChildrenOfRule(app, P.RULE_plain_func_name)[0] ??
 		directChildrenOfRule(app, P.RULE_dotted_func_name)[0];
-	const name = (fname ? displayName(lastName(fname), "duckdb") : (leftmostToken(app) ?? "")).toLowerCase();
+	const name = (fname ? displayName(lastName(fname)) : (leftmostToken(app) ?? "")).toLowerCase();
 	const args = funcArgs(app);
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];
 	if (within) {

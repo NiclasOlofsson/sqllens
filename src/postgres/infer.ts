@@ -1,7 +1,7 @@
-import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
-import type { FnRule } from "./functions.js";
-import { commonType } from "./coerce.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import type { FnRule } from "../infer/functions.js";
+import { commonType } from "../infer/coerce.js";
+import { fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // PostgreSQL inference knowledge. Scalar-name aliases map the Postgres type
@@ -49,7 +49,7 @@ export const POSTGRES_ALIASES: Record<string, string> = {
 };
 
 export function postgresParseType(text: string): Type {
-	return parseType(text, POSTGRES_ALIASES, (n) => foldIdentifier(n, "postgres"));
+	return parseType(text, POSTGRES_ALIASES, fold);
 }
 
 const S = scalar("string");

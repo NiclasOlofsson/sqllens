@@ -8,16 +8,22 @@ import { join, resolve } from "node:path";
 // dispatcher. If this test fails, a new site reached past the seam — route it through the behavior,
 // do not weaken this test.
 //
-// Scope: the pure semantic passes, plus the two infer ENGINE files. NOT the infer knowledge modules
-// (dialect.ts / types.ts / literals.ts / coerce.ts / functions.ts / <dialect>.ts) — those ARE the
-// per-dialect implementation the behavior delegates to, and legitimately know a dialect.
+// Scope: the pure semantic passes, plus the two infer ENGINE files. NOT the per-dialect folders
+// (src/<dialect>/) or the shared infer engine's knowledge helpers (types.ts / coerce.ts / functions.ts)
+// — those ARE the per-dialect implementation the behavior delegates to, and legitimately know a dialect.
 const SEMANTIC_DIRS = ["src/scope", "src/qualify", "src/sema", "src/lineage", "src/references", "src/symbols"];
 const SEMANTIC_FILES = ["src/infer/infer.ts", "src/infer/nullability.ts"];
 
 // A forbidden dependency, matched on the module specifier of an import/export-from statement.
 const FORBIDDEN: { rx: RegExp; why: string }[] = [
-	{ rx: /["'][^"']*ident\/fold\.js["']/, why: "imports the raw fold funnel (use behaviorOf(scope).fold / .displayName / .matchesSourceKey)" },
-	{ rx: /["'][^"']*(?:\/|^)dialect\.js["']/, why: "imports the Dialect union or the inferDialect dispatcher (use DialectBehavior)" },
+	{
+		rx: /["'][^"']*ident\/fold\.js["']/,
+		why: "imports the raw fold funnel (use behaviorOf(scope).fold / .displayName / .matchesSourceKey)",
+	},
+	{
+		rx: /["'][^"']*(?:\/|^)dialect\.js["']/,
+		why: "imports the Dialect union or the inferDialect dispatcher (use DialectBehavior)",
+	},
 ];
 
 function tsFiles(dir: string): string[] {
@@ -42,7 +48,8 @@ describe("no dialect dependency downstream of lower()", () => {
 			for (const line of readFileSync(file, "utf8").split("\n")) {
 				if (!/^\s*(import|export)\b.*\bfrom\b/.test(line)) continue;
 				for (const { rx, why } of FORBIDDEN) {
-					if (rx.test(line)) offenders.push(`${file.replace(root, "").replace(/\\/g, "/")}: ${why}\n    ${line.trim()}`);
+					if (rx.test(line))
+						offenders.push(`${file.replace(root, "").replace(/\\/g, "/")}: ${why}\n    ${line.trim()}`);
 				}
 			}
 		}

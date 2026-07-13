@@ -137,7 +137,7 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { foldIdentifier } from "../ident/fold.js";
+import { fold } from "./fold.js";
 
 // ---------------------------------------------------------------------------
 // Lowering — Trino (the first-party trinodb SqlBase.g4, split in grammars/trino/) CST -> the
@@ -463,7 +463,7 @@ function lowerQuerySpecification(spec: QuerySpecificationContext, ctx: Ctx): Sel
 	// Named windows (WINDOW w AS (…)) go into scope FIRST so projections' OVER w resolve.
 	const local: Ctx = { windows: new Map(ctx.windows) };
 	for (const wd of spec.windowDefinition()) {
-		if (wd._name) local.windows.set(foldIdentifier(wd._name.getText(), "trino"), wd.windowSpecification());
+		if (wd._name) local.windows.set(fold(wd._name.getText()), wd.windowSpecification());
 	}
 
 	const select = emptySelect(spec);
@@ -995,7 +995,7 @@ function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 		return fn(pe, name, args);
 	}
 	if (pe instanceof MeasureContext) {
-		const call = fn(pe, foldIdentifier(pe.identifier().getText(), "trino"), []);
+		const call = fn(pe, fold(pe.identifier().getText()), []);
 		applyOver(call, pe.over(), ctx);
 		return call;
 	}
@@ -1213,7 +1213,7 @@ function applyOver(call: Expr, over: OverContext | null, ctx: Ctx): void {
 function resolveWindow(over: OverContext, ctx: Ctx): WindowSpecificationContext | null {
 	const direct = over.windowSpecification();
 	if (direct) return direct;
-	const name = over._windowName ? foldIdentifier(over._windowName.getText(), "trino") : null;
+	const name = over._windowName ? fold(over._windowName.getText()) : null;
 	return name ? (ctx.windows.get(name) ?? null) : null;
 }
 
@@ -1221,7 +1221,7 @@ function lowerWindowSpec(spec: WindowSpecificationContext, ctx: Ctx, depth = 0):
 	const out: WindowSpec = { partitionBy: [], orderBy: [], cst: spec };
 	// A named window may extend another (existingWindowName); chain, cycle-guarded by depth.
 	if (spec._existingWindowName && depth < 8) {
-		const base = ctx.windows.get(foldIdentifier(spec._existingWindowName.getText(), "trino"));
+		const base = ctx.windows.get(fold(spec._existingWindowName.getText()));
 		if (base) {
 			const inherited = lowerWindowSpec(base, ctx, depth + 1);
 			out.partitionBy.push(...inherited.partitionBy);

@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { lower as lowerDbx } from "../src/databricks/lower.js";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { inferType } from "../src/infer/infer.js";
-import { BIGQUERY_FUNCTION_RETURNS } from "../src/infer/bigquery.js";
+import { BIGQUERY_FUNCTION_RETURNS } from "../src/bigquery/infer.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { lower as lowerTsql } from "../src/tsql/lower.js";
