@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: MicrosoftDocs/sql-docs  docs/t-sql/{functions,language-elements}/**/*.md (```syntaxsql``` blocks)
 // Overrides source: tools/signature-overrides/tsql.mjs
-// Built 2026-07-14. 205 names (38 curated, 167 harvested), 0 with 2+ overloads.
+// Built 2026-07-14. 205 names (29 curated, 176 harvested), 1 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for tsql: curated overrides folded over the harvested
@@ -58,7 +58,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: CHOOSE (Transact-SQL) - CHOOSE ( index, val_1, val_2 [, val_n ] ): the docs' `val_n` convention is a repeating tail, not one more optional param, which the harvester's dots-only variadic detection missed
-	coalesce: [{ name: "COALESCE", params: [{ name: "expression" }], variadic: true, origin: "curated" }], // curated: COALESCE (Transact-SQL) (variadic)
+	coalesce: [{ name: "COALESCE", params: [{ name: "expression" }], variadic: true, origin: "harvested" }], // language-elements/coalesce-transact-sql.md
 	col_name: [{ name: "COL_NAME", params: [{ name: "table_id" }, { name: "column_id" }], origin: "harvested" }], // functions/col-name-transact-sql.md
 	collationproperty: [
 		{ name: "COLLATIONPROPERTY", params: [{ name: "collation_name" }, { name: "property" }], origin: "harvested" },
@@ -254,9 +254,14 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "FORMAT",
 			params: [{ name: "value" }, { name: "format" }, { name: "culture", optional: true }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: FORMAT (Transact-SQL) (culture optional)
+		{
+			name: "FORMAT",
+			params: [{ name: "value" }, { name: "format_string" }, { name: "culture", optional: true }],
+			origin: "harvested",
+		},
+	], // functions/format-transact-sql.md
 	generate_series: [
 		{
 			name: "GENERATE_SERIES",
@@ -312,8 +317,8 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/isjson-transact-sql.md
 	isnull: [
-		{ name: "ISNULL", params: [{ name: "check_expression" }, { name: "replacement_value" }], origin: "curated" },
-	], // curated: ISNULL (Transact-SQL)
+		{ name: "ISNULL", params: [{ name: "check_expression" }, { name: "replacement_value" }], origin: "harvested" },
+	], // functions/isnull-transact-sql.md
 	isnumeric: [{ name: "ISNUMERIC", params: [{ name: "expression" }], origin: "harvested" }], // functions/isnumeric-transact-sql.md
 	json_contains: [
 		{
@@ -393,11 +398,11 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "LTRIM",
 			params: [{ name: "character_expression" }, { name: "characters", optional: true }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: LTRIM (Transact-SQL) (characters optional, 2022+)
-	max: [{ name: "MAX", params: [{ name: "expression" }], origin: "curated" }], // curated: MAX (Transact-SQL)
-	min: [{ name: "MIN", params: [{ name: "expression" }], origin: "curated" }], // curated: MIN (Transact-SQL)
+	], // functions/ltrim-transact-sql.md
+	max: [{ name: "MAX", params: [{ name: "expression" }], origin: "harvested" }], // functions/max-transact-sql.md
+	min: [{ name: "MIN", params: [{ name: "expression" }], origin: "harvested" }], // functions/min-transact-sql.md
 	min_active_rowversion: [{ name: "MIN_ACTIVE_ROWVERSION", params: [], origin: "harvested" }], // functions/min-active-rowversion-transact-sql.md
 	month: [{ name: "MONTH", params: [{ name: "date" }], origin: "harvested" }], // functions/month-transact-sql.md
 	nchar: [{ name: "NCHAR", params: [{ name: "integer_expression" }], origin: "harvested" }], // functions/nchar-transact-sql.md
@@ -452,9 +457,9 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "REPLACE",
 			params: [{ name: "string_expression" }, { name: "string_pattern" }, { name: "string_replacement" }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: REPLACE (Transact-SQL)
+	], // functions/replace-transact-sql.md
 	replicate: [
 		{
 			name: "REPLICATE",
@@ -490,9 +495,9 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "RTRIM",
 			params: [{ name: "character_expression" }, { name: "characters", optional: true }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: RTRIM (Transact-SQL) (characters optional, 2022+)
+	], // functions/rtrim-transact-sql.md
 	schema_id: [{ name: "SCHEMA_ID", params: [{ name: "schema_name", optional: true }], origin: "harvested" }], // functions/schema-id-transact-sql.md
 	schema_name: [{ name: "SCHEMA_NAME", params: [{ name: "schema_id", optional: true }], origin: "harvested" }], // functions/schema-name-transact-sql.md
 	scope_identity: [{ name: "SCOPE_IDENTITY", params: [], origin: "harvested" }], // functions/scope-identity-transact-sql.md
@@ -528,7 +533,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	stats_date: [{ name: "STATS_DATE", params: [{ name: "object_id" }, { name: "stats_id" }], origin: "harvested" }], // functions/stats-date-transact-sql.md
 	stdev: [{ name: "STDEV", params: [{ name: "expression" }], origin: "harvested" }], // functions/stdev-transact-sql.md
 	stdevp: [{ name: "STDEVP", params: [{ name: "expression" }], origin: "harvested" }], // functions/stdevp-transact-sql.md
-	string_agg: [{ name: "STRING_AGG", params: [{ name: "expression" }, { name: "separator" }], origin: "curated" }], // curated: STRING_AGG (Transact-SQL)
+	string_agg: [{ name: "STRING_AGG", params: [{ name: "expression" }, { name: "separator" }], origin: "harvested" }], // functions/string-agg-transact-sql.md
 	string_escape: [{ name: "STRING_ESCAPE", params: [{ name: "text" }, { name: "type" }], origin: "harvested" }], // functions/string-escape-transact-sql.md
 	string_split: [
 		{

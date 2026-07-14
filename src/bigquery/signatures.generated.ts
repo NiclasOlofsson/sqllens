@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: google/googlesql reference markdown  vendor/googlesql-docs/docs/*.md (per-function heading + syntax fences)
 // Overrides source: tools/signature-overrides/bigquery.mjs
-// Built 2026-07-14. 329 names (38 curated, 291 harvested), 23 with 2+ overloads.
+// Built 2026-07-14. 329 names (34 curated, 295 harvested), 24 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for bigquery: curated overrides folded over the harvested
@@ -87,7 +87,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	char_length: [{ name: "CHAR_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	character_length: [{ name: "CHARACTER_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	chr: [{ name: "CHR", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
-	coalesce: [{ name: "COALESCE", params: [{ name: "expr" }], variadic: true, origin: "curated" }], // curated: COALESCE (variadic)
+	coalesce: [{ name: "COALESCE", params: [{ name: "expr" }], variadic: true, origin: "harvested" }], // conditional_expressions.md
 	code_points_to_bytes: [
 		{ name: "CODE_POINTS_TO_BYTES", params: [{ name: "ascii_code_points" }], origin: "harvested" },
 	], // string_functions.md
@@ -161,10 +161,20 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	date_trunc: [
 		{
 			name: "DATE_TRUNC",
-			params: [{ name: "date_expression", type: "DATE" }, { name: "granularity" }],
-			origin: "curated",
+			params: [
+				{ name: "timestamp_value" },
+				{ name: "timestamp_granularity" },
+				{ name: "time_zone", optional: true },
+			],
+			origin: "harvested",
 		},
-	], // curated: DATE_TRUNC
+		{ name: "DATE_TRUNC", params: [{ name: "date_value" }, { name: "date_granularity" }], origin: "harvested" },
+		{
+			name: "DATE_TRUNC",
+			params: [{ name: "datetime_value" }, { name: "datetime_granularity" }],
+			origin: "harvested",
+		},
+	], // date_functions.md
 	datetime_bucket: [
 		{
 			name: "DATETIME_BUCKET",
@@ -289,7 +299,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	iferror: [
 		{ name: "IFERROR", params: [{ name: "try_expression" }, { name: "catch_expression" }], origin: "harvested" },
 	], // debugging_functions.md
-	ifnull: [{ name: "IFNULL", params: [{ name: "expr" }, { name: "null_result" }], origin: "curated" }], // curated: IFNULL
+	ifnull: [{ name: "IFNULL", params: [{ name: "expr" }, { name: "null_result" }], origin: "harvested" }], // conditional_expressions.md
 	initcap: [
 		{ name: "INITCAP", params: [{ name: "value" }, { name: "delimiters", optional: true }], origin: "harvested" },
 	], // string_functions.md
@@ -517,7 +527,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // string_functions.md
-	nullif: [{ name: "NULLIF", params: [{ name: "expr" }, { name: "expr_to_match" }], origin: "curated" }], // curated: NULLIF
+	nullif: [{ name: "NULLIF", params: [{ name: "expr" }, { name: "expr_to_match" }], origin: "harvested" }], // conditional_expressions.md
 	nulliferror: [{ name: "NULLIFERROR", params: [{ name: "try_expression" }], origin: "harvested" }], // debugging_functions.md
 	nullifzero: [{ name: "NULLIFZERO", params: [{ name: "expr" }], origin: "harvested" }], // conditional_expressions.md
 	octet_length: [{ name: "OCTET_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md

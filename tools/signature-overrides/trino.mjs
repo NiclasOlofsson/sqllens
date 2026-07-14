@@ -59,14 +59,6 @@ export const OVERRIDES = {
 		],
 		cite: "date_parse(string, format)",
 	},
-	from_unixtime: {
-		name: "from_unixtime",
-		params: [
-			{ name: "unixtime", type: "double" },
-			{ name: "zone", type: "varchar" },
-		],
-		cite: "from_unixtime(unixtime[, zone])",
-	},
 	at_timezone: {
 		name: "at_timezone",
 		params: [
@@ -76,15 +68,6 @@ export const OVERRIDES = {
 		cite: "at_timezone(timestamp, zone)",
 	},
 	// string - functions/string.html
-	substr: {
-		name: "substr",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "start", type: "bigint" },
-			{ name: "length", type: "bigint" },
-		],
-		cite: "substr(string, start[, length])",
-	},
 	split: {
 		name: "split",
 		params: [
@@ -121,24 +104,6 @@ export const OVERRIDES = {
 		],
 		cite: "replace(string, search[, replace])",
 	},
-	lpad: {
-		name: "lpad",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "size", type: "bigint" },
-			{ name: "padstring", type: "varchar" },
-		],
-		cite: "lpad(string, size, padstring)",
-	},
-	rpad: {
-		name: "rpad",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "size", type: "bigint" },
-			{ name: "padstring", type: "varchar" },
-		],
-		cite: "rpad(string, size, padstring)",
-	},
 	concat_ws: {
 		name: "concat_ws",
 		params: [
@@ -174,15 +139,6 @@ export const OVERRIDES = {
 			{ name: "group", type: "bigint", optional: true },
 		],
 		cite: "regexp_extract(string, pattern[, group])",
-	},
-	regexp_replace: {
-		name: "regexp_replace",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "pattern", type: "varchar" },
-			{ name: "replacement", type: "varchar", optional: true },
-		],
-		cite: "regexp_replace(string, pattern[, replacement])",
 	},
 	// json - functions/json.html
 	json_extract: {
@@ -250,7 +206,6 @@ export const OVERRIDES = {
 	// aggregate - functions/aggregate.html
 	count: { name: "count", params: [{ name: "x", type: "any" }], cite: "count(x)" },
 	sum: { name: "sum", params: [{ name: "x", type: "numeric" }], cite: "sum(x)" },
-	avg: { name: "avg", params: [{ name: "x", type: "numeric" }], cite: "avg(x)" },
 	min: {
 		name: "min",
 		params: [
@@ -284,14 +239,6 @@ export const OVERRIDES = {
 			{ name: "n", type: "bigint", optional: true },
 		],
 		cite: "min_by(x, y[, n])",
-	},
-	approx_percentile: {
-		name: "approx_percentile",
-		params: [
-			{ name: "x", type: "numeric" },
-			{ name: "percentile", type: "double" },
-		],
-		cite: "approx_percentile(x, percentile)",
 	},
 	approx_distinct: {
 		name: "approx_distinct",

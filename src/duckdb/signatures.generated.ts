@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: duckdb-web  docs/current/sql/functions/*.md ("#### `name(...)`" headings)
 // Overrides source: tools/signature-overrides/duckdb.mjs
-// Built 2026-07-14. 410 names (51 curated, 359 harvested), 31 with 2+ overloads.
+// Built 2026-07-14. 410 names (37 curated, 373 harvested), 40 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for duckdb: curated overrides folded over the harvested
@@ -138,8 +138,8 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 	], // sql/functions/datepart.md, sql/functions/timestamp.md
 	checkpoint: [{ name: "checkpoint", params: [{ name: "database" }], origin: "harvested" }], // sql/functions/utility.md
 	chr: [{ name: "chr", params: [{ name: "code_point" }], origin: "harvested" }], // sql/functions/text.md
-	coalesce: [{ name: "coalesce", params: [{ name: "expr" }], variadic: true, origin: "curated" }], // curated: coalesce(expr, ...)
-	concat: [{ name: "concat", params: [{ name: "value" }], variadic: true, origin: "curated" }], // curated: concat(value, ...)
+	coalesce: [{ name: "coalesce", params: [{ name: "expr" }], variadic: true, origin: "harvested" }], // sql/functions/utility.md
+	concat: [{ name: "concat", params: [{ name: "value" }], variadic: true, origin: "harvested" }], // sql/functions/list.md
 	concat_ws: [
 		{
 			name: "concat_ws",
@@ -150,19 +150,13 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 	], // curated: concat_ws(separator, value, ...)
 	constant_or_null: [{ name: "constant_or_null", params: [{ name: "arg1" }, { name: "arg2" }], origin: "harvested" }], // sql/functions/utility.md
 	contains: [
-		{
-			name: "contains",
-			params: [
-				{ name: "string", type: "text" },
-				{ name: "search_string", type: "text" },
-			],
-			origin: "curated",
-		},
-	], // curated: contains(string, search_string)
+		{ name: "contains", params: [{ name: "list" }, { name: "element" }], origin: "harvested" },
+		{ name: "contains", params: [{ name: "string" }, { name: "search_string" }], origin: "harvested" },
+	], // sql/functions/list.md, sql/functions/text.md
 	corr: [{ name: "corr", params: [{ name: "y" }, { name: "x" }], origin: "harvested" }], // sql/functions/aggregates.md
 	cos: [{ name: "cos", params: [{ name: "x" }], origin: "harvested" }], // sql/functions/numeric.md
 	cot: [{ name: "cot", params: [{ name: "x" }], origin: "harvested" }], // sql/functions/numeric.md
-	count: [{ name: "count", params: [{ name: "arg", optional: true }], origin: "curated" }], // curated: count([arg]) - count() with no argument counts all rows, count(arg) counts rows where arg is not NULL
+	count: [{ name: "count", params: [{ name: "arg", optional: true }], origin: "harvested" }], // sql/functions/aggregates.md
 	count_if: [{ name: "count_if", params: [{ name: "x" }], origin: "harvested" }], // sql/functions/utility.md
 	countif: [{ name: "countif", params: [{ name: "arg" }], origin: "harvested" }], // sql/functions/aggregates.md
 	covar_pop: [{ name: "covar_pop", params: [{ name: "y" }, { name: "x" }], origin: "harvested" }], // sql/functions/aggregates.md
@@ -190,45 +184,59 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 	date_diff: [
 		{
 			name: "date_diff",
-			params: [
-				{ name: "part", type: "text" },
-				{ name: "startdate", type: "date" },
-				{ name: "enddate", type: "date" },
-			],
-			origin: "curated",
+			params: [{ name: "part" }, { name: "startdate" }, { name: "enddate" }],
+			origin: "harvested",
 		},
-	], // curated: date_diff(part, startdate, enddate)
-	date_part: [
 		{
-			name: "date_part",
-			params: [
-				{ name: "part", type: "text" },
-				{ name: "date", type: "date" },
-			],
-			origin: "curated",
+			name: "date_diff",
+			params: [{ name: "part" }, { name: "starttime" }, { name: "endtime" }],
+			origin: "harvested",
 		},
-	], // curated: date_part(part, date)
+		{
+			name: "date_diff",
+			params: [{ name: "part" }, { name: "starttimestamp" }, { name: "endtimestamp" }],
+			origin: "harvested",
+		},
+		{
+			name: "date_diff",
+			params: [{ name: "part" }, { name: "starttimestamptz" }, { name: "endtimestamptz" }],
+			origin: "harvested",
+		},
+	], // sql/functions/date.md, sql/functions/time.md, sql/functions/timestamp.md, sql/functions/timestamptz.md
+	date_part: [
+		{ name: "date_part", params: [{ name: "part" }, { name: "date" }], origin: "harvested" },
+		{ name: "date_part", params: [{ name: "part" }, { name: "interval" }], origin: "harvested" },
+		{ name: "date_part", params: [{ name: "part" }, { name: "time" }], origin: "harvested" },
+		{ name: "date_part", params: [{ name: "part" }, { name: "timestamp" }], origin: "harvested" },
+		{ name: "date_part", params: [{ name: "part" }, { name: "timestamptz" }], origin: "harvested" },
+	], // sql/functions/date.md, sql/functions/interval.md, sql/functions/time.md, sql/functions/timestamp.md, sql/functions/timestamptz.md
 	date_sub: [
 		{
 			name: "date_sub",
-			params: [
-				{ name: "part", type: "text" },
-				{ name: "startdate", type: "date" },
-				{ name: "enddate", type: "date" },
-			],
-			origin: "curated",
+			params: [{ name: "part" }, { name: "startdate" }, { name: "enddate" }],
+			origin: "harvested",
 		},
-	], // curated: date_sub(part, startdate, enddate)
-	date_trunc: [
 		{
-			name: "date_trunc",
-			params: [
-				{ name: "part", type: "text" },
-				{ name: "date", type: "date" },
-			],
-			origin: "curated",
+			name: "date_sub",
+			params: [{ name: "part" }, { name: "starttime" }, { name: "endtime" }],
+			origin: "harvested",
 		},
-	], // curated: date_trunc(part, date)
+		{
+			name: "date_sub",
+			params: [{ name: "part" }, { name: "starttimestamp" }, { name: "endtimestamp" }],
+			origin: "harvested",
+		},
+		{
+			name: "date_sub",
+			params: [{ name: "part" }, { name: "starttimestamptz" }, { name: "endtimestamptz" }],
+			origin: "harvested",
+		},
+	], // sql/functions/date.md, sql/functions/time.md, sql/functions/timestamp.md, sql/functions/timestamptz.md
+	date_trunc: [
+		{ name: "date_trunc", params: [{ name: "part" }, { name: "date" }], origin: "harvested" },
+		{ name: "date_trunc", params: [{ name: "part" }, { name: "timestamp" }], origin: "harvested" },
+		{ name: "date_trunc", params: [{ name: "part" }, { name: "timestamptz" }], origin: "harvested" },
+	], // sql/functions/date.md, sql/functions/timestamp.md, sql/functions/timestamptz.md
 	datepart: [{ name: "datepart", params: [{ name: "part" }, { name: "interval" }], origin: "harvested" }], // sql/functions/interval.md
 	day: [{ name: "day", params: [{ name: "date" }], origin: "harvested" }], // sql/functions/datepart.md
 	dayname: [
@@ -355,7 +363,7 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: if(condition, a, b)
-	ifnull: [{ name: "ifnull", params: [{ name: "expr" }, { name: "other" }], origin: "curated" }], // curated: ifnull(expr, other)
+	ifnull: [{ name: "ifnull", params: [{ name: "expr" }, { name: "other" }], origin: "harvested" }], // sql/functions/utility.md
 	ilike_escape: [
 		{
 			name: "ilike_escape",
@@ -693,7 +701,7 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // sql/functions/text.md
 	now: [{ name: "now", params: [], origin: "harvested" }], // sql/functions/timestamptz.md
-	nullif: [{ name: "nullif", params: [{ name: "a" }, { name: "b" }], origin: "curated" }], // curated: nullif(a, b)
+	nullif: [{ name: "nullif", params: [{ name: "a" }, { name: "b" }], origin: "harvested" }], // sql/functions/utility.md
 	octet_length: [
 		{ name: "octet_length", params: [{ name: "bitstring" }], origin: "harvested" },
 		{ name: "octet_length", params: [{ name: "blob" }], origin: "harvested" },
@@ -784,13 +792,29 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "regexp_extract",
 			params: [
-				{ name: "string", type: "text" },
-				{ name: "pattern", type: "text" },
-				{ name: "group", type: "int", optional: true },
+				{ name: "string" },
+				{ name: "pattern" },
+				{ name: "name_list" },
+				{ name: "options", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: regexp_extract(string, pattern[, group])
+		{
+			name: "regexp_extract",
+			params: [
+				{ name: "string" },
+				{ name: "regex" },
+				{ name: "group", optional: true },
+				{ name: "options", optional: true },
+			],
+			origin: "harvested",
+		},
+		{
+			name: "regexp_extract",
+			params: [{ name: "string" }, { name: "regex" }, { name: "name_list" }, { name: "options", optional: true }],
+			origin: "harvested",
+		},
+	], // sql/functions/regular_expressions.md, sql/functions/text.md
 	regexp_extract_all: [
 		{
 			name: "regexp_extract_all",
@@ -823,26 +847,37 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 	regexp_matches: [
 		{
 			name: "regexp_matches",
-			params: [
-				{ name: "string", type: "text" },
-				{ name: "pattern", type: "text" },
-				{ name: "options", type: "text", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "pattern" }, { name: "options", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: regexp_matches(string, pattern[, options])
+		{
+			name: "regexp_matches",
+			params: [{ name: "string" }, { name: "regex" }, { name: "options", optional: true }],
+			origin: "harvested",
+		},
+	], // sql/functions/regular_expressions.md, sql/functions/text.md
 	regexp_replace: [
 		{
 			name: "regexp_replace",
 			params: [
-				{ name: "string", type: "text" },
-				{ name: "pattern", type: "text" },
-				{ name: "replacement", type: "text" },
-				{ name: "options", type: "text" },
+				{ name: "string" },
+				{ name: "pattern" },
+				{ name: "replacement" },
+				{ name: "options", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: regexp_replace(string, pattern, replacement[, options])
+		{
+			name: "regexp_replace",
+			params: [
+				{ name: "string" },
+				{ name: "regex" },
+				{ name: "replacement" },
+				{ name: "options", optional: true },
+			],
+			origin: "harvested",
+		},
+	], // sql/functions/regular_expressions.md, sql/functions/text.md
 	regexp_split_to_array: [
 		{
 			name: "regexp_split_to_array",
@@ -998,15 +1033,10 @@ export const DUCKDB_SIGNATURES: Record<string, FnSignature[]> = {
 	stddev_pop: [{ name: "stddev_pop", params: [{ name: "x" }], origin: "harvested" }], // sql/functions/aggregates.md
 	stddev_samp: [{ name: "stddev_samp", params: [{ name: "x" }], origin: "harvested" }], // sql/functions/aggregates.md
 	strftime: [
-		{
-			name: "strftime",
-			params: [
-				{ name: "date", type: "date" },
-				{ name: "format", type: "text" },
-			],
-			origin: "curated",
-		},
-	], // curated: strftime(date, format)
+		{ name: "strftime", params: [{ name: "date" }, { name: "format" }], origin: "harvested" },
+		{ name: "strftime", params: [{ name: "timestamp" }, { name: "format" }], origin: "harvested" },
+		{ name: "strftime", params: [{ name: "timestamptz" }, { name: "format" }], origin: "harvested" },
+	], // sql/functions/date.md, sql/functions/timestamp.md, sql/functions/timestamptz.md
 	string_agg: [
 		{
 			name: "string_agg",

@@ -34,57 +34,81 @@ function harvestedCount(dialect: keyof typeof SIGNATURES): number {
 // regressed and must be investigated, not lowered.
 
 describe("harvested signatures — T-SQL yield floor (ratchet)", () => {
-	it("at least 167 T-SQL entries carry origin harvested", () => {
-		expect(harvestedCount("tsql")).toBeGreaterThanOrEqual(167);
+	it("at least 176 T-SQL entries carry origin harvested", () => {
+		// 167 -> 176 on 2026-07-14: the override-pruning pass deleted 8 redundant overrides (replace,
+		// ltrim, rtrim, isnull, coalesce, min, max, string_agg - each byte-identical to the harvest
+		// alone) plus 1 richer-harvest-hidden override (format), flipping their origin back to harvested.
+		expect(harvestedCount("tsql")).toBeGreaterThanOrEqual(176);
 	});
 });
 
 describe("harvested signatures — DuckDB yield floor (ratchet)", () => {
-	it("at least 359 DuckDB entries carry origin harvested", () => {
+	it("at least 373 DuckDB entries carry origin harvested", () => {
 		// 327 -> 359 on 2026-07-14: the overload-aware model turns former whole-name conflicts (length,
 		// bit_count, hex, md5, generate_series, make_timestamp, ...) into real 2+-overload data.
-		expect(harvestedCount("duckdb")).toBeGreaterThanOrEqual(359);
+		// 359 -> 373 later the same day: the override-pruning pass deleted 5 redundant overrides
+		// (concat, coalesce, nullif, ifnull, count) plus 9 richer-harvest-hidden overrides (date_part,
+		// date_diff, date_sub, date_trunc, strftime, regexp_replace, regexp_extract, regexp_matches,
+		// contains), flipping their origin back to harvested.
+		expect(harvestedCount("duckdb")).toBeGreaterThanOrEqual(373);
 	});
 });
 
 describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
-	it("at least 547 PostgreSQL entries carry origin harvested", () => {
+	it("at least 573 PostgreSQL entries carry origin harvested", () => {
 		// 477 -> 547 on 2026-07-14: type-based overloads (lower(text) vs lower(anyrange), length's six
 		// type forms, round/trunc/log's numeric vs double precision forms, ...) now emit as overload
 		// sets instead of being dropped as conflicts.
-		expect(harvestedCount("postgres")).toBeGreaterThanOrEqual(547);
+		// 547 -> 573 later the same day: the override-pruning pass deleted 13 redundant overrides
+		// (make_date, make_interval, replace, regexp_match, strpos, string_to_array, div, coalesce,
+		// nullif, greatest, least, string_agg, jsonb_set) plus 13 richer-harvest-hidden overrides (age,
+		// date_trunc, date_part, to_timestamp, to_char, round, trunc, ceil, floor, power, width_bucket,
+		// sum, avg), flipping their origin back to harvested.
+		expect(harvestedCount("postgres")).toBeGreaterThanOrEqual(573);
 	});
 });
 
 describe("harvested signatures: Databricks yield floor (ratchet)", () => {
-	it("at least 603 Databricks entries carry origin harvested", () => {
+	it("at least 608 Databricks entries carry origin harvested", () => {
 		// 599 -> 603 on 2026-07-14: ai_extract, element_at, format_number and try_element_at's own
 		// multi-shape doc pages now emit as overload sets.
-		expect(harvestedCount("databricks")).toBeGreaterThanOrEqual(603);
+		// 603 -> 608 later the same day: the override-pruning pass deleted 5 redundant overrides (nvl,
+		// nullif, count, min, max - each byte-identical to the harvest alone), flipping their origin
+		// back to harvested.
+		expect(harvestedCount("databricks")).toBeGreaterThanOrEqual(608);
 	});
 });
 
 describe("harvested signatures: Snowflake yield floor (ratchet)", () => {
-	it("at least 501 Snowflake entries carry origin harvested", () => {
-		expect(harvestedCount("snowflake")).toBeGreaterThanOrEqual(501);
+	it("at least 510 Snowflake entries carry origin harvested", () => {
+		// 501 -> 510 on 2026-07-14: the override-pruning pass deleted 9 redundant overrides (datediff,
+		// date_trunc, coalesce, nvl, ifnull, nullif, count, min, max - each byte-identical to the
+		// harvest alone), flipping their origin back to harvested.
+		expect(harvestedCount("snowflake")).toBeGreaterThanOrEqual(510);
 	});
 });
 
 describe("harvested signatures: Trino yield floor (ratchet)", () => {
-	it("at least 347 Trino entries carry origin harvested", () => {
+	it("at least 354 Trino entries carry origin harvested", () => {
 		// 334 -> 347 on 2026-07-14: type-based overloads (length(binary) vs length(string), avg/merge/
 		// cardinality's typed forms, ...) now emit as overload sets instead of being dropped.
-		expect(harvestedCount("trino")).toBeGreaterThanOrEqual(347);
+		// 347 -> 354 later the same day: the override-pruning pass deleted 7 richer-harvest-hidden
+		// overrides (from_unixtime, substr, lpad, rpad, avg, approx_percentile, regexp_replace),
+		// flipping their origin back to harvested.
+		expect(harvestedCount("trino")).toBeGreaterThanOrEqual(354);
 	});
 });
 
 describe("harvested signatures: BigQuery yield floor (ratchet)", () => {
-	it("at least 291 BigQuery entries carry origin harvested", () => {
+	it("at least 295 BigQuery entries carry origin harvested", () => {
 		// 293 -> 291 on 2026-07-14, same day: json_extract and json_query gained curated overrides
 		// (the corpus proves json_path is really optional, which the doc's own syntax fence doesn't
 		// show), flipping those two names' origin from harvested to curated: a legitimate drop, not a
 		// regression, per this file's own header note.
-		expect(harvestedCount("bigquery")).toBeGreaterThanOrEqual(291);
+		// 291 -> 295 later the same day: the override-pruning pass deleted 3 redundant overrides
+		// (coalesce, ifnull, nullif) plus 1 richer-harvest-hidden override (date_trunc), flipping their
+		// origin back to harvested.
+		expect(harvestedCount("bigquery")).toBeGreaterThanOrEqual(295);
 	});
 });
 
@@ -130,11 +154,13 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		expect(sig.params).toEqual([{ name: "argument1" }, { name: "argument2" }]);
 	});
 
-	it("LTRIM(character_expression, characters?): curated origin, shape identical to the harvest's own prefix-merge", () => {
+	it("LTRIM(character_expression, characters?): harvested origin, via the harvest's own prefix-merge", () => {
 		// functions/ltrim-transact-sql.md documents two blocks of different LENGTH (pre-2022 1-arg,
-		// 2022+ 2-arg); the harvest's prefix-merge widening and the curated override agree on this exact
-		// shape (a redundancy-report candidate), so the override wins but changes nothing observable.
+		// 2022+ 2-arg); the harvest's prefix-merge widening produces this exact shape on its own. The
+		// override that used to duplicate it was deleted 2026-07-14 (redundancy-report candidate,
+		// override-pruning pass), so this is now purely harvested.
 		const sig = SIGNATURES.tsql.ltrim[0];
+		expect(sig.origin).toBe("harvested");
 		expect(sig.params).toEqual([{ name: "character_expression" }, { name: "characters", optional: true }]);
 	});
 
@@ -160,9 +186,11 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 	it("postgres make_interval: all 7 params optional, via the recursive nested-<optional> peel", () => {
 		// func.sgml wraps even the FIRST param (years) in the outer <optional> of a 7-deep chain
 		// (years [, months [, weeks [, days [, hours [, mins [, secs ]]]]]]); only a recursive descent
-		// through the nesting (not a single non-greedy regex pass) unwraps every level. The curated
-		// override agrees with this shape exactly (a redundancy-report candidate).
+		// through the nesting (not a single non-greedy regex pass) unwraps every level. The override that
+		// used to duplicate this shape was deleted 2026-07-14 (redundancy-report candidate,
+		// override-pruning pass), so this is now purely harvested.
 		const sig = SIGNATURES.postgres.make_interval[0];
+		expect(sig.origin).toBe("harvested");
 		expect(sig.params).toEqual([
 			{ name: "years", type: "int", optional: true },
 			{ name: "months", type: "int", optional: true },
@@ -174,10 +202,13 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		]);
 	});
 
-	it("postgres coalesce(value, ...): variadic, curated origin, shape identical to what the harvest found in a <synopsis> block", () => {
+	it("postgres coalesce(value, ...): variadic, harvested origin, found in a <synopsis> block", () => {
 		// func.sgml documents COALESCE only as `<synopsis><function>COALESCE</function>(<replaceable>value</replaceable>
-		// <optional>, ...</optional>)</synopsis>`, not inside a <para role="func_signature">.
+		// <optional>, ...</optional>)</synopsis>`, not inside a <para role="func_signature">. The override
+		// that used to duplicate this shape was deleted 2026-07-14 (redundancy-report candidate,
+		// override-pruning pass), so this is now purely harvested.
 		const sig = SIGNATURES.postgres.coalesce[0];
+		expect(sig.origin).toBe("harvested");
 		expect(sig.params).toEqual([{ name: "value" }]);
 		expect(sig.variadic).toBe(true);
 	});

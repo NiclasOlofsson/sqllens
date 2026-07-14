@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` and `<synopsis>` blocks)
 // Overrides source: tools/signature-overrides/postgres.mjs
-// Built 2026-07-14. 596 names (49 curated, 547 harvested), 70 with 2+ overloads.
+// Built 2026-07-14. 596 names (23 curated, 573 harvested), 83 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for postgres: curated overrides folded over the harvested
@@ -29,15 +29,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	acosd: [{ name: "acosd", params: [{ name: "double precision" }], origin: "harvested" }], // func.sgml
 	acosh: [{ name: "acosh", params: [{ name: "double precision" }], origin: "harvested" }], // func.sgml
 	age: [
-		{
-			name: "age",
-			params: [
-				{ name: "timestamp", type: "timestamp" },
-				{ name: "timestamp2", type: "timestamp" },
-			],
-			origin: "curated",
-		},
-	], // curated: age(timestamp, timestamp)
+		{ name: "age", params: [{ name: "timestamp" }, { name: "timestamp", optional: true }], origin: "harvested" },
+		{ name: "age", params: [{ name: "xid" }], origin: "harvested" },
+	], // func.sgml
 	any_value: [{ name: "any_value", params: [{ name: "anyelement" }], origin: "harvested" }], // func.sgml
 	area: [{ name: "area", params: [{ name: "geometric_type" }], origin: "harvested" }], // func.sgml
 	array_agg: [{ name: "array_agg", params: [{ name: "expression" }], origin: "curated" }], // curated: array_agg(expression)
@@ -171,7 +165,15 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	], // func.sgml
 	atand: [{ name: "atand", params: [{ name: "double precision" }], origin: "harvested" }], // func.sgml
 	atanh: [{ name: "atanh", params: [{ name: "double precision" }], origin: "harvested" }], // func.sgml
-	avg: [{ name: "avg", params: [{ name: "expression", type: "numeric" }], origin: "curated" }], // curated: avg(expression)
+	avg: [
+		{ name: "avg", params: [{ name: "smallint" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "bigint" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "real" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "double precision" }], origin: "harvested" },
+		{ name: "avg", params: [{ name: "interval" }], origin: "harvested" },
+	], // func.sgml
 	bit_and: [
 		{ name: "bit_and", params: [{ name: "smallint" }], origin: "harvested" },
 		{ name: "bit_and", params: [{ name: "integer" }], origin: "harvested" },
@@ -252,7 +254,10 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	cardinality: [{ name: "cardinality", params: [{ name: "anyarray" }], origin: "harvested" }], // func.sgml
 	casefold: [{ name: "casefold", params: [{ name: "text" }], origin: "harvested" }], // func.sgml
 	cbrt: [{ name: "cbrt", params: [{ name: "double precision" }], origin: "harvested" }], // func.sgml
-	ceil: [{ name: "ceil", params: [{ name: "x", type: "numeric" }], origin: "curated" }], // curated: ceil(x)
+	ceil: [
+		{ name: "ceil", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "ceil", params: [{ name: "double precision" }], origin: "harvested" },
+	], // func.sgml
 	ceiling: [
 		{ name: "ceiling", params: [{ name: "numeric" }], origin: "harvested" },
 		{ name: "ceiling", params: [{ name: "double precision" }], origin: "harvested" },
@@ -267,7 +272,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "circle", params: [{ name: "polygon" }], origin: "harvested" },
 	], // func.sgml
 	clock_timestamp: [{ name: "clock_timestamp", params: [], origin: "harvested" }], // func.sgml
-	coalesce: [{ name: "coalesce", params: [{ name: "value" }], variadic: true, origin: "curated" }], // curated: COALESCE(value…)
+	coalesce: [{ name: "COALESCE", params: [{ name: "value" }], variadic: true, origin: "harvested" }], // func.sgml
 	col_description: [
 		{
 			name: "col_description",
@@ -278,7 +283,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // func.sgml
-	concat: [{ name: "concat", params: [{ name: "val" }], variadic: true, origin: "curated" }], // curated: concat(val1, val2, …)
+	concat: [{ name: "concat", params: [{ name: "val" }], variadic: true, origin: "curated" }], // curated: concat(val, ...) - pg_proc oid 3058: one VARIADIC any slot, a 1-arg call is valid (the doc table just displays two slots)
 	concat_ws: [
 		{
 			name: "concat_ws",
@@ -286,7 +291,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			variadic: true,
 			origin: "curated",
 		},
-	], // curated: concat_ws(sep, val…)
+	], // curated: concat_ws(sep, val, ...) - pg_proc oid 3059: text plus VARIADIC any, minimum 2 args (kept over the harvest reading of the doc display slots)
 	convert: [
 		{
 			name: "convert",
@@ -401,15 +406,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // curated: date_bin(stride, source, origin)
 	date_part: [
-		{
-			name: "date_part",
-			params: [
-				{ name: "field", type: "text" },
-				{ name: "source", type: "timestamp" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_part(field, source)
+		{ name: "date_part", params: [{ name: "text" }, { name: "timestamp" }], origin: "harvested" },
+		{ name: "date_part", params: [{ name: "text" }, { name: "interval" }], origin: "harvested" },
+	], // func.sgml
 	date_subtract: [
 		{
 			name: "date_subtract",
@@ -420,13 +419,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	date_trunc: [
 		{
 			name: "date_trunc",
-			params: [
-				{ name: "field", type: "text" },
-				{ name: "source", type: "timestamp" },
-			],
-			origin: "curated",
+			params: [{ name: "text" }, { name: "timestamp with time zone" }, { name: "text" }],
+			origin: "harvested",
 		},
-	], // curated: date_trunc(field, source)
+		{ name: "date_trunc", params: [{ name: "text" }, { name: "timestamp" }], origin: "harvested" },
+		{ name: "date_trunc", params: [{ name: "text" }, { name: "interval" }], origin: "harvested" },
+	], // func.sgml
 	decode: [
 		{
 			name: "decode",
@@ -448,9 +446,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "y", type: "numeric" },
 				{ name: "x", type: "numeric" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: div(y, x)
+	], // func.sgml
 	encode: [
 		{
 			name: "encode",
@@ -476,7 +474,10 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	factorial: [{ name: "factorial", params: [{ name: "bigint" }], origin: "harvested" }], // func.sgml
 	family: [{ name: "family", params: [{ name: "inet" }], origin: "harvested" }], // func.sgml
 	first_value: [{ name: "first_value", params: [{ name: "value", type: "anyelement" }], origin: "harvested" }], // func.sgml
-	floor: [{ name: "floor", params: [{ name: "x", type: "numeric" }], origin: "curated" }], // curated: floor(x)
+	floor: [
+		{ name: "floor", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "floor", params: [{ name: "double precision" }], origin: "harvested" },
+	], // func.sgml
 	format: [
 		{
 			name: "format",
@@ -592,7 +593,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	gin_clean_pending_list: [
 		{ name: "gin_clean_pending_list", params: [{ name: "index", type: "regclass" }], origin: "harvested" },
 	], // func.sgml
-	greatest: [{ name: "greatest", params: [{ name: "value" }], variadic: true, origin: "curated" }], // curated: GREATEST(value…)
+	greatest: [{ name: "GREATEST", params: [{ name: "value" }], variadic: true, origin: "harvested" }], // func.sgml
 	grouping: [{ name: "GROUPING", params: [{ name: "group_by_expression(s)" }], origin: "harvested" }], // func.sgml
 	height: [{ name: "height", params: [{ name: "box" }], origin: "harvested" }], // func.sgml
 	host: [{ name: "host", params: [{ name: "inet" }], origin: "harvested" }], // func.sgml
@@ -972,9 +973,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "new_value", type: "jsonb" },
 				{ name: "create_if_missing", type: "boolean", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: jsonb_set(target, path, new_value [, create_if_missing])
+	], // func.sgml
 	jsonb_set_lax: [
 		{
 			name: "jsonb_set_lax",
@@ -1029,7 +1030,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // func.sgml
-	least: [{ name: "least", params: [{ name: "value" }], variadic: true, origin: "curated" }], // curated: LEAST(value…)
+	least: [{ name: "LEAST", params: [{ name: "value" }], variadic: true, origin: "harvested" }], // func.sgml
 	left: [
 		{
 			name: "left",
@@ -1134,9 +1135,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "month", type: "int" },
 				{ name: "day", type: "int" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: make_date(year, month, day)
+	], // func.sgml
 	make_interval: [
 		{
 			name: "make_interval",
@@ -1149,9 +1150,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "mins", type: "int", optional: true },
 				{ name: "secs", type: "double precision", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: make_interval( [years int [, months int [, weeks int [, days int [, hours int [, mins int [, secs double precision]]]]]]] ) - ALL seven params optional (7-deep nested <optional> chain in the doc)
+	], // func.sgml
 	make_time: [
 		{
 			name: "make_time",
@@ -1245,7 +1246,7 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // func.sgml
 	ntile: [{ name: "ntile", params: [{ name: "num_buckets", type: "integer" }], origin: "harvested" }], // func.sgml
-	nullif: [{ name: "nullif", params: [{ name: "value1" }, { name: "value2" }], origin: "curated" }], // curated: NULLIF(value1, value2)
+	nullif: [{ name: "NULLIF", params: [{ name: "value1" }, { name: "value2" }], origin: "harvested" }], // func.sgml
 	num_nonnulls: [{ name: "num_nonnulls", params: [{ name: '"any"' }], variadic: true, origin: "harvested" }], // func.sgml
 	num_nulls: [{ name: "num_nulls", params: [{ name: '"any"' }], variadic: true, origin: "harvested" }], // func.sgml
 	numnode: [{ name: "numnode", params: [{ name: "tsquery" }], origin: "harvested" }], // func.sgml
@@ -2070,9 +2071,17 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "a", type: "numeric" },
 				{ name: "b", type: "numeric" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: power(a, b)
+		{
+			name: "power",
+			params: [
+				{ name: "a", type: "double precision" },
+				{ name: "b", type: "double precision" },
+			],
+			origin: "harvested",
+		},
+	], // func.sgml
 	querytree: [{ name: "querytree", params: [{ name: "tsquery" }], origin: "harvested" }], // func.sgml
 	quote_ident: [{ name: "quote_ident", params: [{ name: "text" }], origin: "harvested" }], // func.sgml
 	quote_literal: [
@@ -2180,9 +2189,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "pattern", type: "text" },
 				{ name: "flags", type: "text", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: regexp_match(string, pattern [, flags])
+	], // func.sgml
 	regexp_matches: [
 		{
 			name: "regexp_matches",
@@ -2350,9 +2359,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "from", type: "text" },
 				{ name: "to", type: "text" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: replace(string, from, to)
+	], // func.sgml
 	reverse: [
 		{ name: "reverse", params: [{ name: "text" }], origin: "harvested" },
 		{ name: "reverse", params: [{ name: "bytea" }], origin: "harvested" },
@@ -2372,11 +2381,13 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "round",
 			params: [
 				{ name: "v", type: "numeric" },
-				{ name: "s", type: "int", optional: true },
+				{ name: "s", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: round(v numeric [, s int])
+		{ name: "round", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "round", params: [{ name: "double precision" }], origin: "harvested" },
+	], // func.sgml
 	row_number: [{ name: "row_number", params: [], origin: "harvested" }], // func.sgml
 	row_to_json: [
 		{ name: "row_to_json", params: [{ name: "record" }, { name: "boolean", optional: true }], origin: "harvested" },
@@ -2535,9 +2546,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "value", type: "text" },
 				{ name: "delimiter", type: "text" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: string_agg(value, delimiter)
+	], // func.sgml
 	string_to_array: [
 		{
 			name: "string_to_array",
@@ -2546,9 +2557,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "delimiter", type: "text" },
 				{ name: "null_string", type: "text", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: string_to_array(string, delimiter [, null_string])
+	], // func.sgml
 	string_to_table: [
 		{
 			name: "string_to_table",
@@ -2568,9 +2579,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "string", type: "text" },
 				{ name: "substring", type: "text" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: strpos(string, substring)
+	], // func.sgml
 	substr: [
 		{
 			name: "substr",
@@ -2593,7 +2604,16 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: substring(string, start [, count]) - pg_proc oids 936/937
-	sum: [{ name: "sum", params: [{ name: "expression", type: "numeric" }], origin: "curated" }], // curated: sum(expression)
+	sum: [
+		{ name: "sum", params: [{ name: "smallint" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "bigint" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "real" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "double precision" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "interval" }], origin: "harvested" },
+		{ name: "sum", params: [{ name: "money" }], origin: "harvested" },
+	], // func.sgml
 	suppress_redundant_updates_trigger: [
 		{ name: "suppress_redundant_updates_trigger", params: [], origin: "harvested" },
 	], // func.sgml
@@ -2625,7 +2645,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "to_bin", params: [{ name: "integer" }], origin: "harvested" },
 		{ name: "to_bin", params: [{ name: "bigint" }], origin: "harvested" },
 	], // func.sgml
-	to_char: [{ name: "to_char", params: [{ name: "value" }, { name: "format", type: "text" }], origin: "curated" }], // curated: to_char(value, format)
+	to_char: [
+		{ name: "to_char", params: [{ name: "timestamp" }, { name: "text" }], origin: "harvested" },
+		{ name: "to_char", params: [{ name: "timestamp with time zone" }, { name: "text" }], origin: "harvested" },
+		{ name: "to_char", params: [{ name: "interval" }, { name: "text" }], origin: "harvested" },
+		{ name: "to_char", params: [{ name: "numeric_type" }, { name: "text" }], origin: "harvested" },
+	], // func.sgml
 	to_date: [
 		{
 			name: "to_date",
@@ -2667,15 +2692,9 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 	to_regtype: [{ name: "to_regtype", params: [{ name: "text" }], origin: "harvested" }], // func.sgml
 	to_regtypemod: [{ name: "to_regtypemod", params: [{ name: "text" }], origin: "harvested" }], // func.sgml
 	to_timestamp: [
-		{
-			name: "to_timestamp",
-			params: [
-				{ name: "text", type: "text" },
-				{ name: "format", type: "text" },
-			],
-			origin: "curated",
-		},
-	], // curated: to_timestamp(text, format)
+		{ name: "to_timestamp", params: [{ name: "text" }, { name: "text" }], origin: "harvested" },
+		{ name: "to_timestamp", params: [{ name: "double precision" }], origin: "harvested" },
+	], // func.sgml
 	transaction_timestamp: [{ name: "transaction_timestamp", params: [], origin: "harvested" }], // func.sgml
 	translate: [
 		{
@@ -2704,11 +2723,15 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "trunc",
 			params: [
 				{ name: "v", type: "numeric" },
-				{ name: "s", type: "int", optional: true },
+				{ name: "s", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: trunc(v numeric [, s int])
+		{ name: "trunc", params: [{ name: "numeric" }], origin: "harvested" },
+		{ name: "trunc", params: [{ name: "double precision" }], origin: "harvested" },
+		{ name: "trunc", params: [{ name: "macaddr" }], origin: "harvested" },
+		{ name: "trunc", params: [{ name: "macaddr8" }], origin: "harvested" },
+	], // func.sgml
 	ts_delete: [
 		{
 			name: "ts_delete",
@@ -2869,11 +2892,29 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "operand", type: "numeric" },
 				{ name: "low", type: "numeric" },
 				{ name: "high", type: "numeric" },
-				{ name: "count", type: "int" },
+				{ name: "count", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: width_bucket(operand, low, high, count)
+		{
+			name: "width_bucket",
+			params: [
+				{ name: "operand", type: "double precision" },
+				{ name: "low", type: "double precision" },
+				{ name: "high", type: "double precision" },
+				{ name: "count", type: "integer" },
+			],
+			origin: "harvested",
+		},
+		{
+			name: "width_bucket",
+			params: [
+				{ name: "operand", type: "anycompatible" },
+				{ name: "thresholds", type: "anycompatiblearray" },
+			],
+			origin: "harvested",
+		},
+	], // func.sgml
 	xmlagg: [{ name: "xmlagg", params: [{ name: "xml" }], origin: "harvested" }], // func.sgml
 	xmlcomment: [{ name: "xmlcomment", params: [{ name: "text" }], origin: "harvested" }], // func.sgml
 	xmlconcat: [{ name: "xmlconcat", params: [{ name: "xml" }], variadic: true, origin: "harvested" }], // func.sgml

@@ -110,7 +110,7 @@ export const OVERRIDES = {
 		name: "concat",
 		params: [{ name: "expr", type: "string" }],
 		variadic: true,
-		cite: "concat function (variadic)",
+		cite: "concat function (variadic) - min arity 1 per the docs own two-slot notation reading in the reconciliation (curated judged right there); kept over the harvest two-slot minimum",
 	},
 	concat_ws: {
 		name: "concat_ws",
@@ -223,8 +223,6 @@ export const OVERRIDES = {
 	},
 	// conditional / null - Spark "Conditional functions"
 	coalesce: { name: "coalesce", params: [{ name: "expr" }], variadic: true, cite: "coalesce function (variadic)" },
-	nvl: { name: "nvl", params: [{ name: "expr1" }, { name: "expr2" }], cite: "nvl function" },
-	nullif: { name: "nullif", params: [{ name: "expr1" }, { name: "expr2" }], cite: "nullif function" },
 	if: {
 		name: "if",
 		params: [{ name: "cond", type: "boolean" }, { name: "ifTrue" }, { name: "ifFalse" }],
@@ -274,16 +272,8 @@ export const OVERRIDES = {
 	},
 	cast: { name: "cast", params: [{ name: "expr" }, { name: "type" }], cite: "cast function" },
 	// aggregate - Spark "Aggregate functions"
-	count: {
-		name: "count",
-		params: [{ name: "expr" }],
-		variadic: true,
-		cite: "count aggregate - variadic; doc example count(col1, col2) -> 4",
-	},
 	sum: { name: "sum", params: [{ name: "expr", type: "numeric" }], cite: "sum aggregate" },
 	avg: { name: "avg", params: [{ name: "expr", type: "numeric" }], cite: "avg aggregate" },
-	min: { name: "min", params: [{ name: "expr" }], cite: "min aggregate" },
-	max: { name: "max", params: [{ name: "expr" }], cite: "max aggregate" },
 	// ai_parse_document - docs/syntax/functions/ai_parse_document/{1,2}.txt: page documents both
 	// `ai_parse_document(content)` and `ai_parse_document(content, Map("version" -> "2.0"))`; the
 	// second form's example arg isn't a plain identifier, so the harvester (correctly, per its

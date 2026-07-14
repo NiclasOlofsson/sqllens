@@ -23,20 +23,10 @@ export const OVERRIDES = {
 		params: [{ name: "date_or_time_part" }, { name: "value", type: "integer" }, { name: "date_or_time_expr" }],
 		cite: "DATEADD",
 	},
-	datediff: {
-		name: "DATEDIFF",
-		params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr1" }, { name: "date_or_time_expr2" }],
-		cite: "DATEDIFF",
-	},
 	date_part: {
 		name: "DATE_PART",
 		params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr" }],
 		cite: "DATE_PART",
-	},
-	date_trunc: {
-		name: "DATE_TRUNC",
-		params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr" }],
-		cite: "DATE_TRUNC",
 	},
 	to_date: {
 		name: "TO_DATE",
@@ -59,7 +49,7 @@ export const OVERRIDES = {
 		cite: "LAST_DAY (date_part optional)",
 	},
 	// string
-	concat: { name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, cite: "CONCAT (variadic)" },
+	concat: { name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, cite: "CONCAT (variadic) - kept over the harvest two-slot reading: the lax 1-arg minimum can only miss a diagnostic, never fake one (engine minimum unverified)" },
 	concat_ws: {
 		name: "CONCAT_WS",
 		params: [
@@ -67,7 +57,7 @@ export const OVERRIDES = {
 			{ name: "expr", type: "string" },
 		],
 		variadic: true,
-		cite: "CONCAT_WS",
+		cite: "CONCAT_WS - kept over the harvest reading, lax minimum on the never-false-flag side (engine minimum unverified)",
 	},
 	substr: {
 		name: "SUBSTR",
@@ -144,15 +134,6 @@ export const OVERRIDES = {
 		cite: "REGEXP_REPLACE",
 	},
 	// conditional / null
-	coalesce: {
-		name: "COALESCE",
-		params: [{ name: "expr1" }, { name: "expr2" }],
-		variadic: true,
-		cite: "COALESCE (min 2, then variadic) - COALESCE( <expr1> , <expr2> [ , ... , <exprN> ] )",
-	},
-	nvl: { name: "NVL", params: [{ name: "expr1" }, { name: "expr2" }], cite: "NVL" },
-	ifnull: { name: "IFNULL", params: [{ name: "expr1" }, { name: "expr2" }], cite: "IFNULL" },
-	nullif: { name: "NULLIF", params: [{ name: "expr1" }, { name: "expr2" }], cite: "NULLIF" },
 	iff: {
 		name: "IFF",
 		params: [{ name: "condition", type: "boolean" }, { name: "expr1" }, { name: "expr2" }],
@@ -208,16 +189,8 @@ export const OVERRIDES = {
 		cite: "MOD",
 	},
 	// aggregate
-	count: {
-		name: "COUNT",
-		params: [{ name: "expr1" }, { name: "expr2", optional: true }],
-		variadic: true,
-		cite: 'COUNT([DISTINCT] expr1[, expr2, ...]) - multi-column count: "expr2 You can include additional column name(s)"',
-	},
 	sum: { name: "SUM", params: [{ name: "expr", type: "numeric" }], cite: "SUM" },
 	avg: { name: "AVG", params: [{ name: "expr", type: "numeric" }], cite: "AVG" },
-	min: { name: "MIN", params: [{ name: "expr" }], cite: "MIN" },
-	max: { name: "MAX", params: [{ name: "expr" }], cite: "MAX" },
 	listagg: {
 		name: "LISTAGG",
 		params: [

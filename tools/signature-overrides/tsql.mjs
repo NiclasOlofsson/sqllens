@@ -86,11 +86,6 @@ export const OVERRIDES = {
 		],
 		cite: "CHARINDEX (Transact-SQL) (start_location optional)",
 	},
-	replace: {
-		name: "REPLACE",
-		params: [{ name: "string_expression" }, { name: "string_pattern" }, { name: "string_replacement" }],
-		cite: "REPLACE (Transact-SQL)",
-	},
 	left: {
 		name: "LEFT",
 		params: [{ name: "character_expression" }, { name: "integer_expression", type: "int" }],
@@ -128,33 +123,7 @@ export const OVERRIDES = {
 		params: [{ name: "string" }, { name: "characters", optional: true }],
 		cite: "TRIM (Transact-SQL) (characters optional)",
 	},
-	ltrim: {
-		name: "LTRIM",
-		params: [{ name: "character_expression" }, { name: "characters", optional: true }],
-		cite: "LTRIM (Transact-SQL) (characters optional, 2022+)",
-	},
-	rtrim: {
-		name: "RTRIM",
-		params: [{ name: "character_expression" }, { name: "characters", optional: true }],
-		cite: "RTRIM (Transact-SQL) (characters optional, 2022+)",
-	},
-	format: {
-		name: "FORMAT",
-		params: [{ name: "value" }, { name: "format" }, { name: "culture", optional: true }],
-		cite: "FORMAT (Transact-SQL) (culture optional)",
-	},
 	// conditional / null - "Logical Functions" / "NULLIF"
-	isnull: {
-		name: "ISNULL",
-		params: [{ name: "check_expression" }, { name: "replacement_value" }],
-		cite: "ISNULL (Transact-SQL)",
-	},
-	coalesce: {
-		name: "COALESCE",
-		params: [{ name: "expression" }],
-		variadic: true,
-		cite: "COALESCE (Transact-SQL) (variadic)",
-	},
 	nullif: {
 		name: "NULLIF",
 		params: [{ name: "expression1" }, { name: "expression2" }],
@@ -191,13 +160,6 @@ export const OVERRIDES = {
 	count: { name: "COUNT", params: [{ name: "expression" }], cite: "COUNT (Transact-SQL)" },
 	sum: { name: "SUM", params: [{ name: "expression", type: "numeric" }], cite: "SUM (Transact-SQL)" },
 	avg: { name: "AVG", params: [{ name: "expression", type: "numeric" }], cite: "AVG (Transact-SQL)" },
-	min: { name: "MIN", params: [{ name: "expression" }], cite: "MIN (Transact-SQL)" },
-	max: { name: "MAX", params: [{ name: "expression" }], cite: "MAX (Transact-SQL)" },
-	string_agg: {
-		name: "STRING_AGG",
-		params: [{ name: "expression" }, { name: "separator" }],
-		cite: "STRING_AGG (Transact-SQL)",
-	},
 	// logical - "CHOOSE (Transact-SQL)"
 	choose: {
 		name: "CHOOSE",

@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: docs.snowflake.com  snowflake/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-snowflake-syntax.mjs)
 // Overrides source: tools/signature-overrides/snowflake.mjs
-// Built 2026-07-14. 542 names (41 curated, 501 harvested), 26 with 2+ overloads.
+// Built 2026-07-14. 542 names (32 curated, 510 harvested), 26 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for snowflake: curated overrides folded over the harvested
@@ -420,7 +420,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/check_xml/1.txt
 	chr: [{ name: "CHR", params: [{ name: "input" }], origin: "harvested" }], // functions/chr/1.txt
-	coalesce: [{ name: "COALESCE", params: [{ name: "expr1" }, { name: "expr2" }], variadic: true, origin: "curated" }], // curated: COALESCE (min 2, then variadic) - COALESCE( <expr1> , <expr2> [ , ... , <exprN> ] )
+	coalesce: [
+		{ name: "COALESCE", params: [{ name: "expr1" }, { name: "expr2" }], variadic: true, origin: "harvested" },
+	], // functions/coalesce/1.txt
 	collate: [
 		{
 			name: "COLLATE",
@@ -430,7 +432,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/collate/1.txt
 	collation: [{ name: "COLLATION", params: [{ name: "expression" }], origin: "harvested" }], // functions/collation/1.txt
 	compress: [{ name: "COMPRESS", params: [{ name: "input" }, { name: "method" }], origin: "harvested" }], // functions/compress/1.txt
-	concat: [{ name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: CONCAT (variadic)
+	concat: [{ name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: CONCAT (variadic) - kept over the harvest two-slot reading: the lax 1-arg minimum can only miss a diagnostic, never fake one (engine minimum unverified)
 	concat_ws: [
 		{
 			name: "CONCAT_WS",
@@ -441,7 +443,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			variadic: true,
 			origin: "curated",
 		},
-	], // curated: CONCAT_WS
+	], // curated: CONCAT_WS - kept over the harvest reading, lax minimum on the never-false-flag side (engine minimum unverified)
 	conditional_change_event: [{ name: "CONDITIONAL_CHANGE_EVENT", params: [{ name: "expr1" }], origin: "harvested" }], // functions/conditional_change_event/1.txt
 	conditional_true_event: [{ name: "CONDITIONAL_TRUE_EVENT", params: [{ name: "expr1" }], origin: "harvested" }], // functions/conditional_true_event/1.txt
 	contains: [{ name: "CONTAINS", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/contains/1.txt
@@ -465,9 +467,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "COUNT",
 			params: [{ name: "expr1" }, { name: "expr2", optional: true }],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: COUNT([DISTINCT] expr1[, expr2, ...]) - multi-column count: "expr2 You can include additional column name(s)"
+	], // functions/count/1.txt
 	count_if: [{ name: "COUNT_IF", params: [{ name: "condition" }], origin: "harvested" }], // functions/count_if/1.txt
 	cume_dist: [{ name: "CUME_DIST", params: [], origin: "harvested" }], // functions/cume_dist/1.txt
 	current_account: [{ name: "CURRENT_ACCOUNT", params: [], origin: "harvested" }], // functions/current_account/1.txt
@@ -545,9 +547,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "DATE_TRUNC",
 			params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr" }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: DATE_TRUNC
+	], // functions/date_trunc/1.txt
 	dateadd: [
 		{
 			name: "DATEADD",
@@ -559,9 +561,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "DATEDIFF",
 			params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr1" }, { name: "date_or_time_expr2" }],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: DATEDIFF
+	], // functions/datediff/1.txt
 	day: [{ name: "DAY", params: [{ name: "date_interval_or_timestamp_expr" }], origin: "harvested" }], // functions/year/1.txt
 	dayname: [{ name: "DAYNAME", params: [{ name: "date_or_timestamp_expr" }], origin: "harvested" }], // functions/dayname/1.txt
 	dayofmonth: [{ name: "DAYOFMONTH", params: [{ name: "date_or_timestamp_expr" }], origin: "harvested" }], // functions/year/1.txt
@@ -861,7 +863,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: IFF
-	ifnull: [{ name: "IFNULL", params: [{ name: "expr1" }, { name: "expr2" }], origin: "curated" }], // curated: IFNULL
+	ifnull: [{ name: "IFNULL", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/ifnull/1.txt
 	initcap: [
 		{ name: "INITCAP", params: [{ name: "expr" }, { name: "delimiters", optional: true }], origin: "harvested" },
 	], // functions/initcap/1.txt
@@ -997,7 +999,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	map_keys: [{ name: "MAP_KEYS", params: [{ name: "map" }], origin: "harvested" }], // functions/map_keys/1.txt
 	map_pick: [{ name: "MAP_PICK", params: [{ name: "map" }, { name: "array" }], origin: "harvested" }], // functions/map_pick/1.txt
 	map_size: [{ name: "MAP_SIZE", params: [{ name: "map" }], origin: "harvested" }], // functions/map_size/1.txt
-	max: [{ name: "MAX", params: [{ name: "expr" }], origin: "curated" }], // curated: MAX
+	max: [{ name: "MAX", params: [{ name: "expr" }], origin: "harvested" }], // functions/max/1.txt
 	max_by: [
 		{
 			name: "MAX_BY",
@@ -1016,7 +1018,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	md5_number_lower64: [{ name: "MD5_NUMBER_LOWER64", params: [{ name: "msg" }], origin: "harvested" }], // functions/md5_number_lower64/1.txt
 	md5_number_upper64: [{ name: "MD5_NUMBER_UPPER64", params: [{ name: "msg" }], origin: "harvested" }], // functions/md5_number_upper64/1.txt
 	median: [{ name: "MEDIAN", params: [{ name: "expr" }], origin: "harvested" }], // functions/median/1.txt
-	min: [{ name: "MIN", params: [{ name: "expr" }], origin: "curated" }], // curated: MIN
+	min: [{ name: "MIN", params: [{ name: "expr" }], origin: "harvested" }], // functions/min/1.txt
 	min_by: [
 		{
 			name: "MIN_BY",
@@ -1096,9 +1098,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	normal: [{ name: "NORMAL", params: [{ name: "mean" }, { name: "stddev" }, { name: "gen" }], origin: "harvested" }], // functions/normal/1.txt
 	nth_value: [{ name: "NTH_VALUE", params: [{ name: "expr" }, { name: "n" }], origin: "harvested" }], // functions/nth_value/1.txt
 	ntile: [{ name: "NTILE", params: [{ name: "constant_value" }], origin: "harvested" }], // functions/ntile/1.txt
-	nullif: [{ name: "NULLIF", params: [{ name: "expr1" }, { name: "expr2" }], origin: "curated" }], // curated: NULLIF
+	nullif: [{ name: "NULLIF", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/nullif/1.txt
 	nullifzero: [{ name: "NULLIFZERO", params: [{ name: "expr" }], origin: "harvested" }], // functions/nullifzero/1.txt
-	nvl: [{ name: "NVL", params: [{ name: "expr1" }, { name: "expr2" }], origin: "curated" }], // curated: NVL
+	nvl: [{ name: "NVL", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/nvl/1.txt
 	nvl2: [{ name: "NVL2", params: [{ name: "expr1" }, { name: "expr2" }, { name: "expr3" }], origin: "harvested" }], // functions/nvl2/1.txt
 	object_agg: [{ name: "OBJECT_AGG", params: [{ name: "key" }, { name: "value" }], origin: "harvested" }], // functions/object_agg/1.txt
 	object_insert: [

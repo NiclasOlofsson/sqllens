@@ -40,11 +40,6 @@ export const OVERRIDES = {
 		params: [{ name: "end_date", type: "DATE" }, { name: "start_date", type: "DATE" }, { name: "granularity" }],
 		cite: "DATE_DIFF",
 	},
-	date_trunc: {
-		name: "DATE_TRUNC",
-		params: [{ name: "date_expression", type: "DATE" }, { name: "granularity" }],
-		cite: "DATE_TRUNC",
-	},
 	timestamp_diff: {
 		name: "TIMESTAMP_DIFF",
 		params: [
@@ -153,9 +148,6 @@ export const OVERRIDES = {
 		cite: "REGEXP_EXTRACT(value, regexp[, position[, occurrence]])",
 	},
 	// conditional / null
-	coalesce: { name: "COALESCE", params: [{ name: "expr" }], variadic: true, cite: "COALESCE (variadic)" },
-	ifnull: { name: "IFNULL", params: [{ name: "expr" }, { name: "null_result" }], cite: "IFNULL" },
-	nullif: { name: "NULLIF", params: [{ name: "expr" }, { name: "expr_to_match" }], cite: "NULLIF" },
 	if: {
 		name: "IF",
 		params: [{ name: "expr", type: "BOOL" }, { name: "true_result" }, { name: "else_result" }],

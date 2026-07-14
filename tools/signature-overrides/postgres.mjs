@@ -17,30 +17,6 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	age: {
-		name: "age",
-		params: [
-			{ name: "timestamp", type: "timestamp" },
-			{ name: "timestamp2", type: "timestamp" },
-		],
-		cite: "age(timestamp, timestamp)",
-	},
-	date_trunc: {
-		name: "date_trunc",
-		params: [
-			{ name: "field", type: "text" },
-			{ name: "source", type: "timestamp" },
-		],
-		cite: "date_trunc(field, source)",
-	},
-	date_part: {
-		name: "date_part",
-		params: [
-			{ name: "field", type: "text" },
-			{ name: "source", type: "timestamp" },
-		],
-		cite: "date_part(field, source)",
-	},
 	date_bin: {
 		name: "date_bin",
 		params: [
@@ -50,28 +26,6 @@ export const OVERRIDES = {
 		],
 		cite: "date_bin(stride, source, origin)",
 	},
-	make_date: {
-		name: "make_date",
-		params: [
-			{ name: "year", type: "int" },
-			{ name: "month", type: "int" },
-			{ name: "day", type: "int" },
-		],
-		cite: "make_date(year, month, day)",
-	},
-	make_interval: {
-		name: "make_interval",
-		params: [
-			{ name: "years", type: "int", optional: true },
-			{ name: "months", type: "int", optional: true },
-			{ name: "weeks", type: "int", optional: true },
-			{ name: "days", type: "int", optional: true },
-			{ name: "hours", type: "int", optional: true },
-			{ name: "mins", type: "int", optional: true },
-			{ name: "secs", type: "double precision", optional: true },
-		],
-		cite: "make_interval( [years int [, months int [, weeks int [, days int [, hours int [, mins int [, secs double precision]]]]]]] ) - ALL seven params optional (7-deep nested <optional> chain in the doc)",
-	},
 	to_date: {
 		name: "to_date",
 		params: [
@@ -79,19 +33,6 @@ export const OVERRIDES = {
 			{ name: "format", type: "text" },
 		],
 		cite: "to_date(text, format)",
-	},
-	to_timestamp: {
-		name: "to_timestamp",
-		params: [
-			{ name: "text", type: "text" },
-			{ name: "format", type: "text" },
-		],
-		cite: "to_timestamp(text, format)",
-	},
-	to_char: {
-		name: "to_char",
-		params: [{ name: "value" }, { name: "format", type: "text" }],
-		cite: "to_char(value, format)",
 	},
 	to_number: {
 		name: "to_number",
@@ -102,12 +43,12 @@ export const OVERRIDES = {
 		cite: "to_number(text, format)",
 	},
 	// string - functions-string.html (Table 9.10)
-	concat: { name: "concat", params: [{ name: "val" }], variadic: true, cite: "concat(val1, val2, …)" },
+	concat: { name: "concat", params: [{ name: "val" }], variadic: true, cite: "concat(val, ...) - pg_proc oid 3058: one VARIADIC any slot, a 1-arg call is valid (the doc table just displays two slots)" },
 	concat_ws: {
 		name: "concat_ws",
 		params: [{ name: "sep", type: "text" }, { name: "val" }],
 		variadic: true,
-		cite: "concat_ws(sep, val…)",
+		cite: "concat_ws(sep, val, ...) - pg_proc oid 3059: text plus VARIADIC any, minimum 2 args (kept over the harvest reading of the doc display slots)",
 	},
 	// The manual shows the positional comma form only under substr, but the server catalog is the
 	// ground truth and settles it: pg_proc.dat (REL_18_STABLE) carries substring(text, int4, int4)
@@ -140,15 +81,6 @@ export const OVERRIDES = {
 		],
 		cite: "split_part(string, delimiter, n)",
 	},
-	replace: {
-		name: "replace",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "from", type: "text" },
-			{ name: "to", type: "text" },
-		],
-		cite: "replace(string, from, to)",
-	},
 	regexp_replace: {
 		name: "regexp_replace",
 		params: [
@@ -158,15 +90,6 @@ export const OVERRIDES = {
 			{ name: "flags", type: "text", optional: true },
 		],
 		cite: "regexp_replace(string, pattern, replacement [, flags])",
-	},
-	regexp_match: {
-		name: "regexp_match",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "flags", type: "text", optional: true },
-		],
-		cite: "regexp_match(string, pattern [, flags])",
 	},
 	lpad: {
 		name: "lpad",
@@ -194,14 +117,6 @@ export const OVERRIDES = {
 		],
 		cite: "position(substring in string)",
 	},
-	strpos: {
-		name: "strpos",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "substring", type: "text" },
-		],
-		cite: "strpos(string, substring)",
-	},
 	left: {
 		name: "left",
 		params: [
@@ -227,43 +142,8 @@ export const OVERRIDES = {
 		variadic: true,
 		cite: "format(formatstr [, formatarg, …]) - formatarg optional, format('hello') alone is valid",
 	},
-	string_to_array: {
-		name: "string_to_array",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "delimiter", type: "text" },
-			{ name: "null_string", type: "text", optional: true },
-		],
-		cite: "string_to_array(string, delimiter [, null_string])",
-	},
 	// numeric - functions-math.html (Table 9.5)
-	round: {
-		name: "round",
-		params: [
-			{ name: "v", type: "numeric" },
-			{ name: "s", type: "int", optional: true },
-		],
-		cite: "round(v numeric [, s int])",
-	},
-	trunc: {
-		name: "trunc",
-		params: [
-			{ name: "v", type: "numeric" },
-			{ name: "s", type: "int", optional: true },
-		],
-		cite: "trunc(v numeric [, s int])",
-	},
 	abs: { name: "abs", params: [{ name: "x", type: "numeric" }], cite: "abs(x)" },
-	ceil: { name: "ceil", params: [{ name: "x", type: "numeric" }], cite: "ceil(x)" },
-	floor: { name: "floor", params: [{ name: "x", type: "numeric" }], cite: "floor(x)" },
-	power: {
-		name: "power",
-		params: [
-			{ name: "a", type: "numeric" },
-			{ name: "b", type: "numeric" },
-		],
-		cite: "power(a, b)",
-	},
 	mod: {
 		name: "mod",
 		params: [
@@ -272,55 +152,12 @@ export const OVERRIDES = {
 		],
 		cite: "mod(y, x)",
 	},
-	div: {
-		name: "div",
-		params: [
-			{ name: "y", type: "numeric" },
-			{ name: "x", type: "numeric" },
-		],
-		cite: "div(y, x)",
-	},
-	width_bucket: {
-		name: "width_bucket",
-		params: [
-			{ name: "operand", type: "numeric" },
-			{ name: "low", type: "numeric" },
-			{ name: "high", type: "numeric" },
-			{ name: "count", type: "int" },
-		],
-		cite: "width_bucket(operand, low, high, count)",
-	},
-	// conditional - functions-conditional.html
-	coalesce: { name: "coalesce", params: [{ name: "value" }], variadic: true, cite: "COALESCE(value…)" },
-	nullif: { name: "nullif", params: [{ name: "value1" }, { name: "value2" }], cite: "NULLIF(value1, value2)" },
-	greatest: { name: "greatest", params: [{ name: "value" }], variadic: true, cite: "GREATEST(value…)" },
-	least: { name: "least", params: [{ name: "value" }], variadic: true, cite: "LEAST(value…)" },
 	// aggregates - functions-aggregate.html (Table 9.62)
 	count: { name: "count", params: [{ name: "expression" }], cite: "count(expression)" },
-	sum: { name: "sum", params: [{ name: "expression", type: "numeric" }], cite: "sum(expression)" },
-	avg: { name: "avg", params: [{ name: "expression", type: "numeric" }], cite: "avg(expression)" },
 	min: { name: "min", params: [{ name: "expression" }], cite: "min(expression)" },
 	max: { name: "max", params: [{ name: "expression" }], cite: "max(expression)" },
-	string_agg: {
-		name: "string_agg",
-		params: [
-			{ name: "value", type: "text" },
-			{ name: "delimiter", type: "text" },
-		],
-		cite: "string_agg(value, delimiter)",
-	},
 	array_agg: { name: "array_agg", params: [{ name: "expression" }], cite: "array_agg(expression)" },
 	// JSON - functions-json.html
-	jsonb_set: {
-		name: "jsonb_set",
-		params: [
-			{ name: "target", type: "jsonb" },
-			{ name: "path", type: "text[]" },
-			{ name: "new_value", type: "jsonb" },
-			{ name: "create_if_missing", type: "boolean", optional: true },
-		],
-		cite: "jsonb_set(target, path, new_value [, create_if_missing])",
-	},
 	jsonb_extract_path: {
 		name: "jsonb_extract_path",
 		params: [

@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: docs.databricks.com  databricks/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-databricks-syntax.mjs)
 // Overrides source: tools/signature-overrides/databricks.mjs
-// Built 2026-07-14. 645 names (42 curated, 603 harvested), 5 with 2+ overloads.
+// Built 2026-07-14. 645 names (37 curated, 608 harvested), 5 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for databricks: curated overrides folded over the harvested
@@ -260,7 +260,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	collations: [{ name: "collations", params: [], origin: "harvested" }], // functions/collations/1.txt
 	collect_list: [{ name: "collect_list", params: [{ name: "expr" }], origin: "harvested" }], // functions/collect_list/1.txt
 	collect_set: [{ name: "collect_set", params: [{ name: "expr" }], origin: "harvested" }], // functions/collect_set/1.txt
-	concat: [{ name: "concat", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: concat function (variadic)
+	concat: [{ name: "concat", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: concat function (variadic) - min arity 1 per the docs own two-slot notation reading in the reconciliation (curated judged right there); kept over the harvest two-slot minimum
 	concat_ws: [
 		{
 			name: "concat_ws",
@@ -278,7 +278,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	cos: [{ name: "cos", params: [{ name: "expr" }], origin: "harvested" }], // functions/cos/1.txt
 	cosh: [{ name: "cosh", params: [{ name: "expr" }], origin: "harvested" }], // functions/cosh/1.txt
 	cot: [{ name: "cot", params: [{ name: "expr" }], origin: "harvested" }], // functions/cot/1.txt
-	count: [{ name: "count", params: [{ name: "expr" }], variadic: true, origin: "curated" }], // curated: count aggregate - variadic; doc example count(col1, col2) -> 4
+	count: [{ name: "count", params: [{ name: "expr" }], variadic: true, origin: "harvested" }], // functions/count/2.txt
 	count_if: [{ name: "count_if", params: [{ name: "expr" }], origin: "harvested" }], // functions/count_if/1.txt
 	count_min_sketch: [
 		{
@@ -832,7 +832,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/mask/1.txt
 	match_number: [{ name: "match_number", params: [], origin: "harvested" }], // functions/match_number/1.txt
-	max: [{ name: "max", params: [{ name: "expr" }], origin: "curated" }], // curated: max aggregate
+	max: [{ name: "max", params: [{ name: "expr" }], origin: "harvested" }], // functions/max/1.txt
 	max_by: [
 		{
 			name: "max_by",
@@ -844,7 +844,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	mean: [{ name: "mean", params: [{ name: "expr" }], origin: "harvested" }], // functions/mean/1.txt
 	measure: [{ name: "measure", params: [{ name: "measure_column" }], origin: "harvested" }], // functions/measure/1.txt
 	median: [{ name: "median", params: [{ name: "expr" }], origin: "harvested" }], // functions/median/1.txt
-	min: [{ name: "min", params: [{ name: "expr" }], origin: "curated" }], // curated: min aggregate
+	min: [{ name: "min", params: [{ name: "expr" }], origin: "harvested" }], // functions/min/1.txt
 	min_by: [
 		{
 			name: "min_by",
@@ -880,9 +880,9 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	next_day: [{ name: "next_day", params: [{ name: "expr" }, { name: "dayOfWeek" }], origin: "harvested" }], // functions/next_day/1.txt
 	now: [{ name: "now", params: [], origin: "harvested" }], // functions/now/1.txt
 	ntile: [{ name: "ntile", params: [{ name: "n", optional: true }], origin: "harvested" }], // functions/ntile/1.txt
-	nullif: [{ name: "nullif", params: [{ name: "expr1" }, { name: "expr2" }], origin: "curated" }], // curated: nullif function
+	nullif: [{ name: "nullif", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/nullif/1.txt
 	nullifzero: [{ name: "nullifzero", params: [{ name: "expr" }], origin: "harvested" }], // functions/nullifzero/1.txt
-	nvl: [{ name: "nvl", params: [{ name: "expr1" }, { name: "expr2" }], origin: "curated" }], // curated: nvl function
+	nvl: [{ name: "nvl", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/nvl/1.txt
 	nvl2: [{ name: "nvl2", params: [{ name: "expr1" }, { name: "expr2" }, { name: "expr3" }], origin: "harvested" }], // functions/nvl2/1.txt
 	octet_length: [{ name: "octet_length", params: [{ name: "expr" }], origin: "harvested" }], // functions/octet_length/1.txt
 	overlay: [

@@ -17,23 +17,6 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	date_part: {
-		name: "date_part",
-		params: [
-			{ name: "part", type: "text" },
-			{ name: "date", type: "date" },
-		],
-		cite: "date_part(part, date)",
-	},
-	date_diff: {
-		name: "date_diff",
-		params: [
-			{ name: "part", type: "text" },
-			{ name: "startdate", type: "date" },
-			{ name: "enddate", type: "date" },
-		],
-		cite: "date_diff(part, startdate, enddate)",
-	},
 	date_add: {
 		name: "date_add",
 		params: [
@@ -41,31 +24,6 @@ export const OVERRIDES = {
 			{ name: "interval", type: "interval" },
 		],
 		cite: "date_add(date, interval)",
-	},
-	date_sub: {
-		name: "date_sub",
-		params: [
-			{ name: "part", type: "text" },
-			{ name: "startdate", type: "date" },
-			{ name: "enddate", type: "date" },
-		],
-		cite: "date_sub(part, startdate, enddate)",
-	},
-	date_trunc: {
-		name: "date_trunc",
-		params: [
-			{ name: "part", type: "text" },
-			{ name: "date", type: "date" },
-		],
-		cite: "date_trunc(part, date)",
-	},
-	strftime: {
-		name: "strftime",
-		params: [
-			{ name: "date", type: "date" },
-			{ name: "format", type: "text" },
-		],
-		cite: "strftime(date, format)",
 	},
 	strptime: {
 		name: "strptime",
@@ -94,7 +52,6 @@ export const OVERRIDES = {
 		cite: "time_bucket(bucket_width, timestamp[, offset])",
 	},
 	// text - functions/text.md
-	concat: { name: "concat", params: [{ name: "value" }], variadic: true, cite: "concat(value, ...)" },
 	concat_ws: {
 		name: "concat_ws",
 		params: [{ name: "separator", type: "text" }, { name: "value" }],
@@ -127,34 +84,6 @@ export const OVERRIDES = {
 			{ name: "target", type: "text" },
 		],
 		cite: "replace(string, source, target)",
-	},
-	regexp_replace: {
-		name: "regexp_replace",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "replacement", type: "text" },
-			{ name: "options", type: "text" },
-		],
-		cite: "regexp_replace(string, pattern, replacement[, options])",
-	},
-	regexp_extract: {
-		name: "regexp_extract",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "group", type: "int", optional: true },
-		],
-		cite: "regexp_extract(string, pattern[, group])",
-	},
-	regexp_matches: {
-		name: "regexp_matches",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "options", type: "text", optional: true },
-		],
-		cite: "regexp_matches(string, pattern[, options])",
 	},
 	lpad: {
 		name: "lpad",
@@ -189,14 +118,6 @@ export const OVERRIDES = {
 			{ name: "count", type: "int" },
 		],
 		cite: "right(string, count)",
-	},
-	contains: {
-		name: "contains",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "search_string", type: "text" },
-		],
-		cite: "contains(string, search_string)",
 	},
 	starts_with: {
 		name: "starts_with",
@@ -278,20 +199,12 @@ export const OVERRIDES = {
 	},
 	unnest: { name: "unnest", params: [{ name: "list", type: "list" }], cite: "unnest(list)" },
 	// conditional - functions/utility.md
-	coalesce: { name: "coalesce", params: [{ name: "expr" }], variadic: true, cite: "coalesce(expr, ...)" },
-	nullif: { name: "nullif", params: [{ name: "a" }, { name: "b" }], cite: "nullif(a, b)" },
-	ifnull: { name: "ifnull", params: [{ name: "expr" }, { name: "other" }], cite: "ifnull(expr, other)" },
 	if: {
 		name: "if",
 		params: [{ name: "condition", type: "boolean" }, { name: "a" }, { name: "b" }],
 		cite: "if(condition, a, b)",
 	},
 	// aggregates - functions/aggregates.md
-	count: {
-		name: "count",
-		params: [{ name: "arg", optional: true }],
-		cite: "count([arg]) - count() with no argument counts all rows, count(arg) counts rows where arg is not NULL",
-	},
 	sum: { name: "sum", params: [{ name: "arg", type: "numeric" }], cite: "sum(arg)" },
 	avg: { name: "avg", params: [{ name: "arg", type: "numeric" }], cite: "avg(arg)" },
 	min: { name: "min", params: [{ name: "arg" }, { name: "n", type: "int", optional: true }], cite: "min(arg[, n])" },
