@@ -63,6 +63,7 @@
 	},
 	"homepage": "https://github.com/NiclasOlofsson/sqllens#readme",
 	"scripts": {
+		"clean": "node tools/clean.mjs",
 		"gen": "node tools/gen.mjs",
 		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino && npm run gen -- sqlite && npm run gen -- mysql && npm run gen -- minijinja",
 		"build": "npm run gen:all && tsc -p tsconfig.build.json",
@@ -71,6 +72,7 @@
 		"test": "vitest run",
 		"test:corpus": "vitest run --config vitest.corpus.config.ts",
 		"test:all": "npm test && npm run test:corpus",
+		"bench": "node --import tsx tools/bench.mjs",
 		"format": "prettier --write .",
 		"format:check": "prettier --check ."
 	},
