@@ -81,11 +81,13 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		expect(sig.variadic ?? false).toBe(false);
 	});
 
-	it("SUBSTRING(expression, start, length) — 3 params", () => {
-		expect(HARVESTED_SIGNATURES.tsql.substring.params.map((p) => p.name)).toEqual([
-			"expression",
-			"start",
-			"length",
+	it("SUBSTRING(expression, start, length) — length optional via the per-product OR-merge", () => {
+		// The docs page carries two per-product blocks: length required (SQL Server) and bracketed
+		// (Fabric). Same name sequence, so they OR-merge to length-optional instead of conflicting.
+		expect(HARVESTED_SIGNATURES.tsql.substring.params).toEqual([
+			{ name: "expression" },
+			{ name: "start" },
+			{ name: "length", optional: true },
 		]);
 	});
 

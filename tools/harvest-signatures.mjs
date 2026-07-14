@@ -111,22 +111,40 @@ function parseTSqlSig(block) {
 	// Anything the flat-list model can't represent → skip (never guess).
 	if (/[{}|<>]|::=|\bFROM\b|\bAS\b|\bOVER\b|\bUSING\b|\bORDER\b/i.test(inner)) return { skip: "complex" };
 
-	// Flatten SIMPLE optional groups — `[ , x ]` → `, x`, `[ x ]` → `x` — repeatedly. Anything left
-	// bracketed is a non-trivial optional group → skip.
+	// A literal `?` never appears in a clean syntaxsql arg list (it failed the param regex before
+	// this marker scheme existed), and below it marks an unwrapped optional, so reject it up front.
+	if (inner.includes("?")) return { skip: "param-shape" };
+
+	// Unwrap SIMPLE optional groups KEEPING the optionality: `[ , x ]` becomes `, x?` and `[ x ]`
+	// becomes `x?`, repeatedly. Anything left bracketed is a non-trivial optional group: skip.
+	// (Until 2026-07-14 these groups were flattened to plain required params, which overstated the
+	// minimum argument count; that is why check-calls could not trust harvested arity.)
 	let prev;
 	do {
 		prev = inner;
-		inner = inner.replace(/\[\s*(,?)\s*([A-Za-z_][\w]*)\s*\]/g, "$1 $2");
+		inner = inner.replace(/\[\s*(,?)\s*([A-Za-z_][\w]*)\s*\]/g, "$1 $2?");
 	} while (inner !== prev);
 	if (/[[\]]/.test(inner)) return { skip: "optional-group" };
 
-	const params = inner
+	const pieces = inner
 		.split(",")
 		.map((s) => s.trim())
 		.filter((s) => s !== "");
-	// Every param must be a single plain identifier — a multi-word / typed / punctuated piece means
-	// the notation is richer than we model, so skip rather than mis-name.
-	for (const pr of params) if (!/^[A-Za-z_][\w]*$/.test(pr)) return { skip: "param-shape" };
+	// Every param must be a single plain identifier, with the `?` optional marker allowed. A
+	// multi-word / typed / punctuated piece means the notation is richer than we model, so skip
+	// rather than mis-name.
+	const params = [];
+	for (const pr of pieces) {
+		const m = /^([A-Za-z_][\w]*)(\?)?$/.exec(pr);
+		if (!m) return { skip: "param-shape" };
+		params.push(m[2] ? { name: m[1], optional: true } : { name: m[1] });
+	}
+	// ParamSig allows only TRAILING optionals (the arity checker derives the minimum argument count
+	// from them). A doc shape with an optional before a required param cannot be represented, so it
+	// is skipped; flattening it to all-required (the pre-2026-07-14 behavior) asserted a wrong arity.
+	const firstOptional = params.findIndex((p) => p.optional);
+	if (firstOptional !== -1 && params.slice(firstOptional).some((p) => !p.optional))
+		return { skip: "optional-group" };
 	return { name, params, variadic };
 }
 
@@ -161,7 +179,7 @@ function harvestTSql() {
 			}
 			const key = r.name.toLowerCase();
 			if (!cands.has(key)) cands.set(key, new Map());
-			const sig = { name: r.name, params: r.params.map((n) => ({ name: n })), variadic: r.variadic };
+			const sig = { name: r.name, params: r.params, variadic: r.variadic };
 			cands.get(key).set(JSON.stringify([r.params, r.variadic]), sig);
 		}
 		if (cands.size === 0) {
@@ -169,11 +187,39 @@ function harvestTSql() {
 			continue;
 		}
 		for (const [key, variants] of cands) {
-			if (variants.size !== 1) {
-				conflicts++;
-				continue;
+			const sigs = [...variants.values()];
+			let sig = sigs[0];
+			if (sigs.length > 1) {
+				// Blocks that agree on the name sequence but disagree on which params are optional are
+				// per-product syntax variants of ONE form (SUBSTRING's length is required on SQL Server,
+				// optional on Fabric), not overloads: merge by OR-ing optionality, a param is omittable
+				// when ANY documented form omits it (the lax reading can miss a diagnostic, never fake
+				// one). Anything else stays a conflict.
+				const same = sigs.every(
+					(s) =>
+						s.variadic === sig.variadic &&
+						s.params.length === sig.params.length &&
+						s.params.every((p, i) => p.name === sig.params[i].name),
+				);
+				if (!same) {
+					conflicts++;
+					continue;
+				}
+				sig = {
+					name: sig.name,
+					params: sig.params.map((p, i) =>
+						sigs.some((s) => s.params[i].optional) ? { name: p.name, optional: true } : { name: p.name },
+					),
+					variadic: sig.variadic,
+				};
+				// The OR can leave an optional ahead of a required param, which ParamSig cannot represent.
+				const firstOpt = sig.params.findIndex((p) => p.optional);
+				if (firstOpt !== -1 && sig.params.slice(firstOpt).some((p) => !p.optional)) {
+					conflicts++;
+					continue;
+				}
 			}
-			signatures[key] = [...variants.values()][0];
+			signatures[key] = sig;
 			provenance[key] = relative(corpusPath("vendor/sql-docs/docs/t-sql"), f).split("\\").join("/");
 		}
 	}
