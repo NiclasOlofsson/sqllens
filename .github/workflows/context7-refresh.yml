@@ -32,4 +32,10 @@ jobs:
             echo "::notice::Context7 daily refresh limit reached — skipped; next refresh catches up"
             exit 0
           fi
+          if grep -q '"error":"too-early"' response.json; then
+            # Policy observed 2026-07-14: "Minimum 10 days required between updates" —
+            # releases come faster than that; a declined refresh is expected, not an error.
+            echo "::notice::Context7 refresh declined (too-early cooldown) — skipped"
+            exit 0
+          fi
           [ "$http" -ge 200 ] && [ "$http" -lt 300 ]
