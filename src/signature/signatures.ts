@@ -1,8 +1,14 @@
 // ---------------------------------------------------------------------------
 // Function-signature runtime — one generated table per dialect, each folding a curated override
 // layer over the harvested doc-derived long tail at BUILD time (tools/harvest-signatures.mjs). There
-// is no separate curated/harvested split left at runtime: SIGNATURES[dialect] is already the merged,
-// single list, and each entry's `origin` field says which layer produced it.
+// is no separate curated/harvested split left at runtime: SIGNATURES[dialect] is already the merged
+// table, and each entry's `origin` field says which layer produced it.
+//
+// A name maps to an ORDERED overload SET (readonly FnSignature[]), not a single shape: it is common
+// for a builtin to be overloaded on argument type or arity (postgres lower(text) vs lower(anyrange),
+// trino length(binary) vs length(string)), and the model represents that directly. A name with one
+// documented shape is simply a one-element array; origin is uniform across one name's whole set (an
+// override always replaces the entire set, never blends origins entry by entry).
 //
 // The ten generated tables are committed at src/<dialect>/signatures.generated.ts, rebuilt by
 // `node tools/harvest-signatures.mjs`, never hand-edited. The curated inputs that feed the merge
@@ -43,9 +49,10 @@ export interface FnSignature {
 	readonly origin?: "curated" | "harvested";
 }
 
-/** The merged function-signature table, per dialect, keyed by lowercased function name. Each table is
- *  generated (curated overrides folded over the harvested long tail); see the module header. */
-export const SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
+/** The merged function-signature table, per dialect, keyed by lowercased function name. Each name maps
+ *  to an ordered overload SET, not a single shape. Each table is generated (curated overrides folded
+ *  over the harvested long tail); see the module header. */
+export const SIGNATURES: Record<Dialect, Record<string, readonly FnSignature[]>> = {
 	databricks: DATABRICKS_SIGNATURES,
 	tsql: TSQL_SIGNATURES,
 	snowflake: SNOWFLAKE_SIGNATURES,
@@ -58,9 +65,9 @@ export const SIGNATURES: Record<Dialect, Record<string, FnSignature>> = {
 	mysql: MYSQL_SIGNATURES,
 };
 
-/** The signature for a lowercased function name, or undefined when neither layer knows it — the
+/** The overload set for a lowercased function name, or undefined when neither layer knows it: the
  *  caller then degrades to a name-only hint. */
-export function lookupSignature(dialect: Dialect, lowerName: string): FnSignature | undefined {
+export function lookupSignature(dialect: Dialect, lowerName: string): readonly FnSignature[] | undefined {
 	return SIGNATURES[dialect][lowerName];
 }
 

@@ -321,8 +321,10 @@ export { jinjaSlotAt, type JinjaSlot } from "./completion/jinja-slot.js";
 // Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
 // while typing inside a call's parens. SIGNATURES is the merged per-dialect table (curated overrides
 // folded over the harvested doc-derived long tail at generation time, tools/harvest-signatures.mjs);
-// an unknown name degrades to a name-only fallback. A pure token scan; never throws.
-export { signatureAt, type SignatureInfo } from "./signature/signature.js";
+// a name maps to an overload SET (readonly FnSignature[]), not a single shape: it is common for a
+// builtin to be overloaded on argument type or arity. An unknown name degrades to a one-entry
+// name-only fallback. A pure token scan; never throws.
+export { signatureAt, type SignatureHelpInfo, type SignatureLabel } from "./signature/signature.js";
 export { SIGNATURES, lookupSignature, hasSignature, type FnSignature, type ParamSig } from "./signature/signatures.js";
 
 // References / occurrence engine — find the declaration + every occurrence of the symbol under a

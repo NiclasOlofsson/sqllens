@@ -29,7 +29,7 @@ import type { SchemaProvider } from "./qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "./qualify/template-provider.js";
 import type { Occurrences } from "./references/references.js";
 import type { LineageHop } from "./lineage/hops.js";
-import { signatureAt, type SignatureInfo } from "./signature/signature.js";
+import { signatureAt, type SignatureHelpInfo } from "./signature/signature.js";
 import type { Scope, ScopeTree } from "./scope/scope.js";
 import type { Span, Sym } from "./symbols/symbols.js";
 import type { TemplateEngine } from "./template/engine.js";
@@ -164,7 +164,7 @@ export class SqlSession {
 	completeAt(offset: number): Completion[] {
 		return completeAt(this.doc, offset, this.schema);
 	}
-	signatureAt(offset: number): SignatureInfo | null {
+	signatureAt(offset: number): SignatureHelpInfo | null {
 		return signatureAt(this.doc, offset);
 	}
 	referencesAt(offset: number): Occurrences | null {

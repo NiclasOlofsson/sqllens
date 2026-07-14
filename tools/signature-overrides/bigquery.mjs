@@ -11,7 +11,11 @@
 // citation forward into the generated table's comment.
 
 /** @typedef {{ name: string, type?: string, optional?: boolean }} ParamSig */
-/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string }} OverrideSig */
+/** @typedef {{ params: ParamSig[], variadic?: boolean }} OverloadSig */
+/** An entry expresses either ONE shape (legacy, still the common case) or an explicit multi-overload
+ *  set via `overloads` - either way it replaces the WHOLE overload set for its key. `suppress: true`
+ *  drops the name entirely: no flat overload set can represent it (never guessed at). */
+/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string } | { name: string, overloads: OverloadSig[], cite: string } | { suppress: true, cite: string }} OverrideSig */
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
@@ -202,6 +206,30 @@ export const OVERRIDES = {
 			{ name: "delimiter", type: "STRING", optional: true },
 		],
 		cite: 'STRING_AGG(expression[, delimiter]) - "otherwise, a comma is used"',
+	},
+	// json_extract / json_query - json_functions.md's own syntax fences show json_path as REQUIRED in
+	// both overloads (json_string_expr, json_path) and (json_expr, json_path); both functions are
+	// documented "deprecated" (JSON_EXTRACT in favor of JSON_QUERY, and JSON_QUERY itself superseded by
+	// JSON_VALUE for scalar extraction) and the sibling JSON_EXTRACT_ARRAY/JSON_VALUE family already
+	// documents json_path as optional. Corpus-proven 2026-07-14: the ZetaSQL analyzer corpus's own
+	// positive tests call both with json_path omitted (collation_81.sql: `json_extract(string_ci)`,
+	// collation_85.sql: `json_query(string_ci)`), so the real engine accepts the 1-arg form even though
+	// the doc's syntax fence doesn't bracket it - corpus ground truth wins over the literal fence.
+	json_extract: {
+		name: "JSON_EXTRACT",
+		overloads: [
+			{ params: [{ name: "json_string_expr" }, { name: "json_path", optional: true }] },
+			{ params: [{ name: "json_expr" }, { name: "json_path", optional: true }] },
+		],
+		cite: "JSON_EXTRACT(json_string_expr[, json_path]) / JSON_EXTRACT(json_expr[, json_path]) - json_path optional per the ZetaSQL analyzer corpus (collation_81.sql), json_functions.md",
+	},
+	json_query: {
+		name: "JSON_QUERY",
+		overloads: [
+			{ params: [{ name: "json_string_expr" }, { name: "json_path", optional: true }] },
+			{ params: [{ name: "json_expr" }, { name: "json_path", optional: true }] },
+		],
+		cite: "JSON_QUERY(json_string_expr[, json_path]) / JSON_QUERY(json_expr[, json_path]) - json_path optional per the ZetaSQL analyzer corpus (collation_85.sql), json_functions.md",
 	},
 	// array_functions.md documents ARRAY(subquery) as a 1-arg function ("The ARRAY function returns
 	// an ARRAY with one element for each row in a subquery"), but this dialect's lowering also names

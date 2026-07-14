@@ -12,8 +12,10 @@
 //   2. function name — the word-like token immediately before that `(`;
 //   3. active parameter — top-level commas between that `(` and the caret (commas
 //      at the call's own depth only; nested call/paren commas don't count);
-//   4. label — from the merged per-dialect SIGNATURES table; an unknown name degrades
-//      to a name-only hint with the active-arg index still resolved.
+//   4. signatures: one rendered entry per overload from the merged per-dialect
+//      SIGNATURES table (a name maps to an overload SET, not a single shape), plus
+//      which one is active, an unknown name degrades to a one-entry name-only hint
+//      with the active-arg index still resolved.
 //
 // Total: never throws. Anything that isn't a clean call → null.
 //
@@ -27,13 +29,22 @@ import type { Token } from "../token/token.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { hasSignature, lookupSignature, type FnSignature, type ParamSig } from "./signatures.js";
 
-/** What the editor shows while typing inside a call's parens. */
-export interface SignatureInfo {
-	/** e.g. "date_add(start_date: date, num_days: int)" — or just "myfunc" when uncurated. */
+/** One rendered overload: e.g. "date_add(start_date: date, num_days: int)". */
+export interface SignatureLabel {
 	label: string;
-	/** One per param; [] when uncurated. */
+	/** One per param; [] for the name-only fallback entry. */
 	parameters: { label: string }[];
-	/** 0-based arg index the caret is in. */
+}
+
+/** What the editor shows while typing inside a call's parens: every overload of the called name,
+ *  which one is active, and which of ITS params the caret is in. */
+export interface SignatureHelpInfo {
+	/** Every overload of the called name, in harvested/authored order; a single one-element array for
+	 *  an uncurated name (the name-only fallback) or a name with one documented shape. */
+	signatures: SignatureLabel[];
+	/** Index into `signatures` of the overload the editor should highlight. */
+	activeSignature: number;
+	/** 0-based arg index the caret is in, within the active signature. */
 	activeParameter: number;
 }
 
@@ -42,7 +53,7 @@ export interface SignatureInfo {
  * recognizable call. `schema` is accepted for parity with the other features (and future
  * overload selection) but the curated tables don't need it today. NEVER throws.
  */
-export function signatureAt(doc: SqlDocument, offset: number, _schema?: SchemaProvider): SignatureInfo | null {
+export function signatureAt(doc: SqlDocument, offset: number, _schema?: SchemaProvider): SignatureHelpInfo | null {
 	try {
 		return compute(doc, offset);
 	} catch {
@@ -51,7 +62,7 @@ export function signatureAt(doc: SqlDocument, offset: number, _schema?: SchemaPr
 	}
 }
 
-function compute(doc: SqlDocument, offset: number): SignatureInfo | null {
+function compute(doc: SqlDocument, offset: number): SignatureHelpInfo | null {
 	// Default-channel tokens only, in source order — trivia (whitespace/comments) is skipped so a
 	// caret with spaces before it still resolves. EOF carries no text/role and is harmless to keep.
 	const toks = doc.tokens.filter((t) => t.channel === 0);
@@ -104,13 +115,13 @@ function compute(doc: SqlDocument, offset: number): SignatureInfo | null {
 		}
 	}
 
-	// Step 4 — render from the curated table (harvested long tail behind it), else degrade to a
-	// name-only hint.
-	const sig = lookupSignature(doc.dialect, name.toLowerCase());
-	if (!sig) {
-		return { label: name, parameters: [], activeParameter: active };
+	// Step 4: render every overload from the merged table (harvested long tail behind it), else
+	// degrade to a one-entry name-only hint.
+	const overloads = lookupSignature(doc.dialect, name.toLowerCase());
+	if (!overloads) {
+		return { signatures: [{ label: name, parameters: [] }], activeSignature: 0, activeParameter: active };
 	}
-	return curated(sig, active);
+	return renderOverloads(overloads, active);
 }
 
 /**
@@ -135,25 +146,31 @@ function functionName(tok: Token | undefined, dialect: SqlDocument["dialect"]): 
 	return null; // punctuation / operator / string / number / comment / whitespace → not a call
 }
 
-/** Build the curated SignatureInfo: a `name(p1: t1, …)` label, one parameter label per param, and
- *  the active index clamped to the last param for a variadic signature (extra args stay on the
- *  repeating param). */
-function curated(sig: FnSignature, active: number): SignatureInfo {
-	const parameters = sig.params.map((p) => ({ label: paramLabel(p) }));
-	const lastIdx = parameters.length - 1;
+/** Render every overload, then pick which one is active and clamp the active-param index to it.
+ *  activeSignature is the FIRST overload that can still accept `active` as a real param index
+ *  (`active < params.length`, or the overload is variadic: it always can), else the last overload
+ *  (an over-count on every fixed overload has nowhere better to land than the longest one). */
+function renderOverloads(overloads: readonly FnSignature[], active: number): SignatureHelpInfo {
+	const signatures = overloads.map(renderOne);
+	let activeSignature = overloads.findIndex((sig) => sig.variadic || active < sig.params.length);
+	if (activeSignature === -1) activeSignature = overloads.length - 1;
+	const sig = overloads[activeSignature];
+	const lastIdx = sig.params.length - 1;
 	// A variadic signature's last param repeats: clamp so args past the fixed list keep highlighting
 	// it rather than running off the end. A fixed signature leaves `active` as-is (an over-count
 	// simply lands past the last param — the editor renders nothing active, which is correct).
 	const activeParameter = sig.variadic && lastIdx >= 0 ? Math.min(active, lastIdx) : active;
+	return { signatures, activeSignature, activeParameter };
+}
+
+/** One overload rendered as a `name(p1: t1, …)` label plus its parameter labels. */
+function renderOne(sig: FnSignature): SignatureLabel {
+	const parameters = sig.params.map((p) => ({ label: paramLabel(p) }));
 	const inner = sig.params.map(paramLabel);
 	// Variadic: render the repeating param with a trailing "…" so the popup shows it repeats.
 	const rendered =
 		sig.variadic && inner.length > 0 ? [...inner.slice(0, -1), `${inner[inner.length - 1]}, …`] : inner;
-	return {
-		label: `${sig.name}(${rendered.join(", ")})`,
-		parameters,
-		activeParameter,
-	};
+	return { label: `${sig.name}(${rendered.join(", ")})`, parameters };
 }
 
 /** One param's display string: `name: type` when typed, else just `name`. */

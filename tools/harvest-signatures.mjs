@@ -1,15 +1,19 @@
 // Build the single generated function-SIGNATURES table per dialect: ONE list, per dialect, folding
-// two inputs together at generation time.
+// two inputs together at generation time. A name maps to an ORDERED overload SET (FnSignature[]), not
+// a single shape - it is very common for a builtin to be overloaded on argument type or arity, and the
+// model represents that directly instead of forcing everything through one shape.
 //
 //   1. HARVESTED entries mined from the docs corpora (the extractors below, unchanged).
-//   2. CURATED overrides — plain data read from tools/signature-overrides/<dialect>.mjs (migrated
+//   2. CURATED overrides - plain data read from tools/signature-overrides/<dialect>.mjs (migrated
 //      from the old hand-authored FUNCTION_SIGNATURES table).
 //
-// An override wins by key over the harvest; every emitted entry carries `origin: "curated" |
-// "harvested"` so downstream consumers (the arity checker in src/qualify/check-calls.ts, the
-// signature-help hint) can tell which layer it came from. The merged table is committed at
-// src/<dialect>/signatures.generated.ts (NOT src/signature/generated/ — that directory is gone; the
-// table now lives alongside the dialect it describes), exported as `<DIALECT>_SIGNATURES`.
+// An override wins by key over the harvest, replacing its WHOLE overload set; every emitted overload
+// carries `origin: "curated" | "harvested"` so downstream consumers (the arity checker in
+// src/qualify/check-calls.ts, the signature-help hint) can tell which layer it came from - uniform
+// within one name's set, since an override always replaces the entire set rather than mixing origins
+// entry by entry. The merged table is committed at src/<dialect>/signatures.generated.ts (NOT
+// src/signature/generated/ - that directory is gone; the table now lives alongside the dialect it
+// describes), exported as `<DIALECT>_SIGNATURES: Record<string, FnSignature[]>`.
 //
 // Dialects with no offline docs-syntax source (redshift, sqlite, mysql) still get a generated table:
 // overrides-only, every entry origin "curated", the file header noting there is no harvest source yet.
@@ -18,16 +22,17 @@
 // syntax block parses UNAMBIGUOUSLY into `name(param[, param...])` form - a flat, comma-separated list
 // of plain parameter names (optional trailing params flattened in, a `...n`/`...` tail marked
 // variadic). Anything else - alternations `{ a | b }`, in-argument clause keywords
-// (FROM/AS/OVER/ORDER/USING), `<angle>` sub-rule references, `::=` productions, multi-word params, or
-// two blocks on one page that disagree on the parameter list (a genuine overload) - is SKIPPED,
-// counted, and reported. A wrong parameter name or arity is worse than the name-only fallback, so we
-// skip aggressively. A CURATED override carries no such restriction - it is hand-authored, doc-cited
-// data, trusted as written.
+// (FROM/AS/OVER/ORDER/USING), `<angle>` sub-rule references, `::=` productions, or multi-word params -
+// is SKIPPED, counted, and reported. A wrong parameter name or arity is worse than the name-only
+// fallback, so we skip aggressively per BLOCK. Two blocks on one page (or across pages) that disagree
+// on the parameter list are no longer a skip: see OVERLOAD CLUSTERING below, they become separate
+// overloads. A CURATED override carries no such restriction - it is hand-authored, doc-cited data,
+// trusted as written, and may itself declare more than one overload (see OVERLOAD CLUSTERING).
 //
-// REDUNDANCY REPORT: after merging, the generator prints, per dialect, every override key whose shape
-// (params' names + types + optional flags + the variadic flag) is IDENTICAL to what the harvest
-// independently produced for the same key. Those overrides add nothing over the harvest and are future
-// removal candidates - printed, never auto-removed.
+// REDUNDANCY REPORT: after merging, the generator prints, per dialect, every override key whose WHOLE
+// overload set (params' names + types + optional flags + the variadic flag, per overload, in order) is
+// IDENTICAL to what the harvest independently produced for the same key. Those overrides add nothing
+// over the harvest and are future removal candidates - printed, never auto-removed.
 //
 // SOURCES. The scraped example corpora hold runnable SQL statements, not function-syntax blocks, so
 // they can't yield parameter names. Seven dialects have an offline source in the corpus repo that DOES
@@ -48,15 +53,24 @@
 // until their raw docs are vendored or a syntax tier is scraped. Each dialect's extractor is
 // registered below; an absent source is reported, not guessed.
 //
-// MERGE RULE (shared by every extractor, applied once a name's raw occurrences are collected). Occurrences
-// are deduped first — an identical param list + variadic flag collapse to one. Among the survivors: if
-// every shorter param list is a prefix (name-for-name, and where the dialect tracks types, type-for-type
-// too) of one single longest list, they merge into that longest list with the extra tail params marked
-// optional. Anything else — two lists that disagree outside a shared prefix, or two lists tied for
-// longest with neither a prefix of the other — is a CONFLICT: the name is dropped and nothing is emitted
-// for it. A wrong signature is worse than no signature, so ambiguity always loses to omission.
+// OVERLOAD CLUSTERING (shared by every extractor's clusterOverloads() call, applied once a name's raw
+// occurrences are collected). Occurrences are deduped first: an identical param list plus variadic
+// flag collapse to one. The survivors are then partitioned into an ORDERED overload array: repeatedly
+// take the longest remaining shape as an anchor and fold every remaining shape that is a prefix of it
+// (name-for-name, and where the dialect tracks types, type-for-type too) into ONE merged shape, the
+// tail beyond the shortest member's length marked optional. A shape that doesn't chain with the
+// current anchor (a same-length sibling documenting a real overload by type, e.g. lower(text) vs
+// lower(anyrange), or a shorter shape whose own prefix run diverges) becomes its own standalone
+// overload instead of being dropped. Nothing is ever guessed at: every emitted overload is still one
+// documented shape (or a doc-faithful prefix merge of several); the model change is only that a name
+// no longer has to collapse to ONE shape or vanish - "conflict" is now "overload set" (SEE HARVEST
+// STATS below: the old conflicts counter is now overload-sets, a floor never a ceiling to lower).
 //
-// Self-contained by design (repo convention — shares no code with the library). The emitted tables
+// A curated override may itself declare several overloads explicitly - see
+// tools/signature-overrides/<dialect>.mjs's OverrideSig doc comment for the two accepted shapes - and
+// always replaces the whole set for its key, never blends with a harvested overload of the same name.
+//
+// Self-contained by design (repo convention - shares no code with the library). The emitted tables
 // are committed, so rebuild AND format after a corpus refresh:
 //   node tools/harvest-signatures.mjs && npm run format
 // (prettier owns line-wrapping; the harvester emits one entry per line and lets format wrap it.)
@@ -215,13 +229,12 @@ function harvestTSql() {
 	const signatures = {};
 	const provenance = {};
 	const skips = { complex: 0, "optional-group": 0, "param-shape": 0 };
-	let conflicts = 0;
+	let overloadSets = 0;
 	let pagesNoSig = 0;
 
 	for (const dir of dirs) {
 		for (const f of mdFiles(dir)) {
-			// Per page (= one function's reference), collect each name's candidate signatures. A page that
-			// documents overloads with DIFFERENT parameter lists is a conflict → skip that name.
+			// Per page (= one function's reference), collect each name's candidate signatures.
 			const cands = new Map();
 			for (const block of syntaxsqlBlocks(readFileSync(f, "utf8"))) {
 				const r = parseTSqlSig(block);
@@ -241,8 +254,10 @@ function harvestTSql() {
 			}
 			for (const [key, variants] of cands) {
 				const sigs = [...variants.values()];
-				let sig = sigs[0];
-				if (sigs.length > 1) {
+				let overloads;
+				if (sigs.length === 1) {
+					overloads = sigs;
+				} else {
 					// Blocks that agree on the name sequence but disagree on which params are optional are
 					// per-product syntax variants of ONE form (SUBSTRING's length is required on SQL Server,
 					// optional on Fabric), not overloads: merge by OR-ing optionality, a param is omittable
@@ -250,49 +265,36 @@ function harvestTSql() {
 					// one).
 					const same = sigs.every(
 						(s) =>
-							s.variadic === sig.variadic &&
-							s.params.length === sig.params.length &&
-							s.params.every((p, i) => p.name === sig.params[i].name),
+							s.variadic === sigs[0].variadic &&
+							s.params.length === sigs[0].params.length &&
+							s.params.every((p, i) => p.name === sigs[0].params[i].name),
 					);
+					let orMerged = null;
 					if (same) {
-						sig = {
-							name: sig.name,
-							params: sig.params.map((p, i) =>
+						const merged = {
+							name: sigs[0].name,
+							params: sigs[0].params.map((p, i) =>
 								sigs.some((s) => s.params[i].optional)
 									? { name: p.name, optional: true }
 									: { name: p.name },
 							),
-							variadic: sig.variadic,
+							variadic: sigs[0].variadic,
 						};
 						// The OR can leave an optional ahead of a required param, which ParamSig cannot represent.
-						const firstOpt = sig.params.findIndex((p) => p.optional);
-						if (firstOpt !== -1 && sig.params.slice(firstOpt).some((p) => !p.optional)) {
-							conflicts++;
-							continue;
-						}
-					} else {
-						// Not per-product variants of one shape: fall back to the shared MERGE RULE. If every
-						// shorter param list is a name-for-name prefix of the single longest, merge to the
-						// longest with the tail extras marked optional (mirrors the Databricks/Snowflake/DuckDB
-						// extractors). Recovers LTRIM/RTRIM's pre-2022 1-arg vs 2022+ 2-arg forms. Anything
-						// else (two lists tied for longest, or a shorter list that isn't a clean prefix)
-						// stays a conflict.
-						const maxLen = Math.max(...sigs.map((s) => s.params.length));
-						const maximal = sigs.filter((s) => s.params.length === maxLen);
-						if (maximal.length > 1 || !sigs.every((s) => namesArePrefixTSql(s.params, maximal[0].params))) {
-							conflicts++;
-							continue;
-						}
-						const longest = maximal[0];
-						const minLen = Math.min(...sigs.map((s) => s.params.length));
-						sig = {
-							name: longest.name,
-							params: longest.params.map((p, i) => (i >= minLen ? { name: p.name, optional: true } : p)),
-							variadic: longest.variadic,
-						};
+						const firstOpt = merged.params.findIndex((p) => p.optional);
+						if (!(firstOpt !== -1 && merged.params.slice(firstOpt).some((p) => !p.optional)))
+							orMerged = merged;
 					}
+					// Not per-product variants of one mergeable shape (or the OR-merge produced an
+					// unrepresentable shape): fall back to the shared clustering (mirrors the
+					// Databricks/Snowflake/DuckDB/Trino/BigQuery/PostgreSQL extractors). A prefix chain still
+					// merges into one optional-tail shape (recovers LTRIM/RTRIM's pre-2022 1-arg vs 2022+
+					// 2-arg forms); anything that doesn't chain becomes its own overload instead of being
+					// dropped.
+					overloads = orMerged ? [orMerged] : clusterOverloads(sigs, namesArePrefixTSql);
 				}
-				signatures[key] = sig;
+				if (overloads.length >= 2) overloadSets++;
+				signatures[key] = overloads;
 				provenance[key] = relative(corpusPath("vendor/sql-docs/docs/t-sql"), f).split("\\").join("/");
 			}
 		}
@@ -304,7 +306,7 @@ function harvestTSql() {
 		signatures,
 		provenance,
 		source: "MicrosoftDocs/sql-docs  docs/t-sql/{functions,language-elements}/**/*.md (```syntaxsql``` blocks)",
-		stats: { emitted: Object.keys(signatures).length, conflicts, pagesNoSig, skips },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, pagesNoSig, skips },
 	};
 }
 
@@ -354,6 +356,64 @@ function dropOperatorNames(signatures, provenance, skips) {
 		}
 	}
 	return dropped;
+}
+
+// ---------------------------------------------------------------------------
+// Overload clustering: shared by every extractor's per-name aggregation. Replaces the old
+// conflict-drops-the-name behavior: a name's raw occurrences, once deduped to distinct shapes, are
+// partitioned into an ORDERED array of overloads instead of being thrown away when they don't all
+// merge into one.
+// ---------------------------------------------------------------------------
+
+/**
+ * Turns one name's DISTINCT (already-deduped) raw signature objects into an ordered array of
+ * overloads. Repeatedly takes the longest remaining shape as an anchor and folds every remaining
+ * shape that is a strict prefix of it (per the dialect's own `isPrefix(shorter, longer)`, already
+ * defined above per extractor) into ONE merged shape - the shared MERGE RULE: the tail beyond the
+ * shortest member's length is marked optional. A shape that doesn't chain with the current anchor (a
+ * same-length sibling documenting a real overload by type, e.g. lower(text) vs lower(anyrange), or a
+ * shorter shape whose own prefix run diverges from the anchor's) becomes its own standalone overload
+ * instead of being dropped - this is the core of the overload-set model: what used to sink the whole
+ * name as a "conflict" now survives as separate, self-contained data.
+ *
+ * Order: longest-anchor-first extraction, ties broken by the ORIGINAL occurrence order (stable sort),
+ * so the emitted array is deterministic and reflects harvested doc order.
+ */
+function clusterOverloads(distinct, isPrefix) {
+	const withIdx = distinct.map((s, i) => ({ s, i }));
+	withIdx.sort((a, b) => b.s.params.length - a.s.params.length || a.i - b.i);
+	let remaining = withIdx.map((w) => w.s);
+	const overloads = [];
+	while (remaining.length > 0) {
+		const anchor = remaining[0];
+		const rest = remaining.slice(1);
+		const members = rest.filter((s) => isPrefix(s.params, anchor.params));
+		if (members.length === 0) {
+			overloads.push(anchor);
+		} else {
+			const minLen = Math.min(anchor.params.length, ...members.map((m) => m.params.length));
+			const mergedParams = anchor.params.map((p, i) => (i >= minLen ? { ...p, optional: true } : p));
+			const mergedVariadic = !!anchor.variadic || members.some((m) => !!m.variadic);
+			overloads.push({ ...anchor, params: mergedParams, variadic: mergedVariadic || undefined });
+		}
+		const memberSet = new Set(members);
+		remaining = rest.filter((s) => !memberSet.has(s));
+	}
+	return overloads;
+}
+
+/** Unique, order-preserving sourceFile list across one name's final overload array, joined into a
+ *  single provenance comment that covers the whole overload set. */
+function provenanceOf(overloads) {
+	const seen = new Set();
+	const files = [];
+	for (const o of overloads) {
+		if (o.sourceFile && !seen.has(o.sourceFile)) {
+			seen.add(o.sourceFile);
+			files.push(o.sourceFile);
+		}
+	}
+	return files.join(", ");
 }
 
 // Leading "[ DISTINCT ]" / "[ALL | DISTINCT]" keyword-modifier group ahead of the first param on
@@ -622,7 +682,7 @@ function harvestDatabricks() {
 
 	const signatures = {};
 	const provenance = {};
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [key, occs] of occurrencesByName) {
 		// Dedupe identical (params + variadic) occurrences, keeping first sourceFile seen.
 		const distinct = [];
@@ -633,35 +693,14 @@ function harvestDatabricks() {
 			if (!dup) distinct.push(occ);
 		}
 
-		let chosen;
-		if (distinct.length === 1) {
-			chosen = distinct[0];
-		} else {
-			const maxLen = Math.max(...distinct.map((d) => d.params.length));
-			const maximal = distinct.filter((d) => d.params.length === maxLen);
-			if (maximal.length > 1) {
-				conflicts++; // two or more distinct signatures tie for longest, can't pick a canonical one
-				continue;
-			}
-			const longest = maximal[0];
-			const shorterOnes = distinct.filter((d) => d !== longest);
-			const allPrefixes = shorterOnes.every((d) => namesArePrefixDatabricks(d.params, longest.params));
-			if (!allPrefixes) {
-				conflicts++;
-				continue;
-			}
-			const minLen = Math.min(...distinct.map((d) => d.params.length));
-			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
-			chosen = {
-				name: longest.name,
-				params: mergedParams,
-				variadic: longest.variadic,
-				sourceFile: longest.sourceFile,
-			};
-		}
-
-		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
-		provenance[key] = chosen.sourceFile;
+		const overloads = clusterOverloads(distinct, namesArePrefixDatabricks);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -670,7 +709,7 @@ function harvestDatabricks() {
 		signatures,
 		provenance,
 		source: "docs.databricks.com  databricks/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-databricks-syntax.mjs)",
-		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
 }
 
@@ -902,7 +941,7 @@ function harvestSnowflake() {
 
 	const signatures = {};
 	const provenance = {};
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [key, occs] of occurrencesByName) {
 		const distinct = [];
 		for (const occ of occs) {
@@ -912,36 +951,14 @@ function harvestSnowflake() {
 			if (!dup) distinct.push(occ);
 		}
 
-		let chosen;
-		if (distinct.length === 1) {
-			chosen = distinct[0];
-		} else {
-			const maxLen = Math.max(...distinct.map((d) => d.params.length));
-			const maximal = distinct.filter((d) => d.params.length === maxLen);
-			if (maximal.length > 1) {
-				conflicts++;
-				continue;
-			}
-			const longest = maximal[0];
-			const shorterOnes = distinct.filter((d) => d !== longest);
-			const allPrefixes = shorterOnes.every((d) => namesArePrefixSnowflake(d.params, longest.params));
-			if (!allPrefixes) {
-				conflicts++;
-				continue;
-			}
-			const minLen = Math.min(...distinct.map((d) => d.params.length));
-			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
-			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
-			chosen = {
-				name: longest.name,
-				params: mergedParams,
-				variadic: mergedVariadic,
-				sourceFile: longest.sourceFile,
-			};
-		}
-
-		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
-		provenance[key] = chosen.sourceFile;
+		const overloads = clusterOverloads(distinct, namesArePrefixSnowflake);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -950,7 +967,7 @@ function harvestSnowflake() {
 		signatures,
 		provenance,
 		source: "docs.snowflake.com  snowflake/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-snowflake-syntax.mjs)",
-		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
 }
 
@@ -1201,7 +1218,7 @@ function harvestDuckdb() {
 
 	const signatures = {};
 	const provenance = {};
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [name, occs] of occurrencesByName) {
 		// Dedupe identical (params + variadic) occurrences, keeping first sourceFile seen.
 		const distinct = [];
@@ -1210,31 +1227,11 @@ function harvestDuckdb() {
 			if (!dup) distinct.push(occ);
 		}
 
-		let chosen;
-		if (distinct.length === 1) {
-			chosen = distinct[0];
-		} else {
-			const maxLen = Math.max(...distinct.map((d) => d.params.length));
-			const maximal = distinct.filter((d) => d.params.length === maxLen);
-			if (maximal.length > 1) {
-				conflicts++; // two or more distinct signatures tie for longest — can't pick a canonical one
-				continue;
-			}
-			const longest = maximal[0];
-			const shorterOnes = distinct.filter((d) => d !== longest);
-			const allPrefixes = shorterOnes.every((d) => namesArePrefixDuckdb(d.params, longest.params));
-			if (!allPrefixes) {
-				conflicts++;
-				continue;
-			}
-			const minLen = Math.min(...distinct.map((d) => d.params.length));
-			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
-			chosen = { params: mergedParams, variadic: longest.variadic, sourceFile: longest.sourceFile };
-		}
-
+		const overloads = clusterOverloads(distinct, namesArePrefixDuckdb);
+		if (overloads.length >= 2) overloadSets++;
 		const key = name.toLowerCase();
-		signatures[key] = { name, params: chosen.params, variadic: chosen.variadic };
-		provenance[key] = chosen.sourceFile;
+		signatures[key] = overloads.map((o) => ({ name, params: o.params, ...(o.variadic ? { variadic: true } : {}) }));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -1243,7 +1240,7 @@ function harvestDuckdb() {
 		signatures,
 		provenance,
 		source: 'duckdb-web  docs/current/sql/functions/*.md ("#### `name(...)`" headings)',
-		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
 }
 
@@ -1498,20 +1495,23 @@ function sigKeyPostgres(sig) {
 }
 
 function prefixCompatiblePostgres(shorter, longer) {
-	if (shorter.params.length > longer.params.length) return false;
-	for (let i = 0; i < shorter.params.length; i++) {
-		const a = shorter.params[i];
-		const b = longer.params[i];
+	if (shorter.length > longer.length) return false;
+	for (let i = 0; i < shorter.length; i++) {
+		const a = shorter[i];
+		const b = longer[i];
 		if (a.name !== b.name) return false;
 		if ((a.type ?? null) !== (b.type ?? null)) return false;
 	}
 	return true;
 }
 
-/** Dedupe + prefix-compatible merge across a name's raw parses, else conflict (nothing emitted). */
+/** Dedupe, then cluster a name's raw parses into an ordered overload array (the shared
+ *  clusterOverloads: a prefix chain still merges into one optional-tail shape, e.g. PostgreSQL
+ *  overloads by argument TYPE, not just count - lower(text) vs lower(anyrange) - become two separate
+ *  overloads instead of a dropped conflict). */
 function aggregatePostgres(byName) {
 	const emitted = new Map();
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [name, sigs] of byName) {
 		const seen = new Set();
 		const unique = [];
@@ -1522,28 +1522,11 @@ function aggregatePostgres(byName) {
 				unique.push(s);
 			}
 		}
-		if (unique.length === 1) {
-			emitted.set(name, unique[0]);
-			continue;
-		}
-		unique.sort((a, b) => a.params.length - b.params.length);
-		let ok = true;
-		for (let i = 0; i < unique.length && ok; i++) {
-			for (let j = i + 1; j < unique.length && ok; j++) {
-				if (!prefixCompatiblePostgres(unique[i], unique[j])) ok = false;
-			}
-		}
-		if (!ok) {
-			conflicts++; // e.g. PostgreSQL overloads by argument TYPE, not just count (lower(text) vs lower(anyrange))
-			continue;
-		}
-		const longest = unique[unique.length - 1];
-		const minLen = unique[0].params.length;
-		const mergedParams = longest.params.map((p, i) => (i >= minLen ? { ...p, optional: true } : p));
-		const mergedVariadic = unique.some((s) => s.variadic) || undefined;
-		emitted.set(name, { name, params: mergedParams, variadic: mergedVariadic, sourceFile: longest.sourceFile });
+		const overloads = clusterOverloads(unique, prefixCompatiblePostgres);
+		if (overloads.length >= 2) overloadSets++;
+		emitted.set(name, overloads);
 	}
-	return { emitted, conflicts };
+	return { emitted, overloadSets };
 }
 
 /** PostgreSQL extractor. Returns null when the source file is absent. */
@@ -1604,17 +1587,21 @@ function harvestPostgres() {
 		}
 	}
 
-	const { emitted, conflicts: fnSigConflicts } = aggregatePostgres(byName);
-	const { emitted: synopsisEmitted, conflicts: synopsisConflicts } = aggregatePostgres(synopsisByName);
-	for (const [name, sig] of synopsisEmitted) if (!emitted.has(name)) emitted.set(name, sig);
-	const conflicts = fnSigConflicts + synopsisConflicts;
+	const { emitted, overloadSets: fnSigOverloadSets } = aggregatePostgres(byName);
+	const { emitted: synopsisEmitted, overloadSets: synopsisOverloadSets } = aggregatePostgres(synopsisByName);
+	for (const [name, overloads] of synopsisEmitted) if (!emitted.has(name)) emitted.set(name, overloads);
+	const overloadSets = fnSigOverloadSets + synopsisOverloadSets;
 
 	const signatures = {};
 	const provenance = {};
-	for (const [name, sig] of emitted) {
+	for (const [name, overloads] of emitted) {
 		const key = name.toLowerCase();
-		signatures[key] = { name: sig.name, params: sig.params, ...(sig.variadic ? { variadic: true } : {}) };
-		provenance[key] = sig.sourceFile;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -1623,7 +1610,7 @@ function harvestPostgres() {
 		signatures,
 		provenance,
 		source: 'postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` and `<synopsis>` blocks)',
-		stats: { emitted: Object.keys(signatures).length, conflicts, parasFound, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, parasFound, skips: skipCounts },
 	};
 }
 
@@ -1860,7 +1847,7 @@ function harvestTrino() {
 
 	const signatures = {};
 	const provenance = {};
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [key, occs] of occurrencesByName) {
 		// Dedupe identical (params + variadic) occurrences: Trino's docs duplicate some directives
 		// verbatim across pages (qdigest_agg lives in both aggregate.md and qdigest.md).
@@ -1870,36 +1857,14 @@ function harvestTrino() {
 			if (!dup) distinct.push(occ);
 		}
 
-		let chosen;
-		if (distinct.length === 1) {
-			chosen = distinct[0];
-		} else {
-			const maxLen = Math.max(...distinct.map((d) => d.params.length));
-			const maximal = distinct.filter((d) => d.params.length === maxLen);
-			if (maximal.length > 1) {
-				conflicts++; // e.g. length(binary) vs length(string): a real type-based overload
-				continue;
-			}
-			const longest = maximal[0];
-			const shorterOnes = distinct.filter((d) => d !== longest);
-			const allPrefixes = shorterOnes.every((d) => namesArePrefixTrino(d.params, longest.params));
-			if (!allPrefixes) {
-				conflicts++;
-				continue;
-			}
-			const minLen = Math.min(...distinct.map((d) => d.params.length));
-			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : !!p.optional }));
-			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
-			chosen = {
-				name: longest.name,
-				params: mergedParams,
-				variadic: mergedVariadic,
-				sourceFile: longest.sourceFile,
-			};
-		}
-
-		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
-		provenance[key] = chosen.sourceFile;
+		const overloads = clusterOverloads(distinct, namesArePrefixTrino);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -1908,7 +1873,7 @@ function harvestTrino() {
 		signatures,
 		provenance,
 		source: "trinodb/trino release 482  vendor/trino-docs/functions/*.md (MyST `:::{function}` directives)",
-		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
 }
 
@@ -2139,7 +2104,7 @@ function harvestBigquery() {
 
 	const signatures = {};
 	const provenance = {};
-	let conflicts = 0;
+	let overloadSets = 0;
 	for (const [key, occs] of occurrencesByName) {
 		const distinct = [];
 		for (const occ of occs) {
@@ -2149,36 +2114,14 @@ function harvestBigquery() {
 			if (!dup) distinct.push(occ);
 		}
 
-		let chosen;
-		if (distinct.length === 1) {
-			chosen = distinct[0];
-		} else {
-			const maxLen = Math.max(...distinct.map((d) => d.params.length));
-			const maximal = distinct.filter((d) => d.params.length === maxLen);
-			if (maximal.length > 1) {
-				conflicts++;
-				continue;
-			}
-			const longest = maximal[0];
-			const shorterOnes = distinct.filter((d) => d !== longest);
-			const allPrefixes = shorterOnes.every((d) => namesArePrefixBigquery(d.params, longest.params));
-			if (!allPrefixes) {
-				conflicts++;
-				continue;
-			}
-			const minLen = Math.min(...distinct.map((d) => d.params.length));
-			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
-			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
-			chosen = {
-				name: longest.name,
-				params: mergedParams,
-				variadic: mergedVariadic,
-				sourceFile: longest.sourceFile,
-			};
-		}
-
-		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
-		provenance[key] = chosen.sourceFile;
+		const overloads = clusterOverloads(distinct, namesArePrefixBigquery);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
 	}
 
 	dropOperatorNames(signatures, provenance, skipCounts);
@@ -2187,7 +2130,7 @@ function harvestBigquery() {
 		signatures,
 		provenance,
 		source: "google/googlesql reference markdown  vendor/googlesql-docs/docs/*.md (per-function heading + syntax fences)",
-		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
 }
 
@@ -2222,7 +2165,7 @@ const CONST_NAME = {
 	mysql: "MYSQL_SIGNATURES",
 };
 
-/** Serialize one FnSignature literal (stable key order). Params carry `type` (postgres gives the
+/** Serialize one FnSignature (one overload) literal. Params carry `type` (postgres gives the
  *  documented type even when the docs name no parameter) and `optional` (a trailing `[, x]` doc
  *  group stays marked optional rather than silently flattened to required). `origin` says which
  *  layer (curated override vs harvested docs mining) produced the entry. */
@@ -2239,44 +2182,73 @@ function fnLiteral(sig, origin) {
 	return `{ name: ${JSON.stringify(sig.name)}, params: [${params}]${variadic}, origin: ${JSON.stringify(origin)} }`;
 }
 
-/** Whether a harvested signature and a curated override describe the identical shape (names, types,
- *  optional flags, in order, plus the variadic flag). Used only for the redundancy report - never to
- *  drop anything automatically. */
-function sameShape(a, b) {
-	if (!!a.variadic !== !!b.variadic) return false;
-	if (a.params.length !== b.params.length) return false;
-	return a.params.every((p, i) => {
-		const q = b.params[i];
-		return p.name === q.name && (p.type ?? null) === (q.type ?? null) && !!p.optional === !!q.optional;
+/** Serialize one name's whole overload SET as a `FnSignature[]` array literal, one call site's worth
+ *  of overloads in harvested/authored order. */
+function overloadsLiteral(overloads, origin) {
+	return `[${overloads.map((o) => fnLiteral(o, origin)).join(", ")}]`;
+}
+
+/** Whether two overload SETS are identical (same length, and each position the same shape: names,
+ *  types, optional flags, in order, plus the variadic flag). Used only for the redundancy report -
+ *  never to drop anything automatically. */
+function sameOverloadSet(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((sa, i) => {
+		const sb = b[i];
+		if (!!sa.variadic !== !!sb.variadic) return false;
+		if (sa.params.length !== sb.params.length) return false;
+		return sa.params.every((p, j) => {
+			const q = sb.params[j];
+			return p.name === q.name && (p.type ?? null) === (q.type ?? null) && !!p.optional === !!q.optional;
+		});
 	});
 }
 
+/** Normalizes one override entry (tools/signature-overrides/<dialect>.mjs) into an ordered
+ *  `FnSignature[]` overload array. An override may express either the legacy single shape
+ *  (`{ name, params, variadic?, cite }`) or an explicit multi-overload shape
+ *  (`{ name, overloads: [{ params, variadic? }, ...], cite }`); either way it replaces the WHOLE set
+ *  for its key. */
+function normalizeOverride(ov) {
+	if (ov.overloads) {
+		return ov.overloads.map((o) => ({
+			name: ov.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+	}
+	return [{ name: ov.name, params: ov.params, ...(ov.variadic ? { variadic: true } : {}) }];
+}
+
 /** Merge one dialect's harvested table (or null, when it has no offline docs-syntax source) with its
- *  curated overrides. Overrides win by key. Returns the merged { key -> { sig, origin, comment } } map
- *  plus the list of override keys whose shape exactly matches the harvest (redundancy candidates). */
+ *  curated overrides. Overrides win by key, replacing the WHOLE overload set. Returns the merged
+ *  { key -> { sig: FnSignature[], origin, comment } } map plus the list of override keys whose
+ *  overload set exactly matches the harvest (redundancy candidates). */
 function mergeDialect(harvestResult, overrides) {
 	const merged = new Map();
 	if (harvestResult) {
-		for (const [key, sig] of Object.entries(harvestResult.signatures)) {
-			merged.set(key, { sig, origin: "harvested", comment: harvestResult.provenance[key] });
+		for (const [key, overloads] of Object.entries(harvestResult.signatures)) {
+			merged.set(key, { sig: overloads, origin: "harvested", comment: harvestResult.provenance[key] });
 		}
 	}
 	const redundant = [];
 	const suppressed = [];
 	for (const [key, ov] of Object.entries(overrides)) {
-		// `suppress: true` = a ruled judgment that NO flat signature may represent this name (a
-		// constructor with several non-mergeable call shapes, a dual-nature name). The harvested
-		// entry is dropped and nothing is emitted: the name degrades to registry membership plus the
-		// name-only hint, and the arity checker stays silent, exactly like a harvest conflict.
+		// `suppress: true` = a ruled judgment that NO flat signature (or overload set) may represent
+		// this name (a lowering artifact conflated with a real builtin, arity that depends on a literal
+		// argument VALUE rather than its type/position). The harvested entry is dropped and nothing is
+		// emitted: the name degrades to registry membership plus the name-only hint, and the arity
+		// checker stays silent, exactly like a harvest conflict used to.
 		if (ov.suppress) {
 			merged.delete(key);
 			suppressed.push(key);
 			continue;
 		}
-		const overrideSig = { name: ov.name, params: ov.params, ...(ov.variadic ? { variadic: true } : {}) };
+		const overrideOverloads = normalizeOverride(ov);
 		const existing = merged.get(key);
-		if (existing && existing.origin === "harvested" && sameShape(existing.sig, overrideSig)) redundant.push(key);
-		merged.set(key, { sig: overrideSig, origin: "curated", comment: `curated: ${ov.cite}` });
+		if (existing && existing.origin === "harvested" && sameOverloadSet(existing.sig, overrideOverloads))
+			redundant.push(key);
+		merged.set(key, { sig: overrideOverloads, origin: "curated", comment: `curated: ${ov.cite}` });
 	}
 	return { merged, redundant, suppressed };
 }
@@ -2287,11 +2259,12 @@ function renderTable(dialect, merged, harvestResult) {
 	const rows = keys
 		.map((k) => {
 			const e = merged.get(k);
-			return `\t${k}: ${fnLiteral(e.sig, e.origin)}, // ${e.comment}`;
+			return `\t${k}: ${overloadsLiteral(e.sig, e.origin)}, // ${e.comment}`;
 		})
 		.join("\n");
 	const curatedCount = keys.filter((k) => merged.get(k).origin === "curated").length;
 	const harvestedCount = keys.length - curatedCount;
+	const overloadSetCount = keys.filter((k) => merged.get(k).sig.length >= 2).length;
 	const sourceLine = harvestResult
 		? `// Harvested source: ${harvestResult.source}`
 		: `// No offline docs-syntax source in the corpus repo yet for ${dialect} - curated overrides only.`;
@@ -2299,18 +2272,20 @@ function renderTable(dialect, merged, harvestResult) {
 		`// GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format\n` +
 		`${sourceLine}\n` +
 		`// Overrides source: tools/signature-overrides/${dialect}.mjs\n` +
-		`// Built ${TODAY}. ${keys.length} signatures (${curatedCount} curated, ${harvestedCount} harvested).\n` +
+		`// Built ${TODAY}. ${keys.length} names (${curatedCount} curated, ${harvestedCount} harvested), ${overloadSetCount} with 2+ overloads.\n` +
 		`import type { FnSignature } from "../signature/signatures.js";\n\n` +
 		`/** The merged function-signature table for ${dialect}: curated overrides folded over the harvested\n` +
-		` *  doc-derived long tail (overrides win by key), keyed by lowercased name. \`origin\` says which\n` +
-		` *  layer produced each entry. */\n` +
-		`export const ${constName}: Record<string, FnSignature> = {\n${rows}\n};\n`
+		` *  doc-derived long tail (overrides win by key, replacing the whole overload set), keyed by\n` +
+		` *  lowercased name. Each name maps to an ORDERED overload set - a name with one documented shape\n` +
+		` *  is a one-element array. \`origin\` says which layer produced the set. */\n` +
+		`export const ${constName}: Record<string, FnSignature[]> = {\n${rows}\n};\n`
 	);
 }
 
 async function main() {
 	const summary = [];
 	const redundancyReport = [];
+	const overloadSetReport = [];
 	for (const [dialect, extractor] of Object.entries(EXTRACTORS)) {
 		const harvestResult = extractor();
 		const overridesModule = await import(pathToFileURL(overridesFile(dialect)).href);
@@ -2320,7 +2295,16 @@ async function main() {
 
 		if (redundant.length > 0) redundancyReport.push(`  ${dialect.padEnd(11)} - ${redundant.sort().join(", ")}`);
 		if (suppressed.length > 0)
-			summary.push(`  ${dialect.padEnd(11)} - suppressed (no flat signature representable): ${suppressed.sort().join(", ")}`);
+			summary.push(
+				`  ${dialect.padEnd(11)} - suppressed (no flat signature representable): ${suppressed.sort().join(", ")}`,
+			);
+
+		// Post-merge: every name whose FINAL overload set (harvested or curated) carries 2+ overloads.
+		// Under the pre-overload-aware model every one of these names was either a whole-name-dropped
+		// harvest conflict or a suppressed override - now it is real, self-contained data.
+		const overloadNames = [...merged.keys()].filter((k) => merged.get(k).sig.length >= 2).sort();
+		if (overloadNames.length > 0)
+			overloadSetReport.push(`  ${dialect.padEnd(11)} (${overloadNames.length}) - ${overloadNames.join(", ")}`);
 
 		if (!harvestResult) {
 			summary.push(
@@ -2341,7 +2325,7 @@ async function main() {
 					? `, paras-scanned=${s.parasFound}`
 					: "";
 		summary.push(
-			`  ${dialect.padEnd(11)} - ${s.emitted} harvested, ${merged.size} total | skipped: ${skipStr}, conflicts=${s.conflicts}${scanTotal}`,
+			`  ${dialect.padEnd(11)} - ${s.emitted} harvested, ${merged.size} total | skipped: ${skipStr}, overload-sets=${s.overloadSets}${scanTotal}`,
 		);
 	}
 	console.log(`harvest-signatures -> src/<dialect>/signatures.generated.ts`);
@@ -2350,6 +2334,10 @@ async function main() {
 		"\nredundancy candidates (override shape identical to the harvest - safe future removal, not auto-dropped):",
 	);
 	console.log(redundancyReport.length > 0 ? redundancyReport.join("\n") : "  (none)");
+	console.log(
+		"\nnames with 2+ overloads in the FINAL merged table (formerly a dropped conflict or a suppressed override):",
+	);
+	console.log(overloadSetReport.length > 0 ? overloadSetReport.join("\n") : "  (none)");
 }
 
 main();

@@ -1,13 +1,17 @@
 // Signature-help engine tests: signatureAt() is a pure token scan over a
 // SqlDocument's neutral token stream. It finds the enclosing call at a caret,
-// names the function, counts the active parameter, and renders a label from the
-// merged per-dialect SIGNATURES table (degrading to name-only for an unknown name).
+// names the function, counts the active parameter, and renders every overload
+// from the merged per-dialect SIGNATURES table (degrading to a one-entry
+// name-only hint for an unknown name), picking which overload is active.
 // It must never throw on broken / mid-edit input.
 import { describe, it, expect } from "vitest";
-import { SqlDocument, signatureAt, SIGNATURES } from "../../src/index.js";
+import { SqlDocument, signatureAt, SIGNATURES, type SignatureHelpInfo } from "../../src/index.js";
 
 // Caret at the end of the given text — the common mid-typing position.
 const end = (s: string): number => s.length;
+
+/** The active overload's own rendering (label + parameters), the shape most tests care about. */
+const active = (info: SignatureHelpInfo) => info.signatures[info.activeSignature];
 
 describe("signatureAt — curated functions", () => {
 	it("Databricks date_add: caret in the 2nd arg → activeParameter 1, label names date_add", () => {
@@ -15,9 +19,10 @@ describe("signatureAt — curated functions", () => {
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.label).toContain("date_add");
+		expect(info!.signatures.length).toBe(1); // single curated overload
+		expect(active(info!).label).toContain("date_add");
 		// 3 params: start_date, num_days, and the optional 3rd of the (unit, value, expr) overload.
-		expect(info!.parameters.length).toBe(3);
+		expect(active(info!).parameters.length).toBe(3);
 		expect(info!.activeParameter).toBe(1);
 	});
 
@@ -34,8 +39,8 @@ describe("signatureAt — curated functions", () => {
 		const doc = SqlDocument.create(text, "tsql");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.label.toLowerCase()).toContain("dateadd");
-		expect(info!.parameters.length).toBe(3);
+		expect(active(info!).label.toLowerCase()).toContain("dateadd");
+		expect(active(info!).parameters.length).toBe(3);
 		expect(info!.activeParameter).toBe(2);
 	});
 
@@ -44,7 +49,7 @@ describe("signatureAt — curated functions", () => {
 		const doc = SqlDocument.create(text, "snowflake");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.parameters.length).toBe(3);
+		expect(active(info!).parameters.length).toBe(3);
 		expect(info!.activeParameter).toBe(2);
 	});
 
@@ -55,16 +60,57 @@ describe("signatureAt — curated functions", () => {
 		expect(info).not.toBeNull();
 		// concat is curated as variadic (one repeating param). The 4th comma-slot (index 3) must
 		// clamp to the last param index, not run off the end.
-		expect(info!.activeParameter).toBe(info!.parameters.length - 1);
+		expect(info!.activeParameter).toBe(active(info!).parameters.length - 1);
+	});
+});
+
+describe("signatureAt: overload picker", () => {
+	it("postgres length(...): a 2+-overload name renders one entry per overload", () => {
+		const text = "SELECT length(x, ";
+		const doc = SqlDocument.create(text, "postgres");
+		const info = signatureAt(doc, end(text));
+		expect(info).not.toBeNull();
+		// postgres length has 6 documented overloads (text/bytea/bit/geometric_type/tsvector, plus a
+		// 2-arg bytes+encoding form), see tests/signature/harvested.test.ts.
+		expect(info!.signatures.length).toBeGreaterThanOrEqual(2);
+		// Caret is in arg index 1 (2nd arg): the active overload must be one that can actually hold a
+		// 2nd param, a sane pick, not an arbitrary one.
+		const chosen = active(info!);
+		expect(chosen.parameters.length).toBeGreaterThan(1);
+	});
+
+	it("trino length(...): exactly 2 overloads (binary, string), single-param each", () => {
+		const text = "SELECT length(";
+		const doc = SqlDocument.create(text, "trino");
+		const info = signatureAt(doc, end(text));
+		expect(info).not.toBeNull();
+		expect(info!.signatures.length).toBe(2);
+		for (const s of info!.signatures) expect(s.parameters.length).toBe(1);
+		// Caret is in arg 0: both fixed 1-param overloads have room at index 0, so the FIRST one
+		// (harvested doc order) is picked active.
+		expect(info!.activeSignature).toBe(0);
+		expect(info!.activeParameter).toBe(0);
+	});
+
+	it("duckdb length(...): exactly 3 overloads (bitstring, list, string)", () => {
+		const text = "SELECT length(";
+		const doc = SqlDocument.create(text, "duckdb");
+		const info = signatureAt(doc, end(text));
+		expect(info).not.toBeNull();
+		expect(info!.signatures.length).toBe(3);
 	});
 });
 
 describe("signatureAt — uncurated fallback", () => {
-	it("an unknown identifier function degrades to name + active-arg, empty parameters", () => {
+	it("an unknown identifier function degrades to a one-entry name-only hint", () => {
 		const text = "SELECT myfunc(a, ";
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
-		expect(info).toEqual({ label: "myfunc", parameters: [], activeParameter: 1 });
+		expect(info).toEqual({
+			signatures: [{ label: "myfunc", parameters: [] }],
+			activeSignature: 0,
+			activeParameter: 1,
+		});
 	});
 });
 
@@ -94,7 +140,7 @@ describe("signatureAt — nested calls (top-level comma counting)", () => {
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.label).toContain("round");
+		expect(active(info!).label).toContain("round");
 		expect(info!.activeParameter).toBe(1);
 	});
 
@@ -103,7 +149,7 @@ describe("signatureAt — nested calls (top-level comma counting)", () => {
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.label).toContain("abs");
+		expect(active(info!).label).toContain("abs");
 		expect(info!.activeParameter).toBe(0);
 	});
 });
@@ -111,7 +157,7 @@ describe("signatureAt — nested calls (top-level comma counting)", () => {
 describe("SIGNATURES table", () => {
 	it("has a bounded curated-origin set per dialect (roughly 20-45 each)", () => {
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
-			const n = Object.values(SIGNATURES[d]).filter((s) => s.origin === "curated").length;
+			const n = Object.values(SIGNATURES[d]).filter((overloads) => overloads[0]?.origin === "curated").length;
 			expect(n).toBeGreaterThanOrEqual(20);
 			expect(n).toBeLessThanOrEqual(45);
 		}
@@ -121,6 +167,23 @@ describe("SIGNATURES table", () => {
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
 			for (const key of Object.keys(SIGNATURES[d])) {
 				expect(key).toBe(key.toLowerCase());
+			}
+		}
+	});
+
+	it("every name maps to a non-empty overload set", () => {
+		for (const d of [
+			"databricks",
+			"tsql",
+			"snowflake",
+			"bigquery",
+			"redshift",
+			"postgres",
+			"duckdb",
+			"trino",
+		] as const) {
+			for (const overloads of Object.values(SIGNATURES[d])) {
+				expect(overloads.length).toBeGreaterThan(0);
 			}
 		}
 	});

@@ -16,21 +16,24 @@ import type { SchemaProvider } from "./schema-provider.js";
 //
 //  - ARITY (both origins): the name is in the dialect's merged signature table
 //    (src/<dialect>/signatures.generated.ts, curated overrides folded over the
-//    harvested long tail) AND the call's arg count is matched by NO overload's
-//    [min, max] window, so it fires wrong-arity. A variadic signature accepts any
-//    count (the last param repeats), so it never flags. min = the count of
-//    non-optional params; max = the param count. This is the deliberate flip
-//    from the old curated-only design: the harvested tables now carry a
-//    trustworthy optional/variadic encoding (tools/harvest-signatures.mjs's
-//    NEVER-WRONG CONTRACT), so their arity is trusted too.
+//    harvested long tail), and it maps to an ORDERED OVERLOAD SET, not a single
+//    shape. It fires wrong-arity only when the call's arg count is matched by
+//    NO overload's [min, max] window. A variadic overload accepts any count at
+//    or above its own min (the last param repeats), so it never itself causes a
+//    flag. min = the count of non-optional params; max = the param count. Every
+//    overload's origin is trusted for arity (the harvested tables carry a
+//    trustworthy optional/variadic encoding, tools/harvest-signatures.mjs's
+//    NEVER-WRONG CONTRACT), so this is a union check across the whole set.
 //
-//  - OPERAND TYPE (origin "curated" only): every argument type is inferable
-//    (not unknown) AND some argument position is rejected under `accepts()` (no
-//    implicit widening path to the declared param type), so it fires
-//    wrong-argument-type. Any `unknown` argument type anywhere makes the whole
-//    call silent. Harvested entries still don't carry reliable enough types for
-//    this rejection, so a harvested-origin signature never drives a
-//    wrong-argument-type diagnostic.
+//  - OPERAND TYPE: only when the name has EXACTLY ONE overload and its origin is
+//    "curated", the unambiguous case. A 2+-overload name skips type checking
+//    entirely (which specific overload the call means isn't decided here, so no
+//    operand-type rejection can be trusted). When it does apply: every argument
+//    type is inferable (not unknown) AND some argument position is rejected
+//    under `accepts()` (no implicit widening path to the declared param type),
+//    so it fires wrong-argument-type. Any `unknown` argument type anywhere makes
+//    the whole call silent. A harvested-origin overload never drives a
+//    wrong-argument-type diagnostic (its param types aren't reliable enough).
 //
 // A qualified/dotted call (`ns.fn(...)`, sequence `.NEXTVAL`) does NOT match a
 // bare-name signature: the table is bare-name only, so it stays silent.
@@ -158,8 +161,8 @@ function checkOneCall(
 
 	const b = behaviorOf(scope);
 	const name = fn.name.toLowerCase();
-	const sig = b.signatures[name];
-	if (!sig) return; // unknown name — silent
+	const overloads = b.signatures[name];
+	if (!overloads) return; // unknown name, silent
 
 	const args = fn.args;
 
@@ -172,13 +175,15 @@ function checkOneCall(
 	const written = writtenArgCount(fn.cst);
 	if (written !== null && written !== args.length) return;
 
-	// --- arity: fires when the signature doesn't accept the count (both origins, the deliberate flip) ---
-	if (!arityAccepts(sig, args.length)) {
-		diagnostics.push(callDiag("wrong-arity", fn.cst, arityMessage([sig], args.length)));
+	// --- arity: fires only when NO overload's [min, max] window accepts the count ---
+	if (!arityAccepts(overloads, args.length)) {
+		diagnostics.push(callDiag("wrong-arity", fn.cst, arityMessage(overloads, args.length)));
 		return; // one diagnostic per call — don't also type-check a call of the wrong shape
 	}
 
-	// --- operand type (origin "curated" only: harvested param types are never trusted for rejection) ---
+	// --- operand type: only the unambiguous case, exactly one overload and it's curated-origin ---
+	if (overloads.length !== 1) return;
+	const sig = overloads[0];
 	if (sig.origin !== "curated") return;
 	const types = args.map((a) => inferType(a, scope, schema));
 	if (types.some((t) => t.kind === "unknown")) return; // any unknown → silent
@@ -191,23 +196,52 @@ function checkOneCall(
 	}
 }
 
-/** Whether a signature accepts `n` positional args. A variadic signature accepts any count (its last
- *  param repeats); a fixed one accepts [non-optional count, param count]. */
-function arityAccepts(sig: FnSignature, n: number): boolean {
-	if (sig.variadic) return true;
-	const min = sig.params.filter((p) => !p.optional).length;
-	return n >= min && n <= sig.params.length;
+/** Whether ANY overload in the set accepts `n` positional args. A variadic overload accepts any count
+ *  at or above its own min (its last param repeats); a fixed one accepts [non-optional count, param
+ *  count]. */
+function arityAccepts(overloads: readonly FnSignature[], n: number): boolean {
+	return overloads.some((sig) => {
+		if (sig.variadic) return true;
+		const min = sig.params.filter((p) => !p.optional).length;
+		return n >= min && n <= sig.params.length;
+	});
 }
 
 // ---------------------------------------------------------------------------
 // Diagnostics
 // ---------------------------------------------------------------------------
 
-function arityMessage(overloads: FnSignature[], got: number): string {
-	const lo = Math.min(...overloads.map((s) => s.params.filter((p) => !p.optional).length));
-	const hi = Math.max(...overloads.map((s) => (s.variadic ? Infinity : s.params.length)));
-	const want = lo === hi ? `${lo}` : hi === Infinity ? `${lo}+` : `${lo}–${hi}`;
-	return `${overloads[0].name} expects ${want} argument${hi === 1 ? "" : "s"}, got ${got}`;
+/** One overload's own [min, max] arity window (max is Infinity for a variadic overload). */
+function windowOf(sig: FnSignature): [number, number] {
+	return [sig.params.filter((p) => !p.optional).length, sig.variadic ? Infinity : sig.params.length];
+}
+
+/** One [lo, hi] window rendered the way a single contiguous range has always been rendered: an exact
+ *  count, an unbounded "lo+", or a "lo–hi" span (the en dash there is intentional and frozen, this
+ *  exact message shape is corpus-pinned, see tests/corpus/bigquery.analyzer.test.ts). */
+function rangeStr([lo, hi]: [number, number]): string {
+	return lo === hi ? `${lo}` : hi === Infinity ? `${lo}+` : `${lo}–${hi}`;
+}
+
+/** The arity-window UNION across every overload, merged into the fewest disjoint ranges (windows that
+ *  overlap or touch collapse into one). A single-overload name always reduces to exactly one range, so
+ *  this reproduces the pre-overload-aware message byte-for-byte in that case; a genuine multi-overload
+ *  name with a gap between ranges (e.g. 2 args or 4 args, nothing in between) renders each range and
+ *  joins them with " or ". */
+function arityMessage(overloads: readonly FnSignature[], got: number): string {
+	const windows = overloads.map(windowOf).sort((a, b) => a[0] - b[0]);
+	const groups: [number, number][] = [];
+	for (const w of windows) {
+		const last = groups[groups.length - 1];
+		if (last && w[0] <= last[1] + 1) {
+			last[1] = Math.max(last[1], w[1]);
+		} else {
+			groups.push([w[0], w[1]]);
+		}
+	}
+	const want = groups.map(rangeStr).join(" or ");
+	const overallHi = Math.max(...groups.map((g) => g[1]));
+	return `${overloads[0].name} expects ${want} argument${overallHi === 1 ? "" : "s"}, got ${got}`;
 }
 
 function argMessage(sig: FnSignature, i: number, paramType: string, got: Type): string {

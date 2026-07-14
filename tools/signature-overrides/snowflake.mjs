@@ -10,7 +10,11 @@
 // citation forward into the generated table's comment.
 
 /** @typedef {{ name: string, type?: string, optional?: boolean }} ParamSig */
-/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string }} OverrideSig */
+/** @typedef {{ params: ParamSig[], variadic?: boolean }} OverloadSig */
+/** An entry expresses either ONE shape (legacy, still the common case) or an explicit multi-overload
+ *  set via `overloads` - either way it replaces the WHOLE overload set for its key. `suppress: true`
+ *  drops the name entirely: no flat overload set can represent it (never guessed at). */
+/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string } | { name: string, overloads: OverloadSig[], cite: string } | { suppress: true, cite: string }} OverrideSig */
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
@@ -240,35 +244,97 @@ export const OVERRIDES = {
 		params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
 		cite: "TO_VARCHAR(<expr>) | TO_VARCHAR(<numeric_expr|date_or_time_expr|binary_expr>[, '<format>'])",
 	},
-	// ai_count_tokens - functions/ai_count_tokens/{1,2}.txt document seven shapes whose arity and
-	// meaning both hinge on the literal <function_name> value being counted for: the generic form
-	// (function_name, [model_name,] input_text, [options,] [return_error_details]) spans 2-5 args,
-	// and three named forms carry their own fixed arity - 'ai_similarity' takes two input texts plus
-	// options (4-5), 'ai_classify' takes input_text + categories (2-3), 'ai_translate' takes
-	// input_text + source_language + target_language (3-4). No flat param list represents this; the
-	// harvester's per-segment-first-line scan kept only the first generic 2-3-arg line. Real calls
-	// like AI_COUNT_TOKENS('ai_similarity', text1, text2, {...}) (4 args) and
-	// AI_COUNT_TOKENS('ai_translate', text, 'en', 'de') (4 args) are genuine under the named forms.
+	// ai_count_tokens - functions/ai_count_tokens/1.txt documents four generic forms, each a plain
+	// arity range that stacks a leading function_name/model_name pair over an input_text/options pair:
+	//   AI_COUNT_TOKENS( function_name, input_text [, return_error_details] )                  2-3
+	//   AI_COUNT_TOKENS( function_name, model_name, input_text [, return_error_details] )       3-4
+	//   AI_COUNT_TOKENS( function_name, input_text, options [, return_error_details] )          3-4
+	//   AI_COUNT_TOKENS( function_name, model_name, input_text, options [, return_error_details] ) 4-5
+	// Un-suppressed 2026-07-14: these four ARE representable as separate overloads now (the harvester's
+	// own per-segment-first-line scan only ever kept the first line as one shape; the other three are
+	// hand-added here from the same vendored file). functions/ai_count_tokens/2.txt ALSO documents three
+	// NAMED forms ('ai_similarity', 'ai_classify', 'ai_translate') whose arity depends on the literal
+	// function_name value, not just its position; those are left out deliberately (encoding them would
+	// require guessing at a value-dependent shape), but their arities (2-5) are already a subset of the
+	// four generic forms' combined range, and the corpus's real calls - including named forms not even
+	// documented here, e.g. 'ai_redact'/'ai_sentiment'/'ai_complete'/'ai_embed' at 2-4 args - all land
+	// inside [2, 5], so arity checking stays correct without asserting anything about arg meaning.
 	ai_count_tokens: {
-		suppress: true,
-		cite: "AI_COUNT_TOKENS - arity depends on the literal function_name arg (generic 2-5, 'ai_similarity' 4-5, 'ai_classify' 2-3, 'ai_translate' 3-4) - non-mergeable, functions/ai_count_tokens/{1,2}.txt",
+		name: "AI_COUNT_TOKENS",
+		overloads: [
+			{
+				params: [
+					{ name: "function_name" },
+					{ name: "input_text" },
+					{ name: "return_error_details", optional: true },
+				],
+			},
+			{
+				params: [
+					{ name: "function_name" },
+					{ name: "model_name" },
+					{ name: "input_text" },
+					{ name: "return_error_details", optional: true },
+				],
+			},
+			{
+				params: [
+					{ name: "function_name" },
+					{ name: "input_text" },
+					{ name: "options" },
+					{ name: "return_error_details", optional: true },
+				],
+			},
+			{
+				params: [
+					{ name: "function_name" },
+					{ name: "model_name" },
+					{ name: "input_text" },
+					{ name: "options" },
+					{ name: "return_error_details", optional: true },
+				],
+			},
+		],
+		cite: "AI_COUNT_TOKENS( function_name, [model_name,] input_text, [options,] [return_error_details] ) - four generic arity forms (2-5 args total span), functions/ai_count_tokens/1.txt",
 	},
-	// timestamp_from_parts - functions/timestamp_from_parts/1.txt documents two non-mergeable forms:
-	// (year, month, day, hour, minute, second[, nanosecond][, time_zone]) (6-8 args, two SIBLING
-	// optional-bracket groups the harvester's chain parser can't walk, since it treats a second `[`
-	// as nesting inside the first rather than following it, so this form never becomes a candidate)
-	// and (date_expr, time_expr) (2 args, the harvest's sole survivor). Real calls like
-	// timestamp_from_parts(2013, 4, 5, 12, 0, -3600) (6 args) are genuine under the first form.
+	// timestamp_from_parts - functions/timestamp_from_parts/1.txt documents two forms: (year, month,
+	// day, hour, minute, second[, nanosecond][, time_zone]) (6-8 args, two SIBLING optional-bracket
+	// groups the harvester's chain parser can't walk, since it treats a second `[` as nesting inside the
+	// first rather than following it, so this form never became a harvested candidate) and
+	// (date_expr, time_expr) (2 args, the harvest's sole survivor). Un-suppressed 2026-07-14: both forms
+	// are hand-authored here as separate overloads (the harvester's own limitation, not a real
+	// ambiguity). Real calls like timestamp_from_parts(2013, 4, 5, 12, 0, -3600) (6 args) are genuine
+	// under the first form.
 	timestamp_from_parts: {
-		suppress: true,
-		cite: "TIMESTAMP_FROM_PARTS(year,month,day,hour,minute,second[,nanosecond][,time_zone]) 6-8 args vs TIMESTAMP_FROM_PARTS(date_expr,time_expr) 2 args - non-mergeable, functions/timestamp_from_parts/1.txt",
+		name: "TIMESTAMP_FROM_PARTS",
+		overloads: [
+			{
+				params: [
+					{ name: "year" },
+					{ name: "month" },
+					{ name: "day" },
+					{ name: "hour" },
+					{ name: "minute" },
+					{ name: "second" },
+					{ name: "nanosecond", optional: true },
+					{ name: "time_zone", optional: true },
+				],
+			},
+			{ params: [{ name: "date_expr" }, { name: "time_expr" }] },
+		],
+		cite: "TIMESTAMP_FROM_PARTS(year,month,day,hour,minute,second[,nanosecond][,time_zone]) 6-8 args, and TIMESTAMP_FROM_PARTS(date_expr,time_expr) 2 args - functions/timestamp_from_parts/1.txt",
 	},
-	// object_pick - functions/object_pick/1.txt documents two non-mergeable forms: (object, key1[,
-	// key2, ...]) (a variadic scalar key list, min 2 args) and (object, array) (a single array
-	// standing in for the whole key list, exactly 2 args). The harvest kept only the array form.
-	// The corpus's OBJECT_PICK(obj, 'a', 'b') (3 args) is genuine under the variadic-keys form.
+	// object_pick - functions/object_pick/1.txt documents two forms: (object, key1[, key2, ...]) (a
+	// variadic scalar key list, min 2 args) and (object, array) (a single array standing in for the
+	// whole key list, exactly 2 args). The harvest kept only the array form. Un-suppressed 2026-07-14:
+	// their arity ranges (2+ and exactly 2) never conflict, so both coexist as separate overloads. The
+	// corpus's OBJECT_PICK(obj, 'a', 'b') (3 args) is genuine under the variadic-keys form.
 	object_pick: {
-		suppress: true,
-		cite: "OBJECT_PICK(object, key1[, key2, ...]) variadic keys vs OBJECT_PICK(object, array) single array - non-mergeable, functions/object_pick/1.txt",
+		name: "OBJECT_PICK",
+		overloads: [
+			{ params: [{ name: "object" }, { name: "key1" }], variadic: true },
+			{ params: [{ name: "object" }, { name: "array" }] },
+		],
+		cite: "OBJECT_PICK(object, key1[, key2, ...]) variadic keys, and OBJECT_PICK(object, array) single array - functions/object_pick/1.txt",
 	},
 };

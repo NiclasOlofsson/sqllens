@@ -10,7 +10,11 @@
 // citation forward into the generated table's comment.
 
 /** @typedef {{ name: string, type?: string, optional?: boolean }} ParamSig */
-/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string }} OverrideSig */
+/** @typedef {{ params: ParamSig[], variadic?: boolean }} OverloadSig */
+/** An entry expresses either ONE shape (legacy, still the common case) or an explicit multi-overload
+ *  set via `overloads` - either way it replaces the WHOLE overload set for its key. `suppress: true`
+ *  drops the name entirely: no flat overload set can represent it (never guessed at). */
+/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string } | { name: string, overloads: OverloadSig[], cite: string } | { suppress: true, cite: string }} OverrideSig */
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
@@ -300,16 +304,23 @@ export const OVERRIDES = {
 		params: [{ name: "array" }, { name: "func", optional: true }],
 		cite: "array_sort(array[, func]) - func omitted sorts ascending (Returns section, docs.databricks.com/en/sql/language-manual/functions/array_sort)",
 	},
-	// decode - two genuinely different, non-mergeable builtins share this name: docs/syntax/functions/
-	// decode_cs/1.txt's "decode(expr, charSet)" (binary-to-string charset decode, 2 required args,
-	// the harvest's own pick since decode/1.txt's own block contains "{ }" braces and is skipped as
-	// complex) vs docs/syntax/functions/decode/1.txt's Oracle-style conditional
-	// "decode(expr, { key1, value1 } [, ...] [, defValue])" (1 + variadic key/value pairs + an
-	// optional default). The corpus's real decode() calls - decode(5, 6,'Spark', 5,'SQL', 4,'rocks')
-	// - are the conditional form with 7 args, not the charset form.
+	// decode - two genuinely different builtins share this name: docs/syntax/functions/decode_cs/1.txt's
+	// "decode(expr, charSet)" (binary-to-string charset decode, 2 required args, the harvest's own pick
+	// since decode/1.txt's own block contains "{ }" braces and is skipped as complex) vs
+	// docs/syntax/functions/decode/1.txt's Oracle-style conditional
+	// "decode(expr, { key1, value1 } [, ...] [, defValue])" (expr + 1+ variadic key/value pairs + an
+	// optional default: arity 3, 4, 5, 6, ... - every count from 3 up, since a pair adds 2 and a
+	// trailing default adds 1 more). Un-suppressed 2026-07-14 now that the model represents overloads:
+	// their arities never collide (exactly 2 vs 3-or-more), so both coexist as separate overloads
+	// without ambiguity. The corpus's real decode() calls - decode(5, 6, 'Spark', 5, 'SQL', 4, 'rocks')
+	// (6 args) and the decode_cs-style 2-arg calls - are both genuine and both now representable.
 	decode: {
-		suppress: true,
-		cite: "decode(bin, charSet) 2-arg charset decode vs decode(expr, key1, value1[, ...][, defValue]) Oracle-style conditional decode - non-mergeable, docs/syntax/functions/decode_cs vs decode",
+		name: "decode",
+		overloads: [
+			{ params: [{ name: "bin" }, { name: "charSet" }] },
+			{ params: [{ name: "expr" }, { name: "search" }, { name: "result" }], variadic: true },
+		],
+		cite: "decode(bin, charSet) 2-arg charset decode, and decode(expr, search, result, ...) Oracle-style conditional decode (expr + 1+ key/value pairs + an optional default) - docs/syntax/functions/decode_cs vs decode",
 	},
 	// from_avro - docs/syntax/functions/from_avro/1.txt: "from_avro(avroBin, jsonSchemaStr, options )"
 	// shows no brackets, but docs.databricks.com/en/sql/language-manual/functions/from_avro (fetched

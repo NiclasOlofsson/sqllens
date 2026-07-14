@@ -9,7 +9,11 @@
 // citation forward into the generated table's comment.
 
 /** @typedef {{ name: string, type?: string, optional?: boolean }} ParamSig */
-/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string }} OverrideSig */
+/** @typedef {{ params: ParamSig[], variadic?: boolean }} OverloadSig */
+/** An entry expresses either ONE shape (legacy, still the common case) or an explicit multi-overload
+ *  set via `overloads` - either way it replaces the WHOLE overload set for its key. `suppress: true`
+ *  drops the name entirely: no flat overload set can represent it (never guessed at). */
+/** @typedef {{ name: string, params: ParamSig[], variadic?: boolean, cite: string } | { name: string, overloads: OverloadSig[], cite: string } | { suppress: true, cite: string }} OverrideSig */
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {

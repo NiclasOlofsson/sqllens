@@ -204,7 +204,7 @@ src/references/            referencesAt(scopes, offset, schema?, ast?) → Occur
 src/symbols/               deriveSymbols — kind×modifier symbol model over the scope tree; carries types/origins when given a schema
 src/document/              the living-document model — document.ts (SqlDocument), line-index.ts (LineIndex: O(log n) position↔offset), node-at.ts (CST node at an offset)
 src/completion/            scope-aware completion over a SqlDocument — own ATN candidate walk (atn-walk.ts), NO antlr4-c3 dependency; complete.ts (all dialects). Total: never throws
-src/signature/             signature help: SIGNATURES, one generated table per dialect (src/<dialect>/signatures.generated.ts), curated overrides (tools/signature-overrides/<dialect>.mjs) folded over the harvested long tail at generation time, `origin` per entry; signatureAt() is a pure token scan; total
+src/signature/             signature help: SIGNATURES, one generated table per dialect (src/<dialect>/signatures.generated.ts), curated overrides (tools/signature-overrides/<dialect>.mjs) folded over the harvested long tail at generation time, `origin` per entry, overload sets per name; signatureAt() is a pure token scan; total
 src/api.ts                 the public surface: Dialect, parse, analyze, tokenize, SqlDocument, complete/signatureAt, composable qualify/lineage/deriveSymbols, referencesAt, typed result wrappers
 src/index.ts               public barrel: re-exports src/api.ts + the per-dialect parse*/lower building blocks and the raw shared passes
 tools/gen.mjs              generation driver (sorts .g4 so the lexer generates before the parser — tokenVocab)
