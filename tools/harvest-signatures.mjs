@@ -1635,12 +1635,29 @@ function harvestPostgres() {
 
 	const byName = new Map();
 	const txt = readFileSync(src, "utf8");
+	// Enclosing <sect1 id="..."> per offset: the id doubles as provenance ("functions-math" beats a
+	// flat "func.sgml") and, downstream, as the page slug of the published docs URL
+	// (postgresql.org/docs/18/<id>.html) for the fn-docs table.
+	const sect1s = [];
+	{
+		const sectRe = /<sect1 id="([^"]+)"/g;
+		let sm;
+		while ((sm = sectRe.exec(txt))) sect1s.push([sm.index, sm[1]]);
+	}
+	const sect1At = (offset) => {
+		let id = "func.sgml";
+		for (const [o, sectId] of sect1s) {
+			if (o > offset) break;
+			id = sectId;
+		}
+		return id;
+	};
 	const re = /<para role="func_signature">([\s\S]*?)<\/para>/g;
 	let m;
 	let parasFound = 0;
 	while ((m = re.exec(txt))) {
 		parasFound++;
-		const sig = processParaPostgres(m[1], "func.sgml", stats);
+		const sig = processParaPostgres(m[1], sect1At(m.index), stats);
 		if (sig) {
 			if (!byName.has(sig.name)) byName.set(sig.name, []);
 			byName.get(sig.name).push(sig);
@@ -1657,7 +1674,7 @@ function harvestPostgres() {
 	const synopsisByName = new Map();
 	const synopsisRe = /<synopsis>([\s\S]*?)<\/synopsis>/g;
 	while ((m = synopsisRe.exec(txt))) {
-		const sig = processParaPostgres(m[1], "func.sgml", stats);
+		const sig = processParaPostgres(m[1], sect1At(m.index), stats);
 		if (sig && !byName.has(sig.name)) {
 			if (!synopsisByName.has(sig.name)) synopsisByName.set(sig.name, []);
 			synopsisByName.get(sig.name).push(sig);
@@ -2942,6 +2959,126 @@ const CONST_NAME = {
 	mysql: "MYSQL_SIGNATURES",
 };
 
+// ---------------------------------------------------------------------------
+// Function docs (issue #34) — the parallel per-NAME table: docUrl now, descriptions folded in by
+// later stages. docUrl comes from the same provenance the signature harvest already records, joined
+// against the tier manifests (databricks/snowflake: per-function URLs) or mapped from the source
+// file path (everyone else, page-level). Emitted to src/<dialect>/fn-docs.generated.ts alongside the
+// signature table; only names with at least one field get a row. A resolver returning undefined
+// (curated entry with no source page, manifest miss) simply yields no docUrl — absent beats wrong.
+// ---------------------------------------------------------------------------
+
+const FN_DOCS_CONST_NAME = Object.fromEntries(Object.keys(CONST_NAME).map((d) => [d, `${d.toUpperCase()}_FN_DOCS`]));
+const fnDocsFile = (dialect) => resolve(ROOT_DIR, "src", dialect, "fn-docs.generated.ts");
+
+/** databricks/snowflake: manifest keys are the full per-function page URLs; map last path segment
+ *  (the function name as it appears in the URL) -> URL, dead pages (non-200) excluded. */
+function urlManifest(relPath) {
+	const p = corpusPath(relPath);
+	if (!existsSync(p)) return new Map();
+	const manifest = JSON.parse(readFileSync(p, "utf8"));
+	const byName = new Map();
+	for (const [url, meta] of Object.entries(manifest)) {
+		if (meta.status !== 200) continue;
+		const seg = url.replace(/\/+$/, "").split("/").pop().toLowerCase();
+		if (!byName.has(seg)) byName.set(seg, url);
+	}
+	return byName;
+}
+
+/** First source file of a provenance comment ("a.md, b.md" -> "a.md"); null for curated entries
+ *  (their comment is "curated: <cite>", not a source path). */
+function firstProvenanceFile(comment) {
+	if (!comment || comment.startsWith("curated:")) return null;
+	return comment.split(", ")[0];
+}
+
+/** Per-dialect docUrl resolvers: (lowercased name, provenance comment) -> public URL | undefined.
+ *  Page-level except databricks/snowflake, whose sources are per-function pages. Bases are the
+ *  published homes of the exact vendored/captured sources the harvest reads (see each extractor's
+ *  `source` string); the manifest files record the same bases. */
+function buildDocUrlResolvers() {
+	const databricksManifest = urlManifest("databricks/docs/syntax/manifest.json");
+	const snowflakeManifest = urlManifest("snowflake/docs/syntax/manifest.json");
+	const pageOf = (comment) => {
+		const f = firstProvenanceFile(comment);
+		return f ? f.split("/")[0] : null;
+	};
+	// Per-function manifests join by key first, then by the captured page dir (the provenance path's
+	// first segment under functions/), which IS the URL slug when it differs from the key (snowflake's
+	// system$… functions, punctuation-mangled names).
+	const perFunction = (manifest) => (key, comment) => {
+		const direct = manifest.get(key);
+		if (direct) return direct;
+		const f = firstProvenanceFile(comment);
+		const dir = f && f.startsWith("functions/") ? f.split("/")[1].toLowerCase() : null;
+		return dir ? manifest.get(dir) : undefined;
+	};
+	return {
+		databricks: perFunction(databricksManifest),
+		snowflake: perFunction(snowflakeManifest),
+		tsql: (key, comment) => {
+			const f = firstProvenanceFile(comment);
+			return f ? `https://learn.microsoft.com/en-us/sql/t-sql/${f.replace(/\.md$/, "")}` : undefined;
+		},
+		duckdb: (key, comment) => {
+			const f = firstProvenanceFile(comment);
+			return f ? `https://duckdb.org/docs/current/${f.replace(/\.md$/, ".html")}` : undefined;
+		},
+		postgres: (key, comment) => {
+			const f = firstProvenanceFile(comment);
+			return f && f !== "func.sgml" ? `https://www.postgresql.org/docs/18/${f}.html` : undefined;
+		},
+		trino: (key, comment) => {
+			const f = firstProvenanceFile(comment);
+			return f ? `https://trino.io/docs/current/functions/${f.replace(/\.md$/, ".html")}` : undefined;
+		},
+		bigquery: (key, comment) => {
+			const f = firstProvenanceFile(comment);
+			return f
+				? `https://cloud.google.com/bigquery/docs/reference/standard-sql/${f.replace(/\.md$/, "")}`
+				: undefined;
+		},
+		redshift: (key, comment) => {
+			const page = pageOf(comment);
+			return page ? `https://docs.aws.amazon.com/redshift/latest/dg/${page}.html` : undefined;
+		},
+		mysql: (key, comment) => {
+			const page = pageOf(comment);
+			return page ? `https://dev.mysql.com/doc/refman/8.4/en/${page}.html` : undefined;
+		},
+		sqlite: (key, comment) => {
+			const page = pageOf(comment);
+			return page ? `https://sqlite.org/${page}.html` : undefined;
+		},
+	};
+}
+
+function renderFnDocsTable(dialect, docs) {
+	const constName = FN_DOCS_CONST_NAME[dialect];
+	const keys = Object.keys(docs).sort();
+	const rows = keys
+		.map((k) => {
+			const d = docs[k];
+			const fields = [];
+			if (d.docUrl !== undefined) fields.push(`docUrl: ${JSON.stringify(d.docUrl)}`);
+			if (d.description !== undefined) fields.push(`description: ${JSON.stringify(d.description)}`);
+			fields.push(`origin: ${JSON.stringify(d.origin)}`);
+			return `\t${k}: { ${fields.join(", ")} },`;
+		})
+		.join("\n");
+	const withDesc = keys.filter((k) => docs[k].description !== undefined).length;
+	return (
+		`// GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format\n` +
+		`// The per-NAME function docs table for ${dialect} (issue #34), parallel to the signature table:\n` +
+		`// docUrl points at the vendor's published page for the same source the signature harvest read;\n` +
+		`// description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.\n` +
+		`// Built ${TODAY}. ${keys.length} names (${withDesc} with descriptions).\n` +
+		`import type { FnDoc } from "../signature/docs.js";\n\n` +
+		`export const ${constName}: Record<string, FnDoc> = {\n${rows}\n};\n`
+	);
+}
+
 /** Serialize one FnSignature (one overload) literal. Params carry `type` (postgres gives the
  *  documented type even when the docs name no parameter) and `optional` (a trailing `[, x]` doc
  *  group stays marked optional rather than silently flattened to required). `origin` says which
@@ -3063,12 +3200,23 @@ async function main() {
 	const summary = [];
 	const redundancyReport = [];
 	const overloadSetReport = [];
+	const docUrlResolvers = buildDocUrlResolvers();
 	for (const [dialect, extractor] of Object.entries(EXTRACTORS)) {
 		const harvestResult = extractor();
 		const overridesModule = await import(pathToFileURL(overridesFile(dialect)).href);
 		const { merged, redundant, suppressed } = mergeDialect(harvestResult, overridesModule.OVERRIDES);
 
 		writeFileSync(outFile(dialect), renderTable(dialect, merged, harvestResult));
+
+		// The parallel per-NAME docs table (issue #34): docUrl per name where resolvable.
+		const docs = {};
+		const resolveDocUrl = docUrlResolvers[dialect];
+		for (const key of merged.keys()) {
+			const docUrl = resolveDocUrl(key, merged.get(key).comment);
+			if (docUrl !== undefined) docs[key] = { docUrl, origin: "vendor-docs" };
+		}
+		writeFileSync(fnDocsFile(dialect), renderFnDocsTable(dialect, docs));
+		summary.push(`  ${dialect.padEnd(11)} - fn-docs: ${Object.keys(docs).length}/${merged.size} names with docUrl`);
 
 		if (redundant.length > 0) redundancyReport.push(`  ${dialect.padEnd(11)} - ${redundant.sort().join(", ")}`);
 		if (suppressed.length > 0)
