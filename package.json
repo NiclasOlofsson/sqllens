@@ -16,6 +16,7 @@
 	},
 	"files": [
 		"dist",
+		"!dist/generated/**/*.d.ts",
 		"LICENSE",
 		"THIRD-PARTY-NOTICES.md"
 	],
