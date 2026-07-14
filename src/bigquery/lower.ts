@@ -1584,36 +1584,62 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 	}
 
 	const suffix = directChildrenOfRule(node, P.RULE_function_call_expression_with_clauses_suffix)[0];
-	const args = suffix ? collectCallArgs(suffix) : [];
+	const { args, argNames } = suffix ? collectCallArgs(suffix) : { args: [], argNames: [] };
 	const over = suffix ? firstOfRule(suffix, P.RULE_over_clause) : undefined;
 	const window = over ? lowerOver(over) : undefined;
 	const distinct = hasDirectToken(node, P.DISTINCT_SYMBOL);
 
-	return { kind: "function", name, qualifier, args, aggregate: AGGREGATES.has(name), distinct, window, cst: node };
+	return {
+		kind: "function",
+		name,
+		qualifier,
+		args,
+		// Named-argument invocation `fn(name => value)`: the per-arg names make the call
+		// conservation-visible and let the arity checker's named-arg bypass fire (a named call's
+		// positional count says nothing about the documented positional signature).
+		...(argNames.some((n) => n !== undefined) ? { argNames } : {}),
+		aggregate: AGGREGATES.has(name),
+		distinct,
+		window,
+		cst: node,
+	};
 }
 
-/** function_call_argument children of the suffix (skipping nested calls' own args). */
-function collectCallArgs(suffix: ParserRuleContext): Expr[] {
-	const out: Expr[] = [];
+/** function_call_argument children of the suffix (skipping nested calls' own args), with the
+ *  `name => value` parameter name per arg slot (undefined for positional args). */
+function collectCallArgs(suffix: ParserRuleContext): { args: Expr[]; argNames: (string | undefined)[] } {
+	const args: Expr[] = [];
+	const argNames: (string | undefined)[] = [];
 	for (const arg of shallowNodesOfRule(suffix, P.RULE_function_call_argument)) {
 		// function_call_argument: expression alias? | named_argument | lambda_argument | sequence_arg
 		const named = directChildrenOfRule(arg, P.RULE_named_argument)[0];
 		if (named) {
+			const argName = directChildrenOfRule(named, P.RULE_identifier)[0]?.getText();
 			const e = directChildrenOfRule(named, P.RULE_expression)[0];
-			if (e) out.push(lowerExpr(e));
+			if (e) {
+				args.push(lowerExpr(e));
+				argNames.push(argName);
+			}
 			const lam = directChildrenOfRule(named, P.RULE_lambda_argument)[0];
-			if (lam) out.push(lowerLambda(lam));
+			if (lam) {
+				args.push(lowerLambda(lam));
+				argNames.push(argName);
+			}
 			continue;
 		}
 		const lambda = directChildrenOfRule(arg, P.RULE_lambda_argument)[0];
 		if (lambda) {
-			out.push(lowerLambda(lambda));
+			args.push(lowerLambda(lambda));
+			argNames.push(undefined);
 			continue;
 		}
 		const e = directChildrenOfRule(arg, P.RULE_expression)[0];
-		if (e) out.push(lowerExpr(e));
+		if (e) {
+			args.push(lowerExpr(e));
+			argNames.push(undefined);
+		}
 	}
-	return out;
+	return { args, argNames };
 }
 
 /** lambda_argument: lambda_argument_list -> expression. */
