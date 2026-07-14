@@ -3054,6 +3054,190 @@ function buildDocUrlResolvers() {
 	};
 }
 
+// --- description extraction (issue #34, stage: vendored permissive sources) -----------------
+// One-line prose per function, extracted ONLY from permissively licensed sources vendored in the
+// corpus repo (attribution in THIRD-PARTY-NOTICES.md): trino/googlesql Apache-2.0, duckdb-web MIT,
+// sql-docs CC-BY-4.0, postgres-sgml PostgreSQL License. The license-blocked dialects (snowflake,
+// redshift, mysql) and the capture-tier dialects (databricks via Spark, sqlite via its public-
+// domain bundle) are filled by their own later stages; their extractors return null here.
+// Extraction is first-sentence, tooltip-sized; a name the walker can't describe cleanly is simply
+// absent — absent beats wrong, same contract as the signature harvest.
+
+/** First sentence of a prose block, whitespace-collapsed, capped. Falls back to the full capped
+ *  text when the "sentence" is implausibly short (an abbreviation cut like "approx."). */
+function firstSentenceOf(text, cap = 300) {
+	const t = text.replace(/\s+/g, " ").trim();
+	const m = t.match(/^.*?[.!?](?=\s|$)/);
+	const sentence = m ? m[0] : t;
+	// A paragraph that introduces an example ends with ":" — close it as a sentence instead.
+	return (sentence.length >= 20 ? sentence : t).slice(0, cap).trim().replace(/:$/, ".");
+}
+
+/** Strip markdown link syntax ([text](url) / [text]) and reference-style braces, keep the text. */
+function stripMdLinks(s) {
+	return s
+		.replace(/\[([^\]]*)\]\([^)]*\)/g, "$1")
+		.replace(/\{@?func[^}]*`([^`]*)`\}/g, "$1")
+		.replace(/\{[a-z-]+\}`([^`]*)`/g, "$1");
+}
+
+/** trino: the MyST `:::{function}` directive body IS the description (first paragraph). */
+function describeTrino() {
+	const src = corpusPath("vendor/trino-docs/functions");
+	if (!existsSync(src)) return null;
+	const map = new Map();
+	for (const f of readdirSync(src).filter((n) => n.endsWith(".md"))) {
+		const lines = readFileSync(join(src, f), "utf8").split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			const m = lines[i].match(/^:{3,4}\{function\} ([A-Za-z_][\w.]*)\s*\(/);
+			if (!m) continue;
+			const body = [];
+			for (let j = i + 1; j < lines.length && !/^:{3,}/.test(lines[j]); j++) {
+				if (lines[j].trim() === "" && body.length > 0) break;
+				if (lines[j].trim() !== "") body.push(lines[j].trim());
+			}
+			const key = m[1].toLowerCase();
+			if (body.length > 0 && !map.has(key)) map.set(key, firstSentenceOf(stripMdLinks(body.join(" "))));
+		}
+	}
+	return map;
+}
+
+/** duckdb: `#### \`name(...)\`` heading followed by a `| **Description** | ... |` table row. */
+function describeDuckdb() {
+	const src = corpusPath("vendor/duckdb-web/docs/current/sql/functions");
+	if (!existsSync(src)) return null;
+	const map = new Map();
+	for (const f of mdFiles(src)) {
+		const lines = readFileSync(f, "utf8").split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			const m = lines[i].match(/^#{3,5} `([A-Za-z_][\w.]*)\(/);
+			if (!m) continue;
+			for (let j = i + 1; j < Math.min(i + 10, lines.length); j++) {
+				const d = lines[j].match(/^\| \*\*Description\*\* \| (.*) \|\s*$/);
+				if (d) {
+					const key = m[1].toLowerCase();
+					if (!map.has(key)) map.set(key, firstSentenceOf(stripMdLinks(d[1])));
+					break;
+				}
+			}
+		}
+	}
+	return map;
+}
+
+/** bigquery: `## \`NAME\`` heading, then the paragraph after `**Description**`. */
+function describeBigquery() {
+	const src = corpusPath("vendor/googlesql-docs/docs");
+	if (!existsSync(src)) return null;
+	const map = new Map();
+	for (const f of readdirSync(src).filter((n) => n.endsWith(".md"))) {
+		const lines = readFileSync(join(src, f), "utf8").split("\n");
+		for (let i = 0; i < lines.length; i++) {
+			const m = lines[i].match(/^#{2,3} `([A-Za-z_][\w.]*)`\s*$/);
+			if (!m) continue;
+			let di = -1;
+			for (let k = i + 1; k < Math.min(i + 40, lines.length); k++) {
+				if (/^\*\*Description\*\*/.test(lines[k])) {
+					di = k;
+					break;
+				}
+				if (/^#{2,3} /.test(lines[k])) break; // next function section — no Description here
+			}
+			if (di === -1) continue;
+			const para = [];
+			for (let j = di + 1; j < lines.length; j++) {
+				const l = lines[j].trim();
+				if (l === "") {
+					if (para.length > 0) break;
+					continue;
+				}
+				// Structural starts end the paragraph; a line-initial single backtick is inline code
+				// mid-sentence (wrapped prose), not structure — only a ``` fence breaks.
+				if (/^(#|<|\||```)/.test(l) || /^\*\*/.test(l)) break;
+				para.push(l);
+			}
+			const key = m[1].toLowerCase();
+			if (para.length > 0 && !map.has(key)) map.set(key, firstSentenceOf(stripMdLinks(para.join(" "))));
+		}
+	}
+	return map;
+}
+
+/** postgres: func.sgml `func_table_entry` rows — the func_signature para's next sibling para is
+ *  the description. Tags stripped, entities unescaped. */
+function describePostgres() {
+	const src = corpusPath("vendor/postgres-sgml/func.sgml");
+	if (!existsSync(src)) return null;
+	const sgml = readFileSync(src, "utf8");
+	const map = new Map();
+	for (const entry of sgml.split('<entry role="func_table_entry">').slice(1)) {
+		const m = entry.match(/<para role="func_signature">([\s\S]*?)<\/para>\s*<para>([\s\S]*?)<\/para>/);
+		if (!m) continue;
+		const fn = m[1].match(/<function>([^<(]+)/);
+		if (!fn) continue;
+		const desc = m[2]
+			.replace(/<[^>]+>/g, "")
+			.replace(/&amp;/g, "&")
+			.replace(/&lt;/g, "<")
+			.replace(/&gt;/g, ">")
+			.replace(/&quot;/g, '"');
+		const key = fn[1].trim().toLowerCase();
+		if (desc.trim() && !map.has(key)) map.set(key, firstSentenceOf(desc));
+	}
+	return map;
+}
+
+/** tsql: per-function markdown pages — the first prose paragraph after the H1. Pages come from
+ *  each name's own harvest provenance (no filename guessing), so shared pages (CAST/CONVERT) and
+ *  oddly named ones resolve too. Returns a resolver over the merged table rather than a map. */
+function describeTsqlFor(merged) {
+	const root = corpusPath("vendor/sql-docs/docs/t-sql");
+	if (!existsSync(root)) return null;
+	const cache = new Map();
+	const firstParagraph = (relFile) => {
+		if (cache.has(relFile)) return cache.get(relFile);
+		let desc;
+		const p = join(root, relFile);
+		if (existsSync(p)) {
+			const lines = readFileSync(p, "utf8").split("\n");
+			const h1 = lines.findIndex((l) => /^# /.test(l));
+			for (let i = h1 + 1; h1 !== -1 && i < lines.length; i++) {
+				const l = lines[i].trim();
+				if (l === "" || l.startsWith("[!INCLUDE") || l.startsWith(":::") || l.startsWith("#")) continue;
+				if (l.startsWith(">") || l.startsWith("|") || l.startsWith("<") || l.startsWith("![")) continue;
+				desc = firstSentenceOf(stripMdLinks(l));
+				break;
+			}
+		}
+		cache.set(relFile, desc);
+		return desc;
+	};
+	const map = new Map();
+	for (const key of merged.keys()) {
+		const f = firstProvenanceFile(merged.get(key).comment);
+		if (!f) continue;
+		const desc = firstParagraph(f);
+		if (desc) map.set(key, desc);
+	}
+	return map;
+}
+
+/** Per-dialect description sources. null = no legally clean vendored source in THIS stage (the
+ *  capture-tier and license-blocked dialects get theirs from later stages' committed tiers). */
+const DESCRIPTION_EXTRACTORS = {
+	databricks: () => null,
+	tsql: null, // provenance-driven: wired via describeTsqlFor(merged) in main()
+	snowflake: () => null,
+	bigquery: describeBigquery,
+	redshift: () => null,
+	postgres: describePostgres,
+	duckdb: describeDuckdb,
+	trino: describeTrino,
+	sqlite: () => null,
+	mysql: () => null,
+};
+
 function renderFnDocsTable(dialect, docs) {
 	const constName = FN_DOCS_CONST_NAME[dialect];
 	const keys = Object.keys(docs).sort();
@@ -3208,15 +3392,28 @@ async function main() {
 
 		writeFileSync(outFile(dialect), renderTable(dialect, merged, harvestResult));
 
-		// The parallel per-NAME docs table (issue #34): docUrl per name where resolvable.
+		// The parallel per-NAME docs table (issue #34): docUrl per name where resolvable, plus a
+		// description where a permissively licensed vendored source carries one.
 		const docs = {};
 		const resolveDocUrl = docUrlResolvers[dialect];
 		for (const key of merged.keys()) {
 			const docUrl = resolveDocUrl(key, merged.get(key).comment);
 			if (docUrl !== undefined) docs[key] = { docUrl, origin: "vendor-docs" };
 		}
+		const descriptions = dialect === "tsql" ? describeTsqlFor(merged) : DESCRIPTION_EXTRACTORS[dialect]();
+		let descCount = 0;
+		if (descriptions) {
+			for (const [key, text] of descriptions) {
+				if (!merged.has(key)) continue; // only names the signature table knows
+				(docs[key] ??= { origin: "vendor-docs" }).description = text;
+				descCount++;
+			}
+		}
 		writeFileSync(fnDocsFile(dialect), renderFnDocsTable(dialect, docs));
-		summary.push(`  ${dialect.padEnd(11)} - fn-docs: ${Object.keys(docs).length}/${merged.size} names with docUrl`);
+		const urlCount = Object.values(docs).filter((d) => d.docUrl !== undefined).length;
+		summary.push(
+			`  ${dialect.padEnd(11)} - fn-docs: ${urlCount}/${merged.size} names with docUrl, ${descCount} descriptions`,
+		);
 
 		if (redundant.length > 0) redundancyReport.push(`  ${dialect.padEnd(11)} - ${redundant.sort().join(", ")}`);
 		if (suppressed.length > 0)

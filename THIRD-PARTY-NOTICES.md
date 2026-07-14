@@ -120,12 +120,16 @@ Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 Positive Technologies; (c) 2017 Ivan Khudyashev. Licensed under the MIT License
 (full text retained in the file headers).
 
-## Doc-derived function-signature tables (distributed in this repository)
+## Doc-derived function-signature and function-docs tables (distributed in this repository)
 
-The generated per-dialect function-signature tables (produced by
+The generated per-dialect function-signature tables and their per-name docs
+companions (`signatures.generated.ts` / `fn-docs.generated.ts`, produced by
 `tools/harvest-signatures.mjs`, committed under `src/`) carry factual API-surface
-data (function names, parameter names, arity, optionality) extracted from each
-dialect's reference documentation. Sources and their licenses:
+data (function names, parameter names, arity, optionality) and links to each
+dialect's reference documentation. For the permissively licensed sources listed
+below, the docs tables additionally reproduce one descriptive sentence per
+function, extracted verbatim from the source and marked `origin: "vendor-docs"`.
+Sources and their licenses:
 
 ### T-SQL signatures, from MicrosoftDocs/sql-docs (CC BY 4.0)
 
@@ -133,7 +137,9 @@ Derived from the Transact-SQL reference markdown in
 [MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs), (c) Microsoft
 Corporation, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
 Changes were made: the documented syntax notation was mechanically parsed and
-transformed into TypeScript signature tables; no documentation prose is reproduced.
+transformed into TypeScript signature tables, and the docs table reproduces each
+function page's first descriptive sentence (truncated to one sentence, whitespace
+collapsed); no other documentation prose is reproduced.
 
 ### DuckDB signatures, from duckdb/duckdb-web (MIT)
 
@@ -168,7 +174,11 @@ Derived from the Syntax sections of the public SQL language references at
 publish no redistribution license; the tables reproduce only the factual call
 shape of each function (name, parameter names, arity, optionality), the same facts
 any SQL tool documents about a dialect's API surface, and no documentation prose.
-Credited here as sources with thanks.
+The docs tables link each function to its page on these sites; no page text is
+reproduced. The same applies to the Redshift
+([docs.aws.amazon.com](https://docs.aws.amazon.com), (c) Amazon Web Services) and
+MySQL ([dev.mysql.com](https://dev.mysql.com/doc/), (c) Oracle Corporation)
+references: links only, no prose. Credited here as sources with thanks.
 
 ## Runtime and build dependencies (not redistributed in source)
 
