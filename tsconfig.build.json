@@ -8,6 +8,5 @@
 		"outDir": "dist",
 		"rootDir": "src"
 	},
-	"include": ["src"],
-	"exclude": ["src/lsp"]
+	"include": ["src"]
 }

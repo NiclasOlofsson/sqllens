@@ -161,10 +161,9 @@ describe("splitStatements", () => {
 });
 
 // Step 3's fuzz-ish sweep: the tiling invariant must hold over real-world-shaped input, not just
-// the hand-picked cases above. Pulled from the inline SQL fixtures the LSP acceptance harness
-// actually opens (tests/lsp.acceptance.dialects.test.ts + tests/lsp.acceptance.test.ts) — valid
-// queries, broken/mid-edit fragments, CTEs, comments (incl. multi-line), and a multi-statement
-// file — run across every dialect the splitter is total for.
+// the hand-picked cases above. These inline SQL fixtures cover valid queries, broken/mid-edit
+// fragments, CTEs, comments (incl. multi-line), and a multi-statement file, run across every
+// dialect the splitter is total for.
 const ALL_DIALECTS: Dialect[] = [
 	"databricks",
 	"tsql",
@@ -198,7 +197,7 @@ const ACCEPTANCE_FIXTURES: string[] = [
 	"SELECT amount FROM sales;\nSELECT id FROM sales",
 ];
 
-describe("splitStatements — tiling sweep over LSP acceptance fixtures", () => {
+describe("splitStatements — tiling sweep over editor fixtures", () => {
 	for (const dialect of ALL_DIALECTS) {
 		for (const text of ACCEPTANCE_FIXTURES) {
 			it(`tiles for ${dialect}: ${JSON.stringify(text).slice(0, 40)}`, () => {

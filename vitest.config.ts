@@ -8,7 +8,7 @@ export default defineConfig({
 		// the relocated corpus). A project's test run should cover only this working tree.
 		// Corpus conformance gates live in tests/corpus/ and run as their own tier (npm run test:corpus,
 		// vitest.corpus.config.ts). They parse thousands of files each and are the every-merge bar, not
-		// the every-run inner loop — excluding them here keeps `npm test` a fast units/features/LSP tier.
+		// the every-run inner loop — excluding them here keeps `npm test` a fast units/features tier.
 		exclude: [...configDefaults.exclude, ".claude/worktrees/**", "tests/corpus/**", "temp_auto/**"],
 		// Use the worker-threads pool, not the default `forks` pool.
 		//
@@ -22,7 +22,7 @@ export default defineConfig({
 		// Cap workers hard. Each thread imports the large generated ANTLR modules (a big serialized ATN
 		// per dialect), so worker count is a RAM multiplier, not just a CPU one. Uncapped, tier-1 grabs
 		// all ~16 logical cores; with several agents running suites in parallel that oversubscribes RAM
-		// and flattens the machine. 4 workers is plenty for this fast units/features/LSP tier and leaves
+		// and flattens the machine. 4 workers is plenty for this fast units/features tier and leaves
 		// headroom for a concurrent run. RAM is the constraint here, not throughput. Dropped 4→2 after a
 		// worker OOM'd mid-run (`DataCloneError: out of memory` serializing results) even at 4 — the box is
 		// tight enough (+ other processes resident) that 4 is intermittently over the line. 2 is safe.

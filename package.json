@@ -39,8 +39,6 @@
 		"type-inference",
 		"name-resolution",
 		"tokenizer",
-		"lsp",
-		"language-server",
 		"dbt",
 		"databricks",
 		"tsql",
@@ -69,7 +67,6 @@
 		"gen:all": "npm run gen -- databricks && npm run gen -- tsql && npm run gen -- snowflake && npm run gen -- bigquery && npm run gen -- redshift && npm run gen -- postgres && npm run gen -- duckdb && npm run gen -- trino && npm run gen -- sqlite && npm run gen -- mysql && npm run gen -- minijinja",
 		"build": "npm run gen:all && tsc -p tsconfig.build.json",
 		"prepublishOnly": "npm run build",
-		"lsp": "node --import tsx src/lsp/main.ts",
 		"typecheck": "tsgo -p tsconfig.json",
 		"test": "vitest run",
 		"test:corpus": "vitest run --config vitest.corpus.config.ts",
@@ -87,16 +84,11 @@
 		"@types/node": "^25.9.2",
 		"@typescript/native-preview": "^7.0.0-dev.20260605.1",
 		"antlr-ng": "^1.0.10",
-		"minimatch": "^10.2.5",
 		"prettier": "^3.8.3",
 		"semantic-release": "^25.0.5",
 		"tsx": "^4.22.4",
 		"typescript": "^6.0.3",
-		"vitest": "^4.1.8",
-		"vscode-languageserver": "^10.0.1",
-		"vscode-languageserver-protocol": "^3.18.1",
-		"vscode-languageserver-textdocument": "^1.0.12",
-		"vscode-languageserver-types": "^3.18.0"
+		"vitest": "^4.1.8"
 	},
 	"dependencies": {
 		"antlr4ng": "^3.0.16"

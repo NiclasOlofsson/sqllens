@@ -11,7 +11,7 @@ import type { ANTLRErrorListener, Token } from "antlr4ng";
 //
 // Positions are antlr-native and match the rest of the library: line is 1-based,
 // column is 0-based; offset/length are 0-based inclusive char indices from the
-// offending token. src/lsp/ranges.ts converts these to 0-based LSP positions.
+// offending token. An editor presentation layer converts these to 0-based LSP positions.
 // ---------------------------------------------------------------------------
 
 export interface SyntaxDiagnostic {

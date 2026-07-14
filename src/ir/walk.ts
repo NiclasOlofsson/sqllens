@@ -2,9 +2,9 @@ import type { Expr, PipeStage, Projection, QueryBody, QueryExpr, SelectExpr, Sou
 
 // ---------------------------------------------------------------------------
 // Shared IR walk helpers — expr/query-tree traversal with no scope/document
-// knowledge, so both src/document/node-at.ts (offset → smallest covering Expr)
-// and src/lsp/features/folding.ts (IR → foldable ranges) single-source the same
-// walk instead of carrying byte-for-byte duplicates.
+// knowledge, so src/document/node-at.ts (offset → smallest covering Expr) and
+// any other IR-only consumer single-source the same walk instead of carrying
+// byte-for-byte duplicates.
 // ---------------------------------------------------------------------------
 
 /** Every QueryExpr reachable in the IR (the AST and its nested query blocks). */

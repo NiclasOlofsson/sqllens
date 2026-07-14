@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { complete, type Completion, type Dialect, SqlDocument } from "../../src/api.js";
 import { Schema } from "../../src/qualify/schema.js";
 
-// A small catalog the lsp acceptance test also uses: `sales(amount decimal, id int)`.
+// A small catalog the completion fixtures use: `sales(amount decimal, id int)`.
 const schema = new Schema({ sales: { amount: "decimal", id: "int" } });
 
 const labels = (items: Completion[], kind: Completion["kind"]): string[] =>

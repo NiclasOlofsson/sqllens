@@ -15,9 +15,7 @@ Athena, Fabric, and MariaDB (see [Dialects](#dialects)).
 
 The front end is error-tolerant and token-first, so the library drives editor
 features (completion, hover, diagnostics, go-to-definition) over incomplete,
-mid-edit text. See [Editor / language tooling](#editor--language-tooling). An LSP
-(Language Server Protocol) server built on it lives in the repo, but it is
-experimental and not part of the published package.
+mid-edit text. See [Editor / language tooling](#editor--language-tooling).
 
 ```bash
 npm install sqllens
@@ -380,76 +378,6 @@ doc.tokens;                       // first-class token stream (spans + roles)
 doc.tokenAt(7);                   // token under an offset
 const next = doc.withText("SELECT amount, id FROM sales", 2); // immutable edit → new doc
 ```
-
-## Language server (experimental)
-
-An LSP (Language Server Protocol) server built on the library lives in `src/lsp/`.
-It is experimental and **not part of the published npm package**: the package ships
-the library only, and the server is source you run from the repo. It holds one
-`SqlDocument` per open file (rebuilt on edit) and reaches the library only through
-the public API, and adds no analysis of its own beyond protocol translation.
-
-A SQL server needs only a subset of LSP's ~30 request types: some don't apply to
-SQL (type hierarchy, document color, monikers), and a few are deferred (formatting,
-project-wide navigation). Where the server stands today, feature by feature:
-
-### Language features
-
-| Feature | Status |
-| --- | --- |
-| Completion (+ resolve) | ✅ |
-| Hover | ✅ |
-| Hover — nullability | ✅ (` — not null` / ` — nullable` suffix when provable) |
-| Signature help | ✅ |
-| Go to definition | ✅ |
-| Find references | ✅ |
-| Document highlight | ✅ |
-| Document symbols | ✅ |
-| Folding range | ✅ |
-| Selection range | ✅ |
-| Semantic tokens (full / range / delta) | ✅ all three |
-| Inlay hints | ✅ (no resolve) |
-| Code lens | ✅ (no resolve) |
-| Go to declaration | ◻️ not yet |
-| Go to type definition | ◻️ not yet |
-| Go to implementation | ◻️ not yet — name → its defining query (view / model); needs the project model |
-| Call hierarchy | ◻️ not yet — the CTE / view / model dependency graph |
-| Document link | ◻️ not yet |
-| Linked editing range | ◻️ not yet — live alias / name sync-edit |
-| Code action (quick fixes) | ◻️ next phase |
-| Rename (+ prepare) | ◻️ next phase |
-| Formatting / range / on-type | ◻️ deferred (external formatter) |
-| Inline values | ◻️ debugger surface |
-| Type hierarchy | — n/a — SQL has no type-inheritance relation |
-| Document color | — n/a — no color literals |
-| Moniker | — n/a — LSIF / cross-repo indexing concern |
-
-### Diagnostics & document sync
-
-| Feature | Status |
-| --- | --- |
-| Diagnostics — push (`publishDiagnostics`) | ✅ |
-| Diagnostics — call signature (arity / argument type) | ✅ (curated tables; never-wrong, per-dialect coercion) |
-| Diagnostics — pull (document) | ✅ |
-| Diagnostics — pull (workspace) | ◻️ not yet |
-| Text sync — open / change / close | ✅ (full-document) |
-| Incremental sync | ◻️ full-document only (fine at SQL file sizes) |
-| Save notifications (`didSave` / `willSave`) | ◻️ not yet |
-| Notebook document sync | ◻️ not yet |
-
-### Workspace features
-
-| Feature | Status |
-| --- | --- |
-| Workspace symbols | ◻️ needs a project / multi-file model |
-| Execute command | ◻️ not yet |
-| Configuration / watched-files | ◻️ not yet (protocol config; file-based `.sqllens.json` config exists) |
-| File operations (create / rename / delete) | ◻️ not yet |
-
-Legend: ✅ implemented · ◻️ not yet / deferred · — not applicable to SQL. The
-deferred items are tracked work: rename and
-code actions are the next LSP phase, workspace symbols need the project model,
-and formatting is expected to wrap an existing external formatter.
 
 ## How sqllens compares
 

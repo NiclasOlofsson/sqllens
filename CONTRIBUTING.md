@@ -23,7 +23,7 @@ Never hand-edit generated files.
 | `npm run gen:all` | generate the TypeScript parsers for every dialect |
 | `npm run gen -- <dialect>` | generate the parser for one dialect |
 | `npm run typecheck` | type-check with `tsgo` (`tsc` is the fallback) |
-| `npm test` | tier 1: units, features, LSP; excludes the corpus gates (~1 min) |
+| `npm test` | tier 1: units, features; excludes the corpus gates (~1 min) |
 | `npm run test:corpus` | tier 2: the conformance corpus gates (~3–5 min) |
 | `npm run test:all` | both tiers |
 | `npx vitest run tests/<file>` | run one test file |
@@ -56,8 +56,8 @@ setx SQL_CORPUS_DIR "C:\path\to\sqllens-corpus"   # Windows (persistent user var
 export SQL_CORPUS_DIR=/path/to/sqllens-corpus      # macOS / Linux
 ```
 
-You don't need the corpus to contribute: tier-1 `npm test` runs the unit, feature,
-and LSP suites without it. When the corpus is absent the gates (`tests/corpus/**`,
+You don't need the corpus to contribute: tier-1 `npm test` runs the unit and feature
+suites without it. When the corpus is absent the gates (`tests/corpus/**`,
 `npm run test:corpus`) skip themselves instead of failing, so a green run with it
 missing proves less than it looks like; check the skip count before trusting a gate.
 

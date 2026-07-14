@@ -57,7 +57,7 @@ describe("SqlDocument + templating engine (the unified door)", () => {
 		// TestRelationProvider (tests/helpers/providers.ts) is a DefaultTemplateProvider subclass
 		// driven exactly like a host: relationOf records a miss on a cold ref('orders'), and
 		// prime() drains it through fetchExpansions and bumps `version` — the real invalidation
-		// path (mirrors how the LSP drives schema.prime() in src/lsp/server.ts), not a poke at
+		// path (mirrors how an editor drives schema.prime() on each publish), not a poke at
 		// the counter.
 		const provider = new TestRelationProvider();
 		const doc = SqlDocument.create(MODEL, "databricks", { templating: minijinja(), provider });

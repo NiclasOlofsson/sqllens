@@ -506,7 +506,7 @@ export class SqlDocument {
 	 *  comes from the CELL owning `offset` (with a cell-relative offset), so a node in statement 2 of a
 	 *  multi-cell document resolves through its own scope tree — NOT the compound facade. The returned
 	 *  `expr.cst` carries CELL-relative spans; a caller turning it into a document Range shifts it by the
-	 *  owning cell's start (see `cellBaseAt` in src/lsp/ranges.ts). Single-cell: identical to today. */
+	 *  owning cell's start. Single-cell: identical to today. */
 	nodeAt(offset: number): NodeHit | undefined {
 		const cell = this.cellAt(offset);
 		if (!cell) return nodeAt(this.scopes, offset, this.ast);

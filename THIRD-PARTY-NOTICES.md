@@ -125,9 +125,4 @@ Positive Technologies; (c) 2017 Ivan Khudyashev. Licensed under the MIT License
 - **antlr4ng** — the TypeScript ANTLR runtime (BSD-3-Clause). Runtime dependency.
 - **antlr-ng** — the pure-TypeScript ANTLR generator used by `npm run gen` to
   produce `src/generated/` (a build product, gitignored). Dev dependency.
-- **vscode-languageserver** / **vscode-languageserver-protocol** /
-  **vscode-languageserver-textdocument** / **vscode-languageserver-types** — the
-  LSP layer's runtime dependencies (MIT).
-- **minimatch** — glob matching used by the LSP layer (ISC).
-
 Consult each package's own license for the authoritative terms.

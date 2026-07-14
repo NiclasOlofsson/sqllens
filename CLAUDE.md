@@ -150,7 +150,7 @@ not Jinja2). See [docs/minijinja-front-end.md](docs/minijinja-front-end.md).
 ```bash
 npm run gen -- <dialect>             # antlr-ng → TS into src/generated/<dialect>/ (databricks | tsql | snowflake | bigquery | redshift | postgres | duckdb | trino | sqlite | mysql); dialect arg required
 npm run typecheck                    # tsgo -p tsconfig.json (noEmit; tsc is the fallback compiler)
-npm test                             # tier 1 — the fast inner loop: units + features + LSP (corpus gates excluded); well under a minute
+npm test                             # tier 1 — the fast inner loop: units + features (corpus gates excluded); well under a minute
 npm run test:corpus                  # tier 2 — the conformance gates (tests/corpus/**); ~3–5 min. Green required before any merge to master
 npm run test:all                     # both tiers (npm test && npm run test:corpus)
 npx vitest run tests/tsql.test.ts    # one test file
@@ -207,7 +207,6 @@ src/completion/            scope-aware completion over a SqlDocument — own ATN
 src/signature/             signature help — curated per-dialect signature tables plus a harvested doc-derived long tail; signatureAt() is a pure token scan; total
 src/api.ts                 the public surface: Dialect, parse, analyze, tokenize, SqlDocument, complete/signatureAt, composable qualify/lineage/deriveSymbols, referencesAt, typed result wrappers
 src/index.ts               public barrel: re-exports src/api.ts + the per-dialect parse*/lower building blocks and the raw shared passes
-src/lsp/                   the LSP server (an application, not the library) — one SqlDocument per open file, serves every feature from it. Imports ONLY the public surface (src/api.ts/src/index.ts) + vscode-languageserver-* — the seam to extract it into its own repo
 tools/gen.mjs              generation driver (sorts .g4 so the lexer generates before the parser — tokenVocab)
 ```
 
@@ -218,10 +217,10 @@ longer tail of silent-gap registries and test/tool matrices it doesn't. See
 routine. A missing function rule in a registry yields `unknown`, never a wrong
 type — that's the contract; don't guess return types.
 
-**Public-API-only seam.** Everything under `src/` except `src/lsp/` imports only
-`antlr4ng`. The LSP layer is the one editor consumer and reaches the rest of the
-codebase only through `src/api.ts` / `src/index.ts` (plus `vscode-languageserver-*`
-/ `minimatch`), so it can be lifted into its own repo without touching the library.
+**Public-API-only seam.** Everything under `src/` imports only `antlr4ng`. The
+editor/LSP consumer lives in its own repo and reaches this codebase only through the
+public surface (`src/api.ts` / `src/index.ts`), so the library carries no
+editor-protocol dependency of its own.
 
 ## Conventions
 
