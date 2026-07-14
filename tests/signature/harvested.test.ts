@@ -26,6 +26,22 @@ describe("harvested signatures — T-SQL yield floor (ratchet)", () => {
 	});
 });
 
+describe("harvested signatures — DuckDB yield floor (ratchet)", () => {
+	it("harvests at least 366 DuckDB function signatures from the duckdb-web docs headings", () => {
+		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this — a
+		// drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.duckdb).length).toBeGreaterThanOrEqual(366);
+	});
+});
+
+describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
+	it("harvests at least 456 PostgreSQL function signatures from the func.sgml doc", () => {
+		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this — a
+		// drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.postgres).length).toBeGreaterThanOrEqual(456);
+	});
+});
+
 describe("harvested signatures — doc-verified spot checks", () => {
 	it("DATEADD(datepart, number, date) — 3 params, not variadic", () => {
 		const sig = HARVESTED_SIGNATURES.tsql.dateadd;
@@ -58,6 +74,19 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		expect(sig.variadic).toBe(true);
 		expect(sig.params.at(-1)!.name).toBe("argumentN");
 	});
+
+	it("duckdb substring(string, start, length) — length trails as optional", () => {
+		// sql/functions/text.md: `substring(string, start, length?)`.
+		const sig = HARVESTED_SIGNATURES.duckdb.substring;
+		expect(sig.params).toEqual([{ name: "string" }, { name: "start" }, { name: "length", optional: true }]);
+	});
+
+	it("postgres char_length(text) — the bare <type> stands in for the name, no type field", () => {
+		// func.sgml documents char_length with a bare <type>text</type> and no <parameter>, so the
+		// emitted param is named "text" and carries no separate type (never "text: text").
+		const sig = HARVESTED_SIGNATURES.postgres.char_length;
+		expect(sig.params).toEqual([{ name: "text" }]);
+	});
 });
 
 describe("harvested signatures — lookup precedence", () => {
@@ -74,6 +103,12 @@ describe("harvested signatures — lookup precedence", () => {
 	it("harvested is used when there is no curated entry for the name", () => {
 		expect(FUNCTION_SIGNATURES.tsql.translate).toBeUndefined(); // not curated
 		expect(lookupSignature("tsql", "translate")).toBe(HARVESTED_SIGNATURES.tsql.translate);
+	});
+
+	it("duckdb lookupSignature reaches a harvested-only entry (list_min, not curated)", () => {
+		expect(FUNCTION_SIGNATURES.duckdb.list_min).toBeUndefined(); // not curated
+		expect(lookupSignature("duckdb", "list_min")).toBe(HARVESTED_SIGNATURES.duckdb.list_min);
+		expect(lookupSignature("duckdb", "list_min")).toEqual({ name: "list_min", params: [{ name: "list" }] });
 	});
 });
 

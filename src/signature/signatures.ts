@@ -19,6 +19,8 @@
 
 import type { Dialect } from "../dialect.js";
 import { TSQL_HARVESTED } from "./generated/tsql.js";
+import { DUCKDB_HARVESTED } from "./generated/duckdb.js";
+import { POSTGRES_HARVESTED } from "./generated/postgres.js";
 
 /** One formal parameter of a curated signature. `type` is the dialect's documented type name.
  *  `optional` marks a trailing param the caller may omit — it is consulted by the arity checker
@@ -740,8 +742,8 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 // Harvested signatures — the LONG-TAIL layer under the curated table. Mined from each dialect's
 // reference-doc syntax blocks by tools/harvest-signatures.mjs into src/signature/generated/<dialect>.ts
 // (committed, rebuildable, never hand-edited). Only dialects with an offline syntax-block source in
-// the corpus repo have a generated table today (T-SQL); the rest map to an empty table and fall
-// through to the name-only hint. See the harvester's header for why.
+// the corpus repo have a generated table today (T-SQL, DuckDB, PostgreSQL); the rest map to an empty
+// table and fall through to the name-only hint. See the harvester's header for why.
 // ---------------------------------------------------------------------------
 
 /** Harvested parameter signatures, per dialect, keyed by LOWERCASED function name. */
@@ -751,8 +753,8 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	snowflake: {},
 	bigquery: {},
 	redshift: {},
-	postgres: {},
-	duckdb: {},
+	postgres: POSTGRES_HARVESTED,
+	duckdb: DUCKDB_HARVESTED,
 	trino: {},
 	sqlite: {},
 	mysql: {},
