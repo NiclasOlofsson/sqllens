@@ -234,6 +234,597 @@ function dropOperatorNames(signatures, provenance, skips) {
 // stripped before parsing, counted as nothing.
 const DISTINCT_ALL_GROUP_RE = /^\s*\[\s*(?:ALL|DISTINCT)(?:\s*\|\s*(?:ALL|DISTINCT))*\s*\]\s*/i;
 
+/** All `*.txt` files under a directory, recursively (databricks + snowflake syntax tiers). */
+function* txtFiles(dir) {
+	for (const e of readdirSync(dir, { withFileTypes: true })) {
+		const p = join(dir, e.name);
+		if (e.isDirectory()) yield* txtFiles(p);
+		else if (e.name.endsWith(".txt")) yield p;
+	}
+}
+
+// ---------------------------------------------------------------------------
+// Databricks (Spark SQL): databricks/docs/syntax/functions/<name>/N.txt Syntax blocks, captured
+// from docs.databricks.com by tools/scrape-databricks-syntax.mjs.
+//
+// Two widenings beyond the plain flat-list model (both shape-anchored; everything else stays
+// exactly as strict as the NEVER-WRONG CONTRACT requires):
+//   - a leading "[ DISTINCT ]" / "[ALL | DISTINCT]" keyword-modifier group ahead of the first
+//     param (aggregate-function pages) is a calling-convention modifier, not a param: stripped via
+//     the shared DISTINCT_ALL_GROUP_RE above before parsing.
+//   - a trailing "[FILTER ( WHERE cond ) ]" clause after the call's closing paren (aggregates)
+//     does not by itself invalidate the block: it is stripped first, then the ordinary
+//     trailing-content rule applies to whatever remains (so a further clause after FILTER still
+//     skips, e.g. any_value's "[FILTER (...)] [IGNORE NULLS | RESPECT NULLS]").
+// One more widening, narrower than either of those: a wholly-bracketed single param as the ENTIRE
+// inner, e.g. current_time([precision]), parses as one optional param (the sole shape this
+// recovers beyond a trailing "[, x]" continuation chain); a leading optional group followed by more
+// required text (log's "[ base , ] expr") is unaffected and still skips as optional-group.
+// ---------------------------------------------------------------------------
+
+const DATABRICKS_CALL_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+// Clause keywords that mark a signature as a clause-shaped construct, not a flat call.
+const DATABRICKS_CLAUSE_KEYWORD_RE = /\b(FROM|AS|OVER|USING|ORDER|IGNORE|RESPECT|DISTINCT|WITHIN)\b/i;
+// Widening 4's shape: nothing but "[ ident ]" as the whole inner.
+const DATABRICKS_SOLE_OPTIONAL_RE = /^\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]$/;
+// Widening 3's shape: a trailing FILTER(WHERE ident) clause, stripped from the tail.
+const DATABRICKS_FILTER_CLAUSE_RE = /^\[\s*FILTER\s*\(\s*WHERE\s+[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\]/i;
+
+function isPlainIdentDatabricks(s) {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
+}
+
+/** Recursively unwrap a "[, x]" / "[, x [, y]]" trailing optional chain (already stripped of its
+ *  own outer "[" "]" and leading comma). Returns { ok:true, params, variadic } or { ok:false, reason }. */
+function parseOptionalChainDatabricks(str) {
+	const s = str.trim();
+	if (s === "..." || s === "…") return { ok: true, params: [], variadic: true };
+
+	const m = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(s);
+	if (!m) return { ok: false, reason: "param-shape" };
+	const name = m[1];
+	const rest = s.slice(m[0].length).trim();
+	if (rest === "") return { ok: true, params: [{ name, optional: true }], variadic: false };
+
+	if (rest[0] !== "[" || rest[rest.length - 1] !== "]") return { ok: false, reason: "optional-group" };
+	// The bracket must cover the whole remainder (depth returns to 0 only at the last char).
+	let depth = 0;
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "[") depth++;
+		else if (rest[i] === "]") {
+			depth--;
+			if (depth === 0 && i !== rest.length - 1) return { ok: false, reason: "optional-group" };
+		}
+	}
+	if (depth !== 0) return { ok: false, reason: "optional-group" };
+
+	let inner = rest.slice(1, -1).trim();
+	if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
+	inner = inner.slice(1).trim();
+	const nested = parseOptionalChainDatabricks(inner);
+	if (!nested.ok) return nested;
+	return { ok: true, params: [{ name, optional: true }, ...nested.params], variadic: nested.variadic };
+}
+
+/** Parse the text captured between one call's balanced outer parens into `{ params, variadic }`,
+ *  or a skip reason, per the NEVER-WRONG CONTRACT plus the two widenings above. */
+function parseParamsTextDatabricks(paramsTextRaw) {
+	let text = paramsTextRaw.trim();
+	text = text.replace(DISTINCT_ALL_GROUP_RE, "").trim();
+
+	const sole = DATABRICKS_SOLE_OPTIONAL_RE.exec(text);
+	if (sole) return { ok: true, params: [{ name: sole[1], optional: true }], variadic: false };
+
+	if (/<[^<>\n]*>/.test(text)) return { ok: false, reason: "complex" }; // <placeholder>
+	if (text.includes("::=")) return { ok: false, reason: "complex" };
+	if (text.includes("=>")) return { ok: false, reason: "complex" };
+	if (/[{}]/.test(text)) return { ok: false, reason: "complex" }; // alternation/grouping braces
+	if (text.includes("|")) return { ok: false, reason: "complex" }; // alternation, even outside {}
+	if (DATABRICKS_CLAUSE_KEYWORD_RE.test(text)) return { ok: false, reason: "complex" };
+	if (/[()]/.test(text)) return { ok: false, reason: "complex" }; // nested parens left after outer pair
+
+	// The first top-level "[": everything before it is the required prefix.
+	let depth = 0;
+	let firstBracket = -1;
+	let closeAtEnd = -1;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (c === "[") {
+			if (depth === 0 && firstBracket === -1) firstBracket = i;
+			depth++;
+		} else if (c === "]") {
+			depth--;
+			if (depth < 0) return { ok: false, reason: "optional-group" };
+			if (depth === 0 && firstBracket !== -1 && closeAtEnd === -1) closeAtEnd = i;
+		}
+	}
+	if (depth !== 0) return { ok: false, reason: "optional-group" };
+
+	let requiredPart, chainStr;
+	if (firstBracket === -1) {
+		requiredPart = text;
+		chainStr = null;
+	} else {
+		if (closeAtEnd !== text.length - 1) return { ok: false, reason: "optional-group" }; // bracket not trailing
+		requiredPart = text.slice(0, firstBracket).trim();
+		chainStr = text.slice(firstBracket, closeAtEnd + 1);
+	}
+
+	const requiredNames = requiredPart === "" ? [] : requiredPart.split(",").map((s) => s.trim());
+	// A bare trailing "..." in the plain comma list (no brackets at all, e.g. "expr1, ...") marks
+	// the previous param as variadic too, same as the bracketed "[, ...]" tail.
+	let bareVariadic = false;
+	if (chainStr === null && requiredNames.length > 1 && /^(\.\.\.|…)$/.test(requiredNames[requiredNames.length - 1])) {
+		requiredNames.pop();
+		bareVariadic = true;
+	}
+	for (const n of requiredNames) if (!isPlainIdentDatabricks(n)) return { ok: false, reason: "param-shape" };
+	const requiredParams = requiredNames.map((n) => ({ name: n }));
+
+	let optionalParams = [];
+	let variadic = bareVariadic;
+	if (chainStr !== null) {
+		let inner = chainStr.slice(1, -1).trim();
+		if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
+		inner = inner.slice(1).trim();
+		const chain = parseOptionalChainDatabricks(inner);
+		if (!chain.ok) return chain;
+		optionalParams = chain.params;
+		variadic = chain.variadic;
+	}
+
+	const allParams = requiredParams.concat(optionalParams);
+	if (variadic && allParams.length === 0) return { ok: false, reason: "param-shape" };
+	return { ok: true, params: allParams, variadic };
+}
+
+/** Process one captured *.txt block's raw text into `{ name, params, variadic }`, or records a
+ *  skip reason on `stats` and returns null. */
+function processBlockDatabricks(rawText, stats) {
+	const lines = rawText.split("\n");
+
+	let callLineIdx = -1;
+	let name = null;
+	for (let i = 0; i < lines.length; i++) {
+		const m = DATABRICKS_CALL_LINE_RE.exec(lines[i].trim());
+		if (m) {
+			callLineIdx = i;
+			name = m[1];
+			break;
+		}
+	}
+	if (callLineIdx === -1) {
+		stats.skip("no-call-line");
+		return null;
+	}
+	// Anything non-blank before the call line means this block isn't just one flat signature.
+	for (let i = 0; i < callLineIdx; i++) {
+		if (lines[i].trim() !== "") {
+			stats.skip("leading-content");
+			return null;
+		}
+	}
+
+	// Reconstruct the text from the call line's "(" onward, through the rest of the block, so a
+	// multi-line paren group still balances correctly.
+	const callLine = lines[callLineIdx];
+	const openParenIdx = callLine.indexOf("(", callLine.search(/\S/));
+	const afterOpen = callLine.slice(openParenIdx + 1) + "\n" + lines.slice(callLineIdx + 1).join("\n");
+
+	let depth = 1;
+	let closeIdx = -1;
+	for (let i = 0; i < afterOpen.length; i++) {
+		if (afterOpen[i] === "(") depth++;
+		else if (afterOpen[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				closeIdx = i;
+				break;
+			}
+		}
+	}
+	if (closeIdx === -1) {
+		stats.skip("unbalanced");
+		return null;
+	}
+
+	const paramsText = afterOpen.slice(0, closeIdx);
+	let trailing = afterOpen.slice(closeIdx + 1).trim();
+	// Widening 3: strip a trailing FILTER(WHERE ident) clause before judging the trailing text.
+	const filterMatch = DATABRICKS_FILTER_CLAUSE_RE.exec(trailing);
+	if (filterMatch) trailing = trailing.slice(filterMatch[0].length).trim();
+
+	const parsed = parseParamsTextDatabricks(paramsText);
+	if (!parsed.ok) {
+		stats.skip(parsed.reason);
+		return null;
+	}
+	if (trailing !== "") {
+		// Content beyond the first balanced paren group (and beyond a stripped FILTER clause):
+		// another overload, a required clause, or a variant crammed into the same code box, never
+		// safe to treat the leading call as "the" signature, so bail.
+		stats.skip("trailing-content");
+		return null;
+	}
+
+	return { name, params: parsed.params, variadic: parsed.variadic };
+}
+
+function sameParamListDatabricks(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixDatabricks(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** Databricks extractor. Returns null when the source tree is absent. */
+function harvestDatabricks() {
+	const src = corpusPath("databricks/docs/syntax/functions");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		"no-call-line": 0,
+		"leading-content": 0,
+		unbalanced: 0,
+		"trailing-content": 0,
+		"optional-group": 0,
+		"param-shape": 0,
+		complex: 0,
+	};
+	const stats = {
+		skip(reason) {
+			skipCounts[reason]++;
+		},
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of txtFiles(src)) {
+		const sourceFile = relative(corpusPath("databricks/docs/syntax"), f).split("\\").join("/");
+		const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
+		const result = processBlockDatabricks(text, stats);
+		if (!result) continue;
+		const key = result.name.toLowerCase();
+		const list = occurrencesByName.get(key) ?? [];
+		list.push({ name: result.name, params: result.params, variadic: result.variadic, sourceFile });
+		occurrencesByName.set(key, list);
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let conflicts = 0;
+	for (const [key, occs] of occurrencesByName) {
+		// Dedupe identical (params + variadic) occurrences, keeping first sourceFile seen.
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find(
+				(d) => d.variadic === occ.variadic && sameParamListDatabricks(d.params, occ.params),
+			);
+			if (!dup) distinct.push(occ);
+		}
+
+		let chosen;
+		if (distinct.length === 1) {
+			chosen = distinct[0];
+		} else {
+			const maxLen = Math.max(...distinct.map((d) => d.params.length));
+			const maximal = distinct.filter((d) => d.params.length === maxLen);
+			if (maximal.length > 1) {
+				conflicts++; // two or more distinct signatures tie for longest, can't pick a canonical one
+				continue;
+			}
+			const longest = maximal[0];
+			const shorterOnes = distinct.filter((d) => d !== longest);
+			const allPrefixes = shorterOnes.every((d) => namesArePrefixDatabricks(d.params, longest.params));
+			if (!allPrefixes) {
+				conflicts++;
+				continue;
+			}
+			const minLen = Math.min(...distinct.map((d) => d.params.length));
+			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
+			chosen = {
+				name: longest.name,
+				params: mergedParams,
+				variadic: longest.variadic,
+				sourceFile: longest.sourceFile,
+			};
+		}
+
+		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
+		provenance[key] = chosen.sourceFile;
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts);
+
+	return {
+		signatures,
+		provenance,
+		source: "docs.databricks.com  databricks/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-databricks-syntax.mjs)",
+		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
+// Snowflake: snowflake/docs/syntax/functions/<name>/N.txt (some nested under an overload-slug
+// directory), captured from docs.snowflake.com by tools/scrape-snowflake-syntax.mjs. Placeholders
+// use `<name>` angle-bracket notation; a blank-line-separated segment inside one block is an
+// INDEPENDENT candidate (an alias pair such as LENGTH/LEN, or SUBSTR/SUBSTRING, shares one file).
+//
+// Two widenings beyond the plain flat-list model (shape-anchored; everything else stays exactly as
+// strict):
+//   - a placeholder wrapped in literal single quotes, '<rounding_mode>', is an ordinary placeholder
+//     (the quotes just mark "this argument is a quoted string literal": rounding mode, pad side,
+//     collation params). Recovers ROUND, among others.
+//   - the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" keyword-modifier group (see
+//     DISTINCT_ALL_GROUP_RE above) is stripped before tokenizing, recovering COUNT / LISTAGG /
+//     ARRAY_AGG and their aggregate siblings.
+// Trailing text after the call's own balanced parens (WITHIN GROUP, OVER, …) is never inspected: it
+// always sits outside that first paren pair by construction, so it never reaches the tokenizer.
+// Unlike Databricks, there is no FILTER-clause rule to apply here.
+// ---------------------------------------------------------------------------
+
+/** Whitelist tokenizer for one balanced-paren inner region: top-level commas, `[`/`]` optional-
+ *  group brackets, `...` ellipsis, `<placeholder>`, and (widening 1) a `'<placeholder>'` quoted
+ *  form. Any other character (bare keywords, `{`/`}`/`|` alternation, `*`, `=>` named-arg arrows,
+ *  stray literal parens, `@` stage sigils, …) fails the whole inner region: never guessed at. */
+function tokenizeInnerSnowflake(inner) {
+	const tokens = [];
+	let i = 0;
+	while (i < inner.length) {
+		const c = inner[i];
+		if (/\s/.test(c)) {
+			i++;
+			continue;
+		}
+		if (c === ",") {
+			tokens.push({ t: "COMMA" });
+			i++;
+			continue;
+		}
+		if (c === "[") {
+			tokens.push({ t: "LBRACKET" });
+			i++;
+			continue;
+		}
+		if (c === "]") {
+			tokens.push({ t: "RBRACKET" });
+			i++;
+			continue;
+		}
+		if (inner.startsWith("...", i)) {
+			tokens.push({ t: "ELLIPSIS" });
+			i += 3;
+			continue;
+		}
+		if (c === "'") {
+			// Widening 1: a single-quoted placeholder, e.g. '<rounding_mode>'.
+			const m = /^'<([A-Za-z_][A-Za-z0-9_]*)>'/.exec(inner.slice(i));
+			if (!m) return { skip: "complex" };
+			tokens.push({ t: "PLACEHOLDER", name: m[1] });
+			i += m[0].length;
+			continue;
+		}
+		if (c === "<") {
+			const close = inner.indexOf(">", i);
+			if (close === -1) return { skip: "complex" };
+			const content = inner.slice(i + 1, close);
+			if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(content)) return { skip: "param-shape" };
+			tokens.push({ t: "PLACEHOLDER", name: content });
+			i = close + 1;
+			continue;
+		}
+		return { skip: "complex" };
+	}
+	return { tokens };
+}
+
+// Consume one `[ , <body> ]` optional-tail group at tokens[i], recursing for a further-nested
+// group before this level's own closing bracket (ROUND-style `[ , x [ , y ] ]` chain). `<body>` is
+// one of: a bare `...` (optionally `, <label>`, as in COALESCE's `[ , ... , <exprN> ]`, where the
+// label is repetition notation, not a distinct param), or `<placeholder>` optionally followed by `...`
+// (GREATEST's `[ , <expr2> ... ]`) or by a further nested group (ROUND's chain).
+function parseOptTailSnowflake(tokens, i, params) {
+	if (!tokens[i] || tokens[i].t !== "LBRACKET") return { i, variadic: false };
+	i++;
+	if (!tokens[i] || tokens[i].t !== "COMMA") return { skip: "optional-group" };
+	i++;
+	let variadic = false;
+	if (tokens[i] && tokens[i].t === "ELLIPSIS") {
+		i++;
+		variadic = true;
+		if (tokens[i] && tokens[i].t === "COMMA") {
+			i++;
+			if (!tokens[i] || tokens[i].t !== "PLACEHOLDER") return { skip: "complex" };
+			i++; // trailing label placeholder (e.g. <exprN>): repetition notation, not a distinct param
+		}
+	} else if (tokens[i] && tokens[i].t === "PLACEHOLDER") {
+		const name = tokens[i].name;
+		i++;
+		params.push({ name, optional: true });
+		if (tokens[i] && tokens[i].t === "ELLIPSIS") {
+			i++;
+			variadic = true;
+		} else {
+			const nested = parseOptTailSnowflake(tokens, i, params);
+			if (nested.skip) return nested;
+			i = nested.i;
+			variadic = variadic || nested.variadic;
+		}
+	} else {
+		return { skip: "optional-group" };
+	}
+	if (!tokens[i] || tokens[i].t !== "RBRACKET") return { skip: "optional-group" };
+	i++;
+	return { i, variadic };
+}
+
+function parseParamsSnowflake(tokens) {
+	if (tokens.length === 0) return { params: [], variadic: false };
+	const params = [];
+	let i = 0;
+	while (tokens[i] && tokens[i].t === "PLACEHOLDER") {
+		params.push({ name: tokens[i].name });
+		i++;
+		if (tokens[i] && tokens[i].t === "COMMA") {
+			i++;
+			continue;
+		}
+		break;
+	}
+	if (i === tokens.length) return { params, variadic: false };
+	const tail = parseOptTailSnowflake(tokens, i, params);
+	if (tail.skip) return tail;
+	if (tail.i !== tokens.length) return { skip: "optional-group" }; // leftover unparsed tokens
+	return { params, variadic: tail.variadic };
+}
+
+/** Extracts the candidate `NAME( … )` call from one blank-line-separated segment of a scraped
+ *  block, or null when the segment has no such call at all (not a signature-shape skip). Nothing
+ *  may precede the name on its own line: dotted/qualified names (SNOWFLAKE.CORTEX.COMPLETE) never
+ *  match a plain identifier, by design, not a bug. */
+function parseCandidateSnowflake(segment, stats) {
+	const re = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(/m;
+	const m = re.exec(segment);
+	if (!m) return null;
+
+	const name = m[1];
+	const openIdx = segment.indexOf("(", m.index);
+	let depth = 0;
+	let start = -1;
+	let end = -1;
+	for (let i = openIdx; i < segment.length; i++) {
+		if (segment[i] === "(") {
+			if (depth === 0) start = i;
+			depth++;
+		} else if (segment[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				end = i;
+				break;
+			}
+		}
+	}
+	if (start === -1 || end === -1) {
+		stats.skip("unbalanced-parens");
+		return null;
+	}
+
+	let inner = segment.slice(start + 1, end).trim();
+	// Widening 2: strip the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" modifier group.
+	inner = inner.replace(DISTINCT_ALL_GROUP_RE, "").trim();
+
+	const tok = tokenizeInnerSnowflake(inner);
+	if (tok.skip) {
+		stats.skip(tok.skip);
+		return null;
+	}
+	const parsed = parseParamsSnowflake(tok.tokens);
+	if (parsed.skip) {
+		stats.skip(parsed.skip);
+		return null;
+	}
+	return { name, params: parsed.params, variadic: parsed.variadic };
+}
+
+function sameParamListSnowflake(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixSnowflake(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** Snowflake extractor. Returns null when the source tree is absent. */
+function harvestSnowflake() {
+	const src = corpusPath("snowflake/docs/syntax/functions");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		complex: 0,
+		"optional-group": 0,
+		"unbalanced-parens": 0,
+		"param-shape": 0,
+	};
+	const stats = {
+		skip(reason) {
+			skipCounts[reason]++;
+		},
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of txtFiles(src)) {
+		const sourceFile = relative(corpusPath("snowflake/docs/syntax"), f).split("\\").join("/");
+		const text = readFileSync(f, "utf8");
+		const segments = text
+			.split(/\n\s*\n/)
+			.map((s) => s.trim())
+			.filter(Boolean);
+		for (const seg of segments) {
+			const cand = parseCandidateSnowflake(seg, stats);
+			if (!cand) continue;
+			const key = cand.name.toLowerCase();
+			const list = occurrencesByName.get(key) ?? [];
+			list.push({ name: cand.name, params: cand.params, variadic: cand.variadic, sourceFile });
+			occurrencesByName.set(key, list);
+		}
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let conflicts = 0;
+	for (const [key, occs] of occurrencesByName) {
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find(
+				(d) => d.variadic === occ.variadic && sameParamListSnowflake(d.params, occ.params),
+			);
+			if (!dup) distinct.push(occ);
+		}
+
+		let chosen;
+		if (distinct.length === 1) {
+			chosen = distinct[0];
+		} else {
+			const maxLen = Math.max(...distinct.map((d) => d.params.length));
+			const maximal = distinct.filter((d) => d.params.length === maxLen);
+			if (maximal.length > 1) {
+				conflicts++;
+				continue;
+			}
+			const longest = maximal[0];
+			const shorterOnes = distinct.filter((d) => d !== longest);
+			const allPrefixes = shorterOnes.every((d) => namesArePrefixSnowflake(d.params, longest.params));
+			if (!allPrefixes) {
+				conflicts++;
+				continue;
+			}
+			const minLen = Math.min(...distinct.map((d) => d.params.length));
+			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
+			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
+			chosen = {
+				name: longest.name,
+				params: mergedParams,
+				variadic: mergedVariadic,
+				sourceFile: longest.sourceFile,
+			};
+		}
+
+		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
+		provenance[key] = chosen.sourceFile;
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts);
+
+	return {
+		signatures,
+		provenance,
+		source: "docs.snowflake.com  snowflake/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-snowflake-syntax.mjs)",
+		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+	};
+}
+
 // ---------------------------------------------------------------------------
 // DuckDB — duckdb-web docs/current/sql/functions/*.md, "#### `name(...)`" headings.
 //
@@ -517,6 +1108,8 @@ function harvestDuckdb() {
 		provenance[key] = chosen.sourceFile;
 	}
 
+	dropOperatorNames(signatures, provenance, skipCounts);
+
 	return {
 		signatures,
 		provenance,
@@ -790,6 +1383,8 @@ function harvestPostgres() {
 		provenance[key] = sig.sourceFile;
 	}
 
+	dropOperatorNames(signatures, provenance, skipCounts);
+
 	return {
 		signatures,
 		provenance,
@@ -800,13 +1395,13 @@ function harvestPostgres() {
 
 // ---------------------------------------------------------------------------
 // Registry — one entry per dialect. An extractor returns null (source absent) or a harvest result.
-// T-SQL, DuckDB, and PostgreSQL have an offline syntax-block source in the corpus repo today; the rest
-// don't (see the header note).
+// T-SQL, Databricks, Snowflake, DuckDB, and PostgreSQL have an offline syntax-block source in the
+// corpus repo today; the rest don't (see the header note).
 // ---------------------------------------------------------------------------
 const EXTRACTORS = {
-	databricks: () => null,
+	databricks: harvestDatabricks,
 	tsql: harvestTSql,
-	snowflake: () => null,
+	snowflake: harvestSnowflake,
 	bigquery: () => null,
 	redshift: () => null,
 	postgres: harvestPostgres,

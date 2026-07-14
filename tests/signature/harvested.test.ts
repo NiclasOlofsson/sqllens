@@ -42,6 +42,22 @@ describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
 	});
 });
 
+describe("harvested signatures: Databricks yield floor (ratchet)", () => {
+	it("harvests at least 639 Databricks function signatures from the scraped syntax tier", () => {
+		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this: a
+		// drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.databricks).length).toBeGreaterThanOrEqual(639);
+	});
+});
+
+describe("harvested signatures: Snowflake yield floor (ratchet)", () => {
+	it("harvests at least 516 Snowflake function signatures from the scraped syntax tier", () => {
+		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this: a
+		// drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.snowflake).length).toBeGreaterThanOrEqual(516);
+	});
+});
+
 describe("harvested signatures — doc-verified spot checks", () => {
 	it("DATEADD(datepart, number, date) — 3 params, not variadic", () => {
 		const sig = HARVESTED_SIGNATURES.tsql.dateadd;
@@ -86,6 +102,38 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		// emitted param is named "text" and carries no separate type (never "text: text").
 		const sig = HARVESTED_SIGNATURES.postgres.char_length;
 		expect(sig.params).toEqual([{ name: "text" }]);
+	});
+
+	it("databricks date_add(startDate, numDays): 2 params, exact names", () => {
+		// databricks/docs/syntax/functions/date_add/1.txt: `date_add(startDate, numDays)`.
+		const sig = HARVESTED_SIGNATURES.databricks.date_add;
+		expect(sig.params).toEqual([{ name: "startDate" }, { name: "numDays" }]);
+	});
+
+	it("snowflake ROUND(input_expr, scale_expr?, rounding_mode?): the quoted-placeholder widening", () => {
+		// functions/round/1.txt: `ROUND( <input_expr> [ , <scale_expr> [ , '<rounding_mode>' ] ] )`. The
+		// single-quoted rounding_mode placeholder only parses with the quoted-placeholder widening.
+		const sig = HARVESTED_SIGNATURES.snowflake.round;
+		expect(sig.params).toEqual([
+			{ name: "input_expr" },
+			{ name: "scale_expr", optional: true },
+			{ name: "rounding_mode", optional: true },
+		]);
+	});
+
+	it("snowflake len: the LENGTH/LEN alias-segment mechanism keeps LEN's own name", () => {
+		// functions/length/1.txt holds two blank-line-separated segments, "LENGTH( <expression> )" and
+		// "LEN( <expression> )"; each is an independent candidate, so the "len" key's emitted `name`
+		// is LEN's own doc line, not LENGTH's.
+		const sig = HARVESTED_SIGNATURES.snowflake.len;
+		expect(sig.name).toBe("LEN");
+		expect(sig.params).toEqual([{ name: "expression" }]);
+	});
+});
+
+describe("harvested signatures: operator blocklist", () => {
+	it("databricks IN is dropped: its function-call-shaped `in ( elem, expr1 [, ...] )` doc page parses cleanly but IN is a predicate keyword, not a function", () => {
+		expect(HARVESTED_SIGNATURES.databricks.in).toBeUndefined();
 	});
 });
 
