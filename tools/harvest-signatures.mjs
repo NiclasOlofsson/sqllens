@@ -3231,11 +3231,19 @@ function describeSqlite() {
 	return new Map(Object.entries(JSON.parse(readFileSync(p, "utf8")).descriptions));
 }
 
-/** Per-dialect description sources. null = no legally clean vendored source in THIS stage (the
- *  remaining dialects get theirs from later stages: databricks from a Spark capture tier,
- *  snowflake/redshift/mysql from the authored layer). */
+/** databricks: the committed descriptions tier (databricks/docs/descriptions.json, captured from
+ *  Apache Spark's generated Built-in Functions page by tools/capture-spark-descriptions.mjs —
+ *  Spark-authored Apache-2.0 prose for the shared surface; Databricks-only names stay absent). */
+function describeDatabricks() {
+	const p = corpusPath("databricks/docs/descriptions.json");
+	if (!existsSync(p)) return null;
+	return new Map(Object.entries(JSON.parse(readFileSync(p, "utf8")).descriptions));
+}
+
+/** Per-dialect description sources. null = no legally clean source yet (snowflake/redshift/mysql
+ *  wait for the authored layer). */
 const DESCRIPTION_EXTRACTORS = {
-	databricks: () => null,
+	databricks: describeDatabricks,
 	tsql: null, // provenance-driven: wired via describeTsqlFor(merged) in main()
 	snowflake: () => null,
 	bigquery: describeBigquery,
@@ -3246,6 +3254,10 @@ const DESCRIPTION_EXTRACTORS = {
 	sqlite: describeSqlite,
 	mysql: () => null,
 };
+
+/** The `origin` a dialect's extracted descriptions carry (the description's provenance; docUrl is
+ *  always the vendor's page). */
+const DESCRIPTION_ORIGIN = { databricks: "spark-docs" };
 
 function renderFnDocsTable(dialect, docs) {
 	const constName = FN_DOCS_CONST_NAME[dialect];
@@ -3412,9 +3424,12 @@ async function main() {
 		const descriptions = dialect === "tsql" ? describeTsqlFor(merged) : DESCRIPTION_EXTRACTORS[dialect]();
 		let descCount = 0;
 		if (descriptions) {
+			const origin = DESCRIPTION_ORIGIN[dialect] ?? "vendor-docs";
 			for (const [key, text] of descriptions) {
 				if (!merged.has(key)) continue; // only names the signature table knows
-				(docs[key] ??= { origin: "vendor-docs" }).description = text;
+				const entry = (docs[key] ??= { origin });
+				entry.description = text;
+				entry.origin = origin;
 				descCount++;
 			}
 		}

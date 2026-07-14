@@ -166,6 +166,14 @@ Derived from the function reference markdown in
 [google/googlesql](https://github.com/google/googlesql) `docs/`, (c) Google LLC,
 Apache License 2.0.
 
+### Databricks descriptions, from Apache Spark's Built-in Functions reference (Apache License 2.0)
+
+The databricks docs table's descriptions (origin `"spark-docs"`) are reproduced
+from [Apache Spark](https://spark.apache.org)'s generated SQL Built-in Functions
+reference (4.0.1), (c) The Apache Software Foundation, Apache License 2.0 —
+Spark-authored prose describing the Spark SQL surface Databricks shares.
+Databricks-only functions carry no Spark description.
+
 ### SQLite signatures and descriptions, from the sqlite.org documentation (public domain)
 
 Derived from the [sqlite.org](https://sqlite.org) function-reference pages (doc
