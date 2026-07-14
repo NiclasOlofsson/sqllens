@@ -15,8 +15,9 @@
 // src/signature/generated/ - that directory is gone; the table now lives alongside the dialect it
 // describes), exported as `<DIALECT>_SIGNATURES: Record<string, FnSignature[]>`.
 //
-// Dialects with no offline docs-syntax source (redshift, sqlite, mysql) still get a generated table:
-// overrides-only, every entry origin "curated", the file header noting there is no harvest source yet.
+// Every dialect has an offline docs-syntax source in the corpus repo and a registered extractor; a
+// dialect whose source tree happens to be absent on a machine still gets a generated table
+// (overrides-only, every entry origin "curated", the file header noting the source was absent).
 //
 // NEVER-WRONG CONTRACT (harvest side only): a HARVESTED signature is emitted ONLY when its documented
 // syntax block parses UNAMBIGUOUSLY into `name(param[, param...])` form - a flat, comma-separated list
@@ -35,7 +36,7 @@
 // over the harvest and are future removal candidates - printed, never auto-removed.
 //
 // SOURCES. The scraped example corpora hold runnable SQL statements, not function-syntax blocks, so
-// they can't yield parameter names. Seven dialects have an offline source in the corpus repo that DOES
+// they can't yield parameter names. Every dialect has an offline source in the corpus repo that DOES
 // carry function SYNTAX notation: the T-SQL reference markdown (MicrosoftDocs/sql-docs, vendored at
 // vendor/sql-docs), whose ```syntaxsql``` fenced blocks are exactly `NAME ( param , … )`; the DuckDB
 // reference markdown (duckdb-web, vendored at vendor/duckdb-web), whose "#### `name(...)`" headings
@@ -45,13 +46,15 @@
 // snowflake/docs/syntax, per-function N.txt Syntax blocks captured by tools/scrape-databricks-syntax.mjs
 // and tools/scrape-snowflake-syntax.mjs from the vendor docs); the Trino function reference (vendored
 // at vendor/trino-docs/functions, trinodb/trino release tag 482), whose MyST `:::{function}` colon-fence
-// directives carry the whole signature on the opening fence line; and the BigQuery (GoogleSQL)
+// directives carry the whole signature on the opening fence line; the BigQuery (GoogleSQL)
 // function reference (google/googlesql docs markdown, vendored at vendor/googlesql-docs/docs), whose
-// per-function headings are followed by syntax code fences. The remaining dialects (redshift, sqlite,
-// mysql) still have no syntax-notation source in the corpus repo (their docs were consumed live by
-// their scrapers and only the extracted example SQL landed there), so they get no generated table
-// until their raw docs are vendored or a syntax tier is scraped. Each dialect's extractor is
-// registered below; an absent source is reported, not guessed.
+// per-function headings are followed by syntax code fences; the Redshift committed syntax tier
+// (redshift/docs/syntax, per-page N.txt Syntax blocks captured by tools/scrape-redshift-syntax.mjs);
+// the MySQL committed syntax tier (mysql/docs/syntax, one call form per line captured by
+// tools/capture-mysql-syntax.mjs from the cached 8.4 refman HTML); and the SQLite committed syntax
+// tier (sqlite/docs/syntax, one call phrase per file captured by tools/capture-sqlite-syntax.mjs
+// from the six sqlite.org function-reference pages). Each dialect's extractor is registered below;
+// an absent source is reported, not guessed.
 //
 // OVERLOAD CLUSTERING (shared by every extractor's clusterOverloads() call, applied once a name's raw
 // occurrences are collected). Occurrences are deduped first: an identical param list plus variadic
@@ -365,12 +368,17 @@ const OPERATOR_NAMES = new Set([
 ]);
 
 /** Drops every emitted entry whose (lowercased) key is an operator/predicate keyword. Mutates the
- *  maps, counts each drop under skips["operator-name"], and returns the dropped keys. */
-function dropOperatorNames(signatures, provenance, skips) {
+ *  maps, counts each drop under skips["operator-name"], and returns the dropped keys. `except` is a
+ *  per-dialect exemption set for names a dialect documents as REAL callable functions despite being
+ *  operator keywords elsewhere: MySQL's INTERVAL(N,N1,N2,...) comparison function (dev.mysql.com
+ *  comparison-operators #function_interval - a genuinely distinct builtin sharing the DATE_ADD
+ *  keyword's spelling), and SQLite's like(X,Y[,Z]) (lang_corefunc documents it as the function the
+ *  LIKE operator is implemented by, and the hand table deliberately carried it for signature help). */
+function dropOperatorNames(signatures, provenance, skips, except = new Set()) {
 	skips["operator-name"] = 0;
 	const dropped = [];
 	for (const key of Object.keys(signatures)) {
-		if (OPERATOR_NAMES.has(key)) {
+		if (OPERATOR_NAMES.has(key) && !except.has(key)) {
 			delete signatures[key];
 			delete provenance[key];
 			skips["operator-name"]++;
@@ -2208,21 +2216,717 @@ function harvestBigquery() {
 }
 
 // ---------------------------------------------------------------------------
+// Redshift: redshift/docs/syntax/<page>/N.txt Syntax blocks, captured from
+// docs.aws.amazon.com/redshift by tools/scrape-redshift-syntax.mjs. Placeholders render as plain
+// identifier text, some wrapped in single quotes ('delimiter', 'format') - a quoted placeholder is
+// treated exactly like a bare one, quotes stripped. Three bracket-nesting shapes all occur,
+// sometimes on the same page: a required prefix plus ONE trailing "[, x [, y]]" chain (FNV_HASH),
+// a wholly-optional list built from SIBLING bracket groups where the first has no leading comma
+// (ARRAY's "[ expr1 ] [, expr2 [, ... ]]"), and a bare trailing ellipsis in a plain comma list
+// with no brackets at all (NVL's "expression, expression, ...").
+//
+// Two shape-anchored widenings (mirroring the Databricks/Snowflake style):
+//   - the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" modifier group (LISTAGG) is stripped
+//     before tokenizing.
+//   - a trailing "[ WITHIN GROUP (ORDER BY x) ]" clause after the call's own closing paren
+//     (LISTAGG again) is stripped before the trailing-content judgment.
+//
+// EVERY CALL-SHAPED LINE IS AN INDEPENDENT CANDIDATE (same model as the other extractors after the
+// 2026-07-14 widening): a page's Syntax section is not always one call - some pages document two
+// names together (GREATEST/LEAST), some repeat one name at two arities across lines
+// (CURRENT_SETTING), and window functions carry a trailing "OVER (...)" line that LOOKS call-shaped
+// but is a clause (rejected by the clause-keyword check on its PARTITION/ORDER/BY content, with the
+// operator blocklist as a backstop). A block is split into candidate spans at every line that
+// itself starts `identifier(`; each span runs to the next such line or end of block.
+// ---------------------------------------------------------------------------
+
+const REDSHIFT_CALL_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+// Clause/keyword tokens that mean the text is SQL clause syntax, not a flat identifier param list:
+// EXTRACT's "part FROM date", SUBSTRING's "string FROM start FOR len", window functions'
+// "OVER (PARTITION BY ...)", aggregate NULLS handling, and a leftover unbracketed DISTINCT/ALL the
+// leading-modifier strip didn't consume.
+const REDSHIFT_CLAUSE_KEYWORD_RE =
+	/\b(FROM|FOR|AS|OVER|USING|ORDER|BY|PARTITION|WITHIN|IGNORE|RESPECT|NULLS|WHEN|CASE|THEN|ELSE|END|DISTINCT|ALL)\b/i;
+// A trailing WITHIN GROUP clause after the call's own balanced close paren - stripped rather than
+// treated as unmodeled trailing content (mirrors Databricks' FILTER-clause widening).
+const REDSHIFT_WITHIN_GROUP_TAIL_RE = /^\[\s*WITHIN\s+GROUP\s*\(\s*ORDER\s+BY\s+[A-Za-z_][A-Za-z0-9_]*\s*\)\s*\]$/i;
+
+/** Whitelist tokenizer for one balanced-paren inner region: top-level commas, "["/"]" brackets, an
+ *  ellipsis ("..." or the Unicode "…" - both appear in the docs), a bare identifier, or a
+ *  single-quoted placeholder 'name' (quotes stripped). Any other character fails the region. */
+function tokenizeInnerRedshift(inner) {
+	const tokens = [];
+	let i = 0;
+	while (i < inner.length) {
+		const c = inner[i];
+		if (/\s/.test(c)) {
+			i++;
+			continue;
+		}
+		if (c === ",") {
+			tokens.push({ t: "COMMA" });
+			i++;
+			continue;
+		}
+		if (c === "[") {
+			tokens.push({ t: "LBRACKET" });
+			i++;
+			continue;
+		}
+		if (c === "]") {
+			tokens.push({ t: "RBRACKET" });
+			i++;
+			continue;
+		}
+		if (inner.startsWith("...", i)) {
+			tokens.push({ t: "ELLIPSIS" });
+			i += 3;
+			continue;
+		}
+		if (c === "…") {
+			tokens.push({ t: "ELLIPSIS" });
+			i += 1;
+			continue;
+		}
+		if (c === "'") {
+			const m = /^'([A-Za-z_][A-Za-z0-9_]*)'/.exec(inner.slice(i));
+			if (!m) return { skip: "param-shape" };
+			tokens.push({ t: "PARAM", name: m[1] });
+			i += m[0].length;
+			continue;
+		}
+		const idMatch = /^[A-Za-z_][A-Za-z0-9_]*/.exec(inner.slice(i));
+		if (idMatch) {
+			tokens.push({ t: "PARAM", name: idMatch[0] });
+			i += idMatch[0].length;
+			continue;
+		}
+		return { skip: "complex" };
+	}
+	return { tokens };
+}
+
+/** Parses ONE bracket group starting at tokens[i] === LBRACKET. `isLeadingSolo` allows the group to
+ *  omit its own leading comma - only true for a group that is the very FIRST thing in the whole
+ *  inner (ARRAY's "[ expr1 ]" shape); every other group (continuation of a required prefix, or
+ *  nested/sibling within another bracket) must carry its own leading comma, Redshift's own "[, x]"
+ *  convention. Returns `{ ok, params, variadic, i }` (i just past this group's own closing bracket)
+ *  or `{ skip }`. */
+function parseOneBracketGroupRedshift(tokens, i, isLeadingSolo) {
+	i++; // past "["
+	let leadingComma = false;
+	if (tokens[i]?.t === "COMMA") {
+		leadingComma = true;
+		i++;
+	}
+	if (!leadingComma && !isLeadingSolo) return { skip: "optional-group" };
+
+	if (tokens[i]?.t === "ELLIPSIS") {
+		i++;
+		if (tokens[i]?.t !== "RBRACKET") return { skip: "optional-group" };
+		return { ok: true, params: [], variadic: true, i: i + 1 };
+	}
+	if (tokens[i]?.t !== "PARAM") return { skip: "optional-group" };
+	const name = tokens[i].name;
+	i++;
+	const param = { name, optional: true };
+
+	let trailingVariadic = false;
+	if (tokens[i]?.t === "ELLIPSIS") {
+		trailingVariadic = true;
+		i++;
+	}
+	if (tokens[i]?.t === "RBRACKET") return { ok: true, params: [param], variadic: trailingVariadic, i: i + 1 };
+	if (tokens[i]?.t === "LBRACKET") {
+		const nested = parseOneBracketGroupRedshift(tokens, i, false);
+		if (nested.skip) return nested;
+		if (tokens[nested.i]?.t !== "RBRACKET") return { skip: "optional-group" };
+		return {
+			ok: true,
+			params: [param, ...nested.params],
+			variadic: trailingVariadic || nested.variadic,
+			i: nested.i + 1,
+		};
+	}
+	return { skip: "optional-group" };
+}
+
+/** Parses the full token stream of one call's inner into `{ params, variadic }` or a skip reason.
+ *  See the section header for the three shapes this recovers. */
+function parseParamsRedshift(tokens) {
+	if (tokens.length === 0) return { ok: true, params: [], variadic: false };
+
+	let i = 0;
+	const params = [];
+	let variadic = false;
+
+	while (tokens[i]?.t === "PARAM") {
+		params.push({ name: tokens[i].name });
+		i++;
+		if (tokens[i]?.t !== "COMMA") break;
+		if (tokens[i + 1]?.t === "ELLIPSIS" && i + 2 === tokens.length) {
+			variadic = true;
+			i = tokens.length;
+			break;
+		}
+		if (tokens[i + 1]?.t === "PARAM") {
+			i++; // consume the comma, loop continues onto the next PARAM
+			continue;
+		}
+		break; // comma belongs to a following bracket group's own leading comma - not consumed here
+	}
+
+	if (i === tokens.length) return { ok: true, params, variadic };
+
+	if (tokens[i]?.t !== "LBRACKET") return { ok: false, reason: "param-shape" };
+
+	while (tokens[i]?.t === "LBRACKET") {
+		const isLeadingSolo = params.length === 0 && i === 0;
+		const group = parseOneBracketGroupRedshift(tokens, i, isLeadingSolo);
+		if (group.skip) return { ok: false, reason: group.skip };
+		params.push(...group.params);
+		variadic = variadic || group.variadic;
+		i = group.i;
+	}
+
+	if (i !== tokens.length) return { ok: false, reason: "optional-group" };
+	return { ok: true, params, variadic };
+}
+
+/** Parses one candidate's raw text (starting at its own `name(` call line, running to just before
+ *  the next candidate or end of block) into `{ name, params, variadic }`, or records a skip reason
+ *  on `stats` and returns null. */
+function parseCandidateRedshift(text, stats) {
+	const m = REDSHIFT_CALL_LINE_RE.exec(text);
+	if (!m) {
+		stats.skip("no-call-line");
+		return null;
+	}
+	const name = m[1];
+
+	let depth = 0;
+	let start = -1;
+	let end = -1;
+	for (let i = text.indexOf("(", m.index); i < text.length; i++) {
+		if (text[i] === "(") {
+			if (depth === 0) start = i;
+			depth++;
+		} else if (text[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				end = i;
+				break;
+			}
+		}
+	}
+	if (start === -1 || end === -1) {
+		stats.skip("unbalanced");
+		return null;
+	}
+
+	let inner = text.slice(start + 1, end).trim();
+	inner = inner.replace(DISTINCT_ALL_GROUP_RE, "").trim();
+
+	let trailing = text.slice(end + 1).trim();
+	if (REDSHIFT_WITHIN_GROUP_TAIL_RE.test(trailing)) trailing = "";
+	if (trailing !== "") {
+		stats.skip("trailing-content");
+		return null;
+	}
+
+	if (/[{}|]/.test(inner)) {
+		stats.skip("alternation");
+		return null;
+	}
+	if (REDSHIFT_CLAUSE_KEYWORD_RE.test(inner)) {
+		stats.skip("clause-keyword");
+		return null;
+	}
+	if (inner.includes("::=") || inner.includes("=>") || /<[a-z_]/i.test(inner)) {
+		stats.skip("complex");
+		return null;
+	}
+
+	const tok = tokenizeInnerRedshift(inner);
+	if (tok.skip) {
+		stats.skip(tok.skip);
+		return null;
+	}
+	const parsed = parseParamsRedshift(tok.tokens);
+	if (!parsed.ok) {
+		stats.skip(parsed.reason);
+		return null;
+	}
+	return { name, params: parsed.params, variadic: parsed.variadic };
+}
+
+/** Splits one captured block's raw text into independent candidate spans, one per line that itself
+ *  starts `identifier(`. Each span runs from its own call-line to the next such line, or to the end
+ *  of the block. A block with no call-shaped line at all yields zero spans. */
+function splitCandidateSpansRedshift(blockText) {
+	const lines = blockText.split("\n");
+	const starts = [];
+	let offset = 0;
+	for (const line of lines) {
+		if (REDSHIFT_CALL_LINE_RE.test(line.trim())) starts.push(offset + (line.length - line.trimStart().length));
+		offset += line.length + 1; // +1 for the split "\n"
+	}
+	const spans = [];
+	for (let i = 0; i < starts.length; i++) {
+		const end = i + 1 < starts.length ? starts[i + 1] : blockText.length;
+		spans.push(blockText.slice(starts[i], end).trim());
+	}
+	return spans;
+}
+
+function sameParamListRedshift(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixRedshift(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** Redshift extractor. Returns null when the source tree is absent. */
+function harvestRedshift() {
+	const src = corpusPath("redshift/docs/syntax");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		"no-call-line": 0,
+		unbalanced: 0,
+		"trailing-content": 0,
+		alternation: 0,
+		"clause-keyword": 0,
+		complex: 0,
+		"param-shape": 0,
+		"optional-group": 0,
+	};
+	const stats = {
+		skip(reason) {
+			skipCounts[reason]++;
+		},
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of txtFiles(src)) {
+		const sourceFile = relative(src, f).split("\\").join("/");
+		const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
+		const spans = splitCandidateSpansRedshift(text);
+		if (spans.length === 0) {
+			skipCounts["no-call-line"]++;
+			continue;
+		}
+		for (const span of spans) {
+			const result = parseCandidateRedshift(span, stats);
+			if (!result) continue;
+			const key = result.name.toLowerCase();
+			const list = occurrencesByName.get(key) ?? [];
+			list.push({ name: result.name, params: result.params, variadic: result.variadic, sourceFile });
+			occurrencesByName.set(key, list);
+		}
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let overloadSets = 0;
+	for (const [key, occs] of occurrencesByName) {
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find(
+				(d) => d.variadic === occ.variadic && sameParamListRedshift(d.params, occ.params),
+			);
+			if (!dup) distinct.push(occ);
+		}
+
+		const overloads = clusterOverloads(distinct, namesArePrefixRedshift);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts);
+
+	return {
+		signatures,
+		provenance,
+		source: "docs.aws.amazon.com/redshift  redshift/docs/syntax/<page>/N.txt (Syntax blocks, captured by tools/scrape-redshift-syntax.mjs)",
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
+// MySQL: mysql/docs/syntax/<page-slug>/N.txt, captured from the dev.mysql.com 8.4 refman by
+// tools/capture-mysql-syntax.mjs (one file per function/operator entry, one documented call form
+// per LINE - SUBSTRING's four forms are four lines in one file, each an independent candidate
+// feeding the shared per-name dedupe + clustering).
+//
+// Three shape-anchored widenings beyond the plain flat-list model:
+//   - a trailing " [over_clause]" annotation (aggregate/window pages: COUNT(expr) [over_clause]) is
+//     stripped before parsing - a reference to the window OVER clause, not a parameter.
+//   - the shared leading "[DISTINCT]" / "[ALL|DISTINCT]" group (SUM([DISTINCT] expr)) is stripped
+//     before parsing. A BARE unbracketed DISTINCT surviving the strip (COUNT(DISTINCT expr,...))
+//     still hits the clause-keyword check and skips - never silently dropped or guessed.
+//   - a wholly-bracketed single param as the ENTIRE param list - NOW([fsp]), RAND([N]) - is one
+//     optional param (the Databricks sole-optional widening).
+//
+// A bare trailing "..." in a plain comma list (CONCAT(str1,str2,...)) marks the previous param
+// variadic; a bracketed trailing chain ("[, N[, default]]" - LEAD/LAG) unwraps through the shared
+// parseOptionalChainFlat. A line with no leading `identifier(` shape at all (an infix/prefix
+// operator form, most of the comparison/logical pages) is not a candidate, not a skip.
+//
+// OPERATOR BLOCKLIST EXEMPTION: "interval". MySQL overloads the word as BOTH the DATE_ADD/DATE_SUB
+// "INTERVAL expr unit" keyword AND a genuinely distinct, cleanly-parseable comparison FUNCTION,
+// INTERVAL(N,N1,N2,...) ("index of N in the sorted list N1..." - comparison-operators.html
+// #function_interval). The shared blocklist would silently suppress that real builtin, so MySQL
+// exempts it; EXISTS(query) stays dropped (a predicate everywhere, not a callable worth a hint).
+// ---------------------------------------------------------------------------
+
+const MYSQL_CALL_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+const MYSQL_TRAILING_OVER_CLAUSE_RE = /\s*\[\s*over_clause\s*\]\s*$/i;
+// Widening 3's shape: nothing but "[ ident ]" as the whole inner.
+const MYSQL_SOLE_OPTIONAL_RE = /^\[\s*([A-Za-z_][A-Za-z0-9_]*)\s*\]$/;
+// Keywords that mark a param list as clause-shaped, not a flat call. DISTINCT is included so a bare
+// unbracketed leftover after the widening-2 strip still skips (see the section header).
+const MYSQL_CLAUSE_KEYWORD_RE =
+	/\b(FROM|AS|FOR|OVER|USING|ORDER|WITHIN|IGNORE|RESPECT|INTERVAL|AT|ZONE|COLUMNS|SEPARATOR|BY|DISTINCT|WHEN|THEN|ELSE|END|CASE)\b/;
+
+function isPlainIdentMysql(s) {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
+}
+
+/** Parse one captured call-phrase LINE into `{ name, params, variadic }`, `{ skip: reason }`, or
+ *  `null` (the line has no leading `identifier(` shape at all - an operator form, not a candidate). */
+function parseMysqlPhrase(lineRaw) {
+	let text = lineRaw.trim();
+	text = text.replace(MYSQL_TRAILING_OVER_CLAUSE_RE, "").trim(); // widening 1
+
+	const m = MYSQL_CALL_LINE_RE.exec(text);
+	if (!m) return null;
+	const name = m[1];
+
+	let depth = 0;
+	const start = text.indexOf("(");
+	let end = -1;
+	for (let i = start; i < text.length; i++) {
+		if (text[i] === "(") depth++;
+		else if (text[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				end = i;
+				break;
+			}
+		}
+	}
+	if (end === -1) return { skip: "unbalanced" };
+
+	let paramsText = text.slice(start + 1, end).trim();
+	const trailing = text.slice(end + 1).trim();
+	if (trailing !== "") return { skip: "trailing-content" };
+
+	paramsText = paramsText.replace(DISTINCT_ALL_GROUP_RE, "").trim(); // widening 2
+	if (paramsText === "") return { name, params: [], variadic: false };
+
+	const sole = MYSQL_SOLE_OPTIONAL_RE.exec(paramsText); // widening 3
+	if (sole) return { name, params: [{ name: sole[1], optional: true }], variadic: false };
+
+	if (/[{}]/.test(paramsText)) return { skip: "complex" }; // alternation braces
+	if (paramsText.includes("|")) return { skip: "complex" }; // alternation, even outside {}
+	if (/[<>]/.test(paramsText)) return { skip: "complex" }; // stray angle-bracket placeholder
+	if (paramsText.includes("::=") || paramsText.includes("=>")) return { skip: "complex" };
+	if (MYSQL_CLAUSE_KEYWORD_RE.test(paramsText)) return { skip: "complex" };
+	if (/[()]/.test(paramsText)) return { skip: "complex" }; // nested literal parens (JSON_TABLE)
+
+	// First top-level "[": everything before it is the required prefix; the bracket must be trailing.
+	const firstBracket = paramsText.indexOf("[");
+	let requiredPart, chainStr;
+	if (firstBracket === -1) {
+		requiredPart = paramsText;
+		chainStr = null;
+	} else {
+		let d = 0;
+		let closeAtEnd = -1;
+		for (let i = firstBracket; i < paramsText.length; i++) {
+			if (paramsText[i] === "[") d++;
+			else if (paramsText[i] === "]") {
+				d--;
+				if (d === 0) {
+					closeAtEnd = i;
+					break;
+				}
+			}
+		}
+		if (d !== 0 || closeAtEnd === -1) return { skip: "optional-group" };
+		if (closeAtEnd !== paramsText.length - 1) return { skip: "optional-group" };
+		requiredPart = paramsText.slice(0, firstBracket).trim();
+		chainStr = paramsText.slice(firstBracket, closeAtEnd + 1);
+	}
+
+	const requiredNames = requiredPart === "" ? [] : requiredPart.split(",").map((s) => s.trim());
+	// A bare trailing "..." in the plain comma list marks the previous param variadic.
+	let bareVariadic = false;
+	if (chainStr === null && requiredNames.length > 1 && /^(\.\.\.|…)$/.test(requiredNames[requiredNames.length - 1])) {
+		requiredNames.pop();
+		bareVariadic = true;
+	}
+	for (const n of requiredNames) if (!isPlainIdentMysql(n)) return { skip: "param-shape" };
+	const requiredParams = requiredNames.map((n) => ({ name: n }));
+
+	let optionalParams = [];
+	let chainVariadic = false;
+	if (chainStr !== null) {
+		let inner = chainStr.slice(1, -1).trim();
+		if (!inner.startsWith(",")) return { skip: "optional-group" };
+		inner = inner.slice(1).trim();
+		const chain = parseOptionalChainFlat(inner);
+		if (!chain.ok) return { skip: chain.reason };
+		optionalParams = chain.params;
+		chainVariadic = chain.variadic;
+	}
+
+	const allParams = requiredParams.concat(optionalParams);
+	const variadic = bareVariadic || chainVariadic;
+	if (variadic && allParams.length === 0) return { skip: "param-shape" };
+	return { name, params: allParams, variadic };
+}
+
+function sameParamListMysql(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixMysql(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** MySQL extractor. Returns null when the source tree is absent. */
+function harvestMysql() {
+	const src = corpusPath("mysql/docs/syntax");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		unbalanced: 0,
+		"trailing-content": 0,
+		complex: 0,
+		"optional-group": 0,
+		"param-shape": 0,
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of txtFiles(src)) {
+		const sourceFile = relative(src, f).split("\\").join("/");
+		const lines = readFileSync(f, "utf8")
+			.split("\n")
+			.map((l) => l.trim())
+			.filter(Boolean);
+		for (const line of lines) {
+			const r = parseMysqlPhrase(line);
+			if (r === null) continue; // operator/infix form - not a candidate at all
+			if (r.skip) {
+				skipCounts[r.skip]++;
+				continue;
+			}
+			const key = r.name.toLowerCase();
+			const list = occurrencesByName.get(key) ?? [];
+			list.push({ name: r.name, params: r.params, variadic: r.variadic, sourceFile });
+			occurrencesByName.set(key, list);
+		}
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let overloadSets = 0;
+	for (const [key, occs] of occurrencesByName) {
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find((d) => d.variadic === occ.variadic && sameParamListMysql(d.params, occ.params));
+			if (!dup) distinct.push(occ);
+		}
+
+		const overloads = clusterOverloads(distinct, namesArePrefixMysql);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts, new Set(["interval"]));
+
+	return {
+		signatures,
+		provenance,
+		source: "dev.mysql.com/doc/refman/8.4  mysql/docs/syntax/<page-slug>/N.txt (one call form per line, captured by tools/capture-mysql-syntax.mjs)",
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
+// SQLite: sqlite/docs/syntax/<page-slug>/N.txt, one call phrase per file, captured from the six
+// sqlite.org function-reference pages (lang_corefunc, lang_aggfunc, lang_datefunc, lang_mathfunc,
+// json1, windowfunctions) by tools/capture-sqlite-syntax.mjs. The phrases are already normalized to
+// one-line `name(args)` form, so the parse is the plain flat-list model: identifier params, a sole
+// trailing "..." marking variadic. Multi-word/hyphenated params (the datefunc pages' "time-value",
+// "modifier") skip as multi-word-param - those six functions stay curated (see
+// tools/signature-overrides/sqlite.mjs). log() emits its two overloads (log(B,X) / log(X)): the
+// leading-optional case the old single-shape hand table refused to encode is exactly what the
+// overload-set model represents.
+//
+// OPERATOR BLOCKLIST EXEMPTION: "like". SQLite documents like(X,Y[,Z]) as a real callable function
+// (lang_corefunc: the function the LIKE operator is implemented by), and the hand table
+// deliberately carried like/glob for signature help. glob is not on the shared blocklist at all;
+// regexp/match never appear call-shaped in this corpus, so nothing special is needed for them.
+// ---------------------------------------------------------------------------
+
+const SQLITE_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const SQLITE_KEYWORD_CLAUSE_RE =
+	/^(FROM|AS|OVER|AND|OR|NOT|ESCAPE|BOTH|LEADING|TRAILING|DISTINCT|ALL|ORDER|USING|WITHIN|CASE|WHEN|THEN|ELSE|END|BY|ASC|DESC|IN|IS|LIKE|BETWEEN)$/i;
+
+/** Classifies why one comma-split segment isn't a plain param identifier. */
+function classifySegmentFailureSqlite(seg) {
+	if (seg === "*") return "count-star";
+	if (/[\s-]/.test(seg)) return "multi-word-param"; // hyphen or internal whitespace: "time-value"
+	if (SQLITE_KEYWORD_CLAUSE_RE.test(seg)) return "keyword-clause";
+	return "param-shape"; // literal, empty segment, or other non-identifier text
+}
+
+/** Parses one captured phrase "name(args)" into `{ ok:true, name, params, variadic }` or
+ *  `{ ok:false, reason }`. The phrase must be cleanly `name(...)` end-to-end. */
+function parseSqlitePhrase(phrase) {
+	const text = phrase.trim();
+	const m = /^([A-Za-z_][A-Za-z0-9_]*)\(/.exec(text);
+	if (!m) return { ok: false, reason: "no-call-shape" };
+	const name = m[1];
+	let depth = 0;
+	const openIdx = m[0].length - 1;
+	let closeIdx = -1;
+	for (let i = openIdx; i < text.length; i++) {
+		if (text[i] === "(") depth++;
+		else if (text[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				closeIdx = i;
+				break;
+			}
+		}
+	}
+	if (closeIdx === -1) return { ok: false, reason: "unbalanced" };
+	if (closeIdx !== text.length - 1) return { ok: false, reason: "trailing-junk" };
+	const inner = text.slice(openIdx + 1, closeIdx).trim();
+
+	if (inner === "") return { ok: true, name, params: [], variadic: false };
+
+	const rawSegments = inner.split(",").map((s) => s.trim());
+	let variadic = false;
+	let segments = rawSegments;
+	if (rawSegments.includes("...")) {
+		const idx = rawSegments.indexOf("...");
+		const soleTrailing =
+			idx === rawSegments.length - 1 && rawSegments.length >= 2 && rawSegments.lastIndexOf("...") === idx;
+		if (!soleTrailing) return { ok: false, reason: "variadic-not-trailing" };
+		variadic = true;
+		segments = rawSegments.slice(0, -1);
+	}
+	const params = [];
+	for (const seg of segments) {
+		if (!SQLITE_IDENT_RE.test(seg)) return { ok: false, reason: classifySegmentFailureSqlite(seg) };
+		params.push({ name: seg });
+	}
+	return { ok: true, name, params, variadic };
+}
+
+function sameParamListSqlite(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixSqlite(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** SQLite extractor. Returns null when the source tree is absent. */
+function harvestSqlite() {
+	const src = corpusPath("sqlite/docs/syntax");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		"no-call-shape": 0,
+		unbalanced: 0,
+		"trailing-junk": 0,
+		"variadic-not-trailing": 0,
+		"count-star": 0,
+		"multi-word-param": 0,
+		"keyword-clause": 0,
+		"param-shape": 0,
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of txtFiles(src)) {
+		const sourceFile = relative(src, f).split("\\").join("/");
+		const phrase = readFileSync(f, "utf8").trim();
+		const parsed = parseSqlitePhrase(phrase);
+		if (!parsed.ok) {
+			skipCounts[parsed.reason]++;
+			continue;
+		}
+		const key = parsed.name.toLowerCase();
+		const list = occurrencesByName.get(key) ?? [];
+		list.push({ name: parsed.name, params: parsed.params, variadic: parsed.variadic, sourceFile });
+		occurrencesByName.set(key, list);
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let overloadSets = 0;
+	for (const [key, occs] of occurrencesByName) {
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find((d) => d.variadic === occ.variadic && sameParamListSqlite(d.params, occ.params));
+			if (!dup) distinct.push(occ);
+		}
+
+		const overloads = clusterOverloads(distinct, namesArePrefixSqlite);
+		if (overloads.length >= 2) overloadSets++;
+		signatures[key] = overloads.map((o) => ({
+			name: o.name,
+			params: o.params,
+			...(o.variadic ? { variadic: true } : {}),
+		}));
+		provenance[key] = provenanceOf(overloads);
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts, new Set(["like"]));
+
+	return {
+		signatures,
+		provenance,
+		source: "sqlite.org  sqlite/docs/syntax/<page-slug>/N.txt (one call phrase per file, captured by tools/capture-sqlite-syntax.mjs)",
+		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Registry — one entry per dialect. An extractor returns null (source absent) or a harvest result.
-// Every dialect except Redshift, SQLite, and MySQL has an offline syntax-block source in the corpus
-// repo today (see the header note).
+// Every dialect now has an offline syntax-block source in the corpus repo (see the header note).
 // ---------------------------------------------------------------------------
 const EXTRACTORS = {
 	databricks: harvestDatabricks,
 	tsql: harvestTSql,
 	snowflake: harvestSnowflake,
 	bigquery: harvestBigquery,
-	redshift: () => null,
+	redshift: harvestRedshift,
 	postgres: harvestPostgres,
 	duckdb: harvestDuckdb,
 	trino: harvestTrino,
-	sqlite: () => null,
-	mysql: () => null,
+	sqlite: harvestSqlite,
+	mysql: harvestMysql,
 };
 
 const CONST_NAME = {
@@ -2293,7 +2997,7 @@ function normalizeOverride(ov) {
 	return [{ name: ov.name, params: ov.params, ...(ov.variadic ? { variadic: true } : {}) }];
 }
 
-/** Merge one dialect's harvested table (or null, when it has no offline docs-syntax source) with its
+/** Merge one dialect's harvested table (or null, when its source tree is absent on this machine) with its
  *  curated overrides. Overrides win by key, replacing the WHOLE overload set. Returns the merged
  *  { key -> { sig: FnSignature[], origin, comment } } map plus the list of override keys whose
  *  overload set exactly matches the harvest (redundancy candidates). */
@@ -2340,7 +3044,7 @@ function renderTable(dialect, merged, harvestResult) {
 	const overloadSetCount = keys.filter((k) => merged.get(k).sig.length >= 2).length;
 	const sourceLine = harvestResult
 		? `// Harvested source: ${harvestResult.source}`
-		: `// No offline docs-syntax source in the corpus repo yet for ${dialect} - curated overrides only.`;
+		: `// The ${dialect} docs-syntax source tree was absent when this table was built - curated overrides only.`;
 	return (
 		`// GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format\n` +
 		`${sourceLine}\n` +
@@ -2381,7 +3085,7 @@ async function main() {
 
 		if (!harvestResult) {
 			summary.push(
-				`  ${dialect.padEnd(11)} - no offline syntax-block source in the corpus repo; ${merged.size} curated entries only`,
+				`  ${dialect.padEnd(11)} - docs-syntax source tree absent on this machine; ${merged.size} curated entries only`,
 			);
 			continue;
 		}

@@ -168,6 +168,39 @@ describe("harvested signatures: BigQuery yield floor (ratchet)", () => {
 	});
 });
 
+describe("harvested signatures: Redshift yield floor (ratchet)", () => {
+	it("at least 294 Redshift entries carry origin harvested", () => {
+		// First pinned 2026-07-14, the day Redshift joined the harvested dialects (its own syntax tier
+		// at redshift/docs/syntax, captured by tools/scrape-redshift-syntax.mjs, mined by the new
+		// Redshift extractor): 298 raw harvested names, 4 of them shadowed by surviving curated
+		// overrides - concat, split_part (hand-authored param names differ from the harvest) plus
+		// rtrim, st_collect (safety-valve entries the corpus gate forced the same day: the doc's own
+		// Syntax lines under-document them, and the doc corpus's 1-arg calls proved it).
+		expect(harvestedCount("redshift")).toBeGreaterThanOrEqual(294);
+	});
+});
+
+describe("harvested signatures: MySQL yield floor (ratchet)", () => {
+	it("at least 241 MySQL entries carry origin harvested", () => {
+		// First pinned 2026-07-14, the day MySQL joined the harvested dialects (its own syntax tier at
+		// mysql/docs/syntax, captured by tools/capture-mysql-syntax.mjs, one documented call form per
+		// line): 242 raw harvested names (including INTERVAL(N,N1,N2,...), the real comparison
+		// function the operator blocklist exempts for this dialect), 1 shadowed by a surviving curated
+		// override (strcmp - hand-authored param names differ from the harvest).
+		expect(harvestedCount("mysql")).toBeGreaterThanOrEqual(241);
+	});
+});
+
+describe("harvested signatures: SQLite yield floor (ratchet)", () => {
+	it("at least 112 SQLite entries carry origin harvested", () => {
+		// First pinned 2026-07-14, the day SQLite joined the harvested dialects (its own syntax tier
+		// at sqlite/docs/syntax, captured by tools/capture-sqlite-syntax.mjs, one call phrase per
+		// file): 116 raw harvested names, 4 shadowed by surviving curated overrides (glob, like,
+		// printf, iif - hand-authored param names beat the doc's X/Y/Z placeholders).
+		expect(harvestedCount("sqlite")).toBeGreaterThanOrEqual(112);
+	});
+});
+
 describe("harvested signatures: doc-verified spot checks (single-overload names)", () => {
 	it("DATEADD(datepart, number, date) — 3 params, not variadic, origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const overloads = SIGNATURES.tsql.dateadd;
@@ -210,7 +243,11 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		const sig = SIGNATURES.tsql.concat[0];
 		expect(sig.origin).toBe("harvested");
 		expect(sig.variadic).toBe(true);
-		expect(sig.params).toEqual([{ name: "argument1" }, { name: "argument2" }, { name: "argumentN", optional: true }]);
+		expect(sig.params).toEqual([
+			{ name: "argument1" },
+			{ name: "argument2" },
+			{ name: "argumentN", optional: true },
+		]);
 	});
 
 	it("LTRIM(character_expression, characters?): harvested origin, via the harvest's own prefix-merge", () => {
@@ -406,6 +443,58 @@ describe("harvested signatures: overload sets (formerly whole-name conflicts, no
 		expect(overloads.length).toBe(2);
 		// params.length counts the 2 trailing optionals too (8 total: 6 required + nanosecond + time_zone).
 		expect(overloads.map((o) => o.params.length).sort((a, b) => a - b)).toEqual([2, 8]);
+	});
+
+	it("sqlite log(...): 2 overloads (log(B,X) / log(X)), origin harvested - the leading-optional case the old hand table refused to encode", () => {
+		// lang_mathfunc documents log(B,X) and log(X), which disagree on argument ORDER, not just a
+		// trailing-optional count; the pre-overload hand table deliberately left log uncurated rather
+		// than assert a wrong arity for one form. The overload-set model represents exactly this.
+		const overloads = SIGNATURES.sqlite.log;
+		expect(overloads.length).toBe(2);
+		expect(overloads.every((o) => o.origin === "harvested")).toBe(true);
+		expect(overloads.map((o) => o.params.map((p) => p.name).join(",")).sort()).toEqual(["B,X", "X"]);
+	});
+
+	it("mysql hex(...): 2 overloads (HEX(str) / HEX(N)), origin harvested - the doc's polymorphic pair, formerly one hand-merged N_or_str param", () => {
+		const overloads = SIGNATURES.mysql.hex;
+		expect(overloads.length).toBe(2);
+		expect(overloads.every((o) => o.origin === "harvested")).toBe(true);
+		expect(overloads.map((o) => o.params[0].name).sort()).toEqual(["N", "str"]);
+	});
+
+	it("mysql substring: the four documented forms emit as ONE merged overload (str, pos, len?)", () => {
+		// string-functions/43.txt carries all four doc forms: SUBSTRING(str,pos), SUBSTRING(str FROM
+		// pos), SUBSTRING(str,pos,len), SUBSTRING(str FROM pos FOR len). The two FROM forms skip as
+		// clause syntax (never guessed); the two comma forms prefix-merge into one shape with len
+		// optional - arity 2-3, exactly the range the four forms span at the call-argument level.
+		const overloads = SIGNATURES.mysql.substring;
+		expect(overloads.length).toBe(1);
+		expect(overloads[0].origin).toBe("harvested");
+		expect(overloads[0].params).toEqual([{ name: "str" }, { name: "pos" }, { name: "len", optional: true }]);
+	});
+
+	it("redshift listagg(...): 2 overloads (aggregate + window pages), delimiter optional in both - the hand shape wrongly required it", () => {
+		// r_LISTAGG and r_WF_LISTAGG each document LISTAGG( [DISTINCT] expression [, 'delimiter' ] );
+		// the leading-modifier strip plus the WITHIN GROUP tail strip recover both, and the deleted
+		// hand entry's required-delimiter shape (an arity bug: LISTAGG(x) is valid) is gone with it.
+		const overloads = SIGNATURES.redshift.listagg;
+		expect(overloads.length).toBe(2);
+		expect(overloads.every((o) => o.origin === "harvested")).toBe(true);
+		for (const o of overloads) {
+			expect(o.params.length).toBe(2);
+			expect(o.params[1]).toMatchObject({ name: "delimiter", optional: true });
+		}
+	});
+
+	it("mysql interval(...): the operator-blocklist exemption keeps INTERVAL(N,N1,N2,...), a real documented comparison function", () => {
+		// comparison-operators.html #function_interval: INTERVAL(N,N1,N2,N3,...) returns the index of
+		// N in the sorted list. The shared blocklist would drop the name (it is the DATE_ADD keyword
+		// everywhere else); the MySQL extractor exempts it because this call shape is a genuine,
+		// cleanly-parseable builtin.
+		const overloads = SIGNATURES.mysql.interval;
+		expect(overloads.length).toBe(1);
+		expect(overloads[0].origin).toBe("harvested");
+		expect(overloads[0].variadic).toBe(true);
 	});
 });
 

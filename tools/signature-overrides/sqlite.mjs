@@ -3,10 +3,23 @@
 // lang_mathfunc.html; cites the page per entry. min()/max()/count()/sum()/total()/avg()/
 // group_concat() are always lowered with the `aggregate` flag set (src/sqlite/lower.ts's
 // AGGREGATES set is name-based, not arg-count-based), so the arity checker in
-// src/qualify/check-calls.ts never applies these signatures to a call - they exist here purely
-// for the signature-help hint. `log(X)` / `log(B,X)` is deliberately NOT curated: the two forms
-// disagree on argument ORDER, not just optional trailing count, and this table's ParamSig can't
-// express a leading-optional/reordered overload without asserting a wrong arity for one form.
+// src/qualify/check-calls.ts never applies these signatures to a call - the harvested entries
+// exist purely for the signature-help hint. `log(X)` / `log(B,X)` needs no curated entry anymore:
+// the two forms disagree on argument ORDER, not just optional trailing count, which a single
+// ParamSig shape can't express - but the overload-set model represents exactly that, and the
+// harvest now emits log's two documented forms as two separate overloads on its own.
+//
+// Pruned 2026-07-14 against the new sqlite/docs/syntax harvest (captured by
+// tools/capture-sqlite-syntax.mjs, mined by tools/harvest-signatures.mjs's SQLite extractor):
+// deleted 6 entries identical to the harvest (quote, pi, coalesce, ifnull, nullif, count), 20
+// typed-duplicates whose only contribution over the harvest was type fields (substr, replace,
+// trim, ltrim, rtrim, instr, soundex, round, abs, sign, hex, power, sqrt, mod, exp, ln, sum,
+// total, avg, group_concat), and 2 whose harvested set became richer than the hand shape (min,
+// max - the harvest reads the scalar min(X,Y,...) form's second slot). What survives is only what
+// the harvest provably cannot produce (the datefunc pages' multi-word "time-value"/"modifier"
+// params skip as multi-word-param) plus entries whose hand-authored param names still differ from
+// the harvest (glob/like keep the pattern/string naming that disambiguates the reversed operator
+// argument order; printf/iif keep their descriptive names over the doc's FORMAT/B1/V1).
 // ---------------------------------------------------------------------------
 //
 // Migrated (mechanically, 2026-07-14) from the hand-curated SQLITE table that used to live
@@ -24,6 +37,9 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
+	// date/time - lang_datefunc.html. No harvest exists for any of these seven: their doc phrases
+	// use multi-word hyphenated params ("time-value", "modifier", "time-value-1") the flat-list
+	// model skips as multi-word-param.
 	date: {
 		name: "date",
 		params: [
@@ -87,57 +103,10 @@ export const OVERRIDES = {
 		],
 		cite: "timediff(time-value-1, time-value-2)",
 	},
-	// string - lang_corefunc.html
-	substr: {
-		name: "substr",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "int" },
-			{ name: "Z", type: "int", optional: true },
-		],
-		cite: "substr(X,Y,Z) / substr(X,Y)",
-	},
-	replace: {
-		name: "replace",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text" },
-			{ name: "Z", type: "text" },
-		],
-		cite: "replace(X,Y,Z)",
-	},
-	trim: {
-		name: "trim",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text", optional: true },
-		],
-		cite: "trim(X,Y)",
-	},
-	ltrim: {
-		name: "ltrim",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text", optional: true },
-		],
-		cite: "ltrim(X,Y)",
-	},
-	rtrim: {
-		name: "rtrim",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text", optional: true },
-		],
-		cite: "rtrim(X,Y)",
-	},
-	instr: {
-		name: "instr",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text" },
-		],
-		cite: "instr(X,Y)",
-	},
+	// operator-form functions - lang_corefunc.html. The harvest emits glob(X,Y) / like(X,Y[,Z]) with
+	// the doc's own X/Y/Z names; the hand entries keep pattern/string naming because the argument
+	// order is the REVERSE of the operator form ("Y GLOB X", "Y LIKE X [ESCAPE Z]") and bare X/Y in
+	// a signature hint would hide exactly the confusion worth preventing.
 	glob: {
 		name: "glob",
 		params: [
@@ -155,74 +124,20 @@ export const OVERRIDES = {
 		],
 		cite: 'like(X,Y[,Z]) ("Y LIKE X [ESCAPE Z]")',
 	},
+	// string - lang_corefunc.html. The harvest's printf entry is the bare printf(FORMAT, ...) index
+	// phrase; the hand entry keeps the descriptive format/args naming.
 	printf: {
 		name: "printf",
 		params: [{ name: "format", type: "text" }, { name: "args" }],
 		variadic: true,
 		cite: "printf(FORMAT,...) - alias for format()",
 	},
-	quote: { name: "quote", params: [{ name: "X" }], cite: "quote(X)" },
-	soundex: { name: "soundex", params: [{ name: "X", type: "text" }], cite: "soundex(X)" },
-	// numeric - lang_corefunc.html + lang_mathfunc.html
-	round: {
-		name: "round",
-		params: [
-			{ name: "X", type: "numeric" },
-			{ name: "Y", type: "int", optional: true },
-		],
-		cite: "round(X,Y) / round(X)",
-	},
-	abs: { name: "abs", params: [{ name: "X", type: "numeric" }], cite: "abs(X)" },
-	sign: { name: "sign", params: [{ name: "X", type: "numeric" }], cite: "sign(X)" },
-	hex: { name: "hex", params: [{ name: "X", type: "blob" }], cite: "hex(X)" },
-	power: {
-		name: "power",
-		params: [
-			{ name: "X", type: "numeric" },
-			{ name: "Y", type: "numeric" },
-		],
-		cite: "power(X,Y) - lang_mathfunc.html",
-	},
-	sqrt: { name: "sqrt", params: [{ name: "X", type: "numeric" }], cite: "sqrt(X) - lang_mathfunc.html" },
-	mod: {
-		name: "mod",
-		params: [
-			{ name: "X", type: "numeric" },
-			{ name: "Y", type: "numeric" },
-		],
-		cite: "mod(X,Y) - lang_mathfunc.html",
-	},
-	pi: { name: "pi", params: [], cite: "pi() - lang_mathfunc.html" },
-	exp: { name: "exp", params: [{ name: "X", type: "numeric" }], cite: "exp(X) - lang_mathfunc.html" },
-	ln: { name: "ln", params: [{ name: "X", type: "numeric" }], cite: "ln(X) - lang_mathfunc.html" },
-	// conditional/null - lang_corefunc.html
-	coalesce: {
-		name: "coalesce",
-		params: [{ name: "X" }, { name: "Y" }],
-		variadic: true,
-		cite: "coalesce(X,Y,...) (SQLite requires >= 2 args)",
-	},
-	ifnull: { name: "ifnull", params: [{ name: "X" }, { name: "Y" }], cite: "ifnull(X,Y)" },
-	nullif: { name: "nullif", params: [{ name: "X" }, { name: "Y" }], cite: "nullif(X,Y)" },
+	// conditional - lang_corefunc.html. The harvest's iif entry is the doc's iif(B1,V1,...) repeat
+	// notation; the hand entry keeps the descriptive condition/true_value/false_value naming.
 	iif: {
 		name: "iif",
 		params: [{ name: "condition", type: "boolean" }, { name: "true_value" }, { name: "false_value" }],
 		variadic: true,
 		cite: "iif(B1,V1,B2,V2,...,else)",
-	},
-	// aggregate - lang_aggfunc.html (see the module note: never arity-checked, name-based aggregate flag)
-	count: { name: "count", params: [{ name: "X" }], cite: "count(X) / count(*)" },
-	sum: { name: "sum", params: [{ name: "X", type: "numeric" }], cite: "sum(X)" },
-	total: { name: "total", params: [{ name: "X", type: "numeric" }], cite: "total(X)" },
-	avg: { name: "avg", params: [{ name: "X", type: "numeric" }], cite: "avg(X)" },
-	min: { name: "min", params: [{ name: "X" }], variadic: true, cite: "min(X) aggregate / min(X,Y,...) scalar" },
-	max: { name: "max", params: [{ name: "X" }], variadic: true, cite: "max(X) aggregate / max(X,Y,...) scalar" },
-	group_concat: {
-		name: "group_concat",
-		params: [
-			{ name: "X", type: "text" },
-			{ name: "Y", type: "text", optional: true },
-		],
-		cite: "group_concat(X[,Y])",
 	},
 };

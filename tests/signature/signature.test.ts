@@ -161,9 +161,11 @@ describe("SIGNATURES table", () => {
 	it("has a bounded curated-origin set per dialect (roughly 5-45 each)", () => {
 		// Lower bound dropped 20 -> 5 on 2026-07-14: the override-pruning pass (widened harvester +
 		// re-prune) deleted every override whose contribution was redundant with, subsumed by, or
-		// type-only over the harvest, down to tsql=7 / databricks=15 / snowflake=16 / bigquery=13 /
-		// redshift=31 (redshift has no harvest source at all, so it keeps the most). A hand entry now
-		// survives only when it earns it; the ceiling still guards against the set growing back.
+		// type-only over the harvest, down to tsql=7 / databricks=15 / snowflake=16 / bigquery=13.
+		// Redshift joined the harvested dialects later the same day (its own syntax tier + extractor)
+		// and its curated set fell 31 -> 13 under the same rules (11 survivors of the prune plus the
+		// rtrim/st_collect safety-valve entries the corpus gate forced). A hand entry now survives
+		// only when it earns it; the ceiling still guards against the set growing back.
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
 			const n = Object.values(SIGNATURES[d]).filter((overloads) => overloads[0]?.origin === "curated").length;
 			expect(n).toBeGreaterThanOrEqual(5);
@@ -189,6 +191,8 @@ describe("SIGNATURES table", () => {
 			"postgres",
 			"duckdb",
 			"trino",
+			"sqlite",
+			"mysql",
 		] as const) {
 			for (const overloads of Object.values(SIGNATURES[d])) {
 				expect(overloads.length).toBeGreaterThan(0);
