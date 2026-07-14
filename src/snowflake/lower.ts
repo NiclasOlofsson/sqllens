@@ -1013,15 +1013,16 @@ function lowerExpr(node: ParserRuleContext): Expr {
 	// expr ! method ( args ) — class-instance method call
 	if (hasDirectToken(node, P.BANG)) {
 		const method = directChildrenOfRule(node, P.RULE_id_)[0];
-		const args = [
-			...exprListExprs(node).map(lowerExpr),
-			...directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues),
-		];
+		const positional = exprListExprs(node).map(lowerExpr);
+		const paramAssoc = directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues);
 		const base = exprs[0] ? lowerExpr(exprs[0]) : otherExpr(node);
+		const args = [base, ...positional, ...paramAssoc.map((v) => v.arg)];
+		const argNames = [undefined, ...positional.map(() => undefined), ...paramAssoc.map((v) => v.name)];
 		return {
 			kind: "function",
 			name: method ? method.getText() : "",
-			args: [base, ...args],
+			args,
+			...(argNames.some((n) => n !== undefined) ? { argNames } : {}),
 			aggregate: false,
 			distinct: false,
 			cst: node,
@@ -1331,40 +1332,62 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 	}
 
 	const name = functionName(node);
-	const args = [
+	const positional = [
 		...exprListExprs(node).map(lowerExpr),
 		...directChildrenOfRule(node, P.RULE_expr).map(lowerExpr),
-		...directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues),
-		// the object_name(func_arg_list) alternative — positional exprs and named-arg values
-		// (STAR / stage / spread / TYPE args carry no expr payload and add nothing here).
-		// Also the SLL-surgery wave's home for plain f(args) calls (2026-07-03).
-		...directChildrenOfRule(node, P.RULE_func_arg_list).flatMap(funcArgValues),
+	];
+	const paramAssoc = directChildrenOfRule(node, P.RULE_param_assoc_list).flatMap(paramAssocValues);
+	// the object_name(func_arg_list) alternative — positional exprs and named-arg values
+	// (STAR / stage / spread / TYPE args carry no expr payload and add nothing here).
+	// Also the SLL-surgery wave's home for plain f(args) calls (2026-07-03).
+	const funcArg = directChildrenOfRule(node, P.RULE_func_arg_list).flatMap(funcArgValues);
+	const args = [...positional, ...paramAssoc.map((v) => v.arg), ...funcArg.map((v) => v.arg)];
+	const argNames = [
+		...positional.map(() => undefined),
+		...paramAssoc.map((v) => v.name),
+		...funcArg.map((v) => v.name),
 	];
 	return {
 		kind: "function",
 		name: name.toLowerCase(),
 		args,
+		// Named-argument invocation `fn(name => value)`: the per-arg names make the call
+		// conservation-visible and let the arity checker's named-arg bypass fire (a named call's
+		// positional count says nothing about the documented positional signature).
+		...(argNames.some((n) => n !== undefined) ? { argNames } : {}),
 		aggregate: AGGREGATES.has(name.toLowerCase()),
 		distinct: hasTokenShallow(node, P.DISTINCT),
 		cst: node,
 	};
 }
 
-function funcArgValues(list: ParserRuleContext): Expr[] {
+/** One func_arg's lowered value plus its `name =>` parameter name (undefined for a plain positional
+ *  expr). STAR / stage / spread / TYPE / TABLE(...) args carry no expr payload and are skipped. */
+function funcArgValues(list: ParserRuleContext): { arg: Expr; name: string | undefined }[] {
 	return directChildrenOfRule(list, P.RULE_func_arg).flatMap((fa) => {
 		const e = directChildrenOfRule(fa, P.RULE_expr)[0];
-		if (e) return [lowerExpr(e)];
+		if (e) return [{ arg: lowerExpr(e), name: undefined }];
 		const pa = directChildrenOfRule(fa, P.RULE_param_assoc)[0];
-		const pe = pa ? directChildrenOfRule(pa, P.RULE_expr)[0] : undefined;
-		return pe ? [lowerExpr(pe)] : [];
+		const one = pa ? oneParamAssoc(pa) : undefined;
+		return one ? [one] : [];
 	});
 }
 
-function paramAssocValues(list: ParserRuleContext): Expr[] {
+/** param_assoc_list: every param_assoc child, each lowered via oneParamAssoc. */
+function paramAssocValues(list: ParserRuleContext): { arg: Expr; name: string | undefined }[] {
 	return directChildrenOfRule(list, P.RULE_param_assoc)
-		.map((pa) => directChildrenOfRule(pa, P.RULE_expr)[0])
-		.filter((e): e is ParserRuleContext => e !== undefined)
-		.map(lowerExpr);
+		.map(oneParamAssoc)
+		.filter((v): v is { arg: Expr; name: string | undefined } => v !== undefined);
+}
+
+/** param_assoc: `(id_ | FILE_FORMAT | PATTERN | LIMIT) ASSOC expr`; the name is the id_ rule when
+ *  present, else the leading keyword token itself. */
+function oneParamAssoc(pa: ParserRuleContext): { arg: Expr; name: string | undefined } | undefined {
+	const e = directChildrenOfRule(pa, P.RULE_expr)[0];
+	if (!e) return undefined;
+	const id = directChildrenOfRule(pa, P.RULE_id_)[0];
+	const name = id ? id.getText() : leftmostToken(pa);
+	return { arg: lowerExpr(e), name };
 }
 
 function functionName(node: ParserRuleContext): string {
