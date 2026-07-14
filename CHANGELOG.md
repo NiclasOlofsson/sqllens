@@ -1,3 +1,40 @@
+# [1.2.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.1.0...v1.2.0) (2026-07-14)
+
+
+### Bug Fixes
+
+* **bigquery:** named-argument calls never populated argNames ([1b93e1c](https://github.com/NiclasOlofsson/sqllens/commit/1b93e1cb6713d5d67c4bf6351c4db3c2109a2bab))
+* **ci:** treat Context7 too-early cooldown as soft skip ([bb2b256](https://github.com/NiclasOlofsson/sqllens/commit/bb2b256f94d4e7b865848018e8562910dd29d177))
+* **completion:** lex the placeholder, not raw text, on templated documents ([7dfb293](https://github.com/NiclasOlofsson/sqllens/commit/7dfb2932ae43cd43a13a982b757ff89f1caeb303))
+* **completion:** resolve ref/source relation columns in broken-input column completion ([574e975](https://github.com/NiclasOlofsson/sqllens/commit/574e97581980ae357424a7131ec4fd48b49af0c1))
+* **pivot:** thread the dialect through aliased-pivot source resolution ([e310f18](https://github.com/NiclasOlofsson/sqllens/commit/e310f18afb40e3cb050b6e30d217eaf7b8b43bc8))
+* **signature:** correct the hand-curated tables against the reconciliation evidence ([df54288](https://github.com/NiclasOlofsson/sqllens/commit/df542889c13346971d9480466cbc55cb209ab438))
+* **signature:** every call-shaped line in a doc block is a candidate; overrides cut to the proven residue ([6592e6b](https://github.com/NiclasOlofsson/sqllens/commit/6592e6b2bc5f45f55c39ecfb90e7c8b559a0a509))
+* **signature:** postgres substring's positional form verified against pg_proc, count optional ([1d1609f](https://github.com/NiclasOlofsson/sqllens/commit/1d1609fd7f6f359c77d223e0325f81cd85bce717))
+* **signature:** syntaxsql fences with trailing whitespace were invisible to the harvester ([a441a80](https://github.com/NiclasOlofsson/sqllens/commit/a441a80d8c971b23464331fff9e1623a3e00c457))
+* **signature:** tsql harvester emits real optionality instead of flattening brackets ([65f9bb0](https://github.com/NiclasOlofsson/sqllens/commit/65f9bb0fe4670f2975feb32f980d92ee55c2c583))
+* **snowflake:** EXTRACT's date-part operand was dropped from the lowered call args ([2960252](https://github.com/NiclasOlofsson/sqllens/commit/29602523d3f52790f21fee0f5a16b0fc6c6e79ee))
+* **snowflake:** named-argument calls never populated argNames ([4434921](https://github.com/NiclasOlofsson/sqllens/commit/4434921e98e22a796afae926c3a9639e9cdde2c9))
+
+
+### Features
+
+* **completion:** complete inside jinja tags via a host candidate contract (REQ2b) ([b1846a5](https://github.com/NiclasOlofsson/sqllens/commit/b1846a5a012f24574ee6f48e2f5eaffcd858ee1f))
+* **completion:** detect bare, nested, and control-tag jinja call slots ([38d9852](https://github.com/NiclasOlofsson/sqllens/commit/38d9852526df3abe338cfd43799963f5e2529361))
+* **completion:** jinjaSlotAt — neutral jinja completion-slot detection (REQ2a) ([a18610f](https://github.com/NiclasOlofsson/sqllens/commit/a18610f54377533b2c3b1714f34c9f63e4a6bff0))
+* **dialect:** add internal DialectBehavior interface + delegating registry ([777f0b3](https://github.com/NiclasOlofsson/sqllens/commit/777f0b3c2efbb70be60a66832cc272d7acd17300))
+* **dialect:** behaviorOf carrier resolves a scope's behavior from its dialect tag ([caf2186](https://github.com/NiclasOlofsson/sqllens/commit/caf21860965f3e0388334dac348f59d6a2692823))
+* **duckdb:** model PIVOT/UNPIVOT onto the shared IR; dynamic pivot resolves to unknown ([0df2c86](https://github.com/NiclasOlofsson/sqllens/commit/0df2c86c62512f002d852e6cb586ce6d0363dd25))
+* **minijinja:** recover incomplete/mid-typing tags as call nodes (REQ1) ([4a7abc6](https://github.com/NiclasOlofsson/sqllens/commit/4a7abc60bdd1b24526f2fe5e081cc2fadf5035dc))
+* require a supported dialect; drop the silent default-dialect fallback ([4502813](https://github.com/NiclasOlofsson/sqllens/commit/45028131f33b8b3c51a8daa567db01848b5e2788))
+* **signature:** eight reconciliation-driven harvester widenings ([0ad1e47](https://github.com/NiclasOlofsson/sqllens/commit/0ad1e4795437604d2b3a079c5d073f0ad7aa8858))
+* **signature:** harvested signature tables for databricks and snowflake ([cd04a36](https://github.com/NiclasOlofsson/sqllens/commit/cd04a365a45e46cbaa746c94e198fc54af91f5bf))
+* **signature:** harvested signature tables for duckdb and postgres ([95dcc2c](https://github.com/NiclasOlofsson/sqllens/commit/95dcc2cea0f20c6cc505f4e33a63ff4b47db19b9))
+* **signature:** harvested signature tables for trino and bigquery ([f4f9aed](https://github.com/NiclasOlofsson/sqllens/commit/f4f9aed26bc96808eafb1998687698592a263afd))
+* **signature:** one generated signature table per dialect, origin per entry ([722492f](https://github.com/NiclasOlofsson/sqllens/commit/722492fafbcc0c441bb08a251617cb2054521dfc))
+* **signature:** overload sets per name ([8e8072b](https://github.com/NiclasOlofsson/sqllens/commit/8e8072bb870f55d9a5745d9f919f48bb8be014df))
+* **signature:** redshift, mysql and sqlite join the harvest; every dialect now doc-derived ([92500cf](https://github.com/NiclasOlofsson/sqllens/commit/92500cf1aea5ed5e822deffbdee1d78406d2e50c))
+
 # [1.1.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.0.0...v1.1.0) (2026-07-11)
 
 
