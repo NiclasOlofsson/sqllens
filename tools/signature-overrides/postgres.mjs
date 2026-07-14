@@ -105,18 +105,18 @@ export const OVERRIDES = {
 		variadic: true,
 		cite: "concat_ws(sep, val…)",
 	},
-	// OPEN (flagged for Niclas, verification pending): the manual documents the positional 3-arg comma
-	// form only under substr ("Same as substring(string from start for count)") - substring's own 6
-	// overloads are all FROM/FOR/SIMILAR/ESCAPE keyword-clause forms. Whether substring(a,b,c) is
-	// itself accepted positionally could not be confirmed against a running Postgres; left as-is.
+	// The manual shows the positional comma form only under substr, but the server catalog is the
+	// ground truth and settles it: pg_proc.dat (REL_18_STABLE) carries substring(text, int4, int4)
+	// (oid 936, prosrc text_substr) AND substring(text, int4) (oid 937, text_substr_no_len), so the
+	// positional call is real and count is omittable. Verified 2026-07-14.
 	substring: {
 		name: "substring",
 		params: [
 			{ name: "string", type: "text" },
 			{ name: "start", type: "int" },
-			{ name: "count", type: "int" },
+			{ name: "count", type: "int", optional: true },
 		],
-		cite: "substring(string, start, count)",
+		cite: "substring(string, start [, count]) - pg_proc oids 936/937",
 	},
 	substr: {
 		name: "substr",
