@@ -74,7 +74,7 @@ interface Case {
  *  its placeholder name is the honest never-wrong fallback, not a leak (same guard the
  *  R3 gate uses via `hasRelationTag`). */
 function hasCompletedRelation(text: string): boolean {
-	return parseTemplated(text, DIALECT).tags.some((n) => n.kind === "ref" || n.kind === "source");
+	return parseTemplated(text, DIALECT).tags.some((n) => n.kind === "call" && (n.name === "ref" || n.name === "source"));
 }
 
 /** In-repo ref/source fixtures that actually complete a `{{ ref('x') }}` / `{{ source('a','b') }}` tag. */
@@ -157,8 +157,11 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 			const { tags } = parseTemplated(text, DIALECT);
 			const expected = new Set<string>();
 			for (const n of tags) {
-				if (n.kind === "ref") expected.add(n.model);
-				else if (n.kind === "source") expected.add(`${n.sourceName}.${n.tableName}`);
+				if (n.kind !== "call") continue;
+				if (n.name === "ref" && n.args.at(-1)?.value != null) expected.add(n.args.at(-1)!.value!);
+				else if (n.name === "source" && n.args[0]?.value != null && n.args[1]?.value != null) {
+					expected.add(`${n.args[0].value}.${n.args[1].value}`);
+				}
 			}
 
 			it("declares at least one real ref/source name", () => {

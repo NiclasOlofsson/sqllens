@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { Dialect } from "../src/api.js";
 import { parseTemplated } from "../src/minijinja/parse.js";
-import type { TagNode } from "../src/minijinja/tag-ast.js";
+import type { TagArg, TagNode } from "../src/minijinja/tag-ast.js";
 import type { PartSpan } from "../src/ir/part-span.js";
 
 // ---------------------------------------------------------------------------
@@ -10,6 +10,13 @@ import type { PartSpan } from "../src/ir/part-span.js";
 // exactly the token it claims, and its 1-based line / 0-based column must match a
 // fresh scan of the text (the sqllens convention). This is the HARD contract the
 // extension positions hover / rename / signature-help on.
+//
+// The tag AST is NEUTRAL: every expression-call tag is a `kind: "call"` node
+// (ref/source/config/var/env_var are just callees, distinguished by `name`), with no
+// dbt interpretation. A string arg carries `{value, span (whole arg, quoted),
+// valueSpan (quote-excluded)}`; a consumer that knows arg roles (dbt: ref's model is
+// the last arg) reads value + valueSpan there — the successor of the old
+// `ref.model`/`modelSpan`.
 // ---------------------------------------------------------------------------
 
 /** 1-based line, 0-based column of an absolute offset — an independent oracle. */
@@ -41,78 +48,76 @@ function firstTag(text: string, dialect: Dialect = "databricks"): TagNode {
 	return tags[0];
 }
 
-describe("tagNodesOf — R2 span contract", () => {
-	it("ref: model content span excludes quotes; callSpan + tagSpan exact", () => {
+/** Narrow to a call node with a given callee `name`, or fail. */
+function callTag(text: string, name: string, dialect: Dialect = "databricks"): Extract<TagNode, { kind: "call" }> {
+	const node = firstTag(text, dialect);
+	expect(node.kind).toBe("call");
+	if (node.kind !== "call") throw new Error("not a call");
+	expect(node.name).toBe(name);
+	return node;
+}
+
+/** The last positional-or-any arg — where dbt's `ref` model / a call's trailing value sits. */
+function lastArg(node: Extract<TagNode, { kind: "call" }>): TagArg {
+	return node.args[node.args.length - 1];
+}
+
+describe("tagNodesOf — R2 span contract (neutral call node)", () => {
+	it("ref: the model arg value is quote-stripped, its valueSpan excludes quotes; callSpan + tagSpan exact", () => {
 		const text = "{{ ref('my_model') }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("my_model");
-		expectSpan(text, node.modelSpan, "my_model"); // NO quotes
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("my_model");
+		expectSpan(text, lastArg(node).valueSpan!, "my_model"); // NO quotes
 		expectSpan(text, node.callSpan, "ref('my_model')");
 		expectSpan(text, node.tagSpan, "{{ ref('my_model') }}");
 	});
 
 	it("ref: spans shift by the tag's document offset inside surrounding SQL", () => {
 		const text = "SELECT * FROM {{ ref('orders') }} WHERE 1=1";
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("orders");
-		expectSpan(text, node.modelSpan, "orders");
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("orders");
+		expectSpan(text, lastArg(node).valueSpan!, "orders");
 		expectSpan(text, node.tagSpan, "{{ ref('orders') }}");
 	});
 
-	it("ref: double-quoted model content span also excludes quotes", () => {
+	it("ref: a double-quoted model arg's valueSpan also excludes quotes", () => {
 		const text = '{{ ref("my_model") }}';
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("my_model");
-		expectSpan(text, node.modelSpan, "my_model"); // NO double quotes
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("my_model");
+		expectSpan(text, lastArg(node).valueSpan!, "my_model"); // NO double quotes
 	});
 
-	it("ref: a COMPUTED arg does NOT fabricate a model (never-wrong)", () => {
-		// `ref(var('x'))` — the target is dynamic; `x` is the var name, not the
-		// model. The string buried inside the nested call must not become a model.
+	it("ref: a COMPUTED arg has value null (never-wrong) and its span covers the whole expression", () => {
+		// `ref(var('x'))` — the target is dynamic; the string buried in the nested call
+		// must NOT become a literal value. It stays a call named `ref` with a null-value arg.
 		const text = "{{ ref(var('x')) }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("macro");
-		if (node.kind !== "macro") return;
-		expect(node.name).toBe("ref");
-		expect((node as { model?: unknown }).model).toBeUndefined();
-		// the sole arg span covers the whole computed expression `var('x')`.
+		const node = callTag(text, "ref");
 		expect(node.args).toHaveLength(1);
+		expect(node.args[0].value).toBeNull();
+		expect(node.args[0].valueSpan).toBeUndefined();
 		expectSpan(text, node.args[0].span, "var('x')");
 	});
 
-	it("source: a computed arg does NOT fabricate a name/table (never-wrong)", () => {
+	it("source: a computed first arg has value null (never-wrong)", () => {
 		const text = "{{ source(var('s'), 'tbl') }}";
-		const node = firstTag(text);
-		// first arg computed → not a source node; degrades to a macro named source.
-		expect(node.kind).toBe("macro");
-		if (node.kind !== "macro") return;
-		expect(node.name).toBe("source");
+		const node = callTag(text, "source");
+		expect(node.args[0].value).toBeNull();
+		expect(node.args[1].value).toBe("tbl");
 	});
 
-	it("source: both content spans exclude quotes", () => {
+	it("source: both string args' valueSpans exclude quotes", () => {
 		const text = "{{ source('sch', 'tbl') }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("source");
-		if (node.kind !== "source") return;
-		expect(node.sourceName).toBe("sch");
-		expect(node.tableName).toBe("tbl");
-		expectSpan(text, node.sourceNameSpan, "sch");
-		expectSpan(text, node.tableNameSpan, "tbl");
+		const node = callTag(text, "source");
+		expect(node.args[0].value).toBe("sch");
+		expect(node.args[1].value).toBe("tbl");
+		expectSpan(text, node.args[0].valueSpan!, "sch");
+		expectSpan(text, node.args[1].valueSpan!, "tbl");
 		expectSpan(text, node.tagSpan, "{{ source('sch', 'tbl') }}");
 	});
 
-	it("macro: name + package spans, per-argument spans source-ordered, argsSpan paren-to-paren", () => {
+	it("call: name + package spans, per-argument spans source-ordered, argsSpan paren-to-paren", () => {
 		const text = "{{ my_pkg.build(a, nested(b), k=c) }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("macro");
-		if (node.kind !== "macro") return;
-		expect(node.name).toBe("build");
+		const node = callTag(text, "build");
 		expect(node.packageName).toBe("my_pkg");
 		expectSpan(text, node.nameSpan, "build");
 		expect(node.packageSpan).toBeDefined();
@@ -130,12 +135,9 @@ describe("tagNodesOf — R2 span contract", () => {
 		expectSpan(text, node.tagSpan, text);
 	});
 
-	it("macro: a bare unknown call is a macro with no package", () => {
+	it("call: a bare unknown call has no package", () => {
 		const text = "{{ dbt_utils_star() }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("macro");
-		if (node.kind !== "macro") return;
-		expect(node.name).toBe("dbt_utils_star");
+		const node = callTag(text, "dbt_utils_star");
 		expect(node.packageName).toBeUndefined();
 		expect(node.args).toHaveLength(0);
 		expectSpan(text, node.nameSpan, "dbt_utils_star");
@@ -143,13 +145,11 @@ describe("tagNodesOf — R2 span contract", () => {
 
 	it("multi-line ref: correct multi-line spans (the parity UPGRADE)", () => {
 		const text = "{{ ref(\n  'x'\n) }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("x");
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("x");
 		// 'x' sits on line 2 — the tag anchor composes with the token's own line.
-		expectSpan(text, node.modelSpan, "x");
-		expect(node.modelSpan.line).toBe(2);
+		expectSpan(text, lastArg(node).valueSpan!, "x");
+		expect(lastArg(node).valueSpan!.line).toBe(2);
 		// tagSpan spans all three lines.
 		expectSpan(text, node.tagSpan, text);
 		expect(node.tagSpan.line).toBe(1);
@@ -160,29 +160,26 @@ describe("tagNodesOf — R2 span contract", () => {
 		// anchor column must apply ONLY to the tag's first line — a later-line span
 		// carries its own absolute column, not base.column + col.
 		const text = "SELECT x,\n  {{ ref(\n  'later'\n) }}";
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("later");
-		// expectSpan cross-checks line AND column against an independent posOf scan,
-		// so a base.column leak into line 4 (the 'later' line) fails here.
-		expectSpan(text, node.modelSpan, "later");
-		expect(node.modelSpan.line).toBe(3);
-		expect(node.modelSpan.column).toBe(3); // "  'later'" → l at col 3
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("later");
+		expectSpan(text, lastArg(node).valueSpan!, "later");
+		expect(lastArg(node).valueSpan!.line).toBe(3);
+		expect(lastArg(node).valueSpan!.column).toBe(3); // "  'later'" → l at col 3
 		// the tag itself anchors on line 2 at column 2.
 		expect(node.tagSpan.line).toBe(2);
 		expect(node.tagSpan.column).toBe(2);
 	});
 
-	it("var / env_var / config classify by leading name", () => {
-		expect(firstTag("{{ var('v') }}").kind).toBe("var");
-		expect(firstTag("{{ env_var('E') }}").kind).toBe("env_var");
-		expect(firstTag("{{ config(materialized='table') }}").kind).toBe("config");
+	it("var / env_var / config are plain calls distinguished by name (no dbt classification here)", () => {
+		expect(callTag("{{ var('v') }}", "var").kind).toBe("call");
+		expect(callTag("{{ env_var('E') }}", "env_var").kind).toBe("call");
+		expect(callTag("{{ config(materialized='table') }}", "config").kind).toBe("call");
 	});
 
-	it("no-output builtins (docs/print/log/return/exceptions) classify as other", () => {
-		expect(firstTag("{{ print('x') }}").kind).toBe("other");
-		expect(firstTag("{{ exceptions.raise_compiler_error('boom') }}").kind).toBe("other");
+	it("no-output builtins are also plain calls (config/docs/print/…) — the meaning is the provider's", () => {
+		expect(callTag("{{ print('x') }}", "print").kind).toBe("call");
+		const exc = callTag("{{ exceptions.raise_compiler_error('boom') }}", "raise_compiler_error");
+		expect(exc.packageName).toBe("exceptions");
 	});
 
 	it("a control statement tag classifies as control", () => {
@@ -199,16 +196,14 @@ describe("tagNodesOf — R2 span contract", () => {
 		expectSpan(text, node.tagSpan, "{# a note #}");
 	});
 
-	it("fusion honesty: the ref node is correct even when the SQL side fuses", () => {
+	it("fusion honesty: the call node is correct even when the SQL side fuses", () => {
 		// `x{{ref('a')}}y` — the identifier placeholder fuses with the adjacent
 		// `x`/`y` on the SQL channel (the known fragment case), but the tag-AST is
 		// INDEPENDENT of the SQL parse: its spans still point at the real tag.
 		const text = "x{{ref('a')}}y";
-		const node = firstTag(text);
-		expect(node.kind).toBe("ref");
-		if (node.kind !== "ref") return;
-		expect(node.model).toBe("a");
-		expectSpan(text, node.modelSpan, "a");
+		const node = callTag(text, "ref");
+		expect(lastArg(node).value).toBe("a");
+		expectSpan(text, lastArg(node).valueSpan!, "a");
 		expectSpan(text, node.tagSpan, "{{ref('a')}}");
 		expectSpan(text, node.callSpan, "ref('a')");
 	});
@@ -218,21 +213,21 @@ describe("tagNodesOf — R2 span contract", () => {
 			const text = "SELECT {{ ref( }}";
 			expect(() => parseTemplated(text, "databricks")).not.toThrow();
 			const { tags, diagnostics } = parseTemplated(text, "databricks");
-			// A broken ref must NOT emit a ref node with a fabricated modelSpan — it
-			// degrades to a best-effort node (never-wrong). The unrecognizable call
-			// yields an `other` node here; either way it is never a ref.
+			// A broken ref must NOT fabricate a literal model — any arg it recovers has a
+			// null value (never-wrong). Its tagSpan is still exact and the jinja parse
+			// error surfaces as a positioned diagnostic.
 			expect(tags).toHaveLength(1);
-			expect(tags[0].kind).not.toBe("ref");
-			// Its tagSpan is still exact, and the jinja parse error surfaces as a
-			// positioned diagnostic.
-			expectSpan(text, tags[0].tagSpan, "{{ ref( }}");
+			const t = tags[0];
+			if (t.kind === "call") expect(t.args.every((a) => a.value === null)).toBe(true);
+			expectSpan(text, t.tagSpan, "{{ ref( }}");
 			expect(diagnostics.length).toBeGreaterThan(0);
 		});
 
-		it("multiple tags in one document each yield a node", () => {
+		it("multiple tags in one document each yield a node, named by callee", () => {
 			const text = "SELECT * FROM {{ ref('a') }} JOIN {{ source('s', 't') }} USING (id)";
 			const { tags } = parseTemplated(text, "databricks");
-			expect(tags.map((t) => t.kind)).toEqual(["ref", "source"]);
+			expect(tags.map((t) => t.kind)).toEqual(["call", "call"]);
+			expect(tags.map((t) => (t.kind === "call" ? t.name : t.kind))).toEqual(["ref", "source"]);
 		});
 
 		it("a {% raw %}…{% endraw %} block's closer yields the same control node the pre-doc-native re-lex produced", () => {
@@ -259,20 +254,26 @@ describe("tagNodesOf — R2 span contract", () => {
 // span carries its end position; a multi-line tag advances tagSpan.endLine.
 // ---------------------------------------------------------------------------
 describe("PartSpan endLine/endColumn", () => {
-	it("single-line ref: tagSpan/modelSpan ends on the same line, one past the last char", () => {
-		const text = "select * from {{ ref('orders') }}";
+	function refTag(text: string): Extract<TagNode, { kind: "call" }> {
 		const r = parseTemplated(text, "databricks");
-		const ref = r.tags.find((t): t is Extract<typeof t, { kind: "ref" }> => t.kind === "ref")!;
+		const ref = r.tags.find((t): t is Extract<TagNode, { kind: "call" }> => t.kind === "call" && t.name === "ref");
+		if (!ref) throw new Error("no ref call");
+		return ref;
+	}
+
+	it("single-line ref: tagSpan/model valueSpan end on the same line, one past the last char", () => {
+		const text = "select * from {{ ref('orders') }}";
+		const ref = refTag(text);
+		const model = lastArg(ref).valueSpan!;
 		expect(ref.tagSpan.endLine).toBe(1);
 		expect(ref.tagSpan.endColumn).toBe(text.length);
-		expect(ref.modelSpan.endLine).toBe(1);
-		expect(ref.modelSpan.endColumn).toBe(ref.modelSpan.column + "orders".length);
+		expect(model.endLine).toBe(1);
+		expect(model.endColumn).toBe(model.column + "orders".length);
 	});
 
 	it("multi-line ref: tagSpan.endLine advances to the closing }} line", () => {
 		const text = "select * from {{ ref(\n  'orders'\n) }}";
-		const r = parseTemplated(text, "databricks");
-		const ref = r.tags.find((t) => t.kind === "ref")!;
+		const ref = refTag(text);
 		expect(ref.tagSpan.line).toBe(1);
 		expect(ref.tagSpan.endLine).toBe(3);
 		expect(ref.tagSpan.endColumn).toBe(") }}".length);

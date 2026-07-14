@@ -178,9 +178,11 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "expr", opaque: true });
 	});
 
-	it("{{ var('t') }} in FROM gets the opaque expr marker", () => {
+	it("{{ var('t') }} in FROM is a generic call marker (opaque until a provider resolves it)", () => {
+		// var is just a callee now — the neutral core doesn't know it's a scalar. It carries its call
+		// so a provider COULD resolve it; without one it behaves opaquely (no diagnostics), like before.
 		const r = parseTemplated("select * from {{ var('t') }}", "databricks");
-		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "expr", opaque: true });
+		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "macro", call: { name: "var" } });
 	});
 
 	it("guard: two sets of the same name do not resolve (ambiguous)", () => {

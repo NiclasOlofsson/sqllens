@@ -8,7 +8,8 @@ describe("TemplatedParseResult Of-accessors", () => {
 		if (body.kind !== "select") throw new Error("expected select");
 		const src = body.from[0];
 		const tag = r.tagOf(src);
-		expect(tag?.kind).toBe("ref");
+		expect(tag?.kind).toBe("call");
+		expect(tag?.kind === "call" && tag.name).toBe("ref");
 		expect(r.nodeOf(tag!)).toBe(src);
 	});
 	it("control tags have no node; plain SQL answers undefined/[]", () => {

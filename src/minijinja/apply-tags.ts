@@ -48,13 +48,36 @@ import type {
 import type { TemplateCall } from "../qualify/template-provider.js";
 import type { MacroCall, TagNode } from "./tag-ast.js";
 
-/** The tag kinds that produce a template attachment (a FROM-slot relation). `var`/`env_var`/`other`
- *  are the NON-CALL expression tags: a bare variable or arbitrary expression occupying a FROM slot
- *  gets the opaque `"expr"` marker (or resolves through a literal `{% set %}` — see `SetResolution`),
- *  so the placeholder name never reaches qualify/hover as if it were a real table. */
-type ExprTag = Extract<TagNode, { kind: "var" | "env_var" | "config" | "other" }>;
-type RelationTag = Extract<TagNode, { kind: "ref" | "source" | "macro" }> | ExprTag;
+/** The tag kinds that can occupy a FROM slot: a CALL (`ref`/`source`/a macro/…) or a non-call
+ *  expression tag (`other` — a bare variable or arbitrary expression). The latter gets the opaque
+ *  `"expr"` marker (or resolves through a literal `{% set %}`, see `SetResolution`), so a placeholder
+ *  name never reaches qualify/hover as if it were a real table. */
+type ExprTag = Extract<TagNode, { kind: "other" }>;
+type CallTag = Extract<TagNode, { kind: "call" }>;
+type RelationTag = CallTag | ExprTag;
 type ControlTag = Extract<TagNode, { kind: "control" }>;
+
+// TEMP (de-dbt follow-up): naming a ref/source FROM source at lower time still lives here, mirroring
+// DbtTemplateProvider.relationOf. The tag AST is now dbt-neutral (a call is a call); the remaining
+// step is to name FROM sources at QUALIFY through the provider so apply-tags carries no ref/source
+// vocabulary either. Kept inline meanwhile so behavior is unchanged.
+function dbtRelation(call: TemplateCall): { kind: "ref" | "source"; name: string[] } | undefined {
+	if (call.packageParts !== undefined) return undefined;
+	if (call.name === "ref") {
+		const kw = call.kwargs?.find((k) => k.name === "model");
+		const model = kw ? kw.value : call.args.length === 1 || call.args.length === 2 ? call.args[call.args.length - 1] : undefined;
+		return typeof model === "string" ? { kind: "ref", name: [model] } : undefined;
+	}
+	if (call.name === "source") {
+		const kwS = call.kwargs?.find((k) => k.name === "source_name");
+		const kwT = call.kwargs?.find((k) => k.name === "table_name");
+		const s = kwS ? kwS.value : call.args[0];
+		const t = kwT ? kwT.value : call.args[1];
+		const has = (kwS && kwT) || call.args.length === 2;
+		if (has && typeof s === "string" && typeof t === "string") return { kind: "source", name: [s, t] };
+	}
+	return undefined;
+}
 
 /** What a template-local variable is known to hold: a literal ref/source target (name resolvable),
  *  or any other single-call RHS (identity known, relation up to the provider). */
@@ -110,15 +133,7 @@ export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string)
 	try {
 		// config is a no-output tag (whitespace-filled) — it can never yield a table
 		// source, so it stays out of the correlation set even though ExprTag admits it.
-		const relTags = tags.filter(
-			(t): t is RelationTag =>
-				t.kind === "ref" ||
-				t.kind === "source" ||
-				t.kind === "macro" ||
-				t.kind === "var" ||
-				t.kind === "env_var" ||
-				t.kind === "other",
-		);
+		const relTags = tags.filter((t): t is RelationTag => t.kind === "call" || t.kind === "other");
 		if (relTags.length === 0) return { ast, byNode, byTag };
 		const ctx: TagContext = { relTags, sets: resolveSets(tags, text), text, byNode, byTag };
 		const next = transformQuery(ast, ctx);
@@ -136,20 +151,11 @@ export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string)
  *  its provider key — ref/source from their literal names, macro from its call fields,
  *  var/env_var lexically, a bare set-bound variable from its RHS call. */
 function exprInfoOf(tag: RelationTag, ctx: TagContext): TemplateExprInfo {
-	if (tag.kind === "ref") return { span: tag.tagSpan, call: { name: "ref", args: [tag.model] } };
-	if (tag.kind === "source") {
-		return { span: tag.tagSpan, call: { name: "source", args: [tag.sourceName, tag.tableName] } };
-	}
-	if (tag.kind === "macro") return { span: tag.tagSpan, call: callOf(tag, ctx.text) };
-	if (tag.kind === "var" || tag.kind === "env_var") {
-		const m = VALUE_CALL_TAG.exec(sliceSpan(ctx.text, tag.tagSpan));
-		if (m) {
-			const args: (string | null)[] = [m[3]];
-			if (m[4] !== undefined) args.push(null); // further args present but not extracted — computed
-			return { span: tag.tagSpan, call: { name: m[1], args } };
-		}
-		return { span: tag.tagSpan };
-	}
+	// A call tag (ref/source/var/env_var/a macro) carries its provider key straight off the call,
+	// callOf reads name + literal args from the source, uniform across every callee.
+	if (tag.kind === "call") return { span: tag.tagSpan, call: callOf(tag, ctx.text) };
+	// A non-call `other` tag: a bare `{{ t }}` resolving through a single-call `{% set t = … %}`
+	// carries that RHS call; anything else is opaque.
 	const ident = bareIdentOf(tag, ctx.text);
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
 	if (resolved) return { span: tag.tagSpan, call: resolved.call };
@@ -498,22 +504,19 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	// therefore also freezes the TagNode.tagSpan object returned in `.tags` — benign,
 	// since spans are read-only. Every marker with a resolvable identity carries its
 	// `call` — the provider key the semantic layer consults (relation-columns.ts).
-	if (tag.kind === "ref") {
-		const call: TemplateCall = { name: "ref", args: [tag.model] };
-		const template: TemplateSourceInfo = { kind: "ref", span: tag.tagSpan, call };
-		return attach(ctx, { ...base, name: [tag.model], template }, tag);
-	}
-	if (tag.kind === "source") {
-		const call: TemplateCall = { name: "source", args: [tag.sourceName, tag.tableName] };
-		const template: TemplateSourceInfo = { kind: "source", span: tag.tagSpan, call };
-		return attach(ctx, { ...base, name: [tag.sourceName, tag.tableName], template }, tag);
-	}
-	if (tag.kind === "macro") {
-		// A macro in a FROM slot keeps the placeholder name (never fabricated) but is no
-		// longer a dead end: its `call` lets a provider resolve the relation it produces
-		// (a TVF-like macro). Without a provider answer it behaves exactly like the old
-		// opaque marker (exemption, no diagnostics).
-		const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, call: callOf(tag, ctx.text) };
+	if (tag.kind === "call") {
+		const call = callOf(tag, ctx.text);
+		const rel = dbtRelation(call);
+		if (rel) {
+			// A resolvable ref/source: the dbt-logical name + a ref/source marker. (Naming kept at
+			// lower time meanwhile — see dbtRelation's note; the `call` is the provider's key.)
+			const template: TemplateSourceInfo = { kind: rel.kind, span: tag.tagSpan, call };
+			return attach(ctx, { ...base, name: [...rel.name], template }, tag);
+		}
+		// Any other call (a macro, a computed ref, a TVF) keeps the placeholder name (never
+		// fabricated) but is no longer a dead end: its `call` lets a provider resolve the relation it
+		// produces. Without a provider answer it behaves exactly like the old opaque marker.
+		const template: TemplateSourceInfo = { kind: "macro", span: tag.tagSpan, call };
 		return attach(ctx, { ...base, template }, tag);
 	}
 

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { SqlDocument, Schema, type TableSource } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
 import type { TagNode } from "../src/minijinja/index.js";
+import type { PartSpan } from "../src/ir/part-span.js";
 import { TestRelationProvider, relKey } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
@@ -51,9 +52,16 @@ function briefLine(span: { line: number }): number {
 	return span.line - 1;
 }
 
-/** Every ref-kind TagNode in `tags` (a narrowing filter used across several sections below). */
-function refTags(tags: readonly TagNode[]): Extract<TagNode, { kind: "ref" }>[] {
-	return tags.filter((t): t is Extract<TagNode, { kind: "ref" }> => t.kind === "ref");
+/** The dbt-ref view (model + its span) of every `ref('…')` call tag — the neutral call node read
+ *  through dbt's arg role (ref's model is the last arg), the same lens a consumer applies. */
+function refTags(tags: readonly TagNode[]): { node: TagNode; model: string; modelSpan: PartSpan }[] {
+	const out: { node: TagNode; model: string; modelSpan: PartSpan }[] = [];
+	for (const t of tags) {
+		if (t.kind !== "call" || t.name !== "ref") continue;
+		const model = t.args[t.args.length - 1];
+		if (model?.value != null && model.valueSpan) out.push({ node: t, model: model.value, modelSpan: model.valueSpan });
+	}
+	return out;
 }
 
 describe("A1 — primary tag completeness (kills the tag-level union)", () => {
@@ -106,7 +114,7 @@ describe("A2 — conflicting arms: primary is best-effort, arm-local joins are g
 			// The OTHER arm's ref tag is blanked away in THIS realization — exactly one ref tag is live.
 			expect(liveRefs.length).toBe(1);
 			expect(liveRefs[0].model).toBe(expectedModel[i]);
-			const node = armDoc.templated!.nodeOf(liveRefs[0]) as TableSource | undefined;
+			const node = armDoc.templated!.nodeOf(liveRefs[0].node) as TableSource | undefined;
 			expect(node).toBeDefined(); // guaranteed nodeOf join to a live IR source node
 			expect(node!.template?.kind).toBe("ref");
 			expect(node!.template?.call?.name).toBe("ref"); // the marker carries the call

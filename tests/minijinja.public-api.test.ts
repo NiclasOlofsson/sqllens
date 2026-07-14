@@ -37,9 +37,11 @@ describe("jinja public surface (barrel export)", () => {
 		const tokens = tokenizeTemplated(text, "databricks");
 		expect(tokens).toEqual(result.tokens);
 
-		// The TagNode type flows through the barrel and a ref node is produced.
-		const ref = result.tags.find((n: TagNode): n is Extract<TagNode, { kind: "ref" }> => n.kind === "ref");
-		expect(ref?.model).toBe("stg_orders");
+		// The TagNode type flows through the barrel and a ref call is produced.
+		const ref = result.tags.find(
+			(n: TagNode): n is Extract<TagNode, { kind: "call" }> => n.kind === "call" && n.name === "ref",
+		);
+		expect(ref?.args.at(-1)?.value).toBe("stg_orders");
 	});
 
 	it("is total through the barrel on broken input", () => {

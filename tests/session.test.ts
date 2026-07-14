@@ -29,10 +29,11 @@ describe("SqlSession — the facade", () => {
 		expect(plain.tagOf({})).toBeUndefined();
 		expect(plain.placeholder).toBe(SQL);
 		const t = SqlSession.create(MODEL, "databricks", { templating: minijinja() });
-		expect(t.tags.map((x) => x.kind)).toContain("ref");
+		expect(t.tags.some((x) => x.kind === "call" && x.name === "ref")).toBe(true);
 		const body = t.ast.body;
 		if (body.kind !== "select") throw new Error("expected select");
-		expect(t.tagOf(body.from[0])?.kind).toBe("ref");
+		const fromTag = t.tagOf(body.from[0]);
+		expect(fromTag?.kind === "call" && fromTag.name).toBe("ref");
 	});
 	it("multi-statement: cursor verbs are cell-aware, spans in document coordinates", () => {
 		const TWO = "select a from t; select b from u";

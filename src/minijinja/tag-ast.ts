@@ -51,8 +51,23 @@ import { NO_OUTPUT_BUILTINS, type Segment } from "./segment.js";
 type TagSegment = Extract<Segment, { kind: "tag" }>;
 
 /**
+ * One argument of a call, in the same spirit as a SQL function-call's args. `span` is the WHOLE
+ * argument (quote-included: `'orders'`, or `model='orders'` for a kwarg). `value` is the literal
+ * value quote-stripped (`orders`), or `null` for a computed arg (`ref(var('x'))`, `'a' ~ b`), never
+ * fabricated. `valueSpan` is the quote-EXCLUDED span of that literal value (covers `orders`, not
+ * `'orders'`), present only when there's a literal value. So a consumer that knows a call's arg roles
+ * (e.g. dbt: `ref`'s model is the last arg) reads the value + valueSpan straight off here, exactly
+ * how the old `ref.model`/`modelSpan` read.
+ */
+export interface TagArg {
+	value: string | null;
+	span: PartSpan;
+	valueSpan?: PartSpan;
+}
+
+/**
  * The reusable call fields the extension consumes for signature-help / hover — the
- * macro TagNode's fields minus `kind`/`tagSpan`. A `{{ }}` macro node IS a
+ * call TagNode's fields minus `kind`/`tagSpan`. A `{{ }}` call node IS a
  * MacroCall + kind/tagSpan; a `{% %}` control tag carries an array of them
  * (`calls`). Every field comes only from real identifier tokens (never-wrong): a
  * computed / dynamic callee yields no MacroCall.
@@ -63,7 +78,7 @@ export interface MacroCall {
 	packageName?: string;
 	packageSpan?: PartSpan;
 	argsSpan?: PartSpan;
-	args: { span: PartSpan }[];
+	args: TagArg[];
 }
 
 /**
@@ -73,26 +88,21 @@ export interface MacroCall {
  * 0-based offsets — sqllens convention).
  */
 export type TagNode =
-	| { kind: "ref"; model: string; modelSpan: PartSpan; callSpan: PartSpan; tagSpan: PartSpan }
 	| {
-			kind: "source";
-			sourceName: string;
-			tableName: string;
-			sourceNameSpan: PartSpan;
-			tableNameSpan: PartSpan;
-			/** Span of the whole `source(…)` call — the sibling of `ref`'s `callSpan`; the extension hit-tests the bare `source` identifier / call on it. */
-			callSpan: PartSpan;
-			tagSpan: PartSpan;
-	  }
-	| {
-			kind: "macro";
+			// A template CALL: ref/source/config/var/env_var/a user macro/pkg.macro. The NEUTRAL
+			// shape. A callee + args + spans, with NO interpretation of what the call MEANS (that
+			// `ref` is a relation is dbt knowledge the provider owns, not the tag AST). ref/source/etc.
+			// are just callees here, distinguished by `name`; the provider resolves their semantics.
+			kind: "call";
 			name: string;
 			nameSpan: PartSpan;
 			packageName?: string;
 			packageSpan?: PartSpan;
+			/** The whole call `name(args)` (name/package through the close paren). */
+			callSpan: PartSpan;
 			tagSpan: PartSpan;
 			argsSpan?: PartSpan;
-			args: { span: PartSpan }[];
+			args: TagArg[];
 			/**
 			 * Every macro CALL in the expression, in source order, EACH as its own
 			 * MacroCall — symmetric to `control.calls` (C1). A NESTED `outer(inner())`
@@ -124,7 +134,7 @@ export type TagNode =
 			 */
 			calls: MacroCall[];
 	  }
-	| { kind: "var" | "env_var" | "config" | "other"; tagSpan: PartSpan };
+	| { kind: "other"; tagSpan: PartSpan };
 
 // ---------------------------------------------------------------------------
 // Span helpers. The tokens here come from parse.ts's per-tag `ListTokenSource`
@@ -349,13 +359,13 @@ function decomposeCallee(call: CallExprContext): Callee | undefined {
  * argsSpan runs from the opening paren to one char past the closing paren (or the
  * call's last token when the close is missing on broken input).
  */
-function argInfo(call: CallExprContext): { args: { span: PartSpan }[]; argsSpan?: PartSpan } {
+function argInfo(call: CallExprContext): { args: TagArg[]; argsSpan?: PartSpan } {
 	const argList = call.arg_list();
-	const args: { span: PartSpan }[] = [];
+	const args: TagArg[] = [];
 	if (argList) {
 		for (const arg of argList.arg()) {
-			const span = spanOfNode(arg);
-			if (span) args.push({ span });
+			const a = argOf(arg);
+			if (a) args.push(a);
 		}
 	}
 	let argsSpan: PartSpan | undefined;
@@ -366,6 +376,43 @@ function argInfo(call: CallExprContext): { args: { span: PartSpan }[]; argsSpan?
 		argsSpan = spanFromTokens(lp.symbol, end);
 	}
 	return { args, ...(argsSpan ? { argsSpan } : {}) };
+}
+
+/** The bare literal token types an argument can be (besides STRING): a consumer reads their text as
+ *  the arg value. */
+const LITERAL_TOKENS: ReadonlySet<number> = new Set([
+	MinijinjaParser.INT,
+	MinijinjaParser.FLOAT,
+	MinijinjaParser.TRUE,
+	MinijinjaParser.FALSE,
+	MinijinjaParser.NONE,
+]);
+
+/** One argument as `{value, span, valueSpan?}`. `span` is the WHOLE arg (incl. any `name=` and quotes).
+ *  The literal VALUE + its quote-excluded `valueSpan` come from the value expression: for a kwarg
+ *  (`model='x'`) that's the RHS, for a positional it's the arg itself. A STRING literal yields the
+ *  stripped value + content span; a bare number/bool/none yields its text + its span; anything
+ *  computed yields `value: null` (never fabricated). undefined only when the arg has no span at all. */
+function argOf(arg: ParserRuleContext): TagArg | undefined {
+	const span = spanOfNode(arg);
+	if (!span) return undefined;
+	const valueCtx = isKwarg(arg) ? kwargValue(arg) : arg;
+	if (valueCtx) {
+		const str = directStringToken(valueCtx);
+		if (str) return { value: stringValue(str), span, valueSpan: stringContentSpan(str) };
+		const v = valueCtx.start;
+		if (v && v === valueCtx.stop && LITERAL_TOKENS.has(v.type)) {
+			return { value: v.text ?? null, span, valueSpan: spanOfNode(valueCtx) };
+		}
+	}
+	return { value: null, span };
+}
+
+/** The value expression of a kwarg (`id = expr` → the `expr`), or undefined. It is the last child;
+ *  the ASSIGN and id precede it. */
+function kwargValue(arg: ParserRuleContext): ParserRuleContext | undefined {
+	const last = arg.getChild(arg.getChildCount() - 1);
+	return last instanceof ParserRuleContext ? last : undefined;
 }
 
 /**
@@ -403,19 +450,21 @@ function macroNode(call: CallExprContext, callee: Callee, tagSpan: PartSpan, tre
 		if (mc) calls.push(mc);
 	}
 
+	const callSpan = spanOfNode(call) ?? tagSpan;
 	const mc = callToMacroCall(call);
-	if (mc) return { kind: "macro", ...mc, tagSpan, calls };
+	if (mc) return { kind: "call", ...mc, callSpan, tagSpan, calls };
 	// Degenerate fallback: a callee with a name but no locatable span (a broken
 	// tree). Preserve the pre-refactor node shape — nameSpan defaults to tagSpan,
 	// args are still extracted. (Unreachable for a well-formed parsed call, where
 	// the identifier token always has a span; kept for behavioral parity.)
 	const { args, argsSpan } = argInfo(call);
 	return {
-		kind: "macro",
+		kind: "call",
 		name: callee.name,
 		nameSpan: tagSpan,
 		...(callee.packageName !== undefined ? { packageName: callee.packageName } : {}),
 		...(callee.packageSpan !== undefined ? { packageSpan: callee.packageSpan } : {}),
+		callSpan,
 		tagSpan,
 		...(argsSpan ? { argsSpan } : {}),
 		args,
@@ -508,60 +557,8 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | 
 	const callee = decomposeCallee(call);
 	if (!callee) return { kind: "other", tagSpan };
 
-	const leading = callee.leading;
-	const bare = callee.packageName === undefined;
-
-	// Bare special forms (ref/source/var/env_var never take a package qualifier).
-	if (bare && leading === "ref") {
-		// The model is the LAST positional arg (dbt: ref('pkg','model')), and only
-		// when THAT arg is a direct string literal — a computed target
-		// (`ref(var('x'))`) does not fabricate a model.
-		const pos = positionalArgs(call.arg_list());
-		const modelArg = pos.at(-1);
-		const modelTok = modelArg ? directStringToken(modelArg) : undefined;
-		if (modelTok) {
-			const callSpan = spanOfNode(call) ?? tagSpan;
-			return {
-				kind: "ref",
-				model: stringValue(modelTok),
-				modelSpan: stringContentSpan(modelTok),
-				callSpan,
-				tagSpan,
-			};
-		}
-		// computed / broken / argless ref → macro fallback (never a fabricated model).
-		return macroNode(call, callee, tagSpan, tree);
-	}
-	if (bare && leading === "source") {
-		// source('name', 'table') — both must be DIRECT string literals; a computed
-		// arg does not fabricate a name/table.
-		const pos = positionalArgs(call.arg_list());
-		const srcTok = pos[0] ? directStringToken(pos[0]) : undefined;
-		const tblTok = pos[1] ? directStringToken(pos[1]) : undefined;
-		if (srcTok && tblTok) {
-			const callSpan = spanOfNode(call) ?? tagSpan;
-			return {
-				kind: "source",
-				sourceName: stringValue(srcTok),
-				tableName: stringValue(tblTok),
-				sourceNameSpan: stringContentSpan(srcTok),
-				tableNameSpan: stringContentSpan(tblTok),
-				callSpan,
-				tagSpan,
-			};
-		}
-		return macroNode(call, callee, tagSpan, tree);
-	}
-	if (bare && leading === "var") return { kind: "var", tagSpan };
-	if (bare && leading === "env_var") return { kind: "env_var", tagSpan };
-
-	// No-output builtins (config/docs/print/log/return/exceptions) — config is its
-	// own kind; the rest map to "other". Applies to the leading name whether bare
-	// (`config(...)`) or member (`exceptions.raise_compiler_error(...)`).
-	if (NO_OUTPUT_BUILTINS.has(leading)) {
-		return leading === "config" ? { kind: "config", tagSpan } : { kind: "other", tagSpan };
-	}
-
-	// pkg.macro(...) or a bare unknown call → macro.
+	// Every expression-call tag is one neutral CALL node. ref/source/config/var/env_var are just
+	// callees distinguished by `name`; the provider (DbtTemplateProvider) interprets what each call
+	// MEANS (relation / no-output / scalar). The tag AST carries no dbt vocabulary.
 	return macroNode(call, callee, tagSpan, tree);
 }

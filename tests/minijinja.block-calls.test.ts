@@ -168,24 +168,25 @@ describe("C1 — macro calls in {% %} control tags (calls: MacroCall[])", () => 
 		expect(node.calls.every((c) => c.name !== "y")).toBe(true);
 	});
 
-	it("source node carries callSpan over the whole source(…) call (sibling of ref's callSpan)", () => {
+	it("call node carries callSpan over the whole source(…) call (every call has it)", () => {
 		const text = "{{ source('sch','tbl') }}";
 		const node = firstTag(text);
-		expect(node.kind).toBe("source");
-		if (node.kind !== "source") return;
-		// callSpan covers the source(…) call, the same way ref's callSpan covers ref(…).
+		expect(node.kind).toBe("call");
+		if (node.kind !== "call") return;
+		expect(node.name).toBe("source");
+		// callSpan covers the source(…) call.
 		expectSpan(text, node.callSpan, "source('sch','tbl')");
-		// existing name/table content spans stay quote-excluded and unchanged.
-		expectSpan(text, node.sourceNameSpan, "sch");
-		expectSpan(text, node.tableNameSpan, "tbl");
+		// the arg values' spans stay quote-excluded.
+		expectSpan(text, node.args[0].valueSpan!, "sch");
+		expectSpan(text, node.args[1].valueSpan!, "tbl");
 	});
 
-	it("MacroCall shape is reusable + assignable from an expression macro node", () => {
-		// The `{{ }}` macro node's call fields ARE a MacroCall (minus kind/tagSpan) —
+	it("MacroCall shape is reusable + assignable from an expression call node", () => {
+		// The `{{ }}` call node's call fields ARE a MacroCall (minus kind/tagSpan/callSpan) —
 		// prove the type is what the extension consumes uniformly.
 		const macro = firstTag("{{ pkg.build(a) }}");
-		expect(macro.kind).toBe("macro");
-		if (macro.kind !== "macro") return;
+		expect(macro.kind).toBe("call");
+		if (macro.kind !== "call") return;
 		const asCall: MacroCall = {
 			name: macro.name,
 			nameSpan: macro.nameSpan,

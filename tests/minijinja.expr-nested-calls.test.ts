@@ -39,12 +39,12 @@ function expectSpan(text: string, span: PartSpan, expected: string): void {
 	expect(span.column).toBe(p.column);
 }
 
-function macroTag(text: string, dialect: Dialect = "databricks"): Extract<TagNode, { kind: "macro" }> {
+function macroTag(text: string, dialect: Dialect = "databricks"): Extract<TagNode, { kind: "call" }> {
 	const { tags } = parseTemplated(text, dialect);
 	expect(tags.length).toBeGreaterThan(0);
 	const node = tags[0];
-	expect(node.kind).toBe("macro");
-	if (node.kind !== "macro") throw new Error("not a macro node");
+	expect(node.kind).toBe("call");
+	if (node.kind !== "call") throw new Error("not a call node");
 	return node;
 }
 

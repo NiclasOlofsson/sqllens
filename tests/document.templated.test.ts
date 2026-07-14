@@ -13,7 +13,7 @@ describe("SqlDocument + templating engine (the unified door)", () => {
 	it("templated document: ref binds, facets ride, coordinates are document-true", () => {
 		const doc = SqlDocument.create(MODEL, "databricks", { templating: minijinja() });
 		expect(doc.templated).toBeDefined();
-		expect(doc.templated!.tags.map((t) => t.kind)).toContain("ref");
+		expect(doc.templated!.tags.some((t) => t.kind === "call" && t.name === "ref")).toBe(true);
 		// the marker-carrying IR reached scopes: the source is aliased `o` — that's the sources key.
 		expect([...doc.scopes.root.sources.keys()]).toContain("o");
 		// tokens: one merged stream, channel-2 jinja present, spans slice the source
@@ -23,7 +23,8 @@ describe("SqlDocument + templating engine (the unified door)", () => {
 		// two-spine join works through the door
 		const body = doc.ast.body;
 		if (body.kind !== "select") throw new Error("expected select");
-		expect(doc.templated!.tagOf(body.from[0])?.kind).toBe("ref");
+		const fromTag = doc.templated!.tagOf(body.from[0]);
+		expect(fromTag?.kind === "call" && fromTag.name).toBe("ref");
 	});
 	it("engine + tag-free text degenerates: facets empty, parse identical to plain door", () => {
 		const plain = SqlDocument.create("select a from t", "databricks");

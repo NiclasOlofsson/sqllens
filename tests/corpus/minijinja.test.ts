@@ -101,23 +101,21 @@ function assertTagSpans(node: TagNode, text: string): void {
 	const tagText = text.slice(node.tagSpan.start, node.tagSpan.end);
 	expect(/^\{[{%#]/.test(tagText), `${node.kind}.tagSpan opens a tag`).toBe(true);
 
-	switch (node.kind) {
-		case "ref":
-			assertSpanContent(node.modelSpan, text, node.model, "ref.modelSpan");
-			assertSpanInBounds(node.callSpan, text, "ref.callSpan");
-			break;
-		case "source":
-			assertSpanContent(node.sourceNameSpan, text, node.sourceName, "source.sourceNameSpan");
-			assertSpanContent(node.tableNameSpan, text, node.tableName, "source.tableNameSpan");
-			break;
-		case "macro":
-			assertSpanContent(node.nameSpan, text, node.name, "macro.nameSpan");
-			if (node.packageName !== undefined && node.packageSpan) {
-				assertSpanContent(node.packageSpan, text, node.packageName, "macro.packageSpan");
+	if (node.kind === "call") {
+		// One neutral call node for ref/source/macro/etc. — spans checked uniformly.
+		assertSpanContent(node.nameSpan, text, node.name, "call.nameSpan");
+		assertSpanInBounds(node.callSpan, text, "call.callSpan");
+		if (node.packageName !== undefined && node.packageSpan) {
+			assertSpanContent(node.packageSpan, text, node.packageName, "call.packageSpan");
+		}
+		if (node.argsSpan) assertSpanInBounds(node.argsSpan, text, "call.argsSpan");
+		for (const [i, arg] of node.args.entries()) {
+			assertSpanInBounds(arg.span, text, `call.args[${i}]`);
+			// A string/number literal arg carries value + its quote-excluded valueSpan.
+			if (arg.valueSpan && arg.value !== null) {
+				assertSpanContent(arg.valueSpan, text, arg.value, `call.args[${i}].valueSpan`);
 			}
-			if (node.argsSpan) assertSpanInBounds(node.argsSpan, text, "macro.argsSpan");
-			for (const [i, arg] of node.args.entries()) assertSpanInBounds(arg.span, text, `macro.args[${i}]`);
-			break;
+		}
 	}
 }
 
@@ -236,7 +234,7 @@ describe("jinja corpus gate — R3 templated-source IR + qualify exemption (inc2
 				// (a) at least one templated source is present — but ONLY when a ref/source tag actually
 				//     parsed to completion. A deliberately-broken totality fixture (`from {{ ref(`) yields
 				//     no complete tag, hence no templated source; that is correct, not a gate failure.
-				const hasRelationTag = tags.some((n) => n.kind === "ref" || n.kind === "source");
+				const hasRelationTag = tags.some((n) => n.kind === "call" && (n.name === "ref" || n.name === "source"));
 				const inFrom = /\bfrom\s*(?:\()?\s*\{\{\s*(?:ref|source)\s*\(/i.test(text);
 				if (hasRelationTag && inFrom) expect(templated.length).toBeGreaterThanOrEqual(1);
 				// (b) no ref/source-tagged source's name is the `jjj…` placeholder fill (Task 2's guard
@@ -273,13 +271,14 @@ describe("jinja corpus gate — multi-line span correctness (R2 parity upgrade)"
 	it("a source() call split across lines carries content-true multi-line spans", () => {
 		const text = readFileSync(FIXTURES_DIR + "05_multiline_tag.sql", "utf8");
 		const { tags } = parseTemplated(text, DIALECT);
-		const src = tags.find((t): t is Extract<TagNode, { kind: "source" }> => t.kind === "source");
+		const src = tags.find((t): t is Extract<TagNode, { kind: "call" }> => t.kind === "call" && t.name === "source");
 		expect(src).toBeDefined();
 		if (!src) return;
+		const [srcName, tblName] = src.args;
 		// The two string args are on different lines — offset spans still slice true.
-		expect(src.sourceNameSpan.line).not.toBe(src.tableNameSpan.line);
-		expect(text.slice(src.sourceNameSpan.start, src.sourceNameSpan.end)).toBe(src.sourceName);
-		expect(text.slice(src.tableNameSpan.start, src.tableNameSpan.end)).toBe(src.tableName);
+		expect(srcName.valueSpan!.line).not.toBe(tblName.valueSpan!.line);
+		expect(text.slice(srcName.valueSpan!.start, srcName.valueSpan!.end)).toBe(srcName.value);
+		expect(text.slice(tblName.valueSpan!.start, tblName.valueSpan!.end)).toBe(tblName.value);
 	});
 });
 
