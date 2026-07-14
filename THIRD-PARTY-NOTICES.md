@@ -120,6 +120,56 @@ Forked from [antlr/grammars-v4](https://github.com/antlr/grammars-v4)
 Positive Technologies; (c) 2017 Ivan Khudyashev. Licensed under the MIT License
 (full text retained in the file headers).
 
+## Doc-derived function-signature tables (distributed in this repository)
+
+The generated per-dialect function-signature tables (produced by
+`tools/harvest-signatures.mjs`, committed under `src/`) carry factual API-surface
+data (function names, parameter names, arity, optionality) extracted from each
+dialect's reference documentation. Sources and their licenses:
+
+### T-SQL signatures, from MicrosoftDocs/sql-docs (CC BY 4.0)
+
+Derived from the Transact-SQL reference markdown in
+[MicrosoftDocs/sql-docs](https://github.com/MicrosoftDocs/sql-docs), (c) Microsoft
+Corporation, licensed [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/).
+Changes were made: the documented syntax notation was mechanically parsed and
+transformed into TypeScript signature tables; no documentation prose is reproduced.
+
+### DuckDB signatures, from duckdb/duckdb-web (MIT)
+
+Derived from the function reference markdown in
+[duckdb/duckdb-web](https://github.com/duckdb/duckdb-web), Copyright 2018-2025
+Stichting DuckDB Foundation, MIT License.
+
+### PostgreSQL signatures, from the PostgreSQL documentation (PostgreSQL License)
+
+Derived from `doc/src/sgml/func.sgml` of
+[postgres/postgres](https://github.com/postgres/postgres) (REL_18_STABLE),
+Copyright (c) 1996-2025, PostgreSQL Global Development Group, PostgreSQL License.
+
+### Trino signatures, from trinodb/trino docs (Apache License 2.0)
+
+Derived from the sphinx function reference in
+[trinodb/trino](https://github.com/trinodb/trino) `docs/src/main/sphinx/functions`
+(release 482), Apache License 2.0. trinodb/trino ships no `NOTICE` file, so there
+is no 4(d) attribution to reproduce.
+
+### BigQuery / GoogleSQL signatures, from google/googlesql docs (Apache License 2.0)
+
+Derived from the function reference markdown in
+[google/googlesql](https://github.com/google/googlesql) `docs/`, (c) Google LLC,
+Apache License 2.0.
+
+### Databricks and Snowflake signatures, from the vendors' public SQL references
+
+Derived from the Syntax sections of the public SQL language references at
+[docs.databricks.com](https://docs.databricks.com) ((c) Databricks, Inc.) and
+[docs.snowflake.com](https://docs.snowflake.com) ((c) Snowflake Inc.). These sites
+publish no redistribution license; the tables reproduce only the factual call
+shape of each function (name, parameter names, arity, optionality), the same facts
+any SQL tool documents about a dialect's API surface, and no documentation prose.
+Credited here as sources with thanks.
+
 ## Runtime and build dependencies (not redistributed in source)
 
 - **antlr4ng** — the TypeScript ANTLR runtime (BSD-3-Clause). Runtime dependency.
