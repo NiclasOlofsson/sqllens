@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: MicrosoftDocs/sql-docs  docs/t-sql/{functions,language-elements}/**/*.md (```syntaxsql``` blocks)
 // Overrides source: tools/signature-overrides/tsql.mjs
-// Built 2026-07-14. 205 names (29 curated, 176 harvested), 1 with 2+ overloads.
+// Built 2026-07-14. 205 names (7 curated, 198 harvested), 1 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for tsql: curated overrides folded over the harvested
@@ -9,7 +9,7 @@ import type { FnSignature } from "../signature/signatures.js";
  *  lowercased name. Each name maps to an ORDERED overload set - a name with one documented shape
  *  is a one-element array. `origin` says which layer produced the set. */
 export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
-	abs: [{ name: "ABS", params: [{ name: "numeric_expression", type: "numeric" }], origin: "curated" }], // curated: ABS (Transact-SQL)
+	abs: [{ name: "ABS", params: [{ name: "numeric_expression" }], origin: "harvested" }], // functions/abs-transact-sql.md
 	acos: [{ name: "ACOS", params: [{ name: "float_expression" }], origin: "harvested" }], // functions/acos-transact-sql.md
 	any_value: [{ name: "ANY_VALUE", params: [{ name: "expression" }], origin: "harvested" }], // functions/any-value-transact-sql.md
 	app_name: [{ name: "APP_NAME", params: [], origin: "harvested" }], // functions/app-name-transact-sql.md
@@ -24,7 +24,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	asin: [{ name: "ASIN", params: [{ name: "float_expression" }], origin: "harvested" }], // functions/asin-transact-sql.md
 	atan: [{ name: "ATAN", params: [{ name: "float_expression" }], origin: "harvested" }], // functions/atan-transact-sql.md
 	atn2: [{ name: "ATN2", params: [{ name: "float_expression" }, { name: "float_expression" }], origin: "harvested" }], // functions/atn2-transact-sql.md
-	avg: [{ name: "AVG", params: [{ name: "expression", type: "numeric" }], origin: "curated" }], // curated: AVG (Transact-SQL)
+	avg: [{ name: "AVG", params: [{ name: "expression" }], origin: "harvested" }], // functions/avg-transact-sql.md
 	base64_decode: [{ name: "BASE64_DECODE", params: [{ name: "expression" }], origin: "harvested" }], // functions/base64-decode-transact-sql.md
 	base64_encode: [
 		{
@@ -35,7 +35,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/base64-encode-transact-sql.md
 	bit_count: [{ name: "BIT_COUNT", params: [{ name: "expression_value" }], origin: "harvested" }], // functions/bit-count-transact-sql.md
 	cast: [{ name: "CAST", params: [{ name: "expression" }, { name: "data_type" }], origin: "curated" }], // curated: CAST (Transact-SQL)
-	ceiling: [{ name: "CEILING", params: [{ name: "numeric_expression", type: "numeric" }], origin: "curated" }], // curated: CEILING (Transact-SQL)
+	ceiling: [{ name: "CEILING", params: [{ name: "numeric_expression" }], origin: "harvested" }], // functions/ceiling-transact-sql.md
 	certencoded: [{ name: "CERTENCODED", params: [{ name: "cert_id" }], origin: "harvested" }], // functions/certencoded-transact-sql.md
 	char: [{ name: "CHAR", params: [{ name: "integer_expression" }], origin: "harvested" }], // functions/char-transact-sql.md
 	charindex: [
@@ -44,11 +44,11 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 			params: [
 				{ name: "expressionToFind" },
 				{ name: "expressionToSearch" },
-				{ name: "start_location", type: "int", optional: true },
+				{ name: "start_location", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: CHARINDEX (Transact-SQL) (start_location optional)
+	], // functions/charindex-transact-sql.md
 	checksum_agg: [{ name: "CHECKSUM_AGG", params: [{ name: "expression" }], origin: "harvested" }], // functions/checksum-agg-transact-sql.md
 	choose: [
 		{
@@ -57,7 +57,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 			variadic: true,
 			origin: "curated",
 		},
-	], // curated: CHOOSE (Transact-SQL) - CHOOSE ( index, val_1, val_2 [, val_n ] ): the docs' `val_n` convention is a repeating tail, not one more optional param, which the harvester's dots-only variadic detection missed
+	], // curated: CHOOSE (Transact-SQL) - CHOOSE ( index, val_1, val_2 [, val_n ] ): the docs' `val_n` convention is a repeating tail, not one more optional param, which the harvester's dots-only variadic detection missed (the harvest itself now recovers val_n as a fourth, non-variadic optional param, which would wrongly cap the call at 4 args)
 	coalesce: [{ name: "COALESCE", params: [{ name: "expression" }], variadic: true, origin: "harvested" }], // language-elements/coalesce-transact-sql.md
 	col_name: [{ name: "COL_NAME", params: [{ name: "table_id" }, { name: "column_id" }], origin: "harvested" }], // functions/col-name-transact-sql.md
 	collationproperty: [
@@ -73,16 +73,26 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	columns_updated: [{ name: "COLUMNS_UPDATED", params: [], origin: "harvested" }], // functions/columns-updated-transact-sql.md
 	compress: [{ name: "COMPRESS", params: [{ name: "expression" }], origin: "harvested" }], // functions/compress-transact-sql.md
 	concat: [
-		{ name: "CONCAT", params: [{ name: "argument1" }, { name: "argument2" }], variadic: true, origin: "curated" },
-	], // curated: CONCAT (Transact-SQL) - CONCAT ( argument1 , argument2 [ , argumentN ] ... ): requires at least two arguments
+		{
+			name: "CONCAT",
+			params: [{ name: "argument1" }, { name: "argument2" }, { name: "argumentN", optional: true }],
+			variadic: true,
+			origin: "harvested",
+		},
+	], // functions/concat-transact-sql.md
 	concat_ws: [
 		{
 			name: "CONCAT_WS",
-			params: [{ name: "separator" }, { name: "argument1" }, { name: "argument2" }],
+			params: [
+				{ name: "separator" },
+				{ name: "argument1" },
+				{ name: "argument2" },
+				{ name: "argumentN", optional: true },
+			],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: CONCAT_WS (Transact-SQL) - CONCAT_WS ( separator , argument1 , argument2 [ , argumentN ] ... ): requires a separator and at least two other arguments
+	], // functions/concat-ws-transact-sql.md
 	connectionproperty: [{ name: "CONNECTIONPROPERTY", params: [{ name: "property" }], origin: "harvested" }], // functions/connectionproperty-transact-sql.md
 	context_info: [{ name: "CONTEXT_INFO", params: [], origin: "harvested" }], // functions/context-info-transact-sql.md
 	convert: [
@@ -119,19 +129,15 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/date-bucket-transact-sql.md
 	dateadd: [
-		{
-			name: "DATEADD",
-			params: [{ name: "datepart" }, { name: "number", type: "int" }, { name: "date", type: "date" }],
-			origin: "curated",
-		},
-	], // curated: DATEADD (Transact-SQL)
+		{ name: "DATEADD", params: [{ name: "datepart" }, { name: "number" }, { name: "date" }], origin: "harvested" },
+	], // functions/dateadd-transact-sql.md
 	datediff: [
 		{
 			name: "DATEDIFF",
-			params: [{ name: "datepart" }, { name: "startdate", type: "date" }, { name: "enddate", type: "date" }],
-			origin: "curated",
+			params: [{ name: "datepart" }, { name: "startdate" }, { name: "enddate" }],
+			origin: "harvested",
 		},
-	], // curated: DATEDIFF (Transact-SQL)
+	], // functions/datediff-transact-sql.md
 	datediff_big: [
 		{
 			name: "DATEDIFF_BIG",
@@ -140,18 +146,10 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/datediff-big-transact-sql.md
 	datefromparts: [
-		{
-			name: "DATEFROMPARTS",
-			params: [
-				{ name: "year", type: "int" },
-				{ name: "month", type: "int" },
-				{ name: "day", type: "int" },
-			],
-			origin: "curated",
-		},
-	], // curated: DATEFROMPARTS (Transact-SQL)
-	datename: [{ name: "DATENAME", params: [{ name: "datepart" }, { name: "date", type: "date" }], origin: "curated" }], // curated: DATENAME (Transact-SQL)
-	datepart: [{ name: "DATEPART", params: [{ name: "datepart" }, { name: "date", type: "date" }], origin: "curated" }], // curated: DATEPART (Transact-SQL)
+		{ name: "DATEFROMPARTS", params: [{ name: "year" }, { name: "month" }, { name: "day" }], origin: "harvested" },
+	], // functions/datefromparts-transact-sql.md
+	datename: [{ name: "DATENAME", params: [{ name: "datepart" }, { name: "date" }], origin: "harvested" }], // functions/datename-transact-sql.md
+	datepart: [{ name: "DATEPART", params: [{ name: "datepart" }, { name: "date" }], origin: "harvested" }], // functions/datepart-transact-sql.md
 	datetime2fromparts: [
 		{
 			name: "DATETIME2FROMPARTS",
@@ -220,13 +218,10 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	eomonth: [
 		{
 			name: "EOMONTH",
-			params: [
-				{ name: "start_date", type: "date" },
-				{ name: "month_to_add", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "start_date" }, { name: "month_to_add", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: EOMONTH (Transact-SQL) - EOMONTH ( start_date [ , month_to_add ] ): month_to_add is optional
+	], // functions/eomonth-transact-sql.md
 	error_line: [{ name: "ERROR_LINE", params: [], origin: "harvested" }], // functions/error-line-transact-sql.md
 	error_message: [{ name: "ERROR_MESSAGE", params: [], origin: "harvested" }], // functions/error-message-transact-sql.md
 	error_number: [{ name: "ERROR_NUMBER", params: [], origin: "harvested" }], // functions/error-number-transact-sql.md
@@ -249,7 +244,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	first_value: [
 		{ name: "FIRST_VALUE", params: [{ name: "scalar_expression", optional: true }], origin: "harvested" },
 	], // functions/first-value-transact-sql.md
-	floor: [{ name: "FLOOR", params: [{ name: "numeric_expression", type: "numeric" }], origin: "curated" }], // curated: FLOOR (Transact-SQL)
+	floor: [{ name: "FLOOR", params: [{ name: "numeric_expression" }], origin: "harvested" }], // functions/floor-transact-sql.md
 	format: [
 		{
 			name: "FORMAT",
@@ -290,10 +285,10 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	iif: [
 		{
 			name: "IIF",
-			params: [{ name: "boolean_expression", type: "boolean" }, { name: "true_value" }, { name: "false_value" }],
-			origin: "curated",
+			params: [{ name: "boolean_expression" }, { name: "true_value" }, { name: "false_value" }],
+			origin: "harvested",
 		},
-	], // curated: IIF (Transact-SQL)
+	], // functions/logical-functions-iif-transact-sql.md
 	indexkey_property: [
 		{
 			name: "INDEXKEY_PROPERTY",
@@ -381,10 +376,10 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	left: [
 		{
 			name: "LEFT",
-			params: [{ name: "character_expression" }, { name: "integer_expression", type: "int" }],
-			origin: "curated",
+			params: [{ name: "character_expression" }, { name: "integer_expression" }],
+			origin: "harvested",
 		},
-	], // curated: LEFT (Transact-SQL)
+	], // functions/left-transact-sql.md
 	left_shift: [
 		{ name: "LEFT_SHIFT", params: [{ name: "expression_value" }, { name: "shift_amount" }], origin: "harvested" },
 	], // functions/left-shift-transact-sql.md
@@ -447,7 +442,7 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	percentile_cont: [{ name: "PERCENTILE_CONT", params: [{ name: "numeric_literal" }], origin: "harvested" }], // functions/percentile-cont-transact-sql.md
 	percentile_disc: [{ name: "PERCENTILE_DISC", params: [{ name: "numeric_literal" }], origin: "harvested" }], // functions/percentile-disc-transact-sql.md
 	pi: [{ name: "PI", params: [], origin: "harvested" }], // functions/pi-transact-sql.md
-	power: [{ name: "POWER", params: [{ name: "float_expression", type: "float" }, { name: "y" }], origin: "curated" }], // curated: POWER (Transact-SQL)
+	power: [{ name: "POWER", params: [{ name: "float_expression" }, { name: "y" }], origin: "harvested" }], // functions/power-transact-sql.md
 	product: [{ name: "PRODUCT", params: [{ name: "expression" }], origin: "harvested" }], // functions/product-aggregate-transact-sql.md
 	publishingservername: [{ name: "PUBLISHINGSERVERNAME", params: [], origin: "harvested" }], // functions/replication-functions-publishingservername.md
 	radians: [{ name: "RADIANS", params: [{ name: "numeric_expression" }], origin: "harvested" }], // functions/radians-transact-sql.md
@@ -471,24 +466,20 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	right: [
 		{
 			name: "RIGHT",
-			params: [{ name: "character_expression" }, { name: "integer_expression", type: "int" }],
-			origin: "curated",
+			params: [{ name: "character_expression" }, { name: "integer_expression" }],
+			origin: "harvested",
 		},
-	], // curated: RIGHT (Transact-SQL)
+	], // functions/right-transact-sql.md
 	right_shift: [
 		{ name: "RIGHT_SHIFT", params: [{ name: "expression_value" }, { name: "shift_amount" }], origin: "harvested" },
 	], // functions/right-shift-transact-sql.md
 	round: [
 		{
 			name: "ROUND",
-			params: [
-				{ name: "numeric_expression", type: "numeric" },
-				{ name: "length", type: "int" },
-				{ name: "function", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "numeric_expression" }, { name: "length" }, { name: "function", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: ROUND (Transact-SQL) (function optional)
+	], // functions/round-transact-sql.md
 	row_number: [{ name: "ROW_NUMBER", params: [], origin: "harvested" }], // functions/row-number-transact-sql.md
 	rowcount_big: [{ name: "ROWCOUNT_BIG", params: [], origin: "harvested" }], // functions/rowcount-big-transact-sql.md
 	rtrim: [
@@ -506,14 +497,10 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 	set_bit: [
 		{
 			name: "SET_BIT",
-			params: [
-				{ name: "expression_value" },
-				{ name: "bit_offset", type: "int" },
-				{ name: "bit_value", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "expression_value" }, { name: "bit_offset" }, { name: "bit_value", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: SET_BIT (Transact-SQL) - the page documents both SET_BIT(expression_value, bit_offset) and SET_BIT(expression_value, bit_offset, bit_value) in one fenced block; the single-call-line parser only kept the first
+	], // functions/set-bit-transact-sql.md
 	sign: [{ name: "SIGN", params: [{ name: "numeric_expression" }], origin: "harvested" }], // functions/sign-transact-sql.md
 	sin: [{ name: "SIN", params: [{ name: "float_expression" }], origin: "harvested" }], // functions/sin-transact-sql.md
 	smalldatetimefromparts: [
@@ -547,25 +534,21 @@ export const TSQL_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "STUFF",
 			params: [
 				{ name: "character_expression" },
-				{ name: "start", type: "int" },
-				{ name: "length", type: "int" },
+				{ name: "start" },
+				{ name: "length" },
 				{ name: "replace_with_expression" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: STUFF (Transact-SQL) - STUFF ( character_expression , start , length , replace_with_expression )
+	], // functions/stuff-transact-sql.md
 	substring: [
 		{
 			name: "SUBSTRING",
-			params: [
-				{ name: "expression" },
-				{ name: "start", type: "int" },
-				{ name: "length", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "expression" }, { name: "start" }, { name: "length", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: SUBSTRING (Transact-SQL) (length optional in Fabric/newer)
-	sum: [{ name: "SUM", params: [{ name: "expression", type: "numeric" }], origin: "curated" }], // curated: SUM (Transact-SQL)
+	], // functions/substring-transact-sql.md
+	sum: [{ name: "SUM", params: [{ name: "expression" }], origin: "harvested" }], // functions/sum-transact-sql.md
 	suser_name: [{ name: "SUSER_NAME", params: [{ name: "server_user_id", optional: true }], origin: "harvested" }], // functions/suser-name-transact-sql.md
 	suser_sname: [{ name: "SUSER_SNAME", params: [{ name: "server_user_sid", optional: true }], origin: "harvested" }], // functions/suser-sname-transact-sql.md
 	switchoffset: [

@@ -19,89 +19,15 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	date_add: {
-		name: "DATE_ADD",
-		params: [
-			{ name: "date_expression", type: "DATE" },
-			{ name: "interval", type: "INTERVAL" },
-		],
-		cite: "DATE_ADD",
-	},
-	date_sub: {
-		name: "DATE_SUB",
-		params: [
-			{ name: "date_expression", type: "DATE" },
-			{ name: "interval", type: "INTERVAL" },
-		],
-		cite: "DATE_SUB",
-	},
-	date_diff: {
-		name: "DATE_DIFF",
-		params: [{ name: "end_date", type: "DATE" }, { name: "start_date", type: "DATE" }, { name: "granularity" }],
-		cite: "DATE_DIFF",
-	},
-	timestamp_diff: {
-		name: "TIMESTAMP_DIFF",
-		params: [
-			{ name: "end_timestamp", type: "TIMESTAMP" },
-			{ name: "start_timestamp", type: "TIMESTAMP" },
-			{ name: "granularity" },
-		],
-		cite: "TIMESTAMP_DIFF",
-	},
-	parse_date: {
-		name: "PARSE_DATE",
-		params: [
-			{ name: "format_string", type: "STRING" },
-			{ name: "date_string", type: "STRING" },
-		],
-		cite: "PARSE_DATE",
-	},
-	format_date: {
-		name: "FORMAT_DATE",
-		params: [
-			{ name: "format_string", type: "STRING" },
-			{ name: "date_expr", type: "DATE" },
-		],
-		cite: "FORMAT_DATE",
-	},
-	// string
+	// date_diff/timestamp_diff/parse_date/format_date deleted 2026-07-14: the harvest reaches the
+	// exact same names/arity/optionality on its own (typed-duplicate; the types above were the only
+	// contribution). date_add/date_sub keep no override here at all - BigQuery has no offline harvest
+	// source for either (their syntax fences use the INTERVAL clause keyword the flat-list model
+	// blocks), so DATE_ADD/DATE_SUB carry no signature entry today.
+	// string - substr/substring/split/replace/lpad/rpad/regexp_replace/regexp_extract deleted
+	// 2026-07-14 as typed-duplicates (the harvest reaches the exact same names/arity/optionality on
+	// its own; the types above were the only contribution).
 	concat: { name: "CONCAT", params: [{ name: "value", type: "STRING" }], variadic: true, cite: "CONCAT (variadic)" },
-	substr: {
-		name: "SUBSTR",
-		params: [
-			{ name: "value", type: "STRING" },
-			{ name: "position", type: "INT64" },
-			{ name: "length", type: "INT64", optional: true },
-		],
-		cite: "SUBSTR (length optional)",
-	},
-	substring: {
-		name: "SUBSTRING",
-		params: [
-			{ name: "value", type: "STRING" },
-			{ name: "position", type: "INT64" },
-			{ name: "length", type: "INT64", optional: true },
-		],
-		cite: "SUBSTRING (length optional)",
-	},
-	split: {
-		name: "SPLIT",
-		params: [
-			{ name: "value", type: "STRING" },
-			{ name: "delimiter", type: "STRING", optional: true },
-		],
-		cite: "SPLIT (delimiter optional → comma)",
-	},
-	replace: {
-		name: "REPLACE",
-		params: [
-			{ name: "original_value", type: "STRING" },
-			{ name: "from_pattern", type: "STRING" },
-			{ name: "to_pattern", type: "STRING" },
-		],
-		cite: "REPLACE(original_value, from_pattern, to_pattern) - string_functions.md, from/to symmetry",
-	},
 	trim: {
 		name: "TRIM",
 		params: [
@@ -110,80 +36,19 @@ export const OVERRIDES = {
 		],
 		cite: "TRIM (chars optional)",
 	},
-	lpad: {
-		name: "LPAD",
-		params: [
-			{ name: "original_value", type: "STRING" },
-			{ name: "return_length", type: "INT64" },
-			{ name: "pattern", type: "STRING", optional: true },
-		],
-		cite: "LPAD(original_value, return_length[, pattern]) - pattern optional, defaults to a blank space",
-	},
-	rpad: {
-		name: "RPAD",
-		params: [
-			{ name: "original_value", type: "STRING" },
-			{ name: "return_length", type: "INT64" },
-			{ name: "pattern", type: "STRING", optional: true },
-		],
-		cite: "RPAD(original_value, return_length[, pattern]) - pattern optional, defaults to a blank space",
-	},
-	regexp_replace: {
-		name: "REGEXP_REPLACE",
-		params: [
-			{ name: "value", type: "STRING" },
-			{ name: "regexp", type: "STRING" },
-			{ name: "replacement", type: "STRING" },
-		],
-		cite: "REGEXP_REPLACE",
-	},
-	regexp_extract: {
-		name: "REGEXP_EXTRACT",
-		params: [
-			{ name: "value", type: "STRING" },
-			{ name: "regexp", type: "STRING" },
-			{ name: "position", type: "INT64", optional: true },
-			{ name: "occurrence", type: "INT64", optional: true },
-		],
-		cite: "REGEXP_EXTRACT(value, regexp[, position[, occurrence]])",
-	},
-	// conditional / null
-	if: {
-		name: "IF",
-		params: [{ name: "expr", type: "BOOL" }, { name: "true_result" }, { name: "else_result" }],
-		cite: "IF",
-	},
+	// conditional / null - if deleted 2026-07-14 as a typed-duplicate (same reasoning); no offline
+	// harvest source at all for SAFE_CAST/CAST (their syntax uses "expr AS typename", the AS keyword
+	// the flat-list model blocks as a clause).
 	safe_cast: { name: "SAFE_CAST", params: [{ name: "expression" }, { name: "typename" }], cite: "SAFE_CAST" },
 	cast: { name: "CAST", params: [{ name: "expression" }, { name: "typename" }], cite: "CAST" },
-	// numeric
-	round: {
-		name: "ROUND",
-		params: [
-			{ name: "X", type: "FLOAT64" },
-			{ name: "N", type: "INT64", optional: true },
-			{ name: "rounding_mode", optional: true },
-		],
-		cite: "ROUND (N + rounding_mode optional)",
-	},
+	// numeric - round/ceil/floor/power/mod deleted 2026-07-14 as typed-duplicates.
+	// abs was deleted 2026-07-14 as a typed-duplicate too, then RESTORED: check-calls.ts's operand-type
+	// check only ever trusts a curated-origin, single-overload signature (src/qualify/check-calls.ts
+	// line ~187), so dropping the type silently disabled the ABS('x') string->numeric diagnostic -
+	// tests/qualify.calls.test.ts > "BigQuery flags ABS('x')" failed.
 	abs: { name: "ABS", params: [{ name: "X", type: "numeric" }], cite: "ABS" },
-	ceil: { name: "CEIL", params: [{ name: "X", type: "FLOAT64" }], cite: "CEIL" },
-	floor: { name: "FLOOR", params: [{ name: "X", type: "FLOAT64" }], cite: "FLOOR" },
-	power: {
-		name: "POWER",
-		params: [
-			{ name: "X", type: "FLOAT64" },
-			{ name: "Y", type: "FLOAT64" },
-		],
-		cite: "POWER",
-	},
-	mod: {
-		name: "MOD",
-		params: [
-			{ name: "X", type: "INT64" },
-			{ name: "Y", type: "INT64" },
-		],
-		cite: "MOD",
-	},
+	// No offline harvest source at all for the aggregates below (their syntax fences use the DISTINCT
+	// clause keyword the flat-list model blocks).
 	// aggregate
 	count: { name: "COUNT", params: [{ name: "expression" }], cite: "COUNT" },
 	sum: { name: "SUM", params: [{ name: "expression", type: "numeric" }], cite: "SUM" },

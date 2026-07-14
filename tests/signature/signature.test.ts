@@ -15,13 +15,16 @@ const active = (info: SignatureHelpInfo) => info.signatures[info.activeSignature
 
 describe("signatureAt — curated functions", () => {
 	it("Databricks date_add: caret in the 2nd arg → activeParameter 1, label names date_add", () => {
+		// date_add's own curated override was deleted 2026-07-14 (the widened harvester now recovers
+		// both real forms - the unit-based 3-arg page and the 2-arg startDate/numDays alias page - as
+		// two harvested overloads on its own). Both overloads have room at index 1, so the FIRST one
+		// (harvested doc order, the longer 3-param unit/value/expr form) is picked active.
 		const text = "SELECT date_add(x, ";
 		const doc = SqlDocument.create(text, "databricks");
 		const info = signatureAt(doc, end(text));
 		expect(info).not.toBeNull();
-		expect(info!.signatures.length).toBe(1); // single curated overload
+		expect(info!.signatures.length).toBe(2);
 		expect(active(info!).label).toContain("date_add");
-		// 3 params: start_date, num_days, and the optional 3rd of the (unit, value, expr) overload.
 		expect(active(info!).parameters.length).toBe(3);
 		expect(info!.activeParameter).toBe(1);
 	});
@@ -155,10 +158,15 @@ describe("signatureAt — nested calls (top-level comma counting)", () => {
 });
 
 describe("SIGNATURES table", () => {
-	it("has a bounded curated-origin set per dialect (roughly 20-45 each)", () => {
+	it("has a bounded curated-origin set per dialect (roughly 5-45 each)", () => {
+		// Lower bound dropped 20 -> 5 on 2026-07-14: the override-pruning pass (widened harvester +
+		// re-prune) deleted every override whose contribution was redundant with, subsumed by, or
+		// type-only over the harvest, down to tsql=7 / databricks=15 / snowflake=16 / bigquery=13 /
+		// redshift=31 (redshift has no harvest source at all, so it keeps the most). A hand entry now
+		// survives only when it earns it; the ceiling still guards against the set growing back.
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
 			const n = Object.values(SIGNATURES[d]).filter((overloads) => overloads[0]?.origin === "curated").length;
-			expect(n).toBeGreaterThanOrEqual(20);
+			expect(n).toBeGreaterThanOrEqual(5);
 			expect(n).toBeLessThanOrEqual(45);
 		}
 	});

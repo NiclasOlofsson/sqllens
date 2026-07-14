@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` and `<synopsis>` blocks)
 // Overrides source: tools/signature-overrides/postgres.mjs
-// Built 2026-07-14. 596 names (23 curated, 573 harvested), 83 with 2+ overloads.
+// Built 2026-07-14. 596 names (11 curated, 585 harvested), 85 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for postgres: curated overrides folded over the harvested
@@ -283,15 +283,29 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // func.sgml
-	concat: [{ name: "concat", params: [{ name: "val" }], variadic: true, origin: "curated" }], // curated: concat(val, ...) - pg_proc oid 3058: one VARIADIC any slot, a 1-arg call is valid (the doc table just displays two slots)
+	concat: [
+		{
+			name: "concat",
+			params: [
+				{ name: "val1", type: '"any"' },
+				{ name: "val2", type: '"any"', optional: true },
+			],
+			variadic: true,
+			origin: "harvested",
+		},
+	], // func.sgml
 	concat_ws: [
 		{
 			name: "concat_ws",
-			params: [{ name: "sep", type: "text" }, { name: "val" }],
+			params: [
+				{ name: "sep", type: "text" },
+				{ name: "val1", type: '"any"' },
+				{ name: "val2", type: '"any"', optional: true },
+			],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: concat_ws(sep, val, ...) - pg_proc oid 3059: text plus VARIADIC any, minimum 2 args (kept over the harvest reading of the doc display slots)
+	], // func.sgml
 	convert: [
 		{
 			name: "convert",
@@ -483,12 +497,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "format",
 			params: [
 				{ name: "formatstr", type: "text" },
-				{ name: "formatarg", optional: true },
+				{ name: "formatarg", type: '"any"', optional: true },
 			],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: format(formatstr [, formatarg, …]) - formatarg optional, format('hello') alone is valid
+	], // func.sgml
 	format_type: [
 		{
 			name: "format_type",
@@ -742,12 +756,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "jsonb_extract_path",
 			params: [
 				{ name: "from_json", type: "jsonb" },
-				{ name: "path_elems", type: "text" },
+				{ name: "path_elems", type: "text[]" },
 			],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: jsonb_extract_path(from_json, VARIADIC path_elems)
+	], // func.sgml
 	jsonb_extract_path_text: [
 		{
 			name: "jsonb_extract_path_text",
@@ -1036,11 +1050,11 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "left",
 			params: [
 				{ name: "string", type: "text" },
-				{ name: "n", type: "int" },
+				{ name: "n", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: left(string, n)
+	], // func.sgml
 	length: [
 		{
 			name: "length",
@@ -1098,12 +1112,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "lpad",
 			params: [
 				{ name: "string", type: "text" },
-				{ name: "length", type: "int" },
+				{ name: "length", type: "integer" },
 				{ name: "fill", type: "text", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: lpad(string, length[, fill])
+	], // func.sgml
 	lseg: [
 		{ name: "lseg", params: [{ name: "point" }, { name: "point" }], origin: "harvested" },
 		{ name: "lseg", params: [{ name: "box" }], origin: "harvested" },
@@ -1218,12 +1232,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "mod",
 			params: [
-				{ name: "y", type: "numeric" },
-				{ name: "x", type: "numeric" },
+				{ name: "y", type: "numeric_type" },
+				{ name: "x", type: "numeric_type" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: mod(y, x)
+	], // func.sgml
 	mode: [{ name: "mode", params: [], origin: "harvested" }], // func.sgml
 	multirange: [{ name: "multirange", params: [{ name: "anyrange" }], origin: "harvested" }], // func.sgml
 	mxid_age: [{ name: "mxid_age", params: [{ name: "xid" }], origin: "harvested" }], // func.sgml
@@ -2210,11 +2224,23 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "string", type: "text" },
 				{ name: "pattern", type: "text" },
 				{ name: "replacement", type: "text" },
+				{ name: "start", type: "integer" },
+				{ name: "N", type: "integer", optional: true },
 				{ name: "flags", type: "text", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: regexp_replace(string, pattern, replacement [, flags])
+		{
+			name: "regexp_replace",
+			params: [
+				{ name: "string", type: "text" },
+				{ name: "pattern", type: "text" },
+				{ name: "replacement", type: "text" },
+				{ name: "flags", type: "text", optional: true },
+			],
+			origin: "harvested",
+		},
+	], // func.sgml
 	regexp_split_to_array: [
 		{
 			name: "regexp_split_to_array",
@@ -2371,11 +2397,11 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "right",
 			params: [
 				{ name: "string", type: "text" },
-				{ name: "n", type: "int" },
+				{ name: "n", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: right(string, n)
+	], // func.sgml
 	round: [
 		{
 			name: "round",
@@ -2397,12 +2423,12 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "rpad",
 			params: [
 				{ name: "string", type: "text" },
-				{ name: "length", type: "int" },
+				{ name: "length", type: "integer" },
 				{ name: "fill", type: "text", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: rpad(string, length[, fill])
+	], // func.sgml
 	rtrim: [
 		{
 			name: "rtrim",
@@ -2516,11 +2542,11 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			params: [
 				{ name: "string", type: "text" },
 				{ name: "delimiter", type: "text" },
-				{ name: "n", type: "int" },
+				{ name: "n", type: "integer" },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: split_part(string, delimiter, n)
+	], // func.sgml
 	sqrt: [
 		{ name: "sqrt", params: [{ name: "numeric" }], origin: "harvested" },
 		{ name: "sqrt", params: [{ name: "double precision" }], origin: "harvested" },
@@ -2587,12 +2613,21 @@ export const POSTGRES_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "substr",
 			params: [
 				{ name: "string", type: "text" },
-				{ name: "start", type: "int" },
-				{ name: "count", type: "int", optional: true },
+				{ name: "start", type: "integer" },
+				{ name: "count", type: "integer", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: substr(string, start[, count]) - count is trailing-optional in both the text and bytea overloads
+		{
+			name: "substr",
+			params: [
+				{ name: "bytes", type: "bytea" },
+				{ name: "start", type: "integer" },
+				{ name: "count", type: "integer", optional: true },
+			],
+			origin: "harvested",
+		},
+	], // func.sgml
 	substring: [
 		{
 			name: "substring",

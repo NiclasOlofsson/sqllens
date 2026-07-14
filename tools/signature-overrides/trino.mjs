@@ -17,48 +17,9 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	date_trunc: {
-		name: "date_trunc",
-		params: [
-			{ name: "unit", type: "varchar" },
-			{ name: "x", type: "timestamp" },
-		],
-		cite: "date_trunc(unit, x)",
-	},
-	date_add: {
-		name: "date_add",
-		params: [
-			{ name: "unit", type: "varchar" },
-			{ name: "value", type: "bigint" },
-			{ name: "timestamp", type: "timestamp" },
-		],
-		cite: "date_add(unit, value, timestamp)",
-	},
-	date_diff: {
-		name: "date_diff",
-		params: [
-			{ name: "unit", type: "varchar" },
-			{ name: "timestamp1", type: "timestamp" },
-			{ name: "timestamp2", type: "timestamp" },
-		],
-		cite: "date_diff(unit, timestamp1, timestamp2)",
-	},
-	date_format: {
-		name: "date_format",
-		params: [
-			{ name: "timestamp", type: "timestamp" },
-			{ name: "format", type: "varchar" },
-		],
-		cite: "date_format(timestamp, format)",
-	},
-	date_parse: {
-		name: "date_parse",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "format", type: "varchar" },
-		],
-		cite: "date_parse(string, format)",
-	},
+	// date_trunc/date_add/date_diff/date_format/date_parse deleted 2026-07-14 as typed-duplicates
+	// (the harvest reaches the exact same names/arity/optionality on its own; the types above were
+	// the only contribution).
 	at_timezone: {
 		name: "at_timezone",
 		params: [
@@ -67,43 +28,9 @@ export const OVERRIDES = {
 		],
 		cite: "at_timezone(timestamp, zone)",
 	},
-	// string - functions/string.html
-	split: {
-		name: "split",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "delimiter", type: "varchar" },
-			{ name: "limit", type: "bigint", optional: true },
-		],
-		cite: "split(string, delimiter[, limit])",
-	},
-	split_part: {
-		name: "split_part",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "delimiter", type: "varchar" },
-			{ name: "index", type: "bigint" },
-		],
-		cite: "split_part(string, delimiter, index)",
-	},
-	strpos: {
-		name: "strpos",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "substring", type: "varchar" },
-			{ name: "instance", type: "bigint", optional: true },
-		],
-		cite: "strpos(string, substring[, instance])",
-	},
-	replace: {
-		name: "replace",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "search", type: "varchar" },
-			{ name: "replace", type: "varchar", optional: true },
-		],
-		cite: "replace(string, search[, replace])",
-	},
+	// string - functions/string.html. split/split_part/strpos/replace/format deleted 2026-07-14 as
+	// typed-duplicates. No offline harvest source at all for CONCAT_WS (its own colon-fence line uses
+	// a "string1, ..., stringN" mid-list ellipsis the variadic-not-trailing rule blocks).
 	concat_ws: {
 		name: "concat_ws",
 		params: [
@@ -113,52 +40,12 @@ export const OVERRIDES = {
 		variadic: true,
 		cite: 'concat_ws(separator, string1, ..., stringN) - a real variadic flag, not a cosmetic "..." in the type string',
 	},
-	format: {
-		name: "format",
-		params: [
-			{ name: "format", type: "varchar" },
-			{ name: "args", type: "any" },
-		],
-		variadic: true,
-		cite: "format(format, args...)",
-	},
-	// regexp - functions/regexp.html
-	regexp_like: {
-		name: "regexp_like",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "pattern", type: "varchar" },
-		],
-		cite: "regexp_like(string, pattern)",
-	},
-	regexp_extract: {
-		name: "regexp_extract",
-		params: [
-			{ name: "string", type: "varchar" },
-			{ name: "pattern", type: "varchar" },
-			{ name: "group", type: "bigint", optional: true },
-		],
-		cite: "regexp_extract(string, pattern[, group])",
-	},
-	// json - functions/json.html
-	json_extract: {
-		name: "json_extract",
-		params: [
-			{ name: "json", type: "json" },
-			{ name: "json_path", type: "varchar" },
-		],
-		cite: "json_extract(json, json_path)",
-	},
-	json_extract_scalar: {
-		name: "json_extract_scalar",
-		params: [
-			{ name: "json", type: "json" },
-			{ name: "json_path", type: "varchar" },
-		],
-		cite: "json_extract_scalar(json, json_path)",
-	},
-	json_parse: { name: "json_parse", params: [{ name: "string", type: "varchar" }], cite: "json_parse(string)" },
-	// array - functions/array.html
+	// regexp - functions/regexp.html. regexp_like/regexp_extract deleted 2026-07-14 as
+	// typed-duplicates.
+	// json - functions/json.html. json_extract/json_extract_scalar/json_parse deleted 2026-07-14 as
+	// typed-duplicates.
+	// array - functions/array.html. No offline harvest source at all for ELEMENT_AT (its syntax uses
+	// an "array(E) | map(K,V)" parenthesized-type alternation the flat-list model can't represent).
 	element_at: {
 		name: "element_at",
 		params: [
@@ -167,24 +54,9 @@ export const OVERRIDES = {
 		],
 		cite: "element_at(x, key)",
 	},
-	array_join: {
-		name: "array_join",
-		params: [
-			{ name: "x", type: "array" },
-			{ name: "delimiter", type: "varchar" },
-			{ name: "null_replacement", type: "varchar", optional: true },
-		],
-		cite: "array_join(x, delimiter[, null_replacement])",
-	},
-	sequence: {
-		name: "sequence",
-		params: [
-			{ name: "start", type: "bigint" },
-			{ name: "stop", type: "bigint" },
-			{ name: "step", type: "bigint", optional: true },
-		],
-		cite: "sequence(start, stop[, step]) - step optional, defaults to incrementing by 1",
-	},
+	// array_join/sequence deleted 2026-07-14 as typed-duplicates. No offline harvest source at all for
+	// TRANSFORM/REDUCE (their `:::{function}` fences use a parenthesized-type "array(T)" / lambda
+	// arrow notation the flat-list model can't represent).
 	transform: {
 		name: "transform",
 		params: [
@@ -203,51 +75,8 @@ export const OVERRIDES = {
 		],
 		cite: "reduce(array, s0, in, out)",
 	},
-	// aggregate - functions/aggregate.html
-	count: { name: "count", params: [{ name: "x", type: "any" }], cite: "count(x)" },
-	sum: { name: "sum", params: [{ name: "x", type: "numeric" }], cite: "sum(x)" },
-	min: {
-		name: "min",
-		params: [
-			{ name: "x", type: "any" },
-			{ name: "n", type: "bigint", optional: true },
-		],
-		cite: "min(x[, n])",
-	},
-	max: {
-		name: "max",
-		params: [
-			{ name: "x", type: "any" },
-			{ name: "n", type: "bigint", optional: true },
-		],
-		cite: "max(x[, n])",
-	},
-	max_by: {
-		name: "max_by",
-		params: [
-			{ name: "x", type: "any" },
-			{ name: "y", type: "any" },
-			{ name: "n", type: "bigint", optional: true },
-		],
-		cite: "max_by(x, y[, n])",
-	},
-	min_by: {
-		name: "min_by",
-		params: [
-			{ name: "x", type: "any" },
-			{ name: "y", type: "any" },
-			{ name: "n", type: "bigint", optional: true },
-		],
-		cite: "min_by(x, y[, n])",
-	},
-	approx_distinct: {
-		name: "approx_distinct",
-		params: [
-			{ name: "x", type: "any" },
-			{ name: "e", type: "double", optional: true },
-		],
-		cite: "approx_distinct(x[, e])",
-	},
+	// aggregate - functions/aggregate.html. count/sum/min/max/max_by/min_by/approx_distinct deleted
+	// 2026-07-14 as typed-duplicates.
 	listagg: {
 		name: "listagg",
 		params: [
@@ -256,33 +85,8 @@ export const OVERRIDES = {
 		],
 		cite: "listagg(expr[, separator]) WITHIN GROUP - separator is optional, defaults to the empty string when not specified",
 	},
-	// conditional - functions/conditional.html
-	coalesce: {
-		name: "coalesce",
-		params: [
-			{ name: "value1", type: "any" },
-			{ name: "value2", type: "any" },
-		],
-		variadic: true,
-		cite: 'coalesce(value1, value2, ...) - AstBuilder.java: "must have at least two arguments", min arity 2',
-	},
-	nullif: {
-		name: "nullif",
-		params: [
-			{ name: "value1", type: "any" },
-			{ name: "value2", type: "any" },
-		],
-		cite: "nullif(value1, value2)",
-	},
-	if: {
-		name: "if",
-		params: [
-			{ name: "condition", type: "boolean" },
-			{ name: "true_value", type: "any" },
-			{ name: "false_value", type: "any", optional: true },
-		],
-		cite: "if(cond, t[, f]) - AstBuilder.java: arguments.size() == 2 || 3, false_value optional",
-	},
+	// conditional - functions/conditional.html. coalesce/nullif/if deleted 2026-07-14 as
+	// typed-duplicates.
 	// map - functions/map.md documents two non-mergeable forms: `map() -> map<unknown, unknown>`
 	// (0 args, the empty-map constructor) and `map(array(K), array(V)) -> map(K,V)` (2 args, from a
 	// key array and a value array). The parenthesized-type notation ("array(K)") means the harvester

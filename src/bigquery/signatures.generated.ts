@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: google/googlesql reference markdown  vendor/googlesql-docs/docs/*.md (per-function heading + syntax fences)
 // Overrides source: tools/signature-overrides/bigquery.mjs
-// Built 2026-07-14. 329 names (34 curated, 295 harvested), 24 with 2+ overloads.
+// Built 2026-07-14. 342 names (14 curated, 328 harvested), 25 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for bigquery: curated overrides folded over the harvested
@@ -22,11 +22,23 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	array_concat: [
 		{ name: "ARRAY_CONCAT", params: [{ name: "array_expression" }], variadic: true, origin: "harvested" },
 	], // array_functions.md
+	array_filter: [
+		{
+			name: "ARRAY_FILTER",
+			params: [{ name: "array_expression" }, { name: "lambda_expression" }],
+			origin: "harvested",
+		},
+	], // array_functions.md
 	array_first: [{ name: "ARRAY_FIRST", params: [{ name: "array_expression" }], origin: "harvested" }], // array_functions.md
 	array_includes: [
 		{
 			name: "ARRAY_INCLUDES",
 			params: [{ name: "array_to_search" }, { name: "search_value" }],
+			origin: "harvested",
+		},
+		{
+			name: "ARRAY_INCLUDES",
+			params: [{ name: "array_to_search" }, { name: "lambda_expression" }],
 			origin: "harvested",
 		},
 	], // array_functions.md
@@ -65,6 +77,13 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // array_functions.md
+	array_transform: [
+		{
+			name: "ARRAY_TRANSFORM",
+			params: [{ name: "array_expression" }, { name: "lambda_expression" }],
+			origin: "harvested",
+		},
+	], // array_functions.md
 	ascii: [{ name: "ASCII", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	asin: [{ name: "ASIN", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	asinh: [{ name: "ASINH", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
@@ -82,7 +101,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	byte_length: [{ name: "BYTE_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	cast: [{ name: "CAST", params: [{ name: "expression" }, { name: "typename" }], origin: "curated" }], // curated: CAST
 	cbrt: [{ name: "CBRT", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
-	ceil: [{ name: "CEIL", params: [{ name: "X", type: "FLOAT64" }], origin: "curated" }], // curated: CEIL
+	ceil: [{ name: "CEIL", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	ceiling: [{ name: "CEILING", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	char_length: [{ name: "CHAR_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	character_length: [{ name: "CHARACTER_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
@@ -106,6 +125,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	count: [{ name: "COUNT", params: [{ name: "expression" }], origin: "curated" }], // curated: COUNT
 	csc: [{ name: "CSC", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	csch: [{ name: "CSCH", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
+	cume_dist: [{ name: "CUME_DIST", params: [], origin: "harvested" }], // numbering_functions.md
 	current_date: [
 		{ name: "CURRENT_DATE", params: [{ name: "time_zone_expression", optional: true }], origin: "harvested" },
 	], // date_functions.md
@@ -119,16 +139,6 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 		{ name: "DATE", params: [{ name: "datetime_expression" }], origin: "harvested" },
 	], // date_functions.md
-	date_add: [
-		{
-			name: "DATE_ADD",
-			params: [
-				{ name: "date_expression", type: "DATE" },
-				{ name: "interval", type: "INTERVAL" },
-			],
-			origin: "curated",
-		},
-	], // curated: DATE_ADD
 	date_bucket: [
 		{
 			name: "DATE_BUCKET",
@@ -143,21 +153,11 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	date_diff: [
 		{
 			name: "DATE_DIFF",
-			params: [{ name: "end_date", type: "DATE" }, { name: "start_date", type: "DATE" }, { name: "granularity" }],
-			origin: "curated",
+			params: [{ name: "end_date" }, { name: "start_date" }, { name: "granularity" }],
+			origin: "harvested",
 		},
-	], // curated: DATE_DIFF
+	], // date_functions.md
 	date_from_unix_date: [{ name: "DATE_FROM_UNIX_DATE", params: [{ name: "int64_expression" }], origin: "harvested" }], // date_functions.md
-	date_sub: [
-		{
-			name: "DATE_SUB",
-			params: [
-				{ name: "date_expression", type: "DATE" },
-				{ name: "interval", type: "INTERVAL" },
-			],
-			origin: "curated",
-		},
-	], // curated: DATE_SUB
 	date_trunc: [
 		{
 			name: "DATE_TRUNC",
@@ -209,6 +209,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // datetime_functions.md
+	dense_rank: [{ name: "DENSE_RANK", params: [], origin: "harvested" }], // numbering_functions.md
 	destination_node_id: [{ name: "DESTINATION_NODE_ID", params: [{ name: "edge_element" }], origin: "harvested" }], // graph-gql-functions.md
 	div: [{ name: "DIV", params: [{ name: "X" }, { name: "Y" }], origin: "harvested" }], // mathematical_functions.md
 	edges: [{ name: "EDGES", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
@@ -225,7 +226,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	exp: [{ name: "EXP", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	farm_fingerprint: [{ name: "FARM_FINGERPRINT", params: [{ name: "value" }], origin: "harvested" }], // hash_functions.md
 	flatten: [{ name: "FLATTEN", params: [{ name: "array_elements_field_access_expression" }], origin: "harvested" }], // array_functions.md
-	floor: [{ name: "FLOOR", params: [{ name: "X", type: "FLOAT64" }], origin: "curated" }], // curated: FLOOR
+	floor: [{ name: "FLOOR", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	format: [
 		{
 			name: "FORMAT",
@@ -235,15 +236,8 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // string_functions.md
 	format_date: [
-		{
-			name: "FORMAT_DATE",
-			params: [
-				{ name: "format_string", type: "STRING" },
-				{ name: "date_expr", type: "DATE" },
-			],
-			origin: "curated",
-		},
-	], // curated: FORMAT_DATE
+		{ name: "FORMAT_DATE", params: [{ name: "format_string" }, { name: "date_expr" }], origin: "harvested" },
+	], // date_functions.md
 	format_datetime: [
 		{
 			name: "FORMAT_DATETIME",
@@ -292,10 +286,10 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	if: [
 		{
 			name: "IF",
-			params: [{ name: "expr", type: "BOOL" }, { name: "true_result" }, { name: "else_result" }],
-			origin: "curated",
+			params: [{ name: "expr" }, { name: "true_result" }, { name: "else_result" }],
+			origin: "harvested",
 		},
-	], // curated: IF
+	], // conditional_expressions.md
 	iferror: [
 		{ name: "IFERROR", params: [{ name: "try_expression" }, { name: "catch_expression" }], origin: "harvested" },
 	], // debugging_functions.md
@@ -320,7 +314,9 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	int64: [{ name: "INT64", params: [{ name: "json_expr" }], origin: "harvested" }], // json_functions.md
 	int64_array: [{ name: "INT64_ARRAY", params: [{ name: "json_expr" }], origin: "harvested" }], // json_functions.md
 	is_acyclic: [{ name: "IS_ACYCLIC", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
+	is_first: [{ name: "IS_FIRST", params: [{ name: "k" }], origin: "harvested" }], // numbering_functions.md
 	is_inf: [{ name: "IS_INF", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
+	is_last: [{ name: "IS_LAST", params: [{ name: "k" }], origin: "harvested" }], // numbering_functions.md
 	is_nan: [{ name: "IS_NAN", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	is_simple: [{ name: "IS_SIMPLE", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
 	is_trail: [{ name: "IS_TRAIL", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
@@ -445,6 +441,17 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	justify_hours: [{ name: "JUSTIFY_HOURS", params: [{ name: "interval_expression" }], origin: "harvested" }], // interval_functions.md
 	justify_interval: [{ name: "JUSTIFY_INTERVAL", params: [{ name: "interval_expression" }], origin: "harvested" }], // interval_functions.md
 	labels: [{ name: "LABELS", params: [{ name: "element" }], origin: "harvested" }], // graph-gql-functions.md
+	lag: [
+		{
+			name: "LAG",
+			params: [
+				{ name: "value_expression" },
+				{ name: "offset", optional: true },
+				{ name: "default_expression", optional: true },
+			],
+			origin: "harvested",
+		},
+	], // navigation_functions.md
 	last_day: [
 		{
 			name: "LAST_DAY",
@@ -473,6 +480,17 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	lax_uint32_array: [{ name: "LAX_UINT32_ARRAY", params: [{ name: "json_expr" }], origin: "harvested" }], // json_functions.md
 	lax_uint64: [{ name: "LAX_UINT64", params: [{ name: "json_expr" }], origin: "harvested" }], // json_functions.md
 	lax_uint64_array: [{ name: "LAX_UINT64_ARRAY", params: [{ name: "json_expr" }], origin: "harvested" }], // json_functions.md
+	lead: [
+		{
+			name: "LEAD",
+			params: [
+				{ name: "value_expression" },
+				{ name: "offset", optional: true },
+				{ name: "default_expression", optional: true },
+			],
+			origin: "harvested",
+		},
+	], // navigation_functions.md
 	left: [{ name: "LEFT", params: [{ name: "value" }, { name: "length" }], origin: "harvested" }], // string_functions.md
 	length: [{ name: "LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	ln: [{ name: "LN", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
@@ -482,28 +500,15 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	lpad: [
 		{
 			name: "LPAD",
-			params: [
-				{ name: "original_value", type: "STRING" },
-				{ name: "return_length", type: "INT64" },
-				{ name: "pattern", type: "STRING", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "original_value" }, { name: "return_length" }, { name: "pattern", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: LPAD(original_value, return_length[, pattern]) - pattern optional, defaults to a blank space
+	], // string_functions.md
 	ltrim: [{ name: "LTRIM", params: [{ name: "value1" }, { name: "value2", optional: true }], origin: "harvested" }], // string_functions.md
 	max: [{ name: "MAX", params: [{ name: "expression" }], origin: "curated" }], // curated: MAX
 	md5: [{ name: "MD5", params: [{ name: "input" }], origin: "harvested" }], // hash_functions.md
 	min: [{ name: "MIN", params: [{ name: "expression" }], origin: "curated" }], // curated: MIN
-	mod: [
-		{
-			name: "MOD",
-			params: [
-				{ name: "X", type: "INT64" },
-				{ name: "Y", type: "INT64" },
-			],
-			origin: "curated",
-		},
-	], // curated: MOD
+	mod: [{ name: "MOD", params: [{ name: "X" }, { name: "Y" }], origin: "harvested" }], // mathematical_functions.md
 	months_between: [
 		{ name: "MONTHS_BETWEEN", params: [{ name: "datetime_end" }, { name: "datetime_start" }], origin: "harvested" },
 		{ name: "MONTHS_BETWEEN", params: [{ name: "date_end" }, { name: "date_start" }], origin: "harvested" },
@@ -527,21 +532,15 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // string_functions.md
+	ntile: [{ name: "NTILE", params: [{ name: "constant_integer_expression" }], origin: "harvested" }], // numbering_functions.md
 	nullif: [{ name: "NULLIF", params: [{ name: "expr" }, { name: "expr_to_match" }], origin: "harvested" }], // conditional_expressions.md
 	nulliferror: [{ name: "NULLIFERROR", params: [{ name: "try_expression" }], origin: "harvested" }], // debugging_functions.md
 	nullifzero: [{ name: "NULLIFZERO", params: [{ name: "expr" }], origin: "harvested" }], // conditional_expressions.md
 	octet_length: [{ name: "OCTET_LENGTH", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	parse_bignumeric: [{ name: "PARSE_BIGNUMERIC", params: [{ name: "string_expression" }], origin: "harvested" }], // conversion_functions.md
 	parse_date: [
-		{
-			name: "PARSE_DATE",
-			params: [
-				{ name: "format_string", type: "STRING" },
-				{ name: "date_string", type: "STRING" },
-			],
-			origin: "curated",
-		},
-	], // curated: PARSE_DATE
+		{ name: "PARSE_DATE", params: [{ name: "format_string" }, { name: "date_string" }], origin: "harvested" },
+	], // date_functions.md
 	parse_datetime: [
 		{
 			name: "PARSE_DATETIME",
@@ -564,20 +563,12 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	path_first: [{ name: "PATH_FIRST", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
 	path_last: [{ name: "PATH_LAST", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
 	path_length: [{ name: "PATH_LENGTH", params: [{ name: "graph_path" }], origin: "harvested" }], // graph-gql-functions.md
+	percent_rank: [{ name: "PERCENT_RANK", params: [], origin: "harvested" }], // numbering_functions.md
 	pi: [{ name: "PI", params: [], origin: "harvested" }], // mathematical_functions.md
 	pi_bignumeric: [{ name: "PI_BIGNUMERIC", params: [], origin: "harvested" }], // mathematical_functions.md
 	pi_numeric: [{ name: "PI_NUMERIC", params: [], origin: "harvested" }], // mathematical_functions.md
 	pow: [{ name: "POW", params: [{ name: "X" }, { name: "Y" }], origin: "harvested" }], // mathematical_functions.md
-	power: [
-		{
-			name: "POWER",
-			params: [
-				{ name: "X", type: "FLOAT64" },
-				{ name: "Y", type: "FLOAT64" },
-			],
-			origin: "curated",
-		},
-	], // curated: POWER
+	power: [{ name: "POWER", params: [{ name: "X" }, { name: "Y" }], origin: "harvested" }], // mathematical_functions.md
 	property_names: [{ name: "PROPERTY_NAMES", params: [{ name: "element" }], origin: "harvested" }], // graph-gql-functions.md
 	proto_default_if_null: [
 		{ name: "PROTO_DEFAULT_IF_NULL", params: [{ name: "proto_field_expression" }], origin: "harvested" },
@@ -586,6 +577,14 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "PROTO_MAP_CONTAINS_KEY",
 			params: [{ name: "proto_map_field_expression" }, { name: "key" }],
+			origin: "harvested",
+		},
+	], // protocol_buffer_functions.md
+	proto_modify_map: [
+		{
+			name: "PROTO_MODIFY_MAP",
+			params: [{ name: "proto_map_field_expression" }, { name: "key_value_pair" }],
+			variadic: true,
 			origin: "harvested",
 		},
 	], // protocol_buffer_functions.md
@@ -610,6 +609,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "RANGE_OVERLAPS", params: [{ name: "range_a" }, { name: "range_b" }], origin: "harvested" },
 	], // range-functions.md
 	range_start: [{ name: "RANGE_START", params: [{ name: "range_to_check" }], origin: "harvested" }], // range-functions.md
+	rank: [{ name: "RANK", params: [], origin: "harvested" }], // numbering_functions.md
 	regexp_contains: [
 		{ name: "REGEXP_CONTAINS", params: [{ name: "value" }, { name: "regexp" }], origin: "harvested" },
 	], // string_functions.md
@@ -617,14 +617,14 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "REGEXP_EXTRACT",
 			params: [
-				{ name: "value", type: "STRING" },
-				{ name: "regexp", type: "STRING" },
-				{ name: "position", type: "INT64", optional: true },
-				{ name: "occurrence", type: "INT64", optional: true },
+				{ name: "value" },
+				{ name: "regexp" },
+				{ name: "position", optional: true },
+				{ name: "occurrence", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: REGEXP_EXTRACT(value, regexp[, position[, occurrence]])
+	], // string_functions.md
 	regexp_extract_all: [
 		{ name: "REGEXP_EXTRACT_ALL", params: [{ name: "value" }, { name: "regexp" }], origin: "harvested" },
 	], // string_functions.md
@@ -635,14 +635,10 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	regexp_replace: [
 		{
 			name: "REGEXP_REPLACE",
-			params: [
-				{ name: "value", type: "STRING" },
-				{ name: "regexp", type: "STRING" },
-				{ name: "replacement", type: "STRING" },
-			],
-			origin: "curated",
+			params: [{ name: "value" }, { name: "regexp" }, { name: "replacement" }],
+			origin: "harvested",
 		},
-	], // curated: REGEXP_REPLACE
+	], // string_functions.md
 	regexp_substr: [
 		{
 			name: "REGEXP_SUBSTR",
@@ -659,38 +655,27 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	replace: [
 		{
 			name: "REPLACE",
-			params: [
-				{ name: "original_value", type: "STRING" },
-				{ name: "from_pattern", type: "STRING" },
-				{ name: "to_pattern", type: "STRING" },
-			],
-			origin: "curated",
+			params: [{ name: "original_value" }, { name: "from_pattern" }, { name: "to_pattern" }],
+			origin: "harvested",
 		},
-	], // curated: REPLACE(original_value, from_pattern, to_pattern) - string_functions.md, from/to symmetry
+	], // string_functions.md
 	reverse: [{ name: "REVERSE", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	right: [{ name: "RIGHT", params: [{ name: "value" }, { name: "length" }], origin: "harvested" }], // string_functions.md
 	round: [
 		{
 			name: "ROUND",
-			params: [
-				{ name: "X", type: "FLOAT64" },
-				{ name: "N", type: "INT64", optional: true },
-				{ name: "rounding_mode", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "X" }, { name: "N", optional: true }, { name: "rounding_mode", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: ROUND (N + rounding_mode optional)
+	], // mathematical_functions.md
+	row_number: [{ name: "ROW_NUMBER", params: [], origin: "harvested" }], // numbering_functions.md
 	rpad: [
 		{
 			name: "RPAD",
-			params: [
-				{ name: "original_value", type: "STRING" },
-				{ name: "return_length", type: "INT64" },
-				{ name: "pattern", type: "STRING", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "original_value" }, { name: "return_length" }, { name: "pattern", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: RPAD(original_value, return_length[, pattern]) - pattern optional, defaults to a blank space
+	], // string_functions.md
 	rtrim: [{ name: "RTRIM", params: [{ name: "value1" }, { name: "value2", optional: true }], origin: "harvested" }], // string_functions.md
 	safe_add: [{ name: "SAFE_ADD", params: [{ name: "X" }, { name: "Y" }], origin: "harvested" }], // mathematical_functions.md
 	safe_cast: [{ name: "SAFE_CAST", params: [{ name: "expression" }, { name: "typename" }], origin: "curated" }], // curated: SAFE_CAST
@@ -713,16 +698,7 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	sinh: [{ name: "SINH", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	soundex: [{ name: "SOUNDEX", params: [{ name: "value" }], origin: "harvested" }], // string_functions.md
 	source_node_id: [{ name: "SOURCE_NODE_ID", params: [{ name: "edge_element" }], origin: "harvested" }], // graph-gql-functions.md
-	split: [
-		{
-			name: "SPLIT",
-			params: [
-				{ name: "value", type: "STRING" },
-				{ name: "delimiter", type: "STRING", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: SPLIT (delimiter optional → comma)
+	split: [{ name: "SPLIT", params: [{ name: "value" }, { name: "delimiter", optional: true }], origin: "harvested" }], // string_functions.md
 	split_substr: [
 		{
 			name: "SPLIT_SUBSTR",
@@ -768,6 +744,13 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "ST_CLOSESTPOINT",
 			params: [{ name: "geography_1" }, { name: "geography_2" }, { name: "use_spheroid", optional: true }],
+			origin: "harvested",
+		},
+	], // geography_functions.md
+	st_clusterdbscan: [
+		{
+			name: "ST_CLUSTERDBSCAN",
+			params: [{ name: "geography_column" }, { name: "epsilon" }, { name: "minimum_geographies" }],
 			origin: "harvested",
 		},
 	], // geography_functions.md
@@ -870,6 +853,13 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // geography_functions.md
+	st_linesubstring: [
+		{
+			name: "ST_LINESUBSTRING",
+			params: [{ name: "linestring_geography" }, { name: "start_fraction" }, { name: "end_fraction" }],
+			origin: "harvested",
+		},
+	], // geography_functions.md
 	st_makeline: [
 		{ name: "ST_MAKELINE", params: [{ name: "geography_1" }, { name: "geography_2" }], origin: "harvested" },
 		{ name: "ST_MAKELINE", params: [{ name: "array_of_geography" }], origin: "harvested" },
@@ -950,25 +940,17 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	substr: [
 		{
 			name: "SUBSTR",
-			params: [
-				{ name: "value", type: "STRING" },
-				{ name: "position", type: "INT64" },
-				{ name: "length", type: "INT64", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "value" }, { name: "position" }, { name: "length", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: SUBSTR (length optional)
+	], // string_functions.md
 	substring: [
 		{
 			name: "SUBSTRING",
-			params: [
-				{ name: "value", type: "STRING" },
-				{ name: "position", type: "INT64" },
-				{ name: "length", type: "INT64", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "value" }, { name: "position" }, { name: "length", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: SUBSTRING (length optional)
+	], // string_functions.md
 	sum: [{ name: "SUM", params: [{ name: "expression", type: "numeric" }], origin: "curated" }], // curated: SUM
 	tan: [{ name: "TAN", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
 	tanh: [{ name: "TANH", params: [{ name: "X" }], origin: "harvested" }], // mathematical_functions.md
@@ -1013,14 +995,10 @@ export const BIGQUERY_SIGNATURES: Record<string, FnSignature[]> = {
 	timestamp_diff: [
 		{
 			name: "TIMESTAMP_DIFF",
-			params: [
-				{ name: "end_timestamp", type: "TIMESTAMP" },
-				{ name: "start_timestamp", type: "TIMESTAMP" },
-				{ name: "granularity" },
-			],
-			origin: "curated",
+			params: [{ name: "end_timestamp" }, { name: "start_timestamp" }, { name: "granularity" }],
+			origin: "harvested",
 		},
-	], // curated: TIMESTAMP_DIFF
+	], // timestamp_functions.md
 	timestamp_from_unix_micros: [
 		{ name: "TIMESTAMP_FROM_UNIX_MICROS", params: [{ name: "int64_expression" }], origin: "harvested" },
 		{ name: "TIMESTAMP_FROM_UNIX_MICROS", params: [{ name: "timestamp_expression" }], origin: "harvested" },

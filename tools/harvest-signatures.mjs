@@ -109,6 +109,14 @@ const TODAY = new Date().toISOString().slice(0, 10);
 //     live there, not under functions/), so the shared operator/predicate blocklist below (also
 //     forward-referenced) now applies to T-SQL too: that directory mixes in operator and
 //     control-flow pages (BETWEEN, CASE, IN, LIKE, ...) whose syntax blocks can render call-shaped.
+//
+// A fourth widening, orthogonal to the three above: EVERY trimmed, non-blank line in a syntaxsql
+// block that matches the `name(` call shape is its own candidate (parseTSqlBlock), not just the
+// block's first matching line. SET_BIT's page documents `SET_BIT ( expression_value , bit_offset )`
+// and `SET_BIT ( expression_value , bit_offset , bit_value )` as two lines in one fence; before this
+// widening the second line was silently discarded and the 3-arg form never reached the per-name
+// clustering below. Each line stays self-contained (a trailing clause past its own closing paren is
+// still ignored, per line, exactly as before), so this widening never needs a trailing-content rule.
 // ---------------------------------------------------------------------------
 
 /** All ```syntaxsql``` fenced blocks in a markdown string. */
@@ -122,19 +130,12 @@ function syntaxsqlBlocks(md) {
 }
 
 /**
- * Parse ONE syntaxsql block into `{ name, params, variadic }`, or `{ skip: reason }` when it isn't a
- * clean `name(param, …)` signature, or `null` when the block has no function-call line at all. Only
- * the FIRST balanced `( … )` after a leading function name is considered; trailing clauses (OVER,
- * WITHIN GROUP, `[ <order_clause> ]`) are ignored.
+ * Parse ONE already-selected candidate LINE into `{ name, params, variadic }`, or `{ skip: reason }`
+ * when it isn't a clean `name(param, …)` signature. Only the FIRST balanced `( … )` after the leading
+ * function name is considered; trailing clauses (OVER, WITHIN GROUP, `[ <order_clause> ]`) on the
+ * same line are ignored.
  */
-function parseTSqlSig(block) {
-	const lines = block
-		.replace(/\r/g, "")
-		.split("\n")
-		.map((l) => l.trim())
-		.filter(Boolean);
-	const line = lines.find((l) => /^[A-Za-z_][\w]*\s*\(/.test(l));
-	if (!line) return null;
+function parseTSqlCallLine(line) {
 	const name = line.match(/^([A-Za-z_][\w]*)\s*\(/)[1];
 
 	// First balanced paren group on the signature line.
@@ -206,6 +207,27 @@ function parseTSqlSig(block) {
 	return { name, params, variadic };
 }
 
+/** Every candidate call LINE in one syntaxsql block: EVERY trimmed, non-blank line matching the
+ *  `name(` call shape is an independent candidate, not just the block's first - e.g. SET_BIT's page
+ *  documents `SET_BIT ( expression_value , bit_offset )` and `SET_BIT ( expression_value , bit_offset ,
+ *  bit_value )` as two lines in one fence, and both must reach the per-name clustering below. Each
+ *  line is self-contained (trailing text past its own closing paren, e.g. an OVER clause, was already
+ *  ignored per-line before this widening and still is), so there is no cross-line trailing-content
+ *  concern here the way there is for Databricks/Snowflake/BigQuery. A line whose own parens never
+ *  balance is dropped with no skip counted, same as before this widening (parseTSqlCallLine's `null`
+ *  case). Returns `[]` when the block has no usable call-shaped line at all. */
+function parseTSqlBlock(block) {
+	const lines = block
+		.replace(/\r/g, "")
+		.split("\n")
+		.map((l) => l.trim())
+		.filter(Boolean);
+	return lines
+		.filter((l) => /^[A-Za-z_][\w]*\s*\(/.test(l))
+		.map((l) => parseTSqlCallLine(l))
+		.filter((r) => r !== null);
+}
+
 function* mdFiles(dir) {
 	for (const e of readdirSync(dir, { withFileTypes: true })) {
 		const p = join(dir, e.name);
@@ -237,16 +259,16 @@ function harvestTSql() {
 			// Per page (= one function's reference), collect each name's candidate signatures.
 			const cands = new Map();
 			for (const block of syntaxsqlBlocks(readFileSync(f, "utf8"))) {
-				const r = parseTSqlSig(block);
-				if (!r) continue;
-				if (r.skip) {
-					skips[r.skip]++;
-					continue;
+				for (const r of parseTSqlBlock(block)) {
+					if (r.skip) {
+						skips[r.skip]++;
+						continue;
+					}
+					const key = r.name.toLowerCase();
+					if (!cands.has(key)) cands.set(key, new Map());
+					const sig = { name: r.name, params: r.params, variadic: r.variadic };
+					cands.get(key).set(JSON.stringify([r.params, r.variadic]), sig);
 				}
-				const key = r.name.toLowerCase();
-				if (!cands.has(key)) cands.set(key, new Map());
-				const sig = { name: r.name, params: r.params, variadic: r.variadic };
-				cands.get(key).set(JSON.stringify([r.params, r.variadic]), sig);
 			}
 			if (cands.size === 0) {
 				pagesNoSig++;
@@ -468,19 +490,27 @@ function parseOptionalChainFlat(str) {
 // Databricks (Spark SQL): databricks/docs/syntax/functions/<name>/N.txt Syntax blocks, captured
 // from docs.databricks.com by tools/scrape-databricks-syntax.mjs.
 //
-// Two widenings beyond the plain flat-list model (both shape-anchored; everything else stays
+// Three widenings beyond the plain flat-list model (all shape-anchored; everything else stays
 // exactly as strict as the NEVER-WRONG CONTRACT requires):
 //   - a leading "[ DISTINCT ]" / "[ALL | DISTINCT]" keyword-modifier group ahead of the first
 //     param (aggregate-function pages) is a calling-convention modifier, not a param: stripped via
 //     the shared DISTINCT_ALL_GROUP_RE above before parsing.
 //   - a trailing "[FILTER ( WHERE cond ) ]" clause after the call's closing paren (aggregates)
-//     does not by itself invalidate the block: it is stripped first, then the ordinary
-//     trailing-content rule applies to whatever remains (so a further clause after FILTER still
-//     skips, e.g. any_value's "[FILTER (...)] [IGNORE NULLS | RESPECT NULLS]").
-// One more widening, narrower than either of those: a wholly-bracketed single param as the ENTIRE
-// inner, e.g. current_time([precision]), parses as one optional param (the sole shape this
-// recovers beyond a trailing "[, x]" continuation chain); a leading optional group followed by more
-// required text (log's "[ base , ] expr") is unaffected and still skips as optional-group.
+//     does not by itself invalidate the CANDIDATE it follows: it is stripped first, then the
+//     ordinary trailing-content rule applies to whatever remains (so a further clause after FILTER
+//     still fails that candidate, e.g. any_value's "[FILTER (...)] [IGNORE NULLS | RESPECT NULLS]").
+//   - EVERY call-shaped line in a block that repeats the block's own leading name is an independent
+//     candidate, not just the block's first (processBlockDatabricks): trim's page stacks
+//     `trim(str)` and `trim(BOTH FROM str)` blank-line-separated in one file, and before this
+//     widening the second line's trailing-content verdict sank the WHOLE block, discarding the
+//     first line's otherwise-clean `trim(str)` too. Trailing content that ISN'T a repeat of the same
+//     name still invalidates only the candidate it trails (not earlier ones already found), and
+//     scanning stops there - safely distinguishable via the repeat-name test alone, the same
+//     mechanism the BigQuery extractor below uses for its own same-fence stacked overload lines.
+// One more widening, narrower than the others: a wholly-bracketed single param as the ENTIRE inner,
+// e.g. current_time([precision]), parses as one optional param (the sole shape this recovers beyond
+// a trailing "[, x]" continuation chain); a leading optional group followed by more required text
+// (log's "[ base , ] expr") is unaffected and still skips as optional-group.
 // ---------------------------------------------------------------------------
 
 const DATABRICKS_CALL_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
@@ -567,8 +597,17 @@ function parseParamsTextDatabricks(paramsTextRaw) {
 	return { ok: true, params: allParams, variadic };
 }
 
-/** Process one captured *.txt block's raw text into `{ name, params, variadic }`, or records a
- *  skip reason on `stats` and returns null. */
+/** Process one captured *.txt block's raw text into a list of `{ name, params, variadic }`
+ *  candidates (possibly empty), recording a skip reason on `stats` for each candidate slot that
+ *  fails. EVERY call-shaped line that repeats the block's own leading name is an independent
+ *  candidate: once the first call line is found (nothing non-blank may precede it, same as before),
+ *  its own balanced paren group is parsed, and if what follows (after stripping a trailing
+ *  FILTER(WHERE …) clause) is ITSELF another call of the same name, that is parsed as a further,
+ *  independent candidate, and so on - recovers trim's blank-line-separated `trim(str)` /
+ *  `trim(BOTH FROM str)` stack, where only the first line was ever a clean flat call. Trailing
+ *  content that is NOT a repeat of the same name invalidates (skip "trailing-content") only the
+ *  candidate it trails, not candidates already found earlier in the same block, and scanning stops
+ *  there (mirrors the BigQuery extractor's own same-fence repeat-scan below). */
 function processBlockDatabricks(rawText, stats) {
 	const lines = rawText.split("\n");
 
@@ -584,59 +623,69 @@ function processBlockDatabricks(rawText, stats) {
 	}
 	if (callLineIdx === -1) {
 		stats.skip("no-call-line");
-		return null;
+		return [];
 	}
 	// Anything non-blank before the call line means this block isn't just one flat signature.
 	for (let i = 0; i < callLineIdx; i++) {
 		if (lines[i].trim() !== "") {
 			stats.skip("leading-content");
-			return null;
+			return [];
 		}
 	}
 
 	// Reconstruct the text from the call line's "(" onward, through the rest of the block, so a
-	// multi-line paren group still balances correctly.
+	// multi-line paren group still balances correctly, and so a further same-name candidate later in
+	// the block is still reachable in this one flattened string.
 	const callLine = lines[callLineIdx];
 	const openParenIdx = callLine.indexOf("(", callLine.search(/\S/));
-	const afterOpen = callLine.slice(openParenIdx + 1) + "\n" + lines.slice(callLineIdx + 1).join("\n");
+	let remaining = callLine.slice(openParenIdx + 1) + "\n" + lines.slice(callLineIdx + 1).join("\n");
 
-	let depth = 1;
-	let closeIdx = -1;
-	for (let i = 0; i < afterOpen.length; i++) {
-		if (afterOpen[i] === "(") depth++;
-		else if (afterOpen[i] === ")") {
-			depth--;
-			if (depth === 0) {
-				closeIdx = i;
-				break;
+	const sameNameRe = new RegExp(`^${name}\\s*\\(`, "i");
+	const results = [];
+	for (;;) {
+		let depth = 1;
+		let closeIdx = -1;
+		for (let i = 0; i < remaining.length; i++) {
+			if (remaining[i] === "(") depth++;
+			else if (remaining[i] === ")") {
+				depth--;
+				if (depth === 0) {
+					closeIdx = i;
+					break;
+				}
 			}
 		}
-	}
-	if (closeIdx === -1) {
-		stats.skip("unbalanced");
-		return null;
+		if (closeIdx === -1) {
+			stats.skip("unbalanced");
+			break;
+		}
+
+		const paramsText = remaining.slice(0, closeIdx);
+		let trailing = remaining.slice(closeIdx + 1).trim();
+		// Widening: strip a trailing FILTER(WHERE ident) clause before judging the trailing text.
+		const filterMatch = DATABRICKS_FILTER_CLAUSE_RE.exec(trailing);
+		if (filterMatch) trailing = trailing.slice(filterMatch[0].length).trim();
+
+		const parsed = parseParamsTextDatabricks(paramsText);
+		if (parsed.ok) results.push({ name, params: parsed.params, variadic: parsed.variadic });
+		else stats.skip(parsed.reason);
+
+		if (trailing === "") break; // clean end of block
+
+		const repeat = sameNameRe.exec(trailing);
+		if (!repeat) {
+			// Content beyond this candidate's own balanced parens (and beyond a stripped FILTER
+			// clause) that ISN'T another call of the same name: another overload, a required clause,
+			// or a variant crammed into the same code box, never safe to treat as a further
+			// candidate. Only THIS candidate is invalidated by it (already recorded above when
+			// `parsed.ok`); earlier candidates already pushed to `results` stand.
+			if (parsed.ok) stats.skip("trailing-content");
+			break;
+		}
+		remaining = trailing.slice(repeat[0].length); // resume just past the repeat's own "("
 	}
 
-	const paramsText = afterOpen.slice(0, closeIdx);
-	let trailing = afterOpen.slice(closeIdx + 1).trim();
-	// Widening 3: strip a trailing FILTER(WHERE ident) clause before judging the trailing text.
-	const filterMatch = DATABRICKS_FILTER_CLAUSE_RE.exec(trailing);
-	if (filterMatch) trailing = trailing.slice(filterMatch[0].length).trim();
-
-	const parsed = parseParamsTextDatabricks(paramsText);
-	if (!parsed.ok) {
-		stats.skip(parsed.reason);
-		return null;
-	}
-	if (trailing !== "") {
-		// Content beyond the first balanced paren group (and beyond a stripped FILTER clause):
-		// another overload, a required clause, or a variant crammed into the same code box, never
-		// safe to treat the leading call as "the" signature, so bail.
-		stats.skip("trailing-content");
-		return null;
-	}
-
-	return { name, params: parsed.params, variadic: parsed.variadic };
+	return results;
 }
 
 function sameParamListDatabricks(a, b) {
@@ -672,12 +721,12 @@ function harvestDatabricks() {
 	for (const f of txtFiles(src)) {
 		const sourceFile = relative(corpusPath("databricks/docs/syntax"), f).split("\\").join("/");
 		const text = readFileSync(f, "utf8").replace(/\r\n/g, "\n").replace(/\n$/, "");
-		const result = processBlockDatabricks(text, stats);
-		if (!result) continue;
-		const key = result.name.toLowerCase();
-		const list = occurrencesByName.get(key) ?? [];
-		list.push({ name: result.name, params: result.params, variadic: result.variadic, sourceFile });
-		occurrencesByName.set(key, list);
+		for (const result of processBlockDatabricks(text, stats)) {
+			const key = result.name.toLowerCase();
+			const list = occurrencesByName.get(key) ?? [];
+			list.push({ name: result.name, params: result.params, variadic: result.variadic, sourceFile });
+			occurrencesByName.set(key, list);
+		}
 	}
 
 	const signatures = {};
@@ -719,7 +768,7 @@ function harvestDatabricks() {
 // use `<name>` angle-bracket notation; a blank-line-separated segment inside one block is an
 // INDEPENDENT candidate (an alias pair such as LENGTH/LEN, or SUBSTR/SUBSTRING, shares one file).
 //
-// Two widenings beyond the plain flat-list model (shape-anchored; everything else stays exactly as
+// Three widenings beyond the plain flat-list model (shape-anchored; everything else stays exactly as
 // strict):
 //   - a placeholder wrapped in literal single quotes, '<rounding_mode>', is an ordinary placeholder
 //     (the quotes just mark "this argument is a quoted string literal": rounding mode, pad side,
@@ -727,8 +776,14 @@ function harvestDatabricks() {
 //   - the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" keyword-modifier group (see
 //     DISTINCT_ALL_GROUP_RE above) is stripped before tokenizing, recovering COUNT / LISTAGG /
 //     ARRAY_AGG and their aggregate siblings.
-// Trailing text after the call's own balanced parens (WITHIN GROUP, OVER, …) is never inspected: it
-// always sits outside that first paren pair by construction, so it never reaches the tokenizer.
+//   - EVERY call-shaped line in a segment that repeats the segment's own leading name is an
+//     independent candidate, not just the segment's first (parseCandidatesSnowflake): TO_CHAR's and
+//     TO_VARCHAR's own segments each stack four per-type lines back-to-back with no blank-line
+//     separator (`TO_CHAR( <expr> )` / `TO_CHAR( <numeric_expr> [, '<format>'] )` / … ), and before
+//     this widening only the first line of each segment ever produced a candidate; the other three
+//     were silently unreached. Trailing text that ISN'T a repeat of the same name is left unparsed
+//     exactly as before this widening (this extractor never counted that as a skip; it just stopped
+//     scanning there) - WITHIN GROUP / OVER clauses still never reach the tokenizer.
 // Unlike Databricks, there is no FILTER-clause rule to apply here.
 // ---------------------------------------------------------------------------
 
@@ -847,52 +902,66 @@ function parseParamsSnowflake(tokens) {
 	return { params, variadic: tail.variadic };
 }
 
-/** Extracts the candidate `NAME( … )` call from one blank-line-separated segment of a scraped
- *  block, or null when the segment has no such call at all (not a signature-shape skip). Nothing
- *  may precede the name on its own line: dotted/qualified names (SNOWFLAKE.CORTEX.COMPLETE) never
- *  match a plain identifier, by design, not a bug. */
-function parseCandidateSnowflake(segment, stats) {
+/** Extracts EVERY candidate `NAME( … )` call from one blank-line-separated segment of a scraped
+ *  block (the widening beyond the old first-line-only model): once the first call-shaped line is
+ *  found, its own balanced parens are parsed, and if what immediately follows repeats the SAME name,
+ *  that is parsed as a further, independent candidate, and so on - recovers TO_CHAR/TO_VARCHAR's four
+ *  stacked per-type lines in one segment. Nothing may precede the FIRST name on its own line:
+ *  dotted/qualified names (SNOWFLAKE.CORTEX.COMPLETE) never match a plain identifier, by design, not
+ *  a bug. Trailing content that ISN'T a repeat of the same name is left unparsed, exactly as before
+ *  this widening (this extractor never counted that as a skip; it just stopped scanning there).
+ *  Returns `[]` when the segment has no call-shaped line at all. */
+function parseCandidatesSnowflake(segment, stats) {
 	const re = /^[ \t]*([A-Za-z_][A-Za-z0-9_]*)[ \t]*\(/m;
 	const m = re.exec(segment);
-	if (!m) return null;
+	if (!m) return [];
 
 	const name = m[1];
-	const openIdx = segment.indexOf("(", m.index);
-	let depth = 0;
-	let start = -1;
-	let end = -1;
-	for (let i = openIdx; i < segment.length; i++) {
-		if (segment[i] === "(") {
-			if (depth === 0) start = i;
-			depth++;
-		} else if (segment[i] === ")") {
-			depth--;
-			if (depth === 0) {
-				end = i;
-				break;
+	const sameNameRe = new RegExp(`^${name}[ \\t]*\\(`, "i");
+	const results = [];
+	let pos = m.index;
+	for (;;) {
+		const openIdx = segment.indexOf("(", pos);
+		let depth = 0;
+		let start = -1;
+		let end = -1;
+		for (let i = openIdx; i < segment.length; i++) {
+			if (segment[i] === "(") {
+				if (depth === 0) start = i;
+				depth++;
+			} else if (segment[i] === ")") {
+				depth--;
+				if (depth === 0) {
+					end = i;
+					break;
+				}
 			}
 		}
-	}
-	if (start === -1 || end === -1) {
-		stats.skip("unbalanced-parens");
-		return null;
-	}
+		if (start === -1 || end === -1) {
+			stats.skip("unbalanced-parens");
+			break;
+		}
 
-	let inner = segment.slice(start + 1, end).trim();
-	// Widening 2: strip the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" modifier group.
-	inner = inner.replace(DISTINCT_ALL_GROUP_RE, "").trim();
+		let inner = segment.slice(start + 1, end).trim();
+		// Widening 2: strip the shared leading "[ DISTINCT ]" / "[ALL | DISTINCT]" modifier group.
+		inner = inner.replace(DISTINCT_ALL_GROUP_RE, "").trim();
 
-	const tok = tokenizeInnerSnowflake(inner);
-	if (tok.skip) {
-		stats.skip(tok.skip);
-		return null;
+		const tok = tokenizeInnerSnowflake(inner);
+		if (tok.skip) {
+			stats.skip(tok.skip);
+		} else {
+			const parsed = parseParamsSnowflake(tok.tokens);
+			if (parsed.skip) stats.skip(parsed.skip);
+			else results.push({ name, params: parsed.params, variadic: parsed.variadic });
+		}
+
+		const rest = segment.slice(end + 1);
+		const leadingWs = /^\s*/.exec(rest)[0];
+		const repeat = sameNameRe.exec(rest.slice(leadingWs.length));
+		if (!repeat) break; // no further repeat of the same name: stop, same as the old silent-ignore
+		pos = end + 1 + leadingWs.length;
 	}
-	const parsed = parseParamsSnowflake(tok.tokens);
-	if (parsed.skip) {
-		stats.skip(parsed.skip);
-		return null;
-	}
-	return { name, params: parsed.params, variadic: parsed.variadic };
+	return results;
 }
 
 function sameParamListSnowflake(a, b) {
@@ -930,12 +999,12 @@ function harvestSnowflake() {
 			.map((s) => s.trim())
 			.filter(Boolean);
 		for (const seg of segments) {
-			const cand = parseCandidateSnowflake(seg, stats);
-			if (!cand) continue;
-			const key = cand.name.toLowerCase();
-			const list = occurrencesByName.get(key) ?? [];
-			list.push({ name: cand.name, params: cand.params, variadic: cand.variadic, sourceFile });
-			occurrencesByName.set(key, list);
+			for (const cand of parseCandidatesSnowflake(seg, stats)) {
+				const key = cand.name.toLowerCase();
+				const list = occurrencesByName.get(key) ?? [];
+				list.push({ name: cand.name, params: cand.params, variadic: cand.variadic, sourceFile });
+				occurrencesByName.set(key, list);
+			}
 		}
 	}
 
@@ -1884,8 +1953,12 @@ function harvestTrino() {
 // extractor scans EVERY fence in every file: a fence whose first content line is not call-shaped
 // is simply not a candidate (example SELECT fences look like that constantly), never a skip.
 // Stacked same-name overload lines inside one fence each count as an occurrence; anything else
-// after the call's balanced parens (an OVER clause, a lambda sub-production) skips the fence as
-// trailing-content. Ports the Databricks required-prefix + optional-bracket-chain parser (the
+// after a call's balanced parens (an OVER clause, a lambda sub-production) that ISN'T a repeat of
+// the same name skips (as trailing-content) only the candidate it trails, not the whole fence -
+// candidates already found earlier in the same fence still stand (before this widening a later
+// line's trailing content discarded every earlier candidate too, the same all-or-nothing bug fixed
+// in the Databricks extractor above). Ports the Databricks required-prefix + optional-bracket-chain
+// parser (the
 // chain via the shared parseOptionalChainFlat) with BigQuery-specific complexity triggers in place
 // of the Databricks widenings: named-arg `=>`, `{ | }` alternation, `<T>` angle generics, and an
 // extended clause-keyword list including INTERVAL. The doc casing (UPPERCASE names) is kept for
@@ -1982,9 +2055,14 @@ function parseParamsTextBigquery(paramsTextRaw) {
 	return { ok: true, params: allParams, variadic };
 }
 
-/** One fence body into candidates: null when the fence's first content line isn't call-shaped (not
- *  a candidate at all), `{ skip: reason }` when it is but doesn't parse cleanly, or
- *  `{ candidates: [...] }` (more than one when same-name overload lines stack in one fence). */
+/** One fence body into a (possibly empty) list of candidates: `null` when the fence's first content
+ *  line isn't call-shaped at all (not a candidate fence, never a skip - example SELECT fences look
+ *  like that constantly). Otherwise every call-shaped line that repeats the fence's own leading name
+ *  is an independent candidate (more than one when same-name overload lines stack in one fence, or
+ *  balancing continues across line breaks for a single multi-line ROUND/ARRAY_AGG-style call).
+ *  Content that ISN'T a repeat of the same name, or a candidate whose params don't parse cleanly,
+ *  invalidates (skip-counted) only that candidate - not candidates already found earlier in the same
+ *  fence - and scanning stops there. */
 function extractCandidatesBigquery(body, stats) {
 	const text = body.replace(/\r\n/g, "\n").replace(/\n$/, "");
 	const lines = text.split("\n");
@@ -2006,18 +2084,20 @@ function extractCandidatesBigquery(body, stats) {
 
 	// Walk repeated `NAME(...)` calls from the call line down, balancing parens across line breaks
 	// (ROUND/ARRAY_AGG-style multi-line param lists).
+	const sameNameRe = new RegExp(`^${name}\\s*\\(`, "i");
 	let remaining = lines.slice(callLineIdx).join("\n");
 	const candidates = [];
 
 	for (;;) {
 		const trimmedStart = remaining.replace(/^\s+/, "");
 		if (trimmedStart === "") break; // clean end
-		const m = new RegExp(`^${name}\\s*\\(`, "i").exec(trimmedStart);
+		const m = sameNameRe.exec(trimmedStart);
 		if (!m) {
 			// Non-blank remainder that isn't a repeat of the same name: an OVER clause, a
-			// sub-production, or another statement crammed into the fence.
+			// sub-production, or another statement crammed into the fence. Only this tail is
+			// unusable - candidates already found earlier in the same fence still stand.
 			stats.skip("trailing-content");
-			return { skipped: true };
+			break;
 		}
 		const openIdx = trimmedStart.indexOf("(", m.index);
 		let depth = 1;
@@ -2034,23 +2114,16 @@ function extractCandidatesBigquery(body, stats) {
 		}
 		if (closeIdx === -1) {
 			stats.skip("unbalanced");
-			return { skipped: true };
+			break;
 		}
 
 		const parsed = parseParamsTextBigquery(trimmedStart.slice(openIdx + 1, closeIdx));
-		if (!parsed.ok) {
-			stats.skip(parsed.reason);
-			return { skipped: true };
-		}
+		if (parsed.ok) candidates.push({ name, params: parsed.params, variadic: parsed.variadic });
+		else stats.skip(parsed.reason);
 
-		candidates.push({ name, params: parsed.params, variadic: parsed.variadic });
 		remaining = trimmedStart.slice(closeIdx + 1);
 	}
 
-	if (candidates.length === 0) {
-		stats.skip("trailing-content");
-		return { skipped: true };
-	}
 	return { candidates };
 }
 
@@ -2092,7 +2165,7 @@ function harvestBigquery() {
 		const md = readFileSync(f, "utf8");
 		for (const body of fencesOfBigquery(md)) {
 			const result = extractCandidatesBigquery(body, stats);
-			if (result === null || result.skipped) continue;
+			if (result === null) continue;
 			for (const cand of result.candidates) {
 				const key = cand.name.toLowerCase();
 				const list = occurrencesByName.get(key) ?? [];

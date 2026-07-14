@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: trinodb/trino release 482  vendor/trino-docs/functions/*.md (MyST `:::{function}` directives)
 // Overrides source: tools/signature-overrides/trino.mjs
-// Built 2026-07-14. 387 names (33 curated, 354 harvested), 20 with 2+ overloads.
+// Built 2026-07-14. 387 names (6 curated, 381 harvested), 20 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for trino: curated overrides folded over the harvested
@@ -20,15 +20,8 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	ai_translate: [{ name: "ai_translate", params: [{ name: "text" }, { name: "language" }], origin: "harvested" }], // ai.md
 	any_value: [{ name: "any_value", params: [{ name: "x" }], origin: "harvested" }], // aggregate.md
 	approx_distinct: [
-		{
-			name: "approx_distinct",
-			params: [
-				{ name: "x", type: "any" },
-				{ name: "e", type: "double", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: approx_distinct(x[, e])
+		{ name: "approx_distinct", params: [{ name: "x" }, { name: "e", optional: true }], origin: "harvested" },
+	], // aggregate.md
 	approx_most_frequent: [
 		{
 			name: "approx_most_frequent",
@@ -60,14 +53,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	array_join: [
 		{
 			name: "array_join",
-			params: [
-				{ name: "x", type: "array" },
-				{ name: "delimiter", type: "varchar" },
-				{ name: "null_replacement", type: "varchar", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "x" }, { name: "delimiter" }, { name: "null_replacement", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: array_join(x, delimiter[, null_replacement])
+	], // array.md
 	array_max: [{ name: "array_max", params: [{ name: "x" }], origin: "harvested" }], // array.md
 	array_min: [{ name: "array_min", params: [{ name: "x" }], origin: "harvested" }], // array.md
 	array_position: [{ name: "array_position", params: [{ name: "x" }, { name: "element" }], origin: "harvested" }], // array.md
@@ -166,16 +155,8 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	chr: [{ name: "chr", params: [{ name: "n" }], origin: "harvested" }], // string.md
 	classify: [{ name: "classify", params: [{ name: "features" }, { name: "model" }], origin: "harvested" }], // ml.md
 	coalesce: [
-		{
-			name: "coalesce",
-			params: [
-				{ name: "value1", type: "any" },
-				{ name: "value2", type: "any" },
-			],
-			variadic: true,
-			origin: "curated",
-		},
-	], // curated: coalesce(value1, value2, ...) - AstBuilder.java: "must have at least two arguments", min arity 2
+		{ name: "coalesce", params: [{ name: "value1" }, { name: "value2" }], variadic: true, origin: "harvested" },
+	], // conditional.md
 	codepoint: [{ name: "codepoint", params: [{ name: "string" }], origin: "harvested" }], // string.md
 	color: [
 		{
@@ -208,7 +189,7 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	cosh: [{ name: "cosh", params: [{ name: "x" }], origin: "harvested" }], // math.md
 	cosine_distance: [{ name: "cosine_distance", params: [{ name: "x" }, { name: "y" }], origin: "harvested" }], // math.md
 	cosine_similarity: [{ name: "cosine_similarity", params: [{ name: "x" }, { name: "y" }], origin: "harvested" }], // math.md
-	count: [{ name: "count", params: [{ name: "x", type: "any" }], origin: "curated" }], // curated: count(x)
+	count: [{ name: "count", params: [{ name: "x" }], origin: "harvested" }], // aggregate.md
 	count_if: [{ name: "count_if", params: [{ name: "x" }], origin: "harvested" }], // aggregate.md
 	covar_pop: [{ name: "covar_pop", params: [{ name: "y" }, { name: "x" }], origin: "harvested" }], // aggregate.md
 	covar_samp: [{ name: "covar_samp", params: [{ name: "y" }, { name: "x" }], origin: "harvested" }], // aggregate.md
@@ -217,57 +198,18 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	current_timezone: [{ name: "current_timezone", params: [], origin: "harvested" }], // datetime.md
 	date: [{ name: "date", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
 	date_add: [
-		{
-			name: "date_add",
-			params: [
-				{ name: "unit", type: "varchar" },
-				{ name: "value", type: "bigint" },
-				{ name: "timestamp", type: "timestamp" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_add(unit, value, timestamp)
+		{ name: "date_add", params: [{ name: "unit" }, { name: "value" }, { name: "timestamp" }], origin: "harvested" },
+	], // datetime.md
 	date_diff: [
 		{
 			name: "date_diff",
-			params: [
-				{ name: "unit", type: "varchar" },
-				{ name: "timestamp1", type: "timestamp" },
-				{ name: "timestamp2", type: "timestamp" },
-			],
-			origin: "curated",
+			params: [{ name: "unit" }, { name: "timestamp1" }, { name: "timestamp2" }],
+			origin: "harvested",
 		},
-	], // curated: date_diff(unit, timestamp1, timestamp2)
-	date_format: [
-		{
-			name: "date_format",
-			params: [
-				{ name: "timestamp", type: "timestamp" },
-				{ name: "format", type: "varchar" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_format(timestamp, format)
-	date_parse: [
-		{
-			name: "date_parse",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "format", type: "varchar" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_parse(string, format)
-	date_trunc: [
-		{
-			name: "date_trunc",
-			params: [
-				{ name: "unit", type: "varchar" },
-				{ name: "x", type: "timestamp" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_trunc(unit, x)
+	], // datetime.md
+	date_format: [{ name: "date_format", params: [{ name: "timestamp" }, { name: "format" }], origin: "harvested" }], // datetime.md
+	date_parse: [{ name: "date_parse", params: [{ name: "string" }, { name: "format" }], origin: "harvested" }], // datetime.md
+	date_trunc: [{ name: "date_trunc", params: [{ name: "unit" }, { name: "x" }], origin: "harvested" }], // datetime.md
 	day: [{ name: "day", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
 	day_of_month: [{ name: "day_of_month", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
 	day_of_week: [{ name: "day_of_week", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
@@ -295,17 +237,7 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	first_value: [{ name: "first_value", params: [{ name: "x" }], origin: "harvested" }], // window.md
 	flatten: [{ name: "flatten", params: [{ name: "x" }], origin: "harvested" }], // array.md
 	floor: [{ name: "floor", params: [{ name: "x" }], origin: "harvested" }], // math.md
-	format: [
-		{
-			name: "format",
-			params: [
-				{ name: "format", type: "varchar" },
-				{ name: "args", type: "any" },
-			],
-			variadic: true,
-			origin: "curated",
-		},
-	], // curated: format(format, args...)
+	format: [{ name: "format", params: [{ name: "format" }, { name: "args" }], variadic: true, origin: "harvested" }], // conversion.md
 	format_datetime: [
 		{ name: "format_datetime", params: [{ name: "timestamp" }, { name: "format" }], origin: "harvested" },
 	], // datetime.md
@@ -378,14 +310,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	if: [
 		{
 			name: "if",
-			params: [
-				{ name: "condition", type: "boolean" },
-				{ name: "true_value", type: "any" },
-				{ name: "false_value", type: "any", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "condition" }, { name: "true_value" }, { name: "false_value", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: if(cond, t[, f]) - AstBuilder.java: arguments.size() == 2 || 3, false_value optional
+	], // conditional.md
 	index: [{ name: "index", params: [{ name: "string" }, { name: "substring" }], origin: "harvested" }], // teradata.md
 	infinity: [{ name: "infinity", params: [], origin: "harvested" }], // math.md
 	intersection_cardinality: [
@@ -409,28 +337,12 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "json_array_get", params: [{ name: "json_array" }, { name: "index" }], origin: "harvested" },
 	], // json.md
 	json_array_length: [{ name: "json_array_length", params: [{ name: "json" }], origin: "harvested" }], // json.md
-	json_extract: [
-		{
-			name: "json_extract",
-			params: [
-				{ name: "json", type: "json" },
-				{ name: "json_path", type: "varchar" },
-			],
-			origin: "curated",
-		},
-	], // curated: json_extract(json, json_path)
+	json_extract: [{ name: "json_extract", params: [{ name: "json" }, { name: "json_path" }], origin: "harvested" }], // json.md
 	json_extract_scalar: [
-		{
-			name: "json_extract_scalar",
-			params: [
-				{ name: "json", type: "json" },
-				{ name: "json_path", type: "varchar" },
-			],
-			origin: "curated",
-		},
-	], // curated: json_extract_scalar(json, json_path)
+		{ name: "json_extract_scalar", params: [{ name: "json" }, { name: "json_path" }], origin: "harvested" },
+	], // json.md
 	json_format: [{ name: "json_format", params: [{ name: "json" }], origin: "harvested" }], // json.md
-	json_parse: [{ name: "json_parse", params: [{ name: "string", type: "varchar" }], origin: "curated" }], // curated: json_parse(string)
+	json_parse: [{ name: "json_parse", params: [{ name: "string" }], origin: "harvested" }], // json.md
 	json_size: [{ name: "json_size", params: [{ name: "json" }, { name: "json_path" }], origin: "harvested" }], // json.md
 	kurtosis: [{ name: "kurtosis", params: [{ name: "x" }], origin: "harvested" }], // aggregate.md
 	lag: [
@@ -512,27 +424,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	luhn_check: [{ name: "luhn_check", params: [{ name: "string" }], origin: "harvested" }], // string.md
 	make_set_digest: [{ name: "make_set_digest", params: [{ name: "x" }], origin: "harvested" }], // setdigest.md
 	map_agg: [{ name: "map_agg", params: [{ name: "key" }, { name: "value" }], origin: "harvested" }], // aggregate.md
-	max: [
-		{
-			name: "max",
-			params: [
-				{ name: "x", type: "any" },
-				{ name: "n", type: "bigint", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: max(x[, n])
+	max: [{ name: "max", params: [{ name: "x" }, { name: "n", optional: true }], origin: "harvested" }], // aggregate.md
 	max_by: [
-		{
-			name: "max_by",
-			params: [
-				{ name: "x", type: "any" },
-				{ name: "y", type: "any" },
-				{ name: "n", type: "bigint", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: max_by(x, y[, n])
+		{ name: "max_by", params: [{ name: "x" }, { name: "y" }, { name: "n", optional: true }], origin: "harvested" },
+	], // aggregate.md
 	md5: [{ name: "md5", params: [{ name: "binary" }], origin: "harvested" }], // binary.md
 	merge: [
 		{ name: "merge", params: [{ name: "x" }], origin: "harvested" },
@@ -542,27 +437,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	], // aggregate.md, hyperloglog.md, qdigest.md
 	merge_set_digest: [{ name: "merge_set_digest", params: [{ name: "setdigest" }], origin: "harvested" }], // setdigest.md
 	millisecond: [{ name: "millisecond", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
-	min: [
-		{
-			name: "min",
-			params: [
-				{ name: "x", type: "any" },
-				{ name: "n", type: "bigint", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: min(x[, n])
+	min: [{ name: "min", params: [{ name: "x" }, { name: "n", optional: true }], origin: "harvested" }], // aggregate.md
 	min_by: [
-		{
-			name: "min_by",
-			params: [
-				{ name: "x", type: "any" },
-				{ name: "y", type: "any" },
-				{ name: "n", type: "bigint", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: min_by(x, y[, n])
+		{ name: "min_by", params: [{ name: "x" }, { name: "y" }, { name: "n", optional: true }], origin: "harvested" },
+	], // aggregate.md
 	minute: [{ name: "minute", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
 	mod: [{ name: "mod", params: [{ name: "n" }, { name: "m" }], origin: "harvested" }], // math.md
 	month: [{ name: "month", params: [{ name: "x" }], origin: "harvested" }], // datetime.md
@@ -578,16 +456,7 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	now: [{ name: "now", params: [], origin: "harvested" }], // datetime.md
 	nth_value: [{ name: "nth_value", params: [{ name: "x" }, { name: "offset" }], origin: "harvested" }], // window.md
 	ntile: [{ name: "ntile", params: [{ name: "n" }], origin: "harvested" }], // window.md
-	nullif: [
-		{
-			name: "nullif",
-			params: [
-				{ name: "value1", type: "any" },
-				{ name: "value2", type: "any" },
-			],
-			origin: "curated",
-		},
-	], // curated: nullif(value1, value2)
+	nullif: [{ name: "nullif", params: [{ name: "value1" }, { name: "value2" }], origin: "harvested" }], // conditional.md
 	numeric_histogram: [
 		{
 			name: "numeric_histogram",
@@ -640,14 +509,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	regexp_extract: [
 		{
 			name: "regexp_extract",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "pattern", type: "varchar" },
-				{ name: "group", type: "bigint", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "pattern" }, { name: "group", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: regexp_extract(string, pattern[, group])
+	], // regexp.md
 	regexp_extract_all: [
 		{
 			name: "regexp_extract_all",
@@ -655,16 +520,7 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // regexp.md
-	regexp_like: [
-		{
-			name: "regexp_like",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "pattern", type: "varchar" },
-			],
-			origin: "curated",
-		},
-	], // curated: regexp_like(string, pattern)
+	regexp_like: [{ name: "regexp_like", params: [{ name: "string" }, { name: "pattern" }], origin: "harvested" }], // regexp.md
 	regexp_position: [
 		{
 			name: "regexp_position",
@@ -701,14 +557,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	replace: [
 		{
 			name: "replace",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "search", type: "varchar" },
-				{ name: "replace", type: "varchar", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "search" }, { name: "replace", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: replace(string, search[, replace])
+	], // string.md
 	reverse: [
 		{ name: "reverse", params: [{ name: "x" }], origin: "harvested" },
 		{ name: "reverse", params: [{ name: "binary" }], origin: "harvested" },
@@ -726,14 +578,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	sequence: [
 		{
 			name: "sequence",
-			params: [
-				{ name: "start", type: "bigint" },
-				{ name: "stop", type: "bigint" },
-				{ name: "step", type: "bigint", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "start" }, { name: "stop" }, { name: "step", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: sequence(start, stop[, step]) - step optional, defaults to incrementing by 1
+	], // array.md
 	sha1: [{ name: "sha1", params: [{ name: "binary" }], origin: "harvested" }], // binary.md
 	sha256: [{ name: "sha256", params: [{ name: "binary" }], origin: "harvested" }], // binary.md
 	sha512: [{ name: "sha512", params: [{ name: "binary" }], origin: "harvested" }], // binary.md
@@ -750,25 +598,17 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	split: [
 		{
 			name: "split",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "delimiter", type: "varchar" },
-				{ name: "limit", type: "bigint", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "delimiter" }, { name: "limit", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: split(string, delimiter[, limit])
+	], // string.md
 	split_part: [
 		{
 			name: "split_part",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "delimiter", type: "varchar" },
-				{ name: "index", type: "bigint" },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "delimiter" }, { name: "index" }],
+			origin: "harvested",
 		},
-	], // curated: split_part(string, delimiter, index)
+	], // string.md
 	split_to_map: [
 		{
 			name: "split_to_map",
@@ -1000,14 +840,10 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 	strpos: [
 		{
 			name: "strpos",
-			params: [
-				{ name: "string", type: "varchar" },
-				{ name: "substring", type: "varchar" },
-				{ name: "instance", type: "bigint", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "string" }, { name: "substring" }, { name: "instance", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: strpos(string, substring[, instance])
+	], // string.md
 	substr: [
 		{
 			name: "substr",
@@ -1027,7 +863,7 @@ export const TRINO_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // string.md
-	sum: [{ name: "sum", params: [{ name: "x", type: "numeric" }], origin: "curated" }], // curated: sum(x)
+	sum: [{ name: "sum", params: [{ name: "x" }], origin: "harvested" }], // aggregate.md
 	t_cdf: [{ name: "t_cdf", params: [{ name: "x" }, { name: "df" }], origin: "harvested" }], // math.md
 	t_pdf: [{ name: "t_pdf", params: [{ name: "x" }, { name: "df" }], origin: "harvested" }], // math.md
 	tan: [{ name: "tan", params: [{ name: "x" }], origin: "harvested" }], // math.md

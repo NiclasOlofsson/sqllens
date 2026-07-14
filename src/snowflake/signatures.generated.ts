@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: docs.snowflake.com  snowflake/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-snowflake-syntax.mjs)
 // Overrides source: tools/signature-overrides/snowflake.mjs
-// Built 2026-07-14. 542 names (32 curated, 510 harvested), 26 with 2+ overloads.
+// Built 2026-07-14. 542 names (16 curated, 526 harvested), 37 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for snowflake: curated overrides folded over the harvested
@@ -9,7 +9,7 @@ import type { FnSignature } from "../signature/signatures.js";
  *  lowercased name. Each name maps to an ORDERED overload set - a name with one documented shape
  *  is a one-element array. `origin` says which layer produced the set. */
 export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
-	abs: [{ name: "ABS", params: [{ name: "expr", type: "numeric" }], origin: "curated" }], // curated: ABS
+	abs: [{ name: "ABS", params: [{ name: "num_expr" }], origin: "harvested" }], // functions/abs/1.txt
 	accumulate: [
 		{
 			name: "ACCUMULATE",
@@ -56,10 +56,12 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			name: "AI_COUNT_TOKENS",
 			params: [
 				{ name: "function_name" },
+				{ name: "model_name" },
 				{ name: "input_text" },
+				{ name: "options" },
 				{ name: "return_error_details", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
 		{
 			name: "AI_COUNT_TOKENS",
@@ -69,7 +71,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "input_text" },
 				{ name: "return_error_details", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
 		{
 			name: "AI_COUNT_TOKENS",
@@ -79,20 +81,18 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 				{ name: "options" },
 				{ name: "return_error_details", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
 		{
 			name: "AI_COUNT_TOKENS",
 			params: [
 				{ name: "function_name" },
-				{ name: "model_name" },
 				{ name: "input_text" },
-				{ name: "options" },
 				{ name: "return_error_details", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: AI_COUNT_TOKENS( function_name, [model_name,] input_text, [options,] [return_error_details] ) - four generic arity forms (2-5 args total span), functions/ai_count_tokens/1.txt
+	], // functions/ai_count_tokens/1.txt
 	ai_embed: [{ name: "AI_EMBED", params: [{ name: "model" }, { name: "input" }], origin: "harvested" }], // functions/ai_embed/1.txt
 	ai_extract: [
 		{ name: "AI_EXTRACT", params: [{ name: "text" }, { name: "responseFormat" }], origin: "harvested" },
@@ -395,15 +395,8 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	boolxor_agg: [{ name: "BOOLXOR_AGG", params: [{ name: "expr" }], origin: "harvested" }], // functions/boolxor_agg/1.txt
 	cbrt: [{ name: "CBRT", params: [{ name: "input_expr" }], origin: "harvested" }], // functions/cbrt/1.txt
 	ceil: [
-		{
-			name: "CEIL",
-			params: [
-				{ name: "input_expr", type: "numeric" },
-				{ name: "scale_expr", type: "integer", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: CEIL (scale optional)
+		{ name: "CEIL", params: [{ name: "input_expr" }, { name: "scale_expr", optional: true }], origin: "harvested" },
+	], // functions/ceil/1.txt
 	charindex: [
 		{
 			name: "CHARINDEX",
@@ -432,18 +425,22 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/collate/1.txt
 	collation: [{ name: "COLLATION", params: [{ name: "expression" }], origin: "harvested" }], // functions/collation/1.txt
 	compress: [{ name: "COMPRESS", params: [{ name: "input" }, { name: "method" }], origin: "harvested" }], // functions/compress/1.txt
-	concat: [{ name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: CONCAT (variadic) - kept over the harvest two-slot reading: the lax 1-arg minimum can only miss a diagnostic, never fake one (engine minimum unverified)
+	concat: [
+		{
+			name: "CONCAT",
+			params: [{ name: "expr" }, { name: "expr", optional: true }],
+			variadic: true,
+			origin: "harvested",
+		},
+	], // functions/concat/1.txt
 	concat_ws: [
 		{
 			name: "CONCAT_WS",
-			params: [
-				{ name: "separator", type: "string" },
-				{ name: "expr", type: "string" },
-			],
+			params: [{ name: "separator" }, { name: "expression" }, { name: "expression", optional: true }],
 			variadic: true,
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: CONCAT_WS - kept over the harvest reading, lax minimum on the never-false-flag side (engine minimum unverified)
+	], // functions/concat_ws/1.txt
 	conditional_change_event: [{ name: "CONDITIONAL_CHANGE_EVENT", params: [{ name: "expr1" }], origin: "harvested" }], // functions/conditional_change_event/1.txt
 	conditional_true_event: [{ name: "CONDITIONAL_TRUE_EVENT", params: [{ name: "expr1" }], origin: "harvested" }], // functions/conditional_true_event/1.txt
 	contains: [{ name: "CONTAINS", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/contains/1.txt
@@ -528,6 +525,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/datasketches_hll_estimate/1.txt
 	date: [
 		{ name: "DATE", params: [{ name: "string_expr" }, { name: "format", optional: true }], origin: "harvested" },
+		{ name: "DATE", params: [{ name: "timestamp_expr" }], origin: "harvested" },
+		{ name: "DATE", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "DATE", params: [{ name: "variant_expr" }], origin: "harvested" },
 	], // functions/to_date/1.txt
 	date_from_parts: [
 		{
@@ -553,10 +553,10 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	dateadd: [
 		{
 			name: "DATEADD",
-			params: [{ name: "date_or_time_part" }, { name: "value", type: "integer" }, { name: "date_or_time_expr" }],
-			origin: "curated",
+			params: [{ name: "date_or_time_part" }, { name: "value" }, { name: "date_or_time_expr" }],
+			origin: "harvested",
 		},
-	], // curated: DATEADD
+	], // functions/dateadd/1.txt
 	datediff: [
 		{
 			name: "DATEDIFF",
@@ -624,13 +624,10 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	floor: [
 		{
 			name: "FLOOR",
-			params: [
-				{ name: "input_expr", type: "numeric" },
-				{ name: "scale_expr", type: "integer", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "input_expr" }, { name: "scale_expr", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: FLOOR (scale optional)
+	], // functions/floor/1.txt
 	generate_column_description: [
 		{ name: "GENERATE_COLUMN_DESCRIPTION", params: [{ name: "expr" }, { name: "string" }], origin: "harvested" },
 	], // functions/generate_column_description/1.txt
@@ -856,13 +853,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	hll_export: [{ name: "HLL_EXPORT", params: [{ name: "binary_expr" }], origin: "harvested" }], // functions/hll_export/1.txt
 	hll_import: [{ name: "HLL_IMPORT", params: [{ name: "obj" }], origin: "harvested" }], // functions/hll_import/1.txt
 	hour: [{ name: "HOUR", params: [{ name: "time_interval_or_timestamp_expr" }], origin: "harvested" }], // functions/hour-minute-second/1.txt
-	iff: [
-		{
-			name: "IFF",
-			params: [{ name: "condition", type: "boolean" }, { name: "expr1" }, { name: "expr2" }],
-			origin: "curated",
-		},
-	], // curated: IFF
+	iff: [{ name: "IFF", params: [{ name: "condition" }, { name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/iff/1.txt
 	ifnull: [{ name: "IFNULL", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/ifnull/1.txt
 	initcap: [
 		{ name: "INITCAP", params: [{ name: "expr" }, { name: "delimiters", optional: true }], origin: "harvested" },
@@ -1032,16 +1023,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/min_by/1.txt
 	minhash_combine: [{ name: "MINHASH_COMBINE", params: [{ name: "state" }], origin: "harvested" }], // functions/minhash_combine/1.txt
 	minute: [{ name: "MINUTE", params: [{ name: "time_interval_or_timestamp_expr" }], origin: "harvested" }], // functions/hour-minute-second/1.txt
-	mod: [
-		{
-			name: "MOD",
-			params: [
-				{ name: "expr1", type: "numeric" },
-				{ name: "expr2", type: "numeric" },
-			],
-			origin: "curated",
-		},
-	], // curated: MOD
+	mod: [{ name: "MOD", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/mod/1.txt
 	mode: [{ name: "MODE", params: [{ name: "expr1" }], origin: "harvested" }], // functions/mode/1.txt
 	model_monitor_drift_metric: [
 		{
@@ -1207,16 +1189,16 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "REGEXP_REPLACE",
 			params: [
-				{ name: "subject", type: "string" },
-				{ name: "pattern", type: "string" },
-				{ name: "replacement", type: "string", optional: true },
-				{ name: "position", type: "integer", optional: true },
-				{ name: "occurrence", type: "integer", optional: true },
-				{ name: "parameters", type: "string", optional: true },
+				{ name: "subject" },
+				{ name: "pattern" },
+				{ name: "replacement", optional: true },
+				{ name: "position", optional: true },
+				{ name: "occurrence", optional: true },
+				{ name: "parameters", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: REGEXP_REPLACE
+	], // functions/regexp_replace/1.txt
 	regexp_substr: [
 		{
 			name: "REGEXP_SUBSTR",
@@ -1251,14 +1233,10 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	replace: [
 		{
 			name: "REPLACE",
-			params: [
-				{ name: "subject", type: "string" },
-				{ name: "pattern", type: "string" },
-				{ name: "replacement", type: "string", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "subject" }, { name: "pattern" }, { name: "replacement", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: REPLACE (replacement optional → '')
+	], // functions/replace/1.txt
 	replication_group_dangling_references: [
 		{
 			name: "REPLICATION_GROUP_DANGLING_REFERENCES",
@@ -1278,13 +1256,13 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "ROUND",
 			params: [
-				{ name: "input_expr", type: "numeric" },
-				{ name: "scale_expr", type: "integer", optional: true },
-				{ name: "rounding_mode", type: "string", optional: true },
+				{ name: "input_expr" },
+				{ name: "scale_expr", optional: true },
+				{ name: "rounding_mode", optional: true },
 			],
-			origin: "curated",
+			origin: "harvested",
 		},
-	], // curated: ROUND (scale + rounding_mode optional)
+	], // functions/round/1.txt
 	row_number: [{ name: "ROW_NUMBER", params: [], origin: "harvested" }], // functions/row_number/1.txt
 	rpad: [
 		{
@@ -1352,6 +1330,11 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 		{
 			name: "ST_AZIMUTH",
 			params: [{ name: "geography_expression_for_origin" }, { name: "geography_expression_for_target" }],
+			origin: "harvested",
+		},
+		{
+			name: "ST_AZIMUTH",
+			params: [{ name: "geometry_expression_for_origin" }, { name: "geometry_expression_for_target" }],
 			origin: "harvested",
 		},
 	], // functions/st_azimuth/1.txt
@@ -1626,6 +1609,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			],
 			origin: "harvested",
 		},
+		{ name: "ST_SIMPLIFY", params: [{ name: "geometry_expression" }, { name: "tolerance" }], origin: "harvested" },
 	], // functions/st_simplify/1.txt
 	st_srid: [{ name: "ST_SRID", params: [{ name: "geography_or_geometry_expression" }], origin: "harvested" }], // functions/st_srid/1.txt
 	st_startpoint: [
@@ -1730,7 +1714,12 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/tag_references_with_lineage/1.txt
 	tan: [{ name: "TAN", params: [{ name: "input_expr" }], origin: "harvested" }], // functions/tan/1.txt
 	tanh: [{ name: "TANH", params: [{ name: "real_expr" }], origin: "harvested" }], // functions/tanh/1.txt
-	time: [{ name: "TIME", params: [{ name: "string_expr" }], origin: "harvested" }], // functions/to_time/1.txt
+	time: [
+		{ name: "TIME", params: [{ name: "string_expr" }], origin: "harvested" },
+		{ name: "TIME", params: [{ name: "timestamp_expr" }], origin: "harvested" },
+		{ name: "TIME", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "TIME", params: [{ name: "variant_expr" }], origin: "harvested" },
+	], // functions/to_time/1.txt
 	time_from_parts: [
 		{
 			name: "TIME_FROM_PARTS",
@@ -1846,22 +1835,29 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			params: [{ name: "string_expr" }, { name: "format", optional: true }],
 			origin: "harvested",
 		},
+		{ name: "TO_BINARY", params: [{ name: "variant_expr" }], origin: "harvested" },
 	], // functions/to_binary/1.txt
 	to_boolean: [{ name: "TO_BOOLEAN", params: [{ name: "string_or_numeric_expr" }], origin: "harvested" }], // functions/to_boolean/1.txt
 	to_char: [
 		{
 			name: "TO_CHAR",
-			params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-			origin: "curated",
+			params: [{ name: "numeric_expr" }, { name: "format", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: TO_CHAR(<expr>) | TO_CHAR(<numeric_expr|date_or_time_expr|binary_expr>[, '<format>'])
-	to_date: [
 		{
-			name: "TO_DATE",
-			params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-			origin: "curated",
+			name: "TO_CHAR",
+			params: [{ name: "date_or_time_expr" }, { name: "format", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: TO_DATE , DATE (format optional)
+		{ name: "TO_CHAR", params: [{ name: "binary_expr" }, { name: "format", optional: true }], origin: "harvested" },
+		{ name: "TO_CHAR", params: [{ name: "expr" }], origin: "harvested" },
+	], // functions/to_char/1.txt
+	to_date: [
+		{ name: "TO_DATE", params: [{ name: "string_expr" }, { name: "format", optional: true }], origin: "harvested" },
+		{ name: "TO_DATE", params: [{ name: "timestamp_expr" }], origin: "harvested" },
+		{ name: "TO_DATE", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "TO_DATE", params: [{ name: "variant_expr" }], origin: "harvested" },
+	], // functions/to_date/1.txt
 	to_decfloat: [
 		{ name: "TO_DECFLOAT", params: [{ name: "expr" }, { name: "format", optional: true }], origin: "harvested" },
 	], // functions/to_decfloat/1.txt
@@ -1894,6 +1890,9 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	to_object: [{ name: "TO_OBJECT", params: [{ name: "expr" }], origin: "harvested" }], // functions/to_object/1.txt
 	to_time: [
 		{ name: "TO_TIME", params: [{ name: "string_expr" }, { name: "format", optional: true }], origin: "harvested" },
+		{ name: "TO_TIME", params: [{ name: "timestamp_expr" }], origin: "harvested" },
+		{ name: "TO_TIME", params: [{ name: "integer" }], origin: "harvested" },
+		{ name: "TO_TIME", params: [{ name: "variant_expr" }], origin: "harvested" },
 	], // functions/to_time/1.txt
 	to_timestamp: [
 		{
@@ -1906,10 +1905,21 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 	to_varchar: [
 		{
 			name: "TO_VARCHAR",
-			params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-			origin: "curated",
+			params: [{ name: "numeric_expr" }, { name: "format", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: TO_VARCHAR(<expr>) | TO_VARCHAR(<numeric_expr|date_or_time_expr|binary_expr>[, '<format>'])
+		{
+			name: "TO_VARCHAR",
+			params: [{ name: "date_or_time_expr" }, { name: "format", optional: true }],
+			origin: "harvested",
+		},
+		{
+			name: "TO_VARCHAR",
+			params: [{ name: "binary_expr" }, { name: "format", optional: true }],
+			origin: "harvested",
+		},
+		{ name: "TO_VARCHAR", params: [{ name: "expr" }], origin: "harvested" },
+	], // functions/to_char/1.txt
 	to_variant: [{ name: "TO_VARIANT", params: [{ name: "expr" }], origin: "harvested" }], // functions/to_variant/1.txt
 	to_xml: [{ name: "TO_XML", params: [{ name: "expression" }], origin: "harvested" }], // functions/to_xml/1.txt
 	transform: [{ name: "TRANSFORM", params: [{ name: "array" }, { name: "lambda_expression" }], origin: "harvested" }], // functions/transform/1.txt
@@ -1920,16 +1930,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // functions/translate/1.txt
-	trim: [
-		{
-			name: "TRIM",
-			params: [
-				{ name: "expr", type: "string" },
-				{ name: "characters", type: "string", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: TRIM (characters optional)
+	trim: [{ name: "TRIM", params: [{ name: "expr" }, { name: "characters", optional: true }], origin: "harvested" }], // functions/trim/1.txt
 	trunc: [
 		{
 			name: "TRUNC",
@@ -1982,6 +1983,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			params: [{ name: "string_expr" }, { name: "format", optional: true }],
 			origin: "harvested",
 		},
+		{ name: "TRY_TO_DATE", params: [{ name: "integer" }], origin: "harvested" },
 	], // functions/try_to_date/1.txt
 	try_to_decfloat: [
 		{
@@ -2020,6 +2022,7 @@ export const SNOWFLAKE_SIGNATURES: Record<string, FnSignature[]> = {
 			params: [{ name: "string_expr" }, { name: "format", optional: true }],
 			origin: "harvested",
 		},
+		{ name: "TRY_TO_TIME", params: [{ name: "integer" }], origin: "harvested" },
 	], // functions/try_to_time/1.txt
 	try_to_uuid: [{ name: "TRY_TO_UUID", params: [{ name: "string_expr" }], origin: "harvested" }], // functions/try_to_uuid/1.txt
 	typeof: [{ name: "TYPEOF", params: [{ name: "expr" }], origin: "harvested" }], // functions/typeof/1.txt

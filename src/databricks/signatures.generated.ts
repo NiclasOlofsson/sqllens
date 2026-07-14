@@ -1,7 +1,7 @@
 // GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Harvested source: docs.databricks.com  databricks/docs/syntax/functions/<name>/N.txt (Syntax blocks, captured by tools/scrape-databricks-syntax.mjs)
 // Overrides source: tools/signature-overrides/databricks.mjs
-// Built 2026-07-14. 645 names (37 curated, 608 harvested), 5 with 2+ overloads.
+// Built 2026-07-14. 668 names (16 curated, 652 harvested), 10 with 2+ overloads.
 import type { FnSignature } from "../signature/signatures.js";
 
 /** The merged function-signature table for databricks: curated overrides folded over the harvested
@@ -12,16 +12,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	abs: [{ name: "abs", params: [{ name: "expr", type: "numeric" }], origin: "curated" }], // curated: abs function
 	acos: [{ name: "acos", params: [{ name: "expr" }], origin: "harvested" }], // functions/acos/1.txt
 	acosh: [{ name: "acosh", params: [{ name: "expr" }], origin: "harvested" }], // functions/acosh/1.txt
-	add_months: [
-		{
-			name: "add_months",
-			params: [
-				{ name: "startDate", type: "date" },
-				{ name: "numMonths", type: "int" },
-			],
-			origin: "curated",
-		},
-	], // curated: add_months function
+	add_months: [{ name: "add_months", params: [{ name: "startDate" }, { name: "numMonths" }], origin: "harvested" }], // functions/add_months/1.txt
 	aes_decrypt: [
 		{
 			name: "aes_decrypt",
@@ -115,6 +106,9 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/ai_summarize/1.txt
 	ai_translate: [{ name: "ai_translate", params: [{ name: "content" }, { name: "to_lang" }], origin: "harvested" }], // functions/ai_translate/1.txt
+	any_value: [
+		{ name: "any_value", params: [{ name: "expr" }, { name: "ignoreNull", optional: true }], origin: "harvested" },
+	], // functions/any_value/1.txt
 	approx_count_distinct: [
 		{
 			name: "approx_count_distinct",
@@ -203,13 +197,14 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	atan: [{ name: "atan", params: [{ name: "expr" }], origin: "harvested" }], // functions/atan/1.txt
 	atan2: [{ name: "atan2", params: [{ name: "exprY" }, { name: "exprX" }], origin: "harvested" }], // functions/atan2/1.txt
 	atanh: [{ name: "atanh", params: [{ name: "expr" }], origin: "harvested" }], // functions/atanh/1.txt
-	avg: [{ name: "avg", params: [{ name: "expr", type: "numeric" }], origin: "curated" }], // curated: avg aggregate
+	avg: [{ name: "avg", params: [{ name: "expr" }], origin: "harvested" }], // functions/avg/1.txt
 	base64: [{ name: "base64", params: [{ name: "expr" }], origin: "harvested" }], // functions/base64/1.txt
 	bigint: [{ name: "bigint", params: [{ name: "expr" }], origin: "harvested" }], // functions/bigint/1.txt
 	bin: [{ name: "bin", params: [{ name: "expr" }], origin: "harvested" }], // functions/bin/1.txt
 	binary: [{ name: "binary", params: [{ name: "expr" }], origin: "harvested" }], // functions/binary/1.txt
 	bit_and: [{ name: "bit_and", params: [{ name: "expr" }], origin: "harvested" }], // functions/bit_and/1.txt
 	bit_count: [{ name: "bit_count", params: [{ name: "expr" }], origin: "harvested" }], // functions/bit_count/1.txt
+	bit_get: [{ name: "bit_get", params: [{ name: "expr" }, { name: "pos" }], origin: "harvested" }], // functions/bit_get/1.txt
 	bit_length: [{ name: "bit_length", params: [{ name: "expr" }], origin: "harvested" }], // functions/bit_length/1.txt
 	bit_or: [{ name: "bit_or", params: [{ name: "expr" }], origin: "harvested" }], // functions/bit_or/1.txt
 	bit_reverse: [{ name: "bit_reverse", params: [{ name: "expr" }], origin: "harvested" }], // functions/bit_reverse/1.txt
@@ -230,16 +225,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	cardinality: [{ name: "cardinality", params: [{ name: "expr" }], origin: "harvested" }], // functions/cardinality/1.txt
 	cast: [{ name: "cast", params: [{ name: "expr" }, { name: "type" }], origin: "curated" }], // curated: cast function
 	cbrt: [{ name: "cbrt", params: [{ name: "expr" }], origin: "harvested" }], // functions/cbrt/1.txt
-	ceil: [
-		{
-			name: "ceil",
-			params: [
-				{ name: "expr", type: "numeric" },
-				{ name: "targetScale", type: "int", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: ceil function (scale optional)
+	ceil: [{ name: "ceil", params: [{ name: "expr" }, { name: "targetScale", optional: true }], origin: "harvested" }], // functions/ceil/1.txt
 	ceiling: [
 		{ name: "ceiling", params: [{ name: "expr" }, { name: "targetScale", optional: true }], origin: "harvested" },
 	], // functions/ceiling/1.txt
@@ -260,7 +246,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	collations: [{ name: "collations", params: [], origin: "harvested" }], // functions/collations/1.txt
 	collect_list: [{ name: "collect_list", params: [{ name: "expr" }], origin: "harvested" }], // functions/collect_list/1.txt
 	collect_set: [{ name: "collect_set", params: [{ name: "expr" }], origin: "harvested" }], // functions/collect_set/1.txt
-	concat: [{ name: "concat", params: [{ name: "expr", type: "string" }], variadic: true, origin: "curated" }], // curated: concat function (variadic) - min arity 1 per the docs own two-slot notation reading in the reconciliation (curated judged right there); kept over the harvest two-slot minimum
+	concat: [{ name: "concat", params: [{ name: "expr1" }, { name: "expr2" }], variadic: true, origin: "harvested" }], // functions/concat/1.txt
 	concat_ws: [
 		{
 			name: "concat_ws",
@@ -292,6 +278,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	crc32: [{ name: "crc32", params: [{ name: "expr" }], origin: "harvested" }], // functions/crc32/1.txt
 	csc: [{ name: "csc", params: [{ name: "expr" }], origin: "harvested" }], // functions/csc/1.txt
 	cube: [{ name: "cube", params: [{ name: "expr1" }], variadic: true, origin: "harvested" }], // functions/cube/1.txt
+	cume_dist: [{ name: "cume_dist", params: [], origin: "harvested" }], // functions/cume_dist/1.txt
 	curdate: [{ name: "curdate", params: [], origin: "harvested" }], // functions/curdate/1.txt
 	current_catalog: [{ name: "current_catalog", params: [], origin: "harvested" }], // functions/current_catalog/1.txt
 	current_database: [{ name: "current_database", params: [], origin: "harvested" }], // functions/current_database/1.txt
@@ -306,26 +293,13 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	current_version: [{ name: "current_version", params: [], origin: "harvested" }], // functions/current_version/1.txt
 	date: [{ name: "date", params: [{ name: "expr" }], origin: "harvested" }], // functions/date/1.txt
 	date_add: [
-		{
-			name: "date_add",
-			params: [
-				{ name: "start_date", type: "date" },
-				{ name: "num_days", type: "int" },
-				{ name: "expr", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: date_add function
-	date_format: [
-		{
-			name: "date_format",
-			params: [
-				{ name: "expr", type: "date" },
-				{ name: "fmt", type: "string" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_format function
+		{ name: "date_add", params: [{ name: "unit" }, { name: "value" }, { name: "expr" }], origin: "harvested" },
+		{ name: "date_add", params: [{ name: "startDate" }, { name: "numDays" }], origin: "harvested" },
+	], // functions/date_add3/1.txt, functions/date_add/1.txt
+	date_diff: [
+		{ name: "date_diff", params: [{ name: "unit" }, { name: "start" }, { name: "end" }], origin: "harvested" },
+	], // functions/date_diff/1.txt
+	date_format: [{ name: "date_format", params: [{ name: "expr" }, { name: "fmt" }], origin: "harvested" }], // functions/date_format/1.txt
 	date_from_unix_date: [{ name: "date_from_unix_date", params: [{ name: "days" }], origin: "harvested" }], // functions/date_from_unix_date/1.txt
 	date_part: [{ name: "date_part", params: [{ name: "fieldStr" }, { name: "expr" }], origin: "harvested" }], // functions/date_part/1.txt
 	date_sub: [
@@ -338,38 +312,15 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: date_sub function - docs.databricks.com functions/date_sub documents only date_sub(startDate, numDays); no unit-based 3-arg overload exists (unlike date_add)
-	date_trunc: [
-		{
-			name: "date_trunc",
-			params: [
-				{ name: "unit", type: "string" },
-				{ name: "expr", type: "timestamp" },
-			],
-			origin: "curated",
-		},
-	], // curated: date_trunc function - date_trunc(unit, expr)
+	date_trunc: [{ name: "date_trunc", params: [{ name: "unit" }, { name: "expr" }], origin: "harvested" }], // functions/date_trunc/1.txt
 	dateadd: [
-		{
-			name: "dateadd",
-			params: [
-				{ name: "start_date", type: "date" },
-				{ name: "num_days", type: "int" },
-				{ name: "expr", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: dateadd function / dateadd (days) function
+		{ name: "dateadd", params: [{ name: "unit" }, { name: "value" }, { name: "expr" }], origin: "harvested" },
+		{ name: "dateadd", params: [{ name: "startDate" }, { name: "numDays" }], origin: "harvested" },
+	], // functions/dateadd/1.txt, functions/dateadd2/1.txt
 	datediff: [
-		{
-			name: "datediff",
-			params: [
-				{ name: "endDate", type: "date" },
-				{ name: "startDate", type: "date" },
-				{ name: "endTs", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: datediff function
+		{ name: "datediff", params: [{ name: "unit" }, { name: "start" }, { name: "end" }], origin: "harvested" },
+		{ name: "datediff", params: [{ name: "endDate" }, { name: "startDate" }], origin: "harvested" },
+	], // functions/datediff3/1.txt, functions/datediff/1.txt
 	day: [{ name: "day", params: [{ name: "expr" }], origin: "harvested" }], // functions/day/1.txt
 	dayname: [{ name: "dayname", params: [{ name: "expr" }], origin: "harvested" }], // functions/dayname/1.txt
 	dayofmonth: [{ name: "dayofmonth", params: [{ name: "expr" }], origin: "harvested" }], // functions/dayofmonth/1.txt
@@ -407,18 +358,19 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	find_in_set: [
 		{ name: "find_in_set", params: [{ name: "searchExpr" }, { name: "sourceExpr" }], origin: "harvested" },
 	], // functions/find_in_set/1.txt
+	first: [{ name: "first", params: [{ name: "expr" }, { name: "ignoreNull", optional: true }], origin: "harvested" }], // functions/first/1.txt
+	first_value: [
+		{
+			name: "first_value",
+			params: [{ name: "expr" }, { name: "ignoreNull", optional: true }],
+			origin: "harvested",
+		},
+	], // functions/first_value/1.txt
 	flatten: [{ name: "flatten", params: [{ name: "expr" }], origin: "harvested" }], // functions/flatten/1.txt
 	float: [{ name: "float", params: [{ name: "expr" }], origin: "harvested" }], // functions/float/1.txt
 	floor: [
-		{
-			name: "floor",
-			params: [
-				{ name: "expr", type: "numeric" },
-				{ name: "targetScale", type: "int", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: floor function (scale optional)
+		{ name: "floor", params: [{ name: "expr" }, { name: "targetScale", optional: true }], origin: "harvested" },
+	], // functions/floor/1.txt
 	forall: [{ name: "forall", params: [{ name: "expr" }, { name: "func" }], origin: "harvested" }], // functions/forall/1.txt
 	format_number: [
 		{ name: "format_number", params: [{ name: "expr" }, { name: "scale" }], origin: "harvested" },
@@ -763,8 +715,26 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "kll_sketch_to_string_float", params: [{ name: "sketch" }], origin: "harvested" },
 	], // functions/kll_sketch_to_string_float/1.txt
 	kurtosis: [{ name: "kurtosis", params: [{ name: "expr" }], origin: "harvested" }], // functions/kurtosis/1.txt
+	lag: [
+		{
+			name: "lag",
+			params: [{ name: "expr" }, { name: "offset", optional: true }, { name: "default", optional: true }],
+			origin: "harvested",
+		},
+	], // functions/lag/1.txt
+	last: [{ name: "last", params: [{ name: "expr" }, { name: "ignoreNull", optional: true }], origin: "harvested" }], // functions/last/1.txt
 	last_day: [{ name: "last_day", params: [{ name: "expr" }], origin: "harvested" }], // functions/last_day/1.txt
+	last_value: [
+		{ name: "last_value", params: [{ name: "expr" }, { name: "ignoreNull", optional: true }], origin: "harvested" },
+	], // functions/last_value/1.txt
 	lcase: [{ name: "lcase", params: [{ name: "expr" }], origin: "harvested" }], // functions/lcase/1.txt
+	lead: [
+		{
+			name: "lead",
+			params: [{ name: "expr" }, { name: "offset", optional: true }, { name: "default", optional: true }],
+			origin: "harvested",
+		},
+	], // functions/lead/1.txt
 	least: [{ name: "least", params: [{ name: "expr1" }, { name: "expr2" }], variadic: true, origin: "harvested" }], // functions/least/1.txt
 	left: [{ name: "left", params: [{ name: "str" }, { name: "len" }], origin: "harvested" }], // functions/left/1.txt
 	len: [{ name: "len", params: [{ name: "expr" }], origin: "harvested" }], // functions/len/1.txt
@@ -777,6 +747,9 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/levenshtein/1.txt
 	list_secrets: [{ name: "list_secrets", params: [{ name: "scopeStr", optional: true }], origin: "harvested" }], // functions/list_secrets/1.txt
+	listagg: [
+		{ name: "listagg", params: [{ name: "expr" }, { name: "delimiter", optional: true }], origin: "harvested" },
+	], // functions/listagg/1.txt
 	ln: [{ name: "ln", params: [{ name: "expr" }], origin: "harvested" }], // functions/ln/1.txt
 	locate: [
 		{
@@ -807,6 +780,26 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	make_time: [
 		{ name: "make_time", params: [{ name: "hour" }, { name: "minute" }, { name: "second" }], origin: "harvested" },
 	], // functions/make_time/1.txt
+	make_timestamp: [
+		{
+			name: "make_timestamp",
+			params: [
+				{ name: "year" },
+				{ name: "month" },
+				{ name: "day" },
+				{ name: "hour" },
+				{ name: "min" },
+				{ name: "sec" },
+				{ name: "timezone", optional: true },
+			],
+			origin: "harvested",
+		},
+		{
+			name: "make_timestamp",
+			params: [{ name: "date" }, { name: "time", optional: true }, { name: "timezone", optional: true }],
+			origin: "harvested",
+		},
+	], // functions/make_timestamp/1.txt
 	make_valid_utf8: [{ name: "make_valid_utf8", params: [{ name: "strExpr" }], origin: "harvested" }], // functions/make_valid_utf8/1.txt
 	map_contains_key: [{ name: "map_contains_key", params: [{ name: "map" }, { name: "key" }], origin: "harvested" }], // functions/map_contains_key/1.txt
 	map_entries: [{ name: "map_entries", params: [{ name: "map" }], origin: "harvested" }], // functions/map_entries/1.txt
@@ -853,16 +846,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/min_by/2.txt
 	minute: [{ name: "minute", params: [{ name: "expr" }], origin: "harvested" }], // functions/minute/1.txt
-	mod: [
-		{
-			name: "mod",
-			params: [
-				{ name: "dividend", type: "numeric" },
-				{ name: "divisor", type: "numeric" },
-			],
-			origin: "curated",
-		},
-	], // curated: mod function
+	mod: [{ name: "mod", params: [{ name: "dividend" }, { name: "divisor" }], origin: "harvested" }], // functions/mod/1.txt
 	mode: [
 		{ name: "mode", params: [{ name: "expr" }, { name: "deterministic", optional: true }], origin: "harvested" },
 	], // functions/mode/1.txt
@@ -879,6 +863,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	negative: [{ name: "negative", params: [{ name: "expr" }], origin: "harvested" }], // functions/negative/1.txt
 	next_day: [{ name: "next_day", params: [{ name: "expr" }, { name: "dayOfWeek" }], origin: "harvested" }], // functions/next_day/1.txt
 	now: [{ name: "now", params: [], origin: "harvested" }], // functions/now/1.txt
+	nth_value: [{ name: "nth_value", params: [{ name: "expr" }, { name: "offset" }], origin: "harvested" }], // functions/nth_value/1.txt
 	ntile: [{ name: "ntile", params: [{ name: "n", optional: true }], origin: "harvested" }], // functions/ntile/1.txt
 	nullif: [{ name: "nullif", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/nullif/1.txt
 	nullifzero: [{ name: "nullifzero", params: [{ name: "expr" }], origin: "harvested" }], // functions/nullifzero/1.txt
@@ -915,6 +900,8 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // functions/percentile_approx/1.txt
+	percentile_cont: [{ name: "percentile_cont", params: [{ name: "percentile" }], origin: "harvested" }], // functions/percentile_cont/1.txt
+	percentile_disc: [{ name: "percentile_disc", params: [{ name: "percentile" }], origin: "harvested" }], // functions/percentile_disc/1.txt
 	pi: [{ name: "pi", params: [], origin: "harvested" }], // functions/pi/1.txt
 	pmod: [{ name: "pmod", params: [{ name: "dividend" }, { name: "divisor" }], origin: "harvested" }], // functions/pmod/1.txt
 	posexplode: [{ name: "posexplode", params: [{ name: "collection" }], origin: "harvested" }], // functions/posexplode/1.txt
@@ -928,16 +915,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/position/1.txt
 	positive: [{ name: "positive", params: [{ name: "expr" }], origin: "harvested" }], // functions/positive/1.txt
 	pow: [{ name: "pow", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/pow/1.txt
-	power: [
-		{
-			name: "power",
-			params: [
-				{ name: "expr1", type: "double" },
-				{ name: "expr2", type: "double" },
-			],
-			origin: "curated",
-		},
-	], // curated: power function
+	power: [{ name: "power", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/power/1.txt
 	quarter: [{ name: "quarter", params: [{ name: "expr" }], origin: "harvested" }], // functions/quarter/1.txt
 	radians: [{ name: "radians", params: [{ name: "expr" }], origin: "harvested" }], // functions/radians/1.txt
 	raise_error: [{ name: "raise_error", params: [{ name: "expr" }], origin: "harvested" }], // functions/raise_error/1.txt
@@ -945,6 +923,19 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	randn: [{ name: "randn", params: [{ name: "seed", optional: true }], origin: "harvested" }], // functions/randn/1.txt
 	random: [{ name: "random", params: [{ name: "seed", optional: true }], origin: "harvested" }], // functions/random/1.txt
 	randstr: [{ name: "randstr", params: [{ name: "length" }, { name: "seed", optional: true }], origin: "harvested" }], // functions/randstr/1.txt
+	range: [
+		{
+			name: "range",
+			params: [
+				{ name: "start" },
+				{ name: "end" },
+				{ name: "step", optional: true },
+				{ name: "numParts", optional: true },
+			],
+			origin: "harvested",
+		},
+		{ name: "range", params: [{ name: "end" }], origin: "harvested" },
+	], // functions/range/1.txt
 	rank: [{ name: "rank", params: [], origin: "harvested" }], // functions/rank/1.txt
 	read_state_metadata: [{ name: "read_state_metadata", params: [{ name: "path" }], origin: "harvested" }], // functions/read_state_metadata/1.txt
 	reduce: [
@@ -958,14 +949,10 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	regexp_extract: [
 		{
 			name: "regexp_extract",
-			params: [
-				{ name: "str", type: "string" },
-				{ name: "regexp", type: "string" },
-				{ name: "idx", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "str" }, { name: "regexp" }, { name: "idx", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: regexp_extract function (idx optional → 1)
+	], // functions/regexp_extract/1.txt
 	regexp_extract_all: [
 		{
 			name: "regexp_extract_all",
@@ -977,15 +964,10 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	regexp_replace: [
 		{
 			name: "regexp_replace",
-			params: [
-				{ name: "str", type: "string" },
-				{ name: "regexp", type: "string" },
-				{ name: "rep", type: "string" },
-				{ name: "position", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "str" }, { name: "regexp" }, { name: "rep" }, { name: "position", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: regexp_replace function
+	], // functions/regexp_replace/1.txt
 	regexp_substr: [{ name: "regexp_substr", params: [{ name: "str" }, { name: "regexp" }], origin: "harvested" }], // functions/regexp_substr/1.txt
 	regr_avgx: [{ name: "regr_avgx", params: [{ name: "yExpr" }, { name: "xExpr" }], origin: "harvested" }], // functions/regr_avgx/1.txt
 	regr_avgy: [{ name: "regr_avgy", params: [{ name: "yExpr" }, { name: "xExpr" }], origin: "harvested" }], // functions/regr_avgy/1.txt
@@ -1000,27 +982,16 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	replace: [
 		{
 			name: "replace",
-			params: [
-				{ name: "str", type: "string" },
-				{ name: "search", type: "string" },
-				{ name: "replace", type: "string", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "str" }, { name: "search" }, { name: "replace", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: replace function (replace optional → '')
+	], // functions/replace/1.txt
 	reverse: [{ name: "reverse", params: [{ name: "expr" }], origin: "harvested" }], // functions/reverse/1.txt
 	right: [{ name: "right", params: [{ name: "str" }, { name: "len" }], origin: "harvested" }], // functions/right/1.txt
 	rint: [{ name: "rint", params: [{ name: "expr" }], origin: "harvested" }], // functions/rint/1.txt
 	round: [
-		{
-			name: "round",
-			params: [
-				{ name: "expr", type: "numeric" },
-				{ name: "targetScale", type: "int", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: round function (scale optional → 0)
+		{ name: "round", params: [{ name: "expr" }, { name: "targetScale", optional: true }], origin: "harvested" },
+	], // functions/round/1.txt
 	row_number: [{ name: "row_number", params: [], origin: "harvested" }], // functions/row_number/1.txt
 	rpad: [
 		{
@@ -1103,14 +1074,10 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	split: [
 		{
 			name: "split",
-			params: [
-				{ name: "str", type: "string" },
-				{ name: "regex", type: "string" },
-				{ name: "limit", type: "int", optional: true },
-			],
-			origin: "curated",
+			params: [{ name: "str" }, { name: "regex" }, { name: "limit", optional: true }],
+			origin: "harvested",
 		},
-	], // curated: split function (limit optional)
+	], // functions/split/1.txt
 	split_part: [
 		{
 			name: "split_part",
@@ -1366,6 +1333,9 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		},
 	], // functions/str_to_map/1.txt
 	string: [{ name: "string", params: [{ name: "expr" }], origin: "harvested" }], // functions/string/1.txt
+	string_agg: [
+		{ name: "string_agg", params: [{ name: "expr" }, { name: "delimiter", optional: true }], origin: "harvested" },
+	], // functions/string_agg/1.txt
 	substr: [
 		{
 			name: "substr",
@@ -1395,7 +1365,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // functions/substring_index/1.txt
-	sum: [{ name: "sum", params: [{ name: "expr", type: "numeric" }], origin: "curated" }], // curated: sum aggregate
+	sum: [{ name: "sum", params: [{ name: "expr" }], origin: "harvested" }], // functions/sum/1.txt
 	table_changes: [
 		{
 			name: "table_changes",
@@ -1434,6 +1404,9 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "harvested",
 		},
 	], // functions/theta_union_agg/1.txt
+	time_diff: [
+		{ name: "time_diff", params: [{ name: "unit" }, { name: "start" }, { name: "end" }], origin: "harvested" },
+	], // functions/time_diff/1.txt
 	time_from_micros: [{ name: "time_from_micros", params: [{ name: "expr" }], origin: "harvested" }], // functions/time_from_micros/1.txt
 	time_from_millis: [{ name: "time_from_millis", params: [{ name: "expr" }], origin: "harvested" }], // functions/time_from_millis/1.txt
 	time_from_seconds: [{ name: "time_from_seconds", params: [{ name: "expr" }], origin: "harvested" }], // functions/time_from_seconds/1.txt
@@ -1441,10 +1414,19 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	time_to_millis: [{ name: "time_to_millis", params: [{ name: "expr" }], origin: "harvested" }], // functions/time_to_millis/1.txt
 	time_to_seconds: [{ name: "time_to_seconds", params: [{ name: "expr" }], origin: "harvested" }], // functions/time_to_seconds/1.txt
 	time_trunc: [{ name: "time_trunc", params: [{ name: "unit" }, { name: "expr" }], origin: "harvested" }], // functions/time_trunc/1.txt
+	timediff: [
+		{ name: "timediff", params: [{ name: "unit" }, { name: "start" }, { name: "end" }], origin: "harvested" },
+	], // functions/timediff/1.txt
 	timestamp: [{ name: "timestamp", params: [{ name: "expr" }], origin: "harvested" }], // functions/timestamp/1.txt
 	timestamp_micros: [{ name: "timestamp_micros", params: [{ name: "expr" }], origin: "harvested" }], // functions/timestamp_micros/1.txt
 	timestamp_millis: [{ name: "timestamp_millis", params: [{ name: "expr" }], origin: "harvested" }], // functions/timestamp_millis/1.txt
 	timestamp_seconds: [{ name: "timestamp_seconds", params: [{ name: "expr" }], origin: "harvested" }], // functions/timestamp_seconds/1.txt
+	timestampadd: [
+		{ name: "timestampadd", params: [{ name: "unit" }, { name: "value" }, { name: "expr" }], origin: "harvested" },
+	], // functions/timestampadd/1.txt
+	timestampdiff: [
+		{ name: "timestampdiff", params: [{ name: "unit" }, { name: "start" }, { name: "end" }], origin: "harvested" },
+	], // functions/timestampdiff/1.txt
 	tinyint: [{ name: "tinyint", params: [{ name: "expr" }], origin: "harvested" }], // functions/tinyint/1.txt
 	to_avro: [
 		{
@@ -1457,32 +1439,17 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 		{ name: "to_binary", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" },
 	], // functions/to_binary/1.txt
 	to_csv: [{ name: "to_csv", params: [{ name: "expr" }, { name: "options", optional: true }], origin: "harvested" }], // functions/to_csv/1.txt
-	to_date: [
-		{
-			name: "to_date",
-			params: [
-				{ name: "expr", type: "string" },
-				{ name: "fmt", type: "string", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: to_date function (fmt optional)
+	to_date: [{ name: "to_date", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" }], // functions/to_date/1.txt
 	to_geography: [{ name: "to_geography", params: [{ name: "geoRepExpr" }], origin: "harvested" }], // functions/to_geography/1.txt
 	to_geometry: [{ name: "to_geometry", params: [{ name: "geoRepExpr" }], origin: "harvested" }], // functions/to_geometry/1.txt
 	to_json: [
 		{ name: "to_json", params: [{ name: "expr" }, { name: "options", optional: true }], origin: "harvested" },
 	], // functions/to_json/1.txt
+	to_number: [{ name: "to_number", params: [{ name: "expr" }, { name: "fmt" }], origin: "harvested" }], // functions/to_number/1.txt
 	to_time: [{ name: "to_time", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" }], // functions/to_time/1.txt
 	to_timestamp: [
-		{
-			name: "to_timestamp",
-			params: [
-				{ name: "expr", type: "string" },
-				{ name: "fmt", type: "string", optional: true },
-			],
-			origin: "curated",
-		},
-	], // curated: to_timestamp function (fmt optional)
+		{ name: "to_timestamp", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" },
+	], // functions/to_timestamp/1.txt
 	to_unix_timestamp: [
 		{ name: "to_unix_timestamp", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" },
 	], // functions/to_unix_timestamp/1.txt
@@ -1504,16 +1471,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 			origin: "curated",
 		},
 	], // curated: trim function (trimStr optional)
-	trunc: [
-		{
-			name: "trunc",
-			params: [
-				{ name: "expr", type: "date" },
-				{ name: "unit", type: "string" },
-			],
-			origin: "curated",
-		},
-	], // curated: trunc function - trunc(expr, unit)
+	trunc: [{ name: "trunc", params: [{ name: "expr" }, { name: "unit" }], origin: "harvested" }], // functions/trunc/1.txt
 	try_add: [{ name: "try_add", params: [{ name: "expr1" }, { name: "expr2" }], origin: "harvested" }], // functions/try_add/1.txt
 	try_aes_decrypt: [
 		{
@@ -1551,6 +1509,7 @@ export const DATABRICKS_SIGNATURES: Record<string, FnSignature[]> = {
 	], // functions/try_to_binary/1.txt
 	try_to_geography: [{ name: "try_to_geography", params: [{ name: "geoRepExpr" }], origin: "harvested" }], // functions/try_to_geography/1.txt
 	try_to_geometry: [{ name: "try_to_geometry", params: [{ name: "geoRepExpr" }], origin: "harvested" }], // functions/try_to_geometry/1.txt
+	try_to_number: [{ name: "try_to_number", params: [{ name: "expr" }, { name: "fmt" }], origin: "harvested" }], // functions/try_to_number/1.txt
 	try_to_time: [
 		{ name: "try_to_time", params: [{ name: "expr" }, { name: "fmt", optional: true }], origin: "harvested" },
 	], // functions/try_to_time/1.txt

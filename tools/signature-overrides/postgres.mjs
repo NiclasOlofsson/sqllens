@@ -42,18 +42,18 @@ export const OVERRIDES = {
 		],
 		cite: "to_number(text, format)",
 	},
-	// string - functions-string.html (Table 9.10)
-	concat: { name: "concat", params: [{ name: "val" }], variadic: true, cite: "concat(val, ...) - pg_proc oid 3058: one VARIADIC any slot, a 1-arg call is valid (the doc table just displays two slots)" },
-	concat_ws: {
-		name: "concat_ws",
-		params: [{ name: "sep", type: "text" }, { name: "val" }],
-		variadic: true,
-		cite: "concat_ws(sep, val, ...) - pg_proc oid 3059: text plus VARIADIC any, minimum 2 args (kept over the harvest reading of the doc display slots)",
-	},
+	// string - functions-string.html (Table 9.10). concat/concat_ws/substr/regexp_replace deleted
+	// 2026-07-14: the harvest independently reaches the same (or a richer) arity now - concat's own
+	// pg_proc-cited min-1 reading is what the harvest reaches on its own (val1 required, val2
+	// optional, variadic), and substr/regexp_replace's own hand shape is now just ONE of the
+	// harvest's own overloads (harvest adds a real bytea overload for substr, and a 6-param
+	// start/N/flags overload for regexp_replace, beyond what either override alone supplied).
 	// The manual shows the positional comma form only under substr, but the server catalog is the
 	// ground truth and settles it: pg_proc.dat (REL_18_STABLE) carries substring(text, int4, int4)
 	// (oid 936, prosrc text_substr) AND substring(text, int4) (oid 937, text_substr_no_len), so the
-	// positional call is real and count is omittable. Verified 2026-07-14.
+	// positional call is real and count is omittable. Verified 2026-07-14. No offline harvest source
+	// at all for SUBSTRING (its own syntax uses "string FROM start FOR count", the FROM/FOR keywords
+	// the flat-list model blocks).
 	substring: {
 		name: "substring",
 		params: [
@@ -63,52 +63,10 @@ export const OVERRIDES = {
 		],
 		cite: "substring(string, start [, count]) - pg_proc oids 936/937",
 	},
-	substr: {
-		name: "substr",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "start", type: "int" },
-			{ name: "count", type: "int", optional: true },
-		],
-		cite: "substr(string, start[, count]) - count is trailing-optional in both the text and bytea overloads",
-	},
-	split_part: {
-		name: "split_part",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "delimiter", type: "text" },
-			{ name: "n", type: "int" },
-		],
-		cite: "split_part(string, delimiter, n)",
-	},
-	regexp_replace: {
-		name: "regexp_replace",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "replacement", type: "text" },
-			{ name: "flags", type: "text", optional: true },
-		],
-		cite: "regexp_replace(string, pattern, replacement [, flags])",
-	},
-	lpad: {
-		name: "lpad",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "length", type: "int" },
-			{ name: "fill", type: "text", optional: true },
-		],
-		cite: "lpad(string, length[, fill])",
-	},
-	rpad: {
-		name: "rpad",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "length", type: "int" },
-			{ name: "fill", type: "text", optional: true },
-		],
-		cite: "rpad(string, length[, fill])",
-	},
+	// split_part/regexp_replace/lpad/rpad/left/right/format deleted 2026-07-14: typed-duplicates
+	// (split_part/lpad/rpad/left/right/format) or superseded by a richer harvest (regexp_replace, see
+	// above). No offline harvest source at all for POSITION (its syntax uses "substring IN string",
+	// the IN keyword the flat-list model blocks).
 	position: {
 		name: "position",
 		params: [
@@ -117,56 +75,16 @@ export const OVERRIDES = {
 		],
 		cite: "position(substring in string)",
 	},
-	left: {
-		name: "left",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "n", type: "int" },
-		],
-		cite: "left(string, n)",
-	},
-	right: {
-		name: "right",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "n", type: "int" },
-		],
-		cite: "right(string, n)",
-	},
-	format: {
-		name: "format",
-		params: [
-			{ name: "formatstr", type: "text" },
-			{ name: "formatarg", optional: true },
-		],
-		variadic: true,
-		cite: "format(formatstr [, formatarg, …]) - formatarg optional, format('hello') alone is valid",
-	},
-	// numeric - functions-math.html (Table 9.5)
+	// numeric - functions-math.html (Table 9.5). mod deleted 2026-07-14 as a typed-duplicate.
 	abs: { name: "abs", params: [{ name: "x", type: "numeric" }], cite: "abs(x)" },
-	mod: {
-		name: "mod",
-		params: [
-			{ name: "y", type: "numeric" },
-			{ name: "x", type: "numeric" },
-		],
-		cite: "mod(y, x)",
-	},
 	// aggregates - functions-aggregate.html (Table 9.62)
 	count: { name: "count", params: [{ name: "expression" }], cite: "count(expression)" },
 	min: { name: "min", params: [{ name: "expression" }], cite: "min(expression)" },
 	max: { name: "max", params: [{ name: "expression" }], cite: "max(expression)" },
+	// no offline harvest source at all for ARRAY_AGG (its syntax uses an "[ORDER BY ...]" clause the
+	// flat-list model blocks).
 	array_agg: { name: "array_agg", params: [{ name: "expression" }], cite: "array_agg(expression)" },
-	// JSON - functions-json.html
-	jsonb_extract_path: {
-		name: "jsonb_extract_path",
-		params: [
-			{ name: "from_json", type: "jsonb" },
-			{ name: "path_elems", type: "text" },
-		],
-		variadic: true,
-		cite: "jsonb_extract_path(from_json, VARIADIC path_elems)",
-	},
+	// JSON - functions-json.html. jsonb_extract_path deleted 2026-07-14 as a typed-duplicate.
 	json_build_object: {
 		name: "json_build_object",
 		params: [{ name: "arg" }],

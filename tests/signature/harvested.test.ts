@@ -34,28 +34,41 @@ function harvestedCount(dialect: keyof typeof SIGNATURES): number {
 // regressed and must be investigated, not lowered.
 
 describe("harvested signatures — T-SQL yield floor (ratchet)", () => {
-	it("at least 176 T-SQL entries carry origin harvested", () => {
+	it("at least 198 T-SQL entries carry origin harvested", () => {
 		// 167 -> 176 on 2026-07-14: the override-pruning pass deleted 8 redundant overrides (replace,
 		// ltrim, rtrim, isnull, coalesce, min, max, string_agg - each byte-identical to the harvest
 		// alone) plus 1 richer-harvest-hidden override (format), flipping their origin back to harvested.
-		expect(harvestedCount("tsql")).toBeGreaterThanOrEqual(176);
+		// 176 -> 198 later the same day: the per-line call-candidate widening (every syntaxsql line in a
+		// block is now its own candidate, not just the block's first) recovered SET_BIT's 3-arg form,
+		// then the second override-pruning pass deleted 22 more overrides (dateadd, datediff, datepart,
+		// datename, datefromparts, eomonth, substring, charindex, left, right, stuff, iif, round, abs,
+		// ceiling, floor, power, sum, avg, set_bit - typed-duplicates - plus concat, concat_ws - richer
+		// harvest, the docs' own argumentN slot matches the hand-fixed minimum arity), flipping their
+		// origin back to harvested.
+		expect(harvestedCount("tsql")).toBeGreaterThanOrEqual(198);
 	});
 });
 
 describe("harvested signatures — DuckDB yield floor (ratchet)", () => {
-	it("at least 373 DuckDB entries carry origin harvested", () => {
+	it("at least 405 DuckDB entries carry origin harvested", () => {
 		// 327 -> 359 on 2026-07-14: the overload-aware model turns former whole-name conflicts (length,
 		// bit_count, hex, md5, generate_series, make_timestamp, ...) into real 2+-overload data.
 		// 359 -> 373 later the same day: the override-pruning pass deleted 5 redundant overrides
 		// (concat, coalesce, nullif, ifnull, count) plus 9 richer-harvest-hidden overrides (date_part,
 		// date_diff, date_sub, date_trunc, strftime, regexp_replace, regexp_extract, regexp_matches,
 		// contains), flipping their origin back to harvested.
-		expect(harvestedCount("duckdb")).toBeGreaterThanOrEqual(373);
+		// 373 -> 405 later the same day: the typed-duplicate re-prune (no DuckDB extractor change this
+		// round) deleted 32 more overrides - 31 typed-duplicates (date_add, strptime, make_date,
+		// substring, split_part, replace, lpad, rpad, left, right, starts_with, printf, format, round,
+		// trunc, abs, ceil, floor, power, list_extract, list_contains, array_to_string, unnest, sum, avg,
+		// min, max, arg_max, arg_min, string_agg, quantile_cont) plus time_bucket (richer harvest: 7 real
+		// per-type overloads now subsume the hand shape) - flipping their origin back to harvested.
+		expect(harvestedCount("duckdb")).toBeGreaterThanOrEqual(405);
 	});
 });
 
 describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
-	it("at least 573 PostgreSQL entries carry origin harvested", () => {
+	it("at least 585 PostgreSQL entries carry origin harvested", () => {
 		// 477 -> 547 on 2026-07-14: type-based overloads (lower(text) vs lower(anyrange), length's six
 		// type forms, round/trunc/log's numeric vs double precision forms, ...) now emit as overload
 		// sets instead of being dropped as conflicts.
@@ -64,43 +77,76 @@ describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
 		// nullif, greatest, least, string_agg, jsonb_set) plus 13 richer-harvest-hidden overrides (age,
 		// date_trunc, date_part, to_timestamp, to_char, round, trunc, ceil, floor, power, width_bucket,
 		// sum, avg), flipping their origin back to harvested.
-		expect(harvestedCount("postgres")).toBeGreaterThanOrEqual(573);
+		// 573 -> 585 later the same day: the typed-duplicate re-prune (no PostgreSQL extractor change
+		// this round) deleted 12 more overrides - 8 typed-duplicates (split_part, lpad, rpad, left,
+		// right, format, mod, jsonb_extract_path) plus 4 richer-harvest-hidden overrides (substr - the
+		// harvest adds a real bytea overload; regexp_replace - the harvest adds a start/N/flags
+		// overload; concat/concat_ws - the harvest reaches the same pg_proc-cited minimum arity on its
+		// own) - flipping their origin back to harvested.
+		expect(harvestedCount("postgres")).toBeGreaterThanOrEqual(585);
 	});
 });
 
 describe("harvested signatures: Databricks yield floor (ratchet)", () => {
-	it("at least 608 Databricks entries carry origin harvested", () => {
+	it("at least 652 Databricks entries carry origin harvested", () => {
 		// 599 -> 603 on 2026-07-14: ai_extract, element_at, format_number and try_element_at's own
 		// multi-shape doc pages now emit as overload sets.
 		// 603 -> 608 later the same day: the override-pruning pass deleted 5 redundant overrides (nvl,
 		// nullif, count, min, max - each byte-identical to the harvest alone), flipping their origin
 		// back to harvested.
-		expect(harvestedCount("databricks")).toBeGreaterThanOrEqual(608);
+		// 608 -> 653 later the same day: the per-block same-name-repeat widening (a call line's own
+		// trailing content, or a further same-name call line, no longer sinks candidates already found
+		// earlier in the block) recovered many previously all-or-nothing-discarded candidates (trim's
+		// bare 1-arg form, several aggregate FILTER-clause pages, ...), then the typed-duplicate re-prune
+		// deleted 22 more overrides - 18 typed-duplicates (date_trunc, trunc, to_date, to_timestamp,
+		// date_format, add_months, split, replace, regexp_replace, regexp_extract, round, abs, ceil,
+		// floor, power, mod, sum, avg) plus 4 richer-harvest-hidden overrides (date_add, dateadd,
+		// datediff - the harvest now independently recovers both the unit-based and alias forms as
+		// separate overloads; concat - the harvest reaches the same minimum-arity reading on its own) -
+		// flipping their origin back to harvested.
+		// 653 -> 652 later the same day: abs was RESTORED as a curated override (tests/qualify.calls.
+		// test.ts's "Databricks still flags a boolean arg into a numeric param" proved the operand-type
+		// checker only trusts a curated-origin signature, so the typed-duplicate deletion silently
+		// disabled that diagnostic).
+		expect(harvestedCount("databricks")).toBeGreaterThanOrEqual(652);
 	});
 });
 
 describe("harvested signatures: Snowflake yield floor (ratchet)", () => {
-	it("at least 510 Snowflake entries carry origin harvested", () => {
+	it("at least 526 Snowflake entries carry origin harvested", () => {
 		// 501 -> 510 on 2026-07-14: the override-pruning pass deleted 9 redundant overrides (datediff,
 		// date_trunc, coalesce, nvl, ifnull, nullif, count, min, max - each byte-identical to the
 		// harvest alone), flipping their origin back to harvested.
-		expect(harvestedCount("snowflake")).toBeGreaterThanOrEqual(510);
+		// 510 -> 526 later the same day: the per-segment same-name-repeat widening (every call-shaped
+		// line in a blank-line-separated segment is now its own candidate, not just the segment's
+		// first) recovered to_char's/to_varchar's four per-type overloads and ai_count_tokens's four
+		// generic-arity overloads, then the typed-duplicate re-prune deleted 15 more overrides - 9
+		// typed-duplicates (dateadd, replace, trim, regexp_replace, iff, round, ceil, floor, mod) plus 6
+		// richer-harvest-hidden overrides (to_date, concat, concat_ws, to_char, to_varchar,
+		// ai_count_tokens) - flipping their origin back to harvested.
+		expect(harvestedCount("snowflake")).toBeGreaterThanOrEqual(526);
 	});
 });
 
 describe("harvested signatures: Trino yield floor (ratchet)", () => {
-	it("at least 354 Trino entries carry origin harvested", () => {
+	it("at least 381 Trino entries carry origin harvested", () => {
 		// 334 -> 347 on 2026-07-14: type-based overloads (length(binary) vs length(string), avg/merge/
 		// cardinality's typed forms, ...) now emit as overload sets instead of being dropped.
 		// 347 -> 354 later the same day: the override-pruning pass deleted 7 richer-harvest-hidden
 		// overrides (from_unixtime, substr, lpad, rpad, avg, approx_percentile, regexp_replace),
 		// flipping their origin back to harvested.
-		expect(harvestedCount("trino")).toBeGreaterThanOrEqual(354);
+		// 354 -> 381 later the same day: the typed-duplicate re-prune (no Trino extractor change this
+		// round) deleted 27 more overrides, all typed-duplicates (date_trunc, date_add, date_diff,
+		// date_format, date_parse, split, split_part, strpos, replace, format, regexp_like,
+		// regexp_extract, json_extract, json_extract_scalar, json_parse, array_join, sequence, count,
+		// sum, min, max, max_by, min_by, approx_distinct, coalesce, nullif, if), flipping their origin
+		// back to harvested.
+		expect(harvestedCount("trino")).toBeGreaterThanOrEqual(381);
 	});
 });
 
 describe("harvested signatures: BigQuery yield floor (ratchet)", () => {
-	it("at least 295 BigQuery entries carry origin harvested", () => {
+	it("at least 328 BigQuery entries carry origin harvested", () => {
 		// 293 -> 291 on 2026-07-14, same day: json_extract and json_query gained curated overrides
 		// (the corpus proves json_path is really optional, which the doc's own syntax fence doesn't
 		// show), flipping those two names' origin from harvested to curated: a legitimate drop, not a
@@ -108,26 +154,37 @@ describe("harvested signatures: BigQuery yield floor (ratchet)", () => {
 		// 291 -> 295 later the same day: the override-pruning pass deleted 3 redundant overrides
 		// (coalesce, ifnull, nullif) plus 1 richer-harvest-hidden override (date_trunc), flipping their
 		// origin back to harvested.
-		expect(harvestedCount("bigquery")).toBeGreaterThanOrEqual(295);
+		// 295 -> 329 later the same day: the same-fence same-name-repeat fix (a candidate line's own
+		// trailing content, or a further same-name call line, no longer discards EVERY candidate
+		// already found in the fence - the same all-or-nothing bug fixed in the Databricks extractor)
+		// recovered many previously all-or-nothing-discarded candidates, then the typed-duplicate
+		// re-prune deleted 19 more overrides (date_diff, timestamp_diff, parse_date, format_date,
+		// substr, substring, split, replace, lpad, rpad, regexp_replace, regexp_extract, if, round, abs,
+		// ceil, floor, power, mod), flipping their origin back to harvested.
+		// 329 -> 328 later the same day: abs was RESTORED as a curated override (tests/qualify.calls.
+		// test.ts's "BigQuery flags ABS('x')" proved the operand-type checker only trusts a
+		// curated-origin signature, so the typed-duplicate deletion silently disabled that diagnostic).
+		expect(harvestedCount("bigquery")).toBeGreaterThanOrEqual(328);
 	});
 });
 
 describe("harvested signatures: doc-verified spot checks (single-overload names)", () => {
-	it("DATEADD(datepart, number, date) — 3 params, not variadic (curated: typed override shadows the harvest here)", () => {
+	it("DATEADD(datepart, number, date) — 3 params, not variadic, origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const overloads = SIGNATURES.tsql.dateadd;
 		expect(overloads.length).toBe(1);
+		expect(overloads[0].origin).toBe("harvested");
 		expect(overloads[0].params.map((p) => p.name)).toEqual(["datepart", "number", "date"]);
 		expect(overloads[0].variadic ?? false).toBe(false);
 	});
 
-	it("SUBSTRING(expression, start, length) — length optional, curated origin (agrees with the harvest's per-product OR-merge, plus types)", () => {
+	it("SUBSTRING(expression, start, length) — length optional, origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const overloads = SIGNATURES.tsql.substring;
 		expect(overloads.length).toBe(1);
-		expect(overloads[0].origin).toBe("curated");
+		expect(overloads[0].origin).toBe("harvested");
 		expect(overloads[0].params).toEqual([
 			{ name: "expression" },
-			{ name: "start", type: "int" },
-			{ name: "length", type: "int", optional: true },
+			{ name: "start" },
+			{ name: "length", optional: true },
 		]);
 	});
 
@@ -144,14 +201,16 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		expect(SIGNATURES.tsql.getdate[0].origin).toBe("harvested");
 	});
 
-	it("CONCAT(argument1, argument2, ...) — requires 2 args minimum (report-cited fix: the old harvested-only shape allowed 1 arg)", () => {
+	it("CONCAT(argument1, argument2, argumentN?): requires 2 args minimum, origin harvested (its own curated fix is now what the harvest reaches on its own)", () => {
 		// learn.microsoft.com/.../concat-transact-sql: "CONCAT ( argument1 , argument2 [ , argumentN ] ) ...
-		// requires at least two arguments". The pre-refactor harvested-only shape had a single required
-		// param, which under-counted the minimum arity; the curated override fixes it.
+		// requires at least two arguments". The curated override used to exist because the pre-widening
+		// harvested-only shape had a single required param, under-counting the minimum arity; deleted
+		// 2026-07-14 once the harvest itself reached the same 2-arg floor (argument1/argument2 required,
+		// argumentN optional, still variadic).
 		const sig = SIGNATURES.tsql.concat[0];
-		expect(sig.origin).toBe("curated");
+		expect(sig.origin).toBe("harvested");
 		expect(sig.variadic).toBe(true);
-		expect(sig.params).toEqual([{ name: "argument1" }, { name: "argument2" }]);
+		expect(sig.params).toEqual([{ name: "argument1" }, { name: "argument2" }, { name: "argumentN", optional: true }]);
 	});
 
 	it("LTRIM(character_expression, characters?): harvested origin, via the harvest's own prefix-merge", () => {
@@ -164,14 +223,10 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		expect(sig.params).toEqual([{ name: "character_expression" }, { name: "characters", optional: true }]);
 	});
 
-	it("duckdb substring(string, start, length) — length optional, curated origin (report-cited fix: adds types)", () => {
+	it("duckdb substring(string, start, length) — length optional, origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const sig = SIGNATURES.duckdb.substring[0];
-		expect(sig.origin).toBe("curated");
-		expect(sig.params).toEqual([
-			{ name: "string", type: "text" },
-			{ name: "start", type: "int" },
-			{ name: "length", type: "int", optional: true },
-		]);
+		expect(sig.origin).toBe("harvested");
+		expect(sig.params).toEqual([{ name: "string" }, { name: "start" }, { name: "length", optional: true }]);
 	});
 
 	it("postgres char_length(text) — the bare <type> stands in for the name, no type field", () => {
@@ -213,29 +268,24 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		expect(sig.variadic).toBe(true);
 	});
 
-	it("databricks date_add: curated origin, 3 params (start_date, num_days, expr optional) — shadows the harvest's 2-arg startDate/numDays form", () => {
-		// databricks/docs/syntax/functions/date_add/1.txt harvests a 2-arg startDate/numDays form; the
-		// curated override documents the fuller (start_date, num_days, unit-based expr) shape from the
-		// function reference page and wins.
-		const sig = SIGNATURES.databricks.date_add[0];
-		expect(sig.origin).toBe("curated");
-		expect(sig.params).toEqual([
-			{ name: "start_date", type: "date" },
-			{ name: "num_days", type: "int" },
-			{ name: "expr", optional: true },
-		]);
+	it("databricks date_add: 2 overloads, origin harvested (its own curated override was deleted 2026-07-14 - the per-block same-name-repeat widening now recovers BOTH the unit-based 3-arg page and the 2-arg startDate/numDays alias page on its own)", () => {
+		const overloads = SIGNATURES.databricks.date_add;
+		expect(overloads.length).toBe(2);
+		expect(overloads.every((o) => o.origin === "harvested")).toBe(true);
+		expect(overloads[0].params).toEqual([{ name: "unit" }, { name: "value" }, { name: "expr" }]);
+		expect(overloads[1].params).toEqual([{ name: "startDate" }, { name: "numDays" }]);
 	});
 
-	it("snowflake ROUND(input_expr, scale_expr?, rounding_mode?): curated origin, types added over the harvest's quoted-placeholder shape", () => {
+	it("snowflake ROUND(input_expr, scale_expr?, rounding_mode?): origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		// functions/round/1.txt: `ROUND( <input_expr> [ , <scale_expr> [ , '<rounding_mode>' ] ] )`. The
-		// harvest's quoted-placeholder widening finds the same optionality; the curated override adds
-		// documented types on top.
+		// harvest's quoted-placeholder widening finds this exact shape on its own; the curated override
+		// only ever added types on top, so it was pruned once that became the sole contribution.
 		const sig = SIGNATURES.snowflake.round[0];
-		expect(sig.origin).toBe("curated");
+		expect(sig.origin).toBe("harvested");
 		expect(sig.params).toEqual([
-			{ name: "input_expr", type: "numeric" },
-			{ name: "scale_expr", type: "integer", optional: true },
-			{ name: "rounding_mode", type: "string", optional: true },
+			{ name: "input_expr" },
+			{ name: "scale_expr", optional: true },
+			{ name: "rounding_mode", optional: true },
 		]);
 	});
 
@@ -250,26 +300,19 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		expect(overloads[0].origin).toBe("harvested");
 	});
 
-	it("trino date_add(unit, value, timestamp): curated origin, types added over the harvest's untyped 3-param shape", () => {
+	it("trino date_add(unit, value, timestamp): origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const sig = SIGNATURES.trino.date_add[0];
-		expect(sig.origin).toBe("curated");
-		expect(sig.params).toEqual([
-			{ name: "unit", type: "varchar" },
-			{ name: "value", type: "bigint" },
-			{ name: "timestamp", type: "timestamp" },
-		]);
+		expect(sig.origin).toBe("harvested");
+		expect(sig.params).toEqual([{ name: "unit" }, { name: "value" }, { name: "timestamp" }]);
 	});
 
-	it("trino date_parse(string, format): curated origin, types added over the lone :::{js:function} fence spelling", () => {
+	it("trino date_parse(string, format): origin harvested via the lone :::{js:function} fence spelling (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		// datetime.md:437 is `:::{js:function} date_parse(string, format) -> timestamp(3)`, the only
 		// js:function-fenced directive in the corpus, and its return arrow is a literal U+2192 rather
-		// than the usual ASCII "->". The curated override adds documented types over that harvest.
+		// than the usual ASCII "->".
 		const sig = SIGNATURES.trino.date_parse[0];
-		expect(sig.origin).toBe("curated");
-		expect(sig.params).toEqual([
-			{ name: "string", type: "varchar" },
-			{ name: "format", type: "varchar" },
-		]);
+		expect(sig.origin).toBe("harvested");
+		expect(sig.params).toEqual([{ name: "string" }, { name: "format" }]);
 	});
 
 	it("trino ST_Point(lon: double, lat: double): typed colon-pair params, mixed-case display name, origin harvested", () => {
@@ -285,23 +328,20 @@ describe("harvested signatures: doc-verified spot checks (single-overload names)
 		]);
 	});
 
-	it("bigquery ROUND(X [, N [, rounding_mode]]): curated origin, X and N typed over the harvest's untyped bracket chain", () => {
+	it("bigquery ROUND(X [, N [, rounding_mode]]): origin harvested via the untyped bracket chain (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const sig = SIGNATURES.bigquery.round[0];
-		expect(sig.origin).toBe("curated");
+		expect(sig.origin).toBe("harvested");
 		expect(sig.params).toEqual([
-			{ name: "X", type: "FLOAT64" },
-			{ name: "N", type: "INT64", optional: true },
+			{ name: "X" },
+			{ name: "N", optional: true },
 			{ name: "rounding_mode", optional: true },
 		]);
 	});
 
-	it("bigquery PARSE_DATE(format_string, date_string): curated origin, types added over the harvest's untyped 2-param shape", () => {
+	it("bigquery PARSE_DATE(format_string, date_string): origin harvested (its own typed override was a typed-duplicate, deleted 2026-07-14)", () => {
 		const sig = SIGNATURES.bigquery.parse_date[0];
-		expect(sig.origin).toBe("curated");
-		expect(sig.params).toEqual([
-			{ name: "format_string", type: "STRING" },
-			{ name: "date_string", type: "STRING" },
-		]);
+		expect(sig.origin).toBe("harvested");
+		expect(sig.params).toEqual([{ name: "format_string" }, { name: "date_string" }]);
 	});
 });
 
@@ -348,10 +388,10 @@ describe("harvested signatures: overload sets (formerly whole-name conflicts, no
 		expect(overloads.some((o) => o.variadic && o.params.length === 3)).toBe(true);
 	});
 
-	it("snowflake ai_count_tokens(...): un-suppressed as 4 generic arity-form overloads", () => {
+	it("snowflake ai_count_tokens(...): 4 generic arity-form overloads, origin harvested (its own curated override was deleted 2026-07-14 - the per-segment same-name-repeat widening now recovers all four generic forms on its own, just in a different order)", () => {
 		const overloads = SIGNATURES.snowflake.ai_count_tokens;
 		expect(overloads.length).toBe(4);
-		expect(overloads.every((o) => o.origin === "curated")).toBe(true);
+		expect(overloads.every((o) => o.origin === "harvested")).toBe(true);
 	});
 
 	it("snowflake object_pick(...): un-suppressed as 2 overloads (variadic keys form, single-array form)", () => {
@@ -390,12 +430,12 @@ describe("harvested signatures: operator blocklist", () => {
 });
 
 describe("harvested signatures — origin assertions (curated override vs harvested long tail)", () => {
-	it("tsql dateadd has origin curated and a typed param — the override that wins over the harvest", () => {
-		const resolved = lookupSignature("tsql", "dateadd");
-		expect(resolved).toBe(SIGNATURES.tsql.dateadd);
+	it("tsql choose has origin curated and a typed param — the override that wins over the harvest (dateadd used to be this example; its own override was a typed-duplicate, deleted 2026-07-14)", () => {
+		const resolved = lookupSignature("tsql", "choose");
+		expect(resolved).toBe(SIGNATURES.tsql.choose);
 		expect(resolved!.length).toBe(1);
 		expect(resolved![0].origin).toBe("curated");
-		expect(resolved![0].params[1]).toMatchObject({ name: "number", type: "int" });
+		expect(resolved![0].params[0]).toMatchObject({ name: "index", type: "int" });
 	});
 
 	it("tsql translate has origin harvested — no curated override exists for it", () => {

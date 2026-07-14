@@ -18,20 +18,17 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	dateadd: {
-		name: "DATEADD",
-		params: [{ name: "date_or_time_part" }, { name: "value", type: "integer" }, { name: "date_or_time_expr" }],
-		cite: "DATEADD",
-	},
+	// dateadd, concat, concat_ws, to_date, to_char, to_varchar, ai_count_tokens deleted 2026-07-14:
+	// the widened per-segment-repeat harvester now independently recovers a harvest at least as
+	// rich as each of these hand shapes (dateadd's own arity/types match the harvest name-for-name;
+	// concat's/concat_ws's own lax minimum is now what the harvest reaches on its own; to_date/to_char/
+	// to_varchar's per-type overload sets - previously only the segment's first line - are now fully
+	// recovered; ai_count_tokens's four hand-authored overloads are now the harvest's own four,
+	// just in a different order).
 	date_part: {
 		name: "DATE_PART",
 		params: [{ name: "date_or_time_part" }, { name: "date_or_time_expr" }],
 		cite: "DATE_PART",
-	},
-	to_date: {
-		name: "TO_DATE",
-		params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-		cite: "TO_DATE , DATE (format optional)",
 	},
 	to_timestamp: {
 		name: "TO_TIMESTAMP",
@@ -49,16 +46,6 @@ export const OVERRIDES = {
 		cite: "LAST_DAY (date_part optional)",
 	},
 	// string
-	concat: { name: "CONCAT", params: [{ name: "expr", type: "string" }], variadic: true, cite: "CONCAT (variadic) - kept over the harvest two-slot reading: the lax 1-arg minimum can only miss a diagnostic, never fake one (engine minimum unverified)" },
-	concat_ws: {
-		name: "CONCAT_WS",
-		params: [
-			{ name: "separator", type: "string" },
-			{ name: "expr", type: "string" },
-		],
-		variadic: true,
-		cite: "CONCAT_WS - kept over the harvest reading, lax minimum on the never-false-flag side (engine minimum unverified)",
-	},
 	substr: {
 		name: "SUBSTR",
 		params: [
@@ -86,23 +73,6 @@ export const OVERRIDES = {
 		],
 		cite: "SPLIT_PART",
 	},
-	replace: {
-		name: "REPLACE",
-		params: [
-			{ name: "subject", type: "string" },
-			{ name: "pattern", type: "string" },
-			{ name: "replacement", type: "string", optional: true },
-		],
-		cite: "REPLACE (replacement optional → '')",
-	},
-	trim: {
-		name: "TRIM",
-		params: [
-			{ name: "expr", type: "string" },
-			{ name: "characters", type: "string", optional: true },
-		],
-		cite: "TRIM (characters optional)",
-	},
 	lpad: {
 		name: "LPAD",
 		params: [
@@ -121,57 +91,15 @@ export const OVERRIDES = {
 		],
 		cite: "RPAD (pad optional)",
 	},
-	regexp_replace: {
-		name: "REGEXP_REPLACE",
-		params: [
-			{ name: "subject", type: "string" },
-			{ name: "pattern", type: "string" },
-			{ name: "replacement", type: "string", optional: true },
-			{ name: "position", type: "integer", optional: true },
-			{ name: "occurrence", type: "integer", optional: true },
-			{ name: "parameters", type: "string", optional: true },
-		],
-		cite: "REGEXP_REPLACE",
-	},
 	// conditional / null
-	iff: {
-		name: "IFF",
-		params: [{ name: "condition", type: "boolean" }, { name: "expr1" }, { name: "expr2" }],
-		cite: "IFF",
-	},
 	decode: {
 		name: "DECODE",
 		params: [{ name: "expr" }, { name: "search" }, { name: "result" }],
 		variadic: true,
 		cite: "DECODE (variadic search/result)",
 	},
-	// numeric
-	round: {
-		name: "ROUND",
-		params: [
-			{ name: "input_expr", type: "numeric" },
-			{ name: "scale_expr", type: "integer", optional: true },
-			{ name: "rounding_mode", type: "string", optional: true },
-		],
-		cite: "ROUND (scale + rounding_mode optional)",
-	},
-	abs: { name: "ABS", params: [{ name: "expr", type: "numeric" }], cite: "ABS" },
-	ceil: {
-		name: "CEIL",
-		params: [
-			{ name: "input_expr", type: "numeric" },
-			{ name: "scale_expr", type: "integer", optional: true },
-		],
-		cite: "CEIL (scale optional)",
-	},
-	floor: {
-		name: "FLOOR",
-		params: [
-			{ name: "input_expr", type: "numeric" },
-			{ name: "scale_expr", type: "integer", optional: true },
-		],
-		cite: "FLOOR (scale optional)",
-	},
+	// numeric - no offline harvest source at all for POWER (its syntax uses a "^" infix-operator
+	// alternation the flat-list model can't represent).
 	power: {
 		name: "POWER",
 		params: [
@@ -179,14 +107,6 @@ export const OVERRIDES = {
 			{ name: "exponent", type: "numeric" },
 		],
 		cite: "POWER",
-	},
-	mod: {
-		name: "MOD",
-		params: [
-			{ name: "expr1", type: "numeric" },
-			{ name: "expr2", type: "numeric" },
-		],
-		cite: "MOD",
 	},
 	// aggregate
 	sum: { name: "SUM", params: [{ name: "expr", type: "numeric" }], cite: "SUM" },
@@ -199,77 +119,10 @@ export const OVERRIDES = {
 		],
 		cite: 'LISTAGG([DISTINCT] expr1[, delimiter]) - "If no delimiter is specified, an empty string is used"',
 	},
-	// to_char / to_varchar - functions/to_char/1.txt documents four segments back-to-back with no
-	// blank-line separator (TO_CHAR(<expr>) / TO_CHAR(<numeric_expr>[, '<format>']) /
-	// TO_CHAR(<date_or_time_expr>[, '<format>']) / TO_CHAR(<binary_expr>[, '<format>'])), and the
-	// harvester's per-segment scan only ever parses the FIRST call-shaped line of a segment, so it
-	// kept only the bare 1-arg form and silently dropped the other three - which are the same shape
-	// (expr, format optional) under different per-type param names. Real calls like
-	// TO_CHAR(TO_BINARY(c1,'hex'), 'base64') and TO_VARCHAR(date1, 'dd-mon-yyyy hh:mi:ss') are the
-	// genuine 2-arg form.
-	to_char: {
-		name: "TO_CHAR",
-		params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-		cite: "TO_CHAR(<expr>) | TO_CHAR(<numeric_expr|date_or_time_expr|binary_expr>[, '<format>'])",
-	},
-	to_varchar: {
-		name: "TO_VARCHAR",
-		params: [{ name: "expr" }, { name: "format", type: "string", optional: true }],
-		cite: "TO_VARCHAR(<expr>) | TO_VARCHAR(<numeric_expr|date_or_time_expr|binary_expr>[, '<format>'])",
-	},
-	// ai_count_tokens - functions/ai_count_tokens/1.txt documents four generic forms, each a plain
-	// arity range that stacks a leading function_name/model_name pair over an input_text/options pair:
-	//   AI_COUNT_TOKENS( function_name, input_text [, return_error_details] )                  2-3
-	//   AI_COUNT_TOKENS( function_name, model_name, input_text [, return_error_details] )       3-4
-	//   AI_COUNT_TOKENS( function_name, input_text, options [, return_error_details] )          3-4
-	//   AI_COUNT_TOKENS( function_name, model_name, input_text, options [, return_error_details] ) 4-5
-	// Un-suppressed 2026-07-14: these four ARE representable as separate overloads now (the harvester's
-	// own per-segment-first-line scan only ever kept the first line as one shape; the other three are
-	// hand-added here from the same vendored file). functions/ai_count_tokens/2.txt ALSO documents three
-	// NAMED forms ('ai_similarity', 'ai_classify', 'ai_translate') whose arity depends on the literal
-	// function_name value, not just its position; those are left out deliberately (encoding them would
-	// require guessing at a value-dependent shape), but their arities (2-5) are already a subset of the
-	// four generic forms' combined range, and the corpus's real calls - including named forms not even
-	// documented here, e.g. 'ai_redact'/'ai_sentiment'/'ai_complete'/'ai_embed' at 2-4 args - all land
-	// inside [2, 5], so arity checking stays correct without asserting anything about arg meaning.
-	ai_count_tokens: {
-		name: "AI_COUNT_TOKENS",
-		overloads: [
-			{
-				params: [
-					{ name: "function_name" },
-					{ name: "input_text" },
-					{ name: "return_error_details", optional: true },
-				],
-			},
-			{
-				params: [
-					{ name: "function_name" },
-					{ name: "model_name" },
-					{ name: "input_text" },
-					{ name: "return_error_details", optional: true },
-				],
-			},
-			{
-				params: [
-					{ name: "function_name" },
-					{ name: "input_text" },
-					{ name: "options" },
-					{ name: "return_error_details", optional: true },
-				],
-			},
-			{
-				params: [
-					{ name: "function_name" },
-					{ name: "model_name" },
-					{ name: "input_text" },
-					{ name: "options" },
-					{ name: "return_error_details", optional: true },
-				],
-			},
-		],
-		cite: "AI_COUNT_TOKENS( function_name, [model_name,] input_text, [options,] [return_error_details] ) - four generic arity forms (2-5 args total span), functions/ai_count_tokens/1.txt",
-	},
+	// to_char, to_varchar, ai_count_tokens deleted 2026-07-14: the widened per-segment-repeat
+	// harvester (which now walks EVERY call-shaped line in a segment, not just the first) recovers
+	// to_char's/to_varchar's four per-type overloads and ai_count_tokens's four generic-arity
+	// overloads on its own - the exact shapes these three hand entries used to supply alone.
 	// timestamp_from_parts - functions/timestamp_from_parts/1.txt documents two forms: (year, month,
 	// day, hour, minute, second[, nanosecond][, time_zone]) (6-8 args, two SIBLING optional-bracket
 	// groups the harvester's chain parser can't walk, since it treats a second `[` as nesting inside the

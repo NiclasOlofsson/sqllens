@@ -18,28 +18,10 @@
 
 /** @type {Record<string, OverrideSig>} */
 export const OVERRIDES = {
-	date_add: {
-		name: "date_add",
-		params: [
-			{ name: "start_date", type: "date" },
-			{ name: "num_days", type: "int" },
-			{ name: "expr", optional: true },
-		],
-		cite: "date_add function",
-	},
-	// dateadd is BOTH the alias of 2-arg date_add (functions/dateadd2) and the unit-based 3-arg form
-	// (functions/dateadd, whose syntax block the harvester skips over its unit legend). The harvest
-	// alone kept only the 2-arg page, and the arity checker then false-flagged the ~40 valid 3-arg
-	// calls in the Oatly corpus. Same 2-or-3-arg compromise shape as date_add above.
-	dateadd: {
-		name: "dateadd",
-		params: [
-			{ name: "start_date", type: "date" },
-			{ name: "num_days", type: "int" },
-			{ name: "expr", optional: true },
-		],
-		cite: "dateadd function / dateadd (days) function",
-	},
+	// date_add/dateadd/datediff - the widened harvester (2026-07-14) now recovers BOTH real forms per
+	// key as separate overloads on its own (the unit-based 3-arg page and the 2-arg alias page, e.g.
+	// date_add's `[unit,value,expr]` and `[startDate,numDays]`), covering the same 2-or-3-arg range
+	// this override used to hand-supply alone; deleted as harvest-superseded.
 	date_sub: {
 		name: "date_sub",
 		params: [
@@ -48,70 +30,7 @@ export const OVERRIDES = {
 		],
 		cite: "date_sub function - docs.databricks.com functions/date_sub documents only date_sub(startDate, numDays); no unit-based 3-arg overload exists (unlike date_add)",
 	},
-	datediff: {
-		name: "datediff",
-		params: [
-			{ name: "endDate", type: "date" },
-			{ name: "startDate", type: "date" },
-			{ name: "endTs", optional: true },
-		],
-		cite: "datediff function",
-	},
-	date_trunc: {
-		name: "date_trunc",
-		params: [
-			{ name: "unit", type: "string" },
-			{ name: "expr", type: "timestamp" },
-		],
-		cite: "date_trunc function - date_trunc(unit, expr)",
-	},
-	trunc: {
-		name: "trunc",
-		params: [
-			{ name: "expr", type: "date" },
-			{ name: "unit", type: "string" },
-		],
-		cite: "trunc function - trunc(expr, unit)",
-	},
-	to_date: {
-		name: "to_date",
-		params: [
-			{ name: "expr", type: "string" },
-			{ name: "fmt", type: "string", optional: true },
-		],
-		cite: "to_date function (fmt optional)",
-	},
-	to_timestamp: {
-		name: "to_timestamp",
-		params: [
-			{ name: "expr", type: "string" },
-			{ name: "fmt", type: "string", optional: true },
-		],
-		cite: "to_timestamp function (fmt optional)",
-	},
-	date_format: {
-		name: "date_format",
-		params: [
-			{ name: "expr", type: "date" },
-			{ name: "fmt", type: "string" },
-		],
-		cite: "date_format function",
-	},
-	add_months: {
-		name: "add_months",
-		params: [
-			{ name: "startDate", type: "date" },
-			{ name: "numMonths", type: "int" },
-		],
-		cite: "add_months function",
-	},
 	// string - Spark "String functions"
-	concat: {
-		name: "concat",
-		params: [{ name: "expr", type: "string" }],
-		variadic: true,
-		cite: "concat function (variadic) - min arity 1 per the docs own two-slot notation reading in the reconciliation (curated judged right there); kept over the harvest two-slot minimum",
-	},
 	concat_ws: {
 		name: "concat_ws",
 		params: [
@@ -144,15 +63,6 @@ export const OVERRIDES = {
 		],
 		cite: "substr function",
 	},
-	split: {
-		name: "split",
-		params: [
-			{ name: "str", type: "string" },
-			{ name: "regex", type: "string" },
-			{ name: "limit", type: "int", optional: true },
-		],
-		cite: "split function (limit optional)",
-	},
 	split_part: {
 		name: "split_part",
 		params: [
@@ -161,15 +71,6 @@ export const OVERRIDES = {
 			{ name: "partNum", type: "int" },
 		],
 		cite: "split_part function",
-	},
-	replace: {
-		name: "replace",
-		params: [
-			{ name: "str", type: "string" },
-			{ name: "search", type: "string" },
-			{ name: "replace", type: "string", optional: true },
-		],
-		cite: "replace function (replace optional → '')",
 	},
 	// NOTE: the reconciliation report recommended reducing this to trim(str) only, arguing the 2-arg
 	// positional form is a syntax error in real Databricks SQL (only the FROM-keyword forms are
@@ -202,25 +103,6 @@ export const OVERRIDES = {
 		],
 		cite: "rpad function (pad optional)",
 	},
-	regexp_replace: {
-		name: "regexp_replace",
-		params: [
-			{ name: "str", type: "string" },
-			{ name: "regexp", type: "string" },
-			{ name: "rep", type: "string" },
-			{ name: "position", type: "int", optional: true },
-		],
-		cite: "regexp_replace function",
-	},
-	regexp_extract: {
-		name: "regexp_extract",
-		params: [
-			{ name: "str", type: "string" },
-			{ name: "regexp", type: "string" },
-			{ name: "idx", type: "int", optional: true },
-		],
-		cite: "regexp_extract function (idx optional → 1)",
-	},
 	// conditional / null - Spark "Conditional functions"
 	coalesce: { name: "coalesce", params: [{ name: "expr" }], variadic: true, cite: "coalesce function (variadic)" },
 	if: {
@@ -228,52 +110,14 @@ export const OVERRIDES = {
 		params: [{ name: "cond", type: "boolean" }, { name: "ifTrue" }, { name: "ifFalse" }],
 		cite: "if function",
 	},
-	// numeric - Spark "Mathematical functions"
-	round: {
-		name: "round",
-		params: [
-			{ name: "expr", type: "numeric" },
-			{ name: "targetScale", type: "int", optional: true },
-		],
-		cite: "round function (scale optional → 0)",
-	},
-	abs: { name: "abs", params: [{ name: "expr", type: "numeric" }], cite: "abs function" },
-	ceil: {
-		name: "ceil",
-		params: [
-			{ name: "expr", type: "numeric" },
-			{ name: "targetScale", type: "int", optional: true },
-		],
-		cite: "ceil function (scale optional)",
-	},
-	floor: {
-		name: "floor",
-		params: [
-			{ name: "expr", type: "numeric" },
-			{ name: "targetScale", type: "int", optional: true },
-		],
-		cite: "floor function (scale optional)",
-	},
-	power: {
-		name: "power",
-		params: [
-			{ name: "expr1", type: "double" },
-			{ name: "expr2", type: "double" },
-		],
-		cite: "power function",
-	},
-	mod: {
-		name: "mod",
-		params: [
-			{ name: "dividend", type: "numeric" },
-			{ name: "divisor", type: "numeric" },
-		],
-		cite: "mod function",
-	},
+	// numeric - Spark "Mathematical functions" - no offline harvest source at all for CAST (its
+	// syntax uses "expr AS type", the AS keyword the flat-list model blocks as a clause).
 	cast: { name: "cast", params: [{ name: "expr" }, { name: "type" }], cite: "cast function" },
-	// aggregate - Spark "Aggregate functions"
-	sum: { name: "sum", params: [{ name: "expr", type: "numeric" }], cite: "sum aggregate" },
-	avg: { name: "avg", params: [{ name: "expr", type: "numeric" }], cite: "avg aggregate" },
+	// abs was deleted 2026-07-14 as a typed-duplicate, then RESTORED: check-calls.ts's operand-type
+	// check only ever trusts a curated-origin, single-overload signature (src/qualify/check-calls.ts
+	// line ~187), so dropping the type silently disabled the abs(true) boolean->numeric diagnostic -
+	// tests/qualify.calls.test.ts > "Databricks still flags a boolean arg into a numeric param" failed.
+	abs: { name: "abs", params: [{ name: "expr", type: "numeric" }], cite: "abs function" },
 	// ai_parse_document - docs/syntax/functions/ai_parse_document/{1,2}.txt: page documents both
 	// `ai_parse_document(content)` and `ai_parse_document(content, Map("version" -> "2.0"))`; the
 	// second form's example arg isn't a plain identifier, so the harvester (correctly, per its
