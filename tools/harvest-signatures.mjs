@@ -3223,8 +3223,17 @@ function describeTsqlFor(merged) {
 	return map;
 }
 
+/** sqlite: the committed descriptions tier (sqlite/docs/descriptions.json, captured from the
+ *  public-domain sqlite.org doc bundle by tools/capture-sqlite-descriptions.mjs). */
+function describeSqlite() {
+	const p = corpusPath("sqlite/docs/descriptions.json");
+	if (!existsSync(p)) return null;
+	return new Map(Object.entries(JSON.parse(readFileSync(p, "utf8")).descriptions));
+}
+
 /** Per-dialect description sources. null = no legally clean vendored source in THIS stage (the
- *  capture-tier and license-blocked dialects get theirs from later stages' committed tiers). */
+ *  remaining dialects get theirs from later stages: databricks from a Spark capture tier,
+ *  snowflake/redshift/mysql from the authored layer). */
 const DESCRIPTION_EXTRACTORS = {
 	databricks: () => null,
 	tsql: null, // provenance-driven: wired via describeTsqlFor(merged) in main()
@@ -3234,7 +3243,7 @@ const DESCRIPTION_EXTRACTORS = {
 	postgres: describePostgres,
 	duckdb: describeDuckdb,
 	trino: describeTrino,
-	sqlite: () => null,
+	sqlite: describeSqlite,
 	mysql: () => null,
 };
 

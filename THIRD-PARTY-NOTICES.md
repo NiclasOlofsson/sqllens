@@ -166,6 +166,13 @@ Derived from the function reference markdown in
 [google/googlesql](https://github.com/google/googlesql) `docs/`, (c) Google LLC,
 Apache License 2.0.
 
+### SQLite signatures and descriptions, from the sqlite.org documentation (public domain)
+
+Derived from the [sqlite.org](https://sqlite.org) function-reference pages (doc
+bundle 3.53.3). SQLite's code and documentation are dedicated to the
+[public domain](https://sqlite.org/copyright.html); the docs table reproduces one
+descriptive sentence per function.
+
 ### Databricks and Snowflake signatures, from the vendors' public SQL references
 
 Derived from the Syntax sections of the public SQL language references at
