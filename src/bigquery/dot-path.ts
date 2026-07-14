@@ -387,5 +387,3 @@ export function dotPathTokenSource(
 	const tokens = lexer.getAllTokens(); // full lex (drives lexer error listeners); EOF excluded
 	return { source: new ListTokenSource(rewriteDotPaths(tokens)), escapeDiagnostics: badLiteralEscapes(tokens) };
 }
-
-export { GoogleSQLLexer };

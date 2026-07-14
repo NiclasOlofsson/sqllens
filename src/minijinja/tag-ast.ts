@@ -425,7 +425,7 @@ function kwargValue(arg: ParserRuleContext): ParserRuleContext | undefined {
  * fabricated (never-wrong). The `{{ }}` macro node and the `{% %}` control tag both
  * build from this, so a call surfaces identically wherever it appears.
  */
-export function callToMacroCall(call: CallExprContext): MacroCall | undefined {
+function callToMacroCall(call: CallExprContext): MacroCall | undefined {
 	const callee = decomposeCallee(call);
 	if (!callee || !callee.nameSpan) return undefined;
 	const { args, argsSpan } = argInfo(call);
