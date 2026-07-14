@@ -56,7 +56,7 @@ const DATABRICKS: Record<string, FnSignature> = {
 	// date_add/datediff carry a 2-arg (start_date, num_days) and a 3-arg unit form
 	// (date_add(unit, value, expr)).
 	date_add: { name: "date_add", params: [p("start_date", "date"), p("num_days", "int"), o("expr")] }, // date_add function
-	date_sub: { name: "date_sub", params: [p("start_date", "date"), p("num_days", "int"), o("expr")] }, // date_sub function
+	date_sub: { name: "date_sub", params: [p("start_date", "date"), p("num_days", "int")] }, // date_sub function — docs.databricks.com functions/date_sub documents only date_sub(startDate, numDays); no unit-based 3-arg overload exists (unlike date_add)
 	datediff: { name: "datediff", params: [p("endDate", "date"), p("startDate", "date"), o("endTs")] }, // datediff function
 	date_trunc: { name: "date_trunc", params: [p("fmt", "string"), p("ts", "timestamp")] }, // date_trunc function
 	trunc: { name: "trunc", params: [p("date", "date"), p("fmt", "string")] }, // trunc function
@@ -66,13 +66,22 @@ const DATABRICKS: Record<string, FnSignature> = {
 	add_months: { name: "add_months", params: [p("startDate", "date"), p("numMonths", "int")] }, // add_months function
 	// string — Spark "String functions"
 	concat: { name: "concat", params: [p("expr", "string")], variadic: true }, // concat function (variadic)
-	concat_ws: { name: "concat_ws", params: [p("sep", "string"), p("expr", "string")], variadic: true }, // concat_ws function
+	concat_ws: { name: "concat_ws", params: [p("sep", "string"), o("expr", "string")], variadic: true }, // concat_ws function — concat_ws('s') = '' is a documented valid call (separator-only)
 	// len is optional (to end of string); substr's pos too (bare substr('hello') per fn-invocation ref).
+	// NOTE: the reconciliation report recommended making pos required, citing the substr function-ref
+	// page alone — but the corpus honesty sweep proved that wrong: sql-ref-function-invocation/4.sql
+	// (docs.databricks.com's own function-invocation-syntax page) is SELECT substr('hello'); a real,
+	// vendor-documented bare 1-arg call. pos stays optional; the report's claim doesn't hold.
 	substring: { name: "substring", params: [p("str", "string"), p("pos", "int"), o("len", "int")] }, // substring function
 	substr: { name: "substr", params: [p("str", "string"), o("pos", "int"), o("len", "int")] }, // substr function
 	split: { name: "split", params: [p("str", "string"), p("regex", "string"), o("limit", "int")] }, // split function (limit optional)
 	split_part: { name: "split_part", params: [p("str", "string"), p("delimiter", "string"), p("partNum", "int")] }, // split_part function
 	replace: { name: "replace", params: [p("str", "string"), p("search", "string"), o("replace", "string")] }, // replace function (replace optional → '')
+	// NOTE: the reconciliation report recommended reducing this to trim(str) only, arguing the 2-arg
+	// positional form is a syntax error in real Databricks SQL (only the FROM-keyword forms are
+	// documented). The corpus honesty sweep proved that wrong: real production SQL (Oatly's
+	// bronze_3pl__nagelbochum/nageltraiskirchen/nagelwroclaw models) calls trim('"', SSCC) — a plain
+	// 2-arg positional call — and it must parse without a diagnostic. trimStr stays optional.
 	trim: { name: "trim", params: [p("str", "string"), o("trimStr", "string")] }, // trim function (trimStr optional)
 	lpad: { name: "lpad", params: [p("str", "string"), p("len", "int"), o("pad", "string")] }, // lpad function (pad optional)
 	rpad: { name: "rpad", params: [p("str", "string"), p("len", "int"), o("pad", "string")] }, // rpad function (pad optional)
@@ -98,7 +107,7 @@ const DATABRICKS: Record<string, FnSignature> = {
 	mod: { name: "mod", params: [p("dividend", "numeric"), p("divisor", "numeric")] }, // mod function
 	cast: { name: "cast", params: [p("expr"), p("type")] }, // cast function
 	// aggregate — Spark "Aggregate functions"
-	count: { name: "count", params: [p("expr")] }, // count aggregate
+	count: { name: "count", params: [p("expr")], variadic: true }, // count aggregate — variadic; doc example count(col1, col2) -> 4
 	sum: { name: "sum", params: [p("expr", "numeric")] }, // sum aggregate
 	avg: { name: "avg", params: [p("expr", "numeric")] }, // avg aggregate
 	min: { name: "min", params: [p("expr")] }, // min aggregate
@@ -118,9 +127,9 @@ const TSQL: Record<string, FnSignature> = {
 	datefromparts: { name: "DATEFROMPARTS", params: [p("year", "int"), p("month", "int"), p("day", "int")] }, // DATEFROMPARTS (Transact-SQL)
 	eomonth: { name: "EOMONTH", params: [p("start_date", "date"), p("month_to_add", "int")] }, // EOMONTH (Transact-SQL)
 	// conversion — "CAST and CONVERT"
-	convert: { name: "CONVERT", params: [p("data_type"), p("expression"), p("style", "int")] }, // CONVERT (Transact-SQL)
+	convert: { name: "CONVERT", params: [p("data_type"), p("expression"), o("style", "int")] }, // CONVERT (Transact-SQL) — CONVERT ( data_type [ ( length ) ] , expression [ , style ] ): style is bracketed/optional
 	cast: { name: "CAST", params: [p("expression"), p("data_type")] }, // CAST (Transact-SQL)
-	try_convert: { name: "TRY_CONVERT", params: [p("data_type"), p("expression"), p("style", "int")] }, // TRY_CONVERT (Transact-SQL)
+	try_convert: { name: "TRY_CONVERT", params: [p("data_type"), p("expression"), o("style", "int")] }, // TRY_CONVERT (Transact-SQL) — TRY_CONVERT ( data_type [ ( length ) ] , expression [ , style ] ): style is bracketed/optional
 	// string — "String Functions"
 	substring: { name: "SUBSTRING", params: [p("expression"), p("start", "int"), o("length", "int")] }, // SUBSTRING (Transact-SQL) (length optional in Fabric/newer)
 	charindex: {
@@ -206,7 +215,7 @@ const SNOWFLAKE: Record<string, FnSignature> = {
 		],
 	}, // REGEXP_REPLACE
 	// conditional / null
-	coalesce: { name: "COALESCE", params: [p("expr")], variadic: true }, // COALESCE (variadic)
+	coalesce: { name: "COALESCE", params: [p("expr1"), p("expr2")], variadic: true }, // COALESCE (min 2, then variadic) — COALESCE( <expr1> , <expr2> [ , ... , <exprN> ] )
 	nvl: { name: "NVL", params: [p("expr1"), p("expr2")] }, // NVL
 	ifnull: { name: "IFNULL", params: [p("expr1"), p("expr2")] }, // IFNULL
 	nullif: { name: "NULLIF", params: [p("expr1"), p("expr2")] }, // NULLIF
@@ -223,12 +232,12 @@ const SNOWFLAKE: Record<string, FnSignature> = {
 	power: { name: "POWER", params: [p("base", "numeric"), p("exponent", "numeric")] }, // POWER
 	mod: { name: "MOD", params: [p("expr1", "numeric"), p("expr2", "numeric")] }, // MOD
 	// aggregate
-	count: { name: "COUNT", params: [p("expr")] }, // COUNT
+	count: { name: "COUNT", params: [p("expr1"), o("expr2")], variadic: true }, // COUNT([DISTINCT] expr1[, expr2, ...]) — multi-column count: "expr2 You can include additional column name(s)"
 	sum: { name: "SUM", params: [p("expr", "numeric")] }, // SUM
 	avg: { name: "AVG", params: [p("expr", "numeric")] }, // AVG
 	min: { name: "MIN", params: [p("expr")] }, // MIN
 	max: { name: "MAX", params: [p("expr")] }, // MAX
-	listagg: { name: "LISTAGG", params: [p("expr", "string"), p("delimiter", "string")] }, // LISTAGG
+	listagg: { name: "LISTAGG", params: [p("expr", "string"), o("delimiter", "string")] }, // LISTAGG([DISTINCT] expr1[, delimiter]) — "If no delimiter is specified, an empty string is used"
 };
 
 // ---------------------------------------------------------------------------
@@ -255,22 +264,25 @@ const BIGQUERY: Record<string, FnSignature> = {
 	split: { name: "SPLIT", params: [p("value", "STRING"), o("delimiter", "STRING")] }, // SPLIT (delimiter optional → comma)
 	replace: {
 		name: "REPLACE",
-		params: [p("original_value", "STRING"), p("from_pattern", "STRING"), p("to_value", "STRING")],
-	}, // REPLACE
+		params: [p("original_value", "STRING"), p("from_pattern", "STRING"), p("to_pattern", "STRING")],
+	}, // REPLACE(original_value, from_pattern, to_pattern) — string_functions.md, from/to symmetry
 	trim: { name: "TRIM", params: [p("value", "STRING"), o("chars_to_trim", "STRING")] }, // TRIM (chars optional)
 	lpad: {
 		name: "LPAD",
-		params: [p("original_value", "STRING"), p("return_length", "INT64"), p("pattern", "STRING")],
-	}, // LPAD
+		params: [p("original_value", "STRING"), p("return_length", "INT64"), o("pattern", "STRING")],
+	}, // LPAD(original_value, return_length[, pattern]) — pattern optional, defaults to a blank space
 	rpad: {
 		name: "RPAD",
-		params: [p("original_value", "STRING"), p("return_length", "INT64"), p("pattern", "STRING")],
-	}, // RPAD
+		params: [p("original_value", "STRING"), p("return_length", "INT64"), o("pattern", "STRING")],
+	}, // RPAD(original_value, return_length[, pattern]) — pattern optional, defaults to a blank space
 	regexp_replace: {
 		name: "REGEXP_REPLACE",
 		params: [p("value", "STRING"), p("regexp", "STRING"), p("replacement", "STRING")],
 	}, // REGEXP_REPLACE
-	regexp_extract: { name: "REGEXP_EXTRACT", params: [p("value", "STRING"), p("regexp", "STRING")] }, // REGEXP_EXTRACT
+	regexp_extract: {
+		name: "REGEXP_EXTRACT",
+		params: [p("value", "STRING"), p("regexp", "STRING"), o("position", "INT64"), o("occurrence", "INT64")],
+	}, // REGEXP_EXTRACT(value, regexp[, position[, occurrence]])
 	// conditional / null
 	coalesce: { name: "COALESCE", params: [p("expr")], variadic: true }, // COALESCE (variadic)
 	ifnull: { name: "IFNULL", params: [p("expr"), p("null_result")] }, // IFNULL
@@ -292,7 +304,7 @@ const BIGQUERY: Record<string, FnSignature> = {
 	min: { name: "MIN", params: [p("expression")] }, // MIN
 	max: { name: "MAX", params: [p("expression")] }, // MAX
 	array_agg: { name: "ARRAY_AGG", params: [p("expression")] }, // ARRAY_AGG
-	string_agg: { name: "STRING_AGG", params: [p("expression", "STRING"), p("delimiter", "STRING")] }, // STRING_AGG
+	string_agg: { name: "STRING_AGG", params: [p("expression", "STRING"), o("delimiter", "STRING")] }, // STRING_AGG(expression[, delimiter]) — "otherwise, a comma is used"
 };
 
 // ---------------------------------------------------------------------------
@@ -369,8 +381,16 @@ const POSTGRES: Record<string, FnSignature> = {
 	make_date: { name: "make_date", params: [p("year", "int"), p("month", "int"), p("day", "int")] }, // make_date(year, month, day)
 	make_interval: {
 		name: "make_interval",
-		params: [p("years", "int"), p("months", "int"), p("weeks", "int"), p("days", "int")],
-	}, // make_interval(years, months, …)
+		params: [
+			o("years", "int"),
+			o("months", "int"),
+			o("weeks", "int"),
+			o("days", "int"),
+			o("hours", "int"),
+			o("mins", "int"),
+			o("secs", "double precision"),
+		],
+	}, // make_interval( [years int [, months int [, weeks int [, days int [, hours int [, mins int [, secs double precision]]]]]]] ) — ALL seven params optional (7-deep nested <optional> chain in the doc)
 	to_date: { name: "to_date", params: [p("text", "text"), p("format", "text")] }, // to_date(text, format)
 	to_timestamp: { name: "to_timestamp", params: [p("text", "text"), p("format", "text")] }, // to_timestamp(text, format)
 	to_char: { name: "to_char", params: [p("value"), p("format", "text")] }, // to_char(value, format)
@@ -378,25 +398,29 @@ const POSTGRES: Record<string, FnSignature> = {
 	// string — functions-string.html (Table 9.10)
 	concat: { name: "concat", params: [p("val")], variadic: true }, // concat(val1, val2, …)
 	concat_ws: { name: "concat_ws", params: [p("sep", "text"), p("val")], variadic: true }, // concat_ws(sep, val…)
+	// OPEN (flagged for Niclas, verification pending): the manual documents the positional 3-arg comma
+	// form only under substr ("Same as substring(string from start for count)") — substring's own 6
+	// overloads are all FROM/FOR/SIMILAR/ESCAPE keyword-clause forms. Whether substring(a,b,c) is
+	// itself accepted positionally could not be confirmed against a running Postgres; left as-is.
 	substring: { name: "substring", params: [p("string", "text"), p("start", "int"), p("count", "int")] }, // substring(string, start, count)
-	substr: { name: "substr", params: [p("string", "text"), p("start", "int"), p("count", "int")] }, // substr(string, start, count)
+	substr: { name: "substr", params: [p("string", "text"), p("start", "int"), o("count", "int")] }, // substr(string, start[, count]) — count is trailing-optional in both the text and bytea overloads
 	split_part: { name: "split_part", params: [p("string", "text"), p("delimiter", "text"), p("n", "int")] }, // split_part(string, delimiter, n)
 	replace: { name: "replace", params: [p("string", "text"), p("from", "text"), p("to", "text")] }, // replace(string, from, to)
 	regexp_replace: {
 		name: "regexp_replace",
-		params: [p("string", "text"), p("pattern", "text"), p("replacement", "text"), p("flags", "text")],
+		params: [p("string", "text"), p("pattern", "text"), p("replacement", "text"), o("flags", "text")],
 	}, // regexp_replace(string, pattern, replacement [, flags])
 	regexp_match: { name: "regexp_match", params: [p("string", "text"), p("pattern", "text"), o("flags", "text")] }, // regexp_match(string, pattern [, flags])
-	lpad: { name: "lpad", params: [p("string", "text"), p("length", "int"), p("fill", "text")] }, // lpad(string, length, fill)
-	rpad: { name: "rpad", params: [p("string", "text"), p("length", "int"), p("fill", "text")] }, // rpad(string, length, fill)
+	lpad: { name: "lpad", params: [p("string", "text"), p("length", "int"), o("fill", "text")] }, // lpad(string, length[, fill])
+	rpad: { name: "rpad", params: [p("string", "text"), p("length", "int"), o("fill", "text")] }, // rpad(string, length[, fill])
 	position: { name: "position", params: [p("substring", "text"), p("string", "text")] }, // position(substring in string)
 	strpos: { name: "strpos", params: [p("string", "text"), p("substring", "text")] }, // strpos(string, substring)
 	left: { name: "left", params: [p("string", "text"), p("n", "int")] }, // left(string, n)
 	right: { name: "right", params: [p("string", "text"), p("n", "int")] }, // right(string, n)
-	format: { name: "format", params: [p("formatstr", "text"), p("formatarg")], variadic: true }, // format(formatstr, formatarg…)
+	format: { name: "format", params: [p("formatstr", "text"), o("formatarg")], variadic: true }, // format(formatstr [, formatarg, …]) — formatarg optional, format('hello') alone is valid
 	string_to_array: {
 		name: "string_to_array",
-		params: [p("string", "text"), p("delimiter", "text"), p("null_string", "text")],
+		params: [p("string", "text"), p("delimiter", "text"), o("null_string", "text")],
 	}, // string_to_array(string, delimiter [, null_string])
 	// numeric — functions-math.html (Table 9.5)
 	round: { name: "round", params: [p("v", "numeric"), o("s", "int")] }, // round(v numeric [, s int])
@@ -427,7 +451,7 @@ const POSTGRES: Record<string, FnSignature> = {
 	// JSON — functions-json.html
 	jsonb_set: {
 		name: "jsonb_set",
-		params: [p("target", "jsonb"), p("path", "text[]"), p("new_value", "jsonb"), p("create_if_missing", "boolean")],
+		params: [p("target", "jsonb"), p("path", "text[]"), p("new_value", "jsonb"), o("create_if_missing", "boolean")],
 	}, // jsonb_set(target, path, new_value [, create_if_missing])
 	jsonb_extract_path: {
 		name: "jsonb_extract_path",
@@ -452,7 +476,7 @@ const DUCKDB: Record<string, FnSignature> = {
 	make_date: { name: "make_date", params: [p("year", "bigint"), p("month", "bigint"), p("day", "bigint")] }, // make_date(year, month, day)
 	time_bucket: {
 		name: "time_bucket",
-		params: [p("bucket_width", "interval"), p("timestamp", "timestamp"), p("offset", "interval")],
+		params: [p("bucket_width", "interval"), p("timestamp", "timestamp"), o("offset", "interval")],
 	}, // time_bucket(bucket_width, timestamp[, offset])
 	// text — functions/text.md
 	concat: { name: "concat", params: [p("value")], variadic: true }, // concat(value, ...)
@@ -475,8 +499,8 @@ const DUCKDB: Record<string, FnSignature> = {
 	right: { name: "right", params: [p("string", "text"), p("count", "int")] }, // right(string, count)
 	contains: { name: "contains", params: [p("string", "text"), p("search_string", "text")] }, // contains(string, search_string)
 	starts_with: { name: "starts_with", params: [p("string", "text"), p("search_string", "text")] }, // starts_with(string, search_string)
-	printf: { name: "printf", params: [p("format", "text"), p("parameter")], variadic: true }, // printf(format, parameters...)
-	format: { name: "format", params: [p("format", "text"), p("parameter")], variadic: true }, // format(format, parameters...)
+	printf: { name: "printf", params: [p("format", "text")], variadic: true }, // printf(format, ...) — text.md:528, only format is required (printf('hello') is valid)
+	format: { name: "format", params: [p("format", "text")], variadic: true }, // format(format, ...) — text.md:268, same shape as printf, only format is required
 	// numeric — functions/numeric.md
 	round: { name: "round", params: [p("v", "numeric"), p("s", "int")] }, // round(v, s)
 	trunc: { name: "trunc", params: [p("x", "numeric")] }, // trunc(x)
@@ -501,10 +525,10 @@ const DUCKDB: Record<string, FnSignature> = {
 	count: { name: "count", params: [p("arg")] }, // count(arg)
 	sum: { name: "sum", params: [p("arg", "numeric")] }, // sum(arg)
 	avg: { name: "avg", params: [p("arg", "numeric")] }, // avg(arg)
-	min: { name: "min", params: [p("arg"), p("n", "int")] }, // min(arg[, n])
-	max: { name: "max", params: [p("arg"), p("n", "int")] }, // max(arg[, n])
-	arg_max: { name: "arg_max", params: [p("arg"), p("val"), p("n", "int")] }, // arg_max(arg, val[, n])
-	arg_min: { name: "arg_min", params: [p("arg"), p("val"), p("n", "int")] }, // arg_min(arg, val[, n])
+	min: { name: "min", params: [p("arg"), o("n", "int")] }, // min(arg[, n])
+	max: { name: "max", params: [p("arg"), o("n", "int")] }, // max(arg[, n])
+	arg_max: { name: "arg_max", params: [p("arg"), p("val"), o("n", "int")] }, // arg_max(arg, val[, n])
+	arg_min: { name: "arg_min", params: [p("arg"), p("val"), o("n", "int")] }, // arg_min(arg, val[, n])
 	string_agg: { name: "string_agg", params: [p("arg", "text"), p("sep", "text")] }, // string_agg(arg, sep)
 	quantile_cont: { name: "quantile_cont", params: [p("x", "numeric"), p("pos", "double")] }, // quantile_cont(x, pos)
 };
@@ -531,11 +555,11 @@ const TRINO: Record<string, FnSignature> = {
 		name: "split_part",
 		params: [p("string", "varchar"), p("delimiter", "varchar"), p("index", "bigint")],
 	}, // split_part(string, delimiter, index)
-	strpos: { name: "strpos", params: [p("string", "varchar"), p("substring", "varchar"), p("instance", "bigint")] }, // strpos(string, substring[, instance])
-	replace: { name: "replace", params: [p("string", "varchar"), p("search", "varchar"), p("replace", "varchar")] }, // replace(string, search[, replace])
+	strpos: { name: "strpos", params: [p("string", "varchar"), p("substring", "varchar"), o("instance", "bigint")] }, // strpos(string, substring[, instance])
+	replace: { name: "replace", params: [p("string", "varchar"), p("search", "varchar"), o("replace", "varchar")] }, // replace(string, search[, replace])
 	lpad: { name: "lpad", params: [p("string", "varchar"), p("size", "bigint"), p("padstring", "varchar")] }, // lpad(string, size, padstring)
 	rpad: { name: "rpad", params: [p("string", "varchar"), p("size", "bigint"), p("padstring", "varchar")] }, // rpad(string, size, padstring)
-	concat_ws: { name: "concat_ws", params: [p("separator", "varchar"), p("strings", "varchar...")] }, // concat_ws(separator, ...)
+	concat_ws: { name: "concat_ws", params: [p("separator", "varchar"), p("strings", "varchar")], variadic: true }, // concat_ws(separator, string1, ..., stringN) — a real variadic flag, not a cosmetic "..." in the type string
 	format: { name: "format", params: [p("format", "varchar"), p("args", "any")], variadic: true }, // format(format, args...)
 	// regexp — functions/regexp.html
 	regexp_like: { name: "regexp_like", params: [p("string", "varchar"), p("pattern", "varchar")] }, // regexp_like(string, pattern)
@@ -557,7 +581,7 @@ const TRINO: Record<string, FnSignature> = {
 		name: "array_join",
 		params: [p("x", "array"), p("delimiter", "varchar"), o("null_replacement", "varchar")],
 	}, // array_join(x, delimiter[, null_replacement])
-	sequence: { name: "sequence", params: [p("start", "bigint"), p("stop", "bigint"), p("step", "bigint")] }, // sequence(start, stop[, step])
+	sequence: { name: "sequence", params: [p("start", "bigint"), p("stop", "bigint"), o("step", "bigint")] }, // sequence(start, stop[, step]) — step optional, defaults to incrementing by 1
 	transform: { name: "transform", params: [p("array", "array"), p("function", "lambda")] }, // transform(array, function) — functions/lambda.html
 	reduce: {
 		name: "reduce",
@@ -572,17 +596,17 @@ const TRINO: Record<string, FnSignature> = {
 	count: { name: "count", params: [p("x", "any")] }, // count(x)
 	sum: { name: "sum", params: [p("x", "numeric")] }, // sum(x)
 	avg: { name: "avg", params: [p("x", "numeric")] }, // avg(x)
-	min: { name: "min", params: [p("x", "any"), p("n", "bigint")] }, // min(x[, n])
-	max: { name: "max", params: [p("x", "any"), p("n", "bigint")] }, // max(x[, n])
-	max_by: { name: "max_by", params: [p("x", "any"), p("y", "any"), p("n", "bigint")] }, // max_by(x, y[, n])
-	min_by: { name: "min_by", params: [p("x", "any"), p("y", "any"), p("n", "bigint")] }, // min_by(x, y[, n])
+	min: { name: "min", params: [p("x", "any"), o("n", "bigint")] }, // min(x[, n])
+	max: { name: "max", params: [p("x", "any"), o("n", "bigint")] }, // max(x[, n])
+	max_by: { name: "max_by", params: [p("x", "any"), p("y", "any"), o("n", "bigint")] }, // max_by(x, y[, n])
+	min_by: { name: "min_by", params: [p("x", "any"), p("y", "any"), o("n", "bigint")] }, // min_by(x, y[, n])
 	approx_percentile: { name: "approx_percentile", params: [p("x", "numeric"), p("percentile", "double")] }, // approx_percentile(x, percentile)
-	approx_distinct: { name: "approx_distinct", params: [p("x", "any"), p("e", "double")] }, // approx_distinct(x[, e])
+	approx_distinct: { name: "approx_distinct", params: [p("x", "any"), o("e", "double")] }, // approx_distinct(x[, e])
 	listagg: { name: "listagg", params: [p("expression", "varchar"), p("separator", "varchar")] }, // listagg(expr[, sep]) WITHIN GROUP
 	// conditional — functions/conditional.html
-	coalesce: { name: "coalesce", params: [p("value", "any")], variadic: true }, // coalesce(value1, value2, ...)
+	coalesce: { name: "coalesce", params: [p("value1", "any"), p("value2", "any")], variadic: true }, // coalesce(value1, value2, ...) — AstBuilder.java: "must have at least two arguments", min arity 2
 	nullif: { name: "nullif", params: [p("value1", "any"), p("value2", "any")] }, // nullif(value1, value2)
-	if: { name: "if", params: [p("condition", "boolean"), p("true_value", "any"), p("false_value", "any")] }, // if(cond, t[, f])
+	if: { name: "if", params: [p("condition", "boolean"), p("true_value", "any"), o("false_value", "any")] }, // if(cond, t[, f]) — AstBuilder.java: arguments.size() == 2 || 3, false_value optional
 };
 
 // ---------------------------------------------------------------------------
