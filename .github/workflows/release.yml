@@ -13,7 +13,7 @@ jobs:
   release:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           fetch-depth: 0 # semantic-release needs full tag history
 
@@ -21,7 +21,7 @@ jobs:
       # .npmrc when registry-url is set, which conflicts with npm's OIDC
       # trusted-publishing auth (EINVALIDNPMTOKEN). npm CLI >=11.5.1 detects
       # the GitHub Actions OIDC environment on its own.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v5
         with:
           node-version: lts/*
           cache: npm
