@@ -1312,6 +1312,24 @@ function lowerFunctionCall(node: ParserRuleContext): Expr {
 		};
 	}
 
+	// EXTRACT LR_BRACKET (id_ | string) (FROM | COMMA) expr RR_BRACKET: the date-part operand is an
+	// id_/string child, not an expr, so the generic collection below drops it and every
+	// EXTRACT(part FROM ts) call under-counts to one argument (a wrong-arity false positive on valid
+	// SQL once the arity checker trusts the generated signatures). Lowered as a literal, never a
+	// column ref: a date part must not join name resolution.
+	if (hasTokenShallow(node, P.EXTRACT)) {
+		const part = directChildrenOfRule(node, P.RULE_id_)[0] ?? directChildrenOfRule(node, P.RULE_string)[0];
+		const partArgs: Expr[] = part ? [{ kind: "literal", text: part.getText(), cst: part }] : [];
+		return {
+			kind: "function",
+			name: "extract",
+			args: [...partArgs, ...directChildrenOfRule(node, P.RULE_expr).map(lowerExpr)],
+			aggregate: false,
+			distinct: false,
+			cst: node,
+		};
+	}
+
 	const name = functionName(node);
 	const args = [
 		...exprListExprs(node).map(lowerExpr),
