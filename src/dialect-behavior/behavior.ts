@@ -25,9 +25,10 @@ export interface DialectBehavior {
 	special?(fn: Extract<Expr, { kind: "function" }>): Type | undefined;
 
 	// --- call-signature checking (was check-calls.ts' per-dialect signature tables) ---
-	curatedSignatures: Record<string, FnSignature>;
-	harvestedSignatures: Record<string, FnSignature>;
-	arityUsesHarvested: boolean;
+	/** The dialect's merged function-signature table (curated overrides folded over the harvested
+	 *  long tail at generation time — src/<dialect>/signatures.generated.ts). The arity checker trusts
+	 *  every entry regardless of origin; operand-type checking trusts "curated"-origin entries only. */
+	signatures: Record<string, FnSignature>;
 	/** Whether an argument type is acceptable for a declared param (dialect implicit-coercion rules). */
 	accepts(argType: Type, paramText: string | undefined): boolean;
 }

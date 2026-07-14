@@ -12,12 +12,12 @@
 //   2. function name — the word-like token immediately before that `(`;
 //   3. active parameter — top-level commas between that `(` and the caret (commas
 //      at the call's own depth only; nested call/paren commas don't count);
-//   4. label — from the curated FUNCTION_SIGNATURES table; the long tail degrades
+//   4. label — from the merged per-dialect SIGNATURES table; an unknown name degrades
 //      to a name-only hint with the active-arg index still resolved.
 //
 // Total: never throws. Anything that isn't a clean call → null.
 //
-// Core module: pure TS over doc.tokens + the curated table + the inference
+// Core module: pure TS over doc.tokens + the merged signature table + the inference
 // registry (function-name membership). No antlr, no LSP deps.
 // ---------------------------------------------------------------------------
 

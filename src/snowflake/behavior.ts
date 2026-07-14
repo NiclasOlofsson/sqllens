@@ -1,11 +1,9 @@
 // The snowflake DialectBehavior: everything the semantic layer needs for snowflake, assembled from
 // this folder's own pieces. The registry wires it; nothing here reaches a central per-dialect table.
-// (Call signatures still read the shared FUNCTION_SIGNATURES.snowflake transitionally, until that table
-// is assembled from the dialect modules in a follow-up pass.)
 import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
-import { FUNCTION_SIGNATURES } from "../signature/signatures.js";
+import { SIGNATURES } from "../signature/signatures.js";
 import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
 import { snowflakeLiteral, snowflakeParseType, SNOWFLAKE_FUNCTION_RETURNS, snowflakeSpecial } from "./infer.js";
 
@@ -24,8 +22,6 @@ export const snowflakeBehavior: DialectBehavior = {
 	functions: SNOWFLAKE_FUNCTION_RETURNS,
 	division: "decimal", // Snowflake: 10/3 -> 3.333333, a scaled NUMBER unless a float is involved
 	special: snowflakeSpecial,
-	curatedSignatures: FUNCTION_SIGNATURES.snowflake,
-	harvestedSignatures: {},
-	arityUsesHarvested: false,
+	signatures: SIGNATURES.snowflake,
 	accepts: (argType, paramText) => acceptsFor(snowflakeParseType, STR_TO_NUM, BOOL_NUM, argType, paramText),
 };

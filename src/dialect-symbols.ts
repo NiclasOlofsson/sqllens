@@ -12,11 +12,10 @@
 // Sources, per set:
 //
 // - functions: the union of (a) the dialect's type-inference registry keys
-//   (src/infer/dialect.ts `inferDialect(dialect).functions`), (b) the curated
-//   per-dialect signature table (src/signature/signatures.ts FUNCTION_SIGNATURES),
-//   (c) its harvested long-tail counterpart (HARVESTED_SIGNATURES — populated for
-//   T-SQL only on this branch, the rest map to `{}` per that file's own header), and
-//   (d) for databricks only, the Spark higher-order function names
+//   (src/infer/dialect.ts `inferDialect(dialect).functions`), (b) the dialect's
+//   merged function-signature table (src/signature/signatures.ts SIGNATURES,
+//   built by tools/harvest-signatures.mjs from curated overrides folded over the
+//   harvested long tail), and (c) for databricks only, the Spark higher-order function names
 //   (src/infer/infer.ts HOF_LAMBDA_ARG: transform/zip_with/aggregate/reduce/
 //   transform_keys/transform_values). Those six are genuine Spark builtins
 //   (spark.apache.org/docs/latest/api/sql/#aggregate) that never get a FnRule registry
@@ -90,7 +89,7 @@ import { DUCKDB_ALIASES } from "./duckdb/infer.js";
 import { TRINO_ALIASES } from "./trino/infer.js";
 import { SQLITE_ALIASES } from "./sqlite/infer.js";
 import { MYSQL_ALIASES } from "./mysql/infer.js";
-import { FUNCTION_SIGNATURES, HARVESTED_SIGNATURES } from "./signature/signatures.js";
+import { SIGNATURES } from "./signature/signatures.js";
 
 /** Per-dialect membership sets — canonical UPPERCASE names. See module header for sources
  *  and heuristic limits per set. */
@@ -150,8 +149,7 @@ function keywordsFor(dialect: Dialect): Set<string> {
 function functionsFor(dialect: Dialect): Set<string> {
 	const out = new Set<string>();
 	for (const name of Object.keys(resolveBehavior(dialect).functions)) out.add(name.toUpperCase());
-	for (const name of Object.keys(FUNCTION_SIGNATURES[dialect])) out.add(name.toUpperCase());
-	for (const name of Object.keys(HARVESTED_SIGNATURES[dialect])) out.add(name.toUpperCase());
+	for (const name of Object.keys(SIGNATURES[dialect])) out.add(name.toUpperCase());
 	if (dialect === "databricks") {
 		for (const name of Object.keys(HOF_LAMBDA_ARG)) out.add(name.toUpperCase());
 	}

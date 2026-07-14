@@ -1,16 +1,33 @@
-// Harvest per-dialect function SIGNATURES (parameter names + arity + variadic) from the docs
-// corpora into committed, generated tables `src/signature/generated/<dialect>.ts`. Signature help
-// (src/signature/signature.ts) reads these AFTER the hand-curated FUNCTION_SIGNATURES table, so a
-// curated entry always wins and the harvest fills the long tail; anything neither table knows still
-// degrades to the name-only hint.
+// Build the single generated function-SIGNATURES table per dialect: ONE list, per dialect, folding
+// two inputs together at generation time.
 //
-// NEVER-WRONG CONTRACT: a signature is emitted ONLY when its documented syntax block parses
-// UNAMBIGUOUSLY into `name(param[, param…])` form — a flat, comma-separated list of plain parameter
-// names (optional trailing params flattened in, a `…n`/`...` tail marked variadic). Anything else —
-// alternations `{ a | b }`, in-argument clause keywords (FROM/AS/OVER/ORDER/USING), `<angle>` sub-rule
-// references, `::=` productions, multi-word params, or two blocks on one page that disagree on the
-// parameter list (a genuine overload) — is SKIPPED, counted, and reported. A wrong parameter name or
-// arity is worse than the name-only fallback, so we skip aggressively.
+//   1. HARVESTED entries mined from the docs corpora (the extractors below, unchanged).
+//   2. CURATED overrides — plain data read from tools/signature-overrides/<dialect>.mjs (migrated
+//      from the old hand-authored FUNCTION_SIGNATURES table).
+//
+// An override wins by key over the harvest; every emitted entry carries `origin: "curated" |
+// "harvested"` so downstream consumers (the arity checker in src/qualify/check-calls.ts, the
+// signature-help hint) can tell which layer it came from. The merged table is committed at
+// src/<dialect>/signatures.generated.ts (NOT src/signature/generated/ — that directory is gone; the
+// table now lives alongside the dialect it describes), exported as `<DIALECT>_SIGNATURES`.
+//
+// Dialects with no offline docs-syntax source (redshift, sqlite, mysql) still get a generated table:
+// overrides-only, every entry origin "curated", the file header noting there is no harvest source yet.
+//
+// NEVER-WRONG CONTRACT (harvest side only): a HARVESTED signature is emitted ONLY when its documented
+// syntax block parses UNAMBIGUOUSLY into `name(param[, param...])` form - a flat, comma-separated list
+// of plain parameter names (optional trailing params flattened in, a `...n`/`...` tail marked
+// variadic). Anything else - alternations `{ a | b }`, in-argument clause keywords
+// (FROM/AS/OVER/ORDER/USING), `<angle>` sub-rule references, `::=` productions, multi-word params, or
+// two blocks on one page that disagree on the parameter list (a genuine overload) - is SKIPPED,
+// counted, and reported. A wrong parameter name or arity is worse than the name-only fallback, so we
+// skip aggressively. A CURATED override carries no such restriction - it is hand-authored, doc-cited
+// data, trusted as written.
+//
+// REDUNDANCY REPORT: after merging, the generator prints, per dialect, every override key whose shape
+// (params' names + types + optional flags + the variadic flag) is IDENTICAL to what the harvest
+// independently produced for the same key. Those overrides add nothing over the harvest and are future
+// removal candidates - printed, never auto-removed.
 //
 // SOURCES. The scraped example corpora hold runnable SQL statements, not function-syntax blocks, so
 // they can't yield parameter names. Seven dialects have an offline source in the corpus repo that DOES
@@ -44,12 +61,16 @@
 //   node tools/harvest-signatures.mjs && npm run format
 // (prettier owns line-wrapping; the harvester emits one entry per line and lets format wrap it.)
 
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { corpusPath } from "./corpus-paths.mjs";
 
-const OUT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "signature", "generated");
+const TOOLS_DIR = dirname(fileURLToPath(import.meta.url));
+const ROOT_DIR = resolve(TOOLS_DIR, "..");
+/** Each dialect's generated table lives next to its own folder, not under a shared signature/generated/. */
+const outFile = (dialect) => resolve(ROOT_DIR, "src", dialect, "signatures.generated.ts");
+const overridesFile = (dialect) => resolve(TOOLS_DIR, "signature-overrides", `${dialect}.mjs`);
 const TODAY = new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
@@ -2189,22 +2210,23 @@ const EXTRACTORS = {
 };
 
 const CONST_NAME = {
-	databricks: "DATABRICKS_HARVESTED",
-	tsql: "TSQL_HARVESTED",
-	snowflake: "SNOWFLAKE_HARVESTED",
-	bigquery: "BIGQUERY_HARVESTED",
-	redshift: "REDSHIFT_HARVESTED",
-	postgres: "POSTGRES_HARVESTED",
-	duckdb: "DUCKDB_HARVESTED",
-	trino: "TRINO_HARVESTED",
-	sqlite: "SQLITE_HARVESTED",
-	mysql: "MYSQL_HARVESTED",
+	databricks: "DATABRICKS_SIGNATURES",
+	tsql: "TSQL_SIGNATURES",
+	snowflake: "SNOWFLAKE_SIGNATURES",
+	bigquery: "BIGQUERY_SIGNATURES",
+	redshift: "REDSHIFT_SIGNATURES",
+	postgres: "POSTGRES_SIGNATURES",
+	duckdb: "DUCKDB_SIGNATURES",
+	trino: "TRINO_SIGNATURES",
+	sqlite: "SQLITE_SIGNATURES",
+	mysql: "MYSQL_SIGNATURES",
 };
 
 /** Serialize one FnSignature literal (stable key order). Params carry `type` (postgres gives the
  *  documented type even when the docs name no parameter) and `optional` (a trailing `[, x]` doc
- *  group stays marked optional rather than silently flattened to required). */
-function fnLiteral(sig) {
+ *  group stays marked optional rather than silently flattened to required). `origin` says which
+ *  layer (curated override vs harvested docs mining) produced the entry. */
+function fnLiteral(sig, origin) {
 	const params = sig.params
 		.map((p) => {
 			const fields = [`name: ${JSON.stringify(p.name)}`];
@@ -2214,34 +2236,99 @@ function fnLiteral(sig) {
 		})
 		.join(", ");
 	const variadic = sig.variadic ? ", variadic: true" : "";
-	return `{ name: ${JSON.stringify(sig.name)}, params: [${params}]${variadic} }`;
+	return `{ name: ${JSON.stringify(sig.name)}, params: [${params}]${variadic}, origin: ${JSON.stringify(origin)} }`;
 }
 
-function renderTable(dialect, result) {
+/** Whether a harvested signature and a curated override describe the identical shape (names, types,
+ *  optional flags, in order, plus the variadic flag). Used only for the redundancy report - never to
+ *  drop anything automatically. */
+function sameShape(a, b) {
+	if (!!a.variadic !== !!b.variadic) return false;
+	if (a.params.length !== b.params.length) return false;
+	return a.params.every((p, i) => {
+		const q = b.params[i];
+		return p.name === q.name && (p.type ?? null) === (q.type ?? null) && !!p.optional === !!q.optional;
+	});
+}
+
+/** Merge one dialect's harvested table (or null, when it has no offline docs-syntax source) with its
+ *  curated overrides. Overrides win by key. Returns the merged { key -> { sig, origin, comment } } map
+ *  plus the list of override keys whose shape exactly matches the harvest (redundancy candidates). */
+function mergeDialect(harvestResult, overrides) {
+	const merged = new Map();
+	if (harvestResult) {
+		for (const [key, sig] of Object.entries(harvestResult.signatures)) {
+			merged.set(key, { sig, origin: "harvested", comment: harvestResult.provenance[key] });
+		}
+	}
+	const redundant = [];
+	const suppressed = [];
+	for (const [key, ov] of Object.entries(overrides)) {
+		// `suppress: true` = a ruled judgment that NO flat signature may represent this name (a
+		// constructor with several non-mergeable call shapes, a dual-nature name). The harvested
+		// entry is dropped and nothing is emitted: the name degrades to registry membership plus the
+		// name-only hint, and the arity checker stays silent, exactly like a harvest conflict.
+		if (ov.suppress) {
+			merged.delete(key);
+			suppressed.push(key);
+			continue;
+		}
+		const overrideSig = { name: ov.name, params: ov.params, ...(ov.variadic ? { variadic: true } : {}) };
+		const existing = merged.get(key);
+		if (existing && existing.origin === "harvested" && sameShape(existing.sig, overrideSig)) redundant.push(key);
+		merged.set(key, { sig: overrideSig, origin: "curated", comment: `curated: ${ov.cite}` });
+	}
+	return { merged, redundant, suppressed };
+}
+
+function renderTable(dialect, merged, harvestResult) {
 	const constName = CONST_NAME[dialect];
-	const keys = Object.keys(result.signatures).sort();
-	const rows = keys.map((k) => `\t${k}: ${fnLiteral(result.signatures[k])}, // ${result.provenance[k]}`).join("\n");
+	const keys = [...merged.keys()].sort();
+	const rows = keys
+		.map((k) => {
+			const e = merged.get(k);
+			return `\t${k}: ${fnLiteral(e.sig, e.origin)}, // ${e.comment}`;
+		})
+		.join("\n");
+	const curatedCount = keys.filter((k) => merged.get(k).origin === "curated").length;
+	const harvestedCount = keys.length - curatedCount;
+	const sourceLine = harvestResult
+		? `// Harvested source: ${harvestResult.source}`
+		: `// No offline docs-syntax source in the corpus repo yet for ${dialect} - curated overrides only.`;
 	return (
-		`// GENERATED — do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format\n` +
-		`// Source: ${result.source}\n` +
-		`// Harvested ${TODAY}. ${keys.length} signatures. Curated FUNCTION_SIGNATURES override these.\n` +
-		`import type { FnSignature } from "../signatures.js";\n\n` +
-		`/** Harvested (doc-syntax-derived) parameter signatures for ${dialect}, keyed by lowercased name. */\n` +
+		`// GENERATED - do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format\n` +
+		`${sourceLine}\n` +
+		`// Overrides source: tools/signature-overrides/${dialect}.mjs\n` +
+		`// Built ${TODAY}. ${keys.length} signatures (${curatedCount} curated, ${harvestedCount} harvested).\n` +
+		`import type { FnSignature } from "../signature/signatures.js";\n\n` +
+		`/** The merged function-signature table for ${dialect}: curated overrides folded over the harvested\n` +
+		` *  doc-derived long tail (overrides win by key), keyed by lowercased name. \`origin\` says which\n` +
+		` *  layer produced each entry. */\n` +
 		`export const ${constName}: Record<string, FnSignature> = {\n${rows}\n};\n`
 	);
 }
 
-function main() {
-	mkdirSync(OUT_DIR, { recursive: true });
+async function main() {
 	const summary = [];
+	const redundancyReport = [];
 	for (const [dialect, extractor] of Object.entries(EXTRACTORS)) {
-		const result = extractor();
-		if (!result) {
-			summary.push(`  ${dialect.padEnd(11)} — no offline syntax-block source in the corpus repo → no table`);
+		const harvestResult = extractor();
+		const overridesModule = await import(pathToFileURL(overridesFile(dialect)).href);
+		const { merged, redundant, suppressed } = mergeDialect(harvestResult, overridesModule.OVERRIDES);
+
+		writeFileSync(outFile(dialect), renderTable(dialect, merged, harvestResult));
+
+		if (redundant.length > 0) redundancyReport.push(`  ${dialect.padEnd(11)} - ${redundant.sort().join(", ")}`);
+		if (suppressed.length > 0)
+			summary.push(`  ${dialect.padEnd(11)} - suppressed (no flat signature representable): ${suppressed.sort().join(", ")}`);
+
+		if (!harvestResult) {
+			summary.push(
+				`  ${dialect.padEnd(11)} - no offline syntax-block source in the corpus repo; ${merged.size} curated entries only`,
+			);
 			continue;
 		}
-		writeFileSync(join(OUT_DIR, `${dialect}.ts`), renderTable(dialect, result));
-		const s = result.stats;
+		const s = harvestResult.stats;
 		const skipStr = Object.entries(s.skips)
 			.map(([k, v]) => `${k}=${v}`)
 			.join(" ");
@@ -2254,11 +2341,15 @@ function main() {
 					? `, paras-scanned=${s.parasFound}`
 					: "";
 		summary.push(
-			`  ${dialect.padEnd(11)} — ${s.emitted} emitted | skipped: ${skipStr}, conflicts=${s.conflicts}${scanTotal}`,
+			`  ${dialect.padEnd(11)} - ${s.emitted} harvested, ${merged.size} total | skipped: ${skipStr}, conflicts=${s.conflicts}${scanTotal}`,
 		);
 	}
-	console.log(`harvest-signatures → ${OUT_DIR}`);
+	console.log(`harvest-signatures -> src/<dialect>/signatures.generated.ts`);
 	console.log(summary.join("\n"));
+	console.log(
+		"\nredundancy candidates (override shape identical to the harvest - safe future removal, not auto-dropped):",
+	);
+	console.log(redundancyReport.length > 0 ? redundancyReport.join("\n") : "  (none)");
 }
 
 main();

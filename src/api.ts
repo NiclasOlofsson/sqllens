@@ -319,17 +319,11 @@ export { complete, completeAt, type Completion } from "./completion/complete.js"
 export { jinjaSlotAt, type JinjaSlot } from "./completion/jinja-slot.js";
 
 // Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
-// while typing inside a call's parens. Lookup order: curated (hand-verified) → harvested (doc-derived
-// long tail, from tools/harvest-signatures.mjs) → name-only fallback. A pure token scan; never throws.
+// while typing inside a call's parens. SIGNATURES is the merged per-dialect table (curated overrides
+// folded over the harvested doc-derived long tail at generation time, tools/harvest-signatures.mjs);
+// an unknown name degrades to a name-only fallback. A pure token scan; never throws.
 export { signatureAt, type SignatureInfo } from "./signature/signature.js";
-export {
-	FUNCTION_SIGNATURES,
-	HARVESTED_SIGNATURES,
-	lookupSignature,
-	hasSignature,
-	type FnSignature,
-	type ParamSig,
-} from "./signature/signatures.js";
+export { SIGNATURES, lookupSignature, hasSignature, type FnSignature, type ParamSig } from "./signature/signatures.js";
 
 // References / occurrence engine — find the declaration + every occurrence of the symbol under a
 // cursor offset. The core primitive behind LSP references / documentHighlight / codeLens / rename.

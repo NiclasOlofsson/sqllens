@@ -1,10 +1,10 @@
-// Signature-help engine tests — signatureAt() is a pure token scan over a
+// Signature-help engine tests: signatureAt() is a pure token scan over a
 // SqlDocument's neutral token stream. It finds the enclosing call at a caret,
 // names the function, counts the active parameter, and renders a label from the
-// curated per-dialect signature table (degrading to name-only for the long tail).
+// merged per-dialect SIGNATURES table (degrading to name-only for an unknown name).
 // It must never throw on broken / mid-edit input.
 import { describe, it, expect } from "vitest";
-import { SqlDocument, signatureAt, FUNCTION_SIGNATURES } from "../../src/index.js";
+import { SqlDocument, signatureAt, SIGNATURES } from "../../src/index.js";
 
 // Caret at the end of the given text — the common mid-typing position.
 const end = (s: string): number => s.length;
@@ -108,10 +108,10 @@ describe("signatureAt — nested calls (top-level comma counting)", () => {
 	});
 });
 
-describe("FUNCTION_SIGNATURES table", () => {
-	it("has a bounded curated set per dialect (roughly 20–40 each)", () => {
+describe("SIGNATURES table", () => {
+	it("has a bounded curated-origin set per dialect (roughly 20-45 each)", () => {
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
-			const n = Object.keys(FUNCTION_SIGNATURES[d]).length;
+			const n = Object.values(SIGNATURES[d]).filter((s) => s.origin === "curated").length;
 			expect(n).toBeGreaterThanOrEqual(20);
 			expect(n).toBeLessThanOrEqual(45);
 		}
@@ -119,7 +119,7 @@ describe("FUNCTION_SIGNATURES table", () => {
 
 	it("is keyed by lowercased function name", () => {
 		for (const d of ["databricks", "tsql", "snowflake", "bigquery", "redshift"] as const) {
-			for (const key of Object.keys(FUNCTION_SIGNATURES[d])) {
+			for (const key of Object.keys(SIGNATURES[d])) {
 				expect(key).toBe(key.toLowerCase());
 			}
 		}

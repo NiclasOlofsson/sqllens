@@ -10,32 +10,35 @@ import type { Diagnostic } from "./qualify.js";
 import type { SchemaProvider } from "./schema-provider.js";
 
 // ---------------------------------------------------------------------------
-// Call-signature diagnostics — arity + operand types, over the modelled function
+// Call-signature diagnostics: arity + operand types, over the modelled function
 // calls in the IR. Never-wrong: a diagnostic fires ONLY when the checker is
 // certain the call is wrong. Two rules, in order of strictness:
 //
-//  - ARITY (curated only): the name is in the CURATED signature table AND the
-//    call's arg count is matched by NO overload's [min, max] window → wrong-arity.
-//    A variadic signature accepts any count (the last param repeats), so it never
-//    flags. min = the count of non-optional params; max = the param count.
+//  - ARITY (both origins): the name is in the dialect's merged signature table
+//    (src/<dialect>/signatures.generated.ts, curated overrides folded over the
+//    harvested long tail) AND the call's arg count is matched by NO overload's
+//    [min, max] window, so it fires wrong-arity. A variadic signature accepts any
+//    count (the last param repeats), so it never flags. min = the count of
+//    non-optional params; max = the param count. This is the deliberate flip
+//    from the old curated-only design: the harvested tables now carry a
+//    trustworthy optional/variadic encoding (tools/harvest-signatures.mjs's
+//    NEVER-WRONG CONTRACT), so their arity is trusted too.
 //
-//  - OPERAND TYPE (curated only): every argument type is inferable (≠ unknown)
-//    AND some argument position is rejected under `accepts()` (no implicit
-//    widening path to the declared param type) → wrong-argument-type. Any
-//    `unknown` argument type anywhere makes the whole call silent.
-//
-// HARVESTED signatures are NOT trusted for either rejection: their param lists
-// (tools/harvest-signatures.mjs, T-SQL 151 entries) carry no optional/variadic
-// encoding and no reliable types, so an arity/type check over them would fire on
-// valid SQL (see ARITY_USES_HARVESTED below). They still drive signatureAt() hints.
+//  - OPERAND TYPE (origin "curated" only): every argument type is inferable
+//    (not unknown) AND some argument position is rejected under `accepts()` (no
+//    implicit widening path to the declared param type), so it fires
+//    wrong-argument-type. Any `unknown` argument type anywhere makes the whole
+//    call silent. Harvested entries still don't carry reliable enough types for
+//    this rejection, so a harvested-origin signature never drives a
+//    wrong-argument-type diagnostic.
 //
 // A qualified/dotted call (`ns.fn(...)`, sequence `.NEXTVAL`) does NOT match a
-// bare-name curated entry — the tables are bare-name only, so it stays silent.
+// bare-name signature: the table is bare-name only, so it stays silent.
 // A named-argument call (`fn(x => v)`) can't be mapped to a positional arg list
 // confidently, so it too stays silent.
 //
 // The checker walks the scope tree; for each scope it inspects THAT scope's own
-// expressions (not nested subquery/EXISTS bodies — those are checked when their
+// expressions (not nested subquery/EXISTS bodies: those are checked when their
 // child scope is visited), so an argument's type is inferred in the scope where
 // the call actually lives.
 // ---------------------------------------------------------------------------
@@ -146,27 +149,17 @@ function checkOneCall(
 ): void {
 	// A named-argument invocation (fn(x => v)) can't be mapped to a positional arg list confidently.
 	if (fn.argNames?.some((n) => n !== undefined)) return;
-	// A qualified/dotted call must not borrow a bare-name signature (the tables are bare-name only).
+	// A qualified/dotted call must not borrow a bare-name signature (the table is bare-name only).
 	if (fn.qualifier !== undefined) return;
 	// Aggregate / window / DISTINCT forms carry modifiers the IR folds into (or out of) the arg list
-	// unevenly — count(*)→0 args, sum(x) FILTER/OVER/WITHIN GROUP, a dropped DISTINCT keyword — so the
-	// positional arg count isn't a reliable signal. Per the never-wrong contract, stay SILENT on them.
+	// unevenly: count(*) becomes 0 args, sum(x) FILTER/OVER/WITHIN GROUP, a dropped DISTINCT keyword,
+	// so the positional arg count isn't a reliable signal. Per the never-wrong contract, stay SILENT.
 	if (fn.aggregate || fn.window || fn.distinct) return;
 
 	const b = behaviorOf(scope);
 	const name = fn.name.toLowerCase();
-	const curated = b.curatedSignatures[name];
-
-	// Arity overloads: the curated signature always; the harvested one ONLY for a dialect whose
-	// harvested arity data is trusted (none today — see ARITY_USES_HARVESTED). The rule fires when NO
-	// overload accepts the arg count.
-	const overloads: FnSignature[] = [];
-	if (curated) overloads.push(curated);
-	if (b.arityUsesHarvested) {
-		const harvested = b.harvestedSignatures[name];
-		if (harvested && harvested !== curated) overloads.push(harvested);
-	}
-	if (overloads.length === 0) return; // uncurated (and no trusted harvested) — silent
+	const sig = b.signatures[name];
+	if (!sig) return; // unknown name — silent
 
 	const args = fn.args;
 
@@ -175,26 +168,24 @@ function checkOneCall(
 	// (T-SQL/BigQuery DATEADD/DATE_DIFF's datepart), a boolean condition split into comparands (T-SQL
 	// IIF), or the SQL-standard `f(x FROM y FOR z)` / nested-call over-capture (Postgres-family TRIM/
 	// SUBSTRING). Comparing the IR arg count to the top-level comma count in the written call catches all
-	// of these generically — a mismatch means the positional shape isn't reliable, so stay SILENT.
+	// of these generically: a mismatch means the positional shape isn't reliable, so stay SILENT.
 	const written = writtenArgCount(fn.cst);
 	if (written !== null && written !== args.length) return;
 
-	// --- arity: fire only when NO overload accepts the count ---
-	if (overloads.every((s) => !arityAccepts(s, args.length))) {
-		diagnostics.push(callDiag("wrong-arity", fn.cst, arityMessage(overloads, args.length)));
+	// --- arity: fires when the signature doesn't accept the count (both origins, the deliberate flip) ---
+	if (!arityAccepts(sig, args.length)) {
+		diagnostics.push(callDiag("wrong-arity", fn.cst, arityMessage([sig], args.length)));
 		return; // one diagnostic per call — don't also type-check a call of the wrong shape
 	}
 
-	// --- operand type (CURATED only — harvested param types are never trusted for rejection) ---
-	if (!curated) return;
+	// --- operand type (origin "curated" only: harvested param types are never trusted for rejection) ---
+	if (sig.origin !== "curated") return;
 	const types = args.map((a) => inferType(a, scope, schema));
 	if (types.some((t) => t.kind === "unknown")) return; // any unknown → silent
 	for (let i = 0; i < types.length; i++) {
-		const param = curated.variadic ? curated.params[Math.min(i, curated.params.length - 1)] : curated.params[i];
+		const param = sig.variadic ? sig.params[Math.min(i, sig.params.length - 1)] : sig.params[i];
 		if (param && !b.accepts(types[i], param.type)) {
-			diagnostics.push(
-				callDiag("wrong-argument-type", fn.cst, argMessage(curated, i, param.type ?? "?", types[i])),
-			);
+			diagnostics.push(callDiag("wrong-argument-type", fn.cst, argMessage(sig, i, param.type ?? "?", types[i])));
 			return; // one diagnostic per call
 		}
 	}

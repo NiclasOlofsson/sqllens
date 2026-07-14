@@ -162,10 +162,35 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL .test corpus", () 
 			// the `other` stage never fires (ported from bigquery.pipe.test.ts's corpus gate).
 			expect(stages.length).toBeGreaterThan(0);
 			expect(other).toEqual([]);
+			// The analyzer corpus's "positive" bucket guarantees the absence of a SYNTAX error only
+			// (tools/extract-googlesql-tests.mjs: "only 'ERROR: Syntax error' is a parse error;
+			// semantic errors parse fine"), so ZetaSQL's own wrong-arity ERROR cases legitimately live
+			// here, and the call checker flagging them is CORRECT behavior, pinned exactly below. A
+			// hit outside this set is either a corpus rebuild surfacing another semantic-error case
+			// (verify against the .test file, then re-pin) or a real false positive to fix in the
+			// signature tables / checker, never to exclude.
+			const KNOWN_SEMANTIC_INVALID = [
+				"query/array_path_26.sql: [wrong-arity] FLATTEN expects 1 argument, got 0",
+				"query/array_path_63.sql: [wrong-arity] FLATTEN expects 1 argument, got 2",
+				"query/collation_24.sql: [wrong-arity] COLLATE expects 2 arguments, got 1",
+				"query/geography_11.sql: [wrong-arity] ST_DISTANCE expects 2–3 arguments, got 1",
+				"query/geography_15.sql: [wrong-arity] ST_ASGEOJSON expects 1 argument, got 2",
+				"query/geography_24.sql: [wrong-arity] ST_GEOGPOINT expects 2 arguments, got 3",
+				"query/lambda_5.sql: [wrong-arity] LENGTH expects 1 argument, got 2",
+				"query/lambda_6.sql: [wrong-arity] LENGTH expects 1 argument, got 2",
+				"query/lambda_8.sql: [wrong-arity] LENGTH expects 1 argument, got 2",
+				"query/normalize_13.sql: [wrong-arity] NORMALIZE expects 1–2 arguments, got 0",
+				"query/normalize_14.sql: [wrong-arity] NORMALIZE_AND_CASEFOLD expects 1–2 arguments, got 0",
+				"query/normalize_18.sql: [wrong-arity] NORMALIZE expects 1–2 arguments, got 3",
+				"query/normalize_21.sql: [wrong-arity] NORMALIZE_AND_CASEFOLD expects 1–2 arguments, got 3",
+			];
+			const normalizedHits = callHits
+				.map((h) => h.split(/[\\/]analyzer[\\/]positive[\\/]/)[1]?.replace(/\\/g, "/") ?? h)
+				.sort();
 			expect(
-				callHits,
-				`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
-			).toEqual([]);
+				normalizedHits,
+				`call-signature hits diverge from the pinned semantic-error set (fix the signature table / checker, never exclude):\n${normalizedHits.slice(0, 20).join("\n")}`,
+			).toEqual(KNOWN_SEMANTIC_INVALID);
 		},
 	);
 
