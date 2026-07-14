@@ -329,8 +329,7 @@ function emitColumns(
 			// so don't double-emit a declaration. An explicit alias or a computed expr does declare.
 			if (p.name === undefined) continue;
 			const last = p.expr.kind === "column" ? p.expr.parts[p.expr.parts.length - 1] : undefined;
-			const echo =
-				last !== undefined && behaviorOf(scope).fold(last) === behaviorOf(scope).fold(p.name);
+			const echo = last !== undefined && behaviorOf(scope).fold(last) === behaviorOf(scope).fold(p.name);
 			if (!echo) {
 				out.push({
 					kind: "column",

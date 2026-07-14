@@ -23,54 +23,51 @@ describe.each<Dialect>([
 	"trino",
 	"sqlite",
 	"mysql",
-])(
-	"complete — column position, %s",
-	(dialect) => {
-		it("offers the FROM relation's columns at an empty-projection caret", () => {
-			const sql = "SELECT  FROM sales";
-			const offset = "SELECT ".length; // the caret in the gap after SELECT
-			const items = complete(SqlDocument.create(sql, dialect), offset, schema);
-			const cols = labels(items, "column");
-			expect(cols).toContain("amount");
-			expect(cols).toContain("id");
-		});
+])("complete — column position, %s", (dialect) => {
+	it("offers the FROM relation's columns at an empty-projection caret", () => {
+		const sql = "SELECT  FROM sales";
+		const offset = "SELECT ".length; // the caret in the gap after SELECT
+		const items = complete(SqlDocument.create(sql, dialect), offset, schema);
+		const cols = labels(items, "column");
+		expect(cols).toContain("amount");
+		expect(cols).toContain("id");
+	});
 
-		it("never throws and returns an array on broken input", () => {
-			const sql = "SELECT amount FORM "; // FORM typo — broken parse
-			const items = complete(SqlDocument.create(sql, dialect), sql.length, schema);
-			expect(Array.isArray(items)).toBe(true);
-		});
+	it("never throws and returns an array on broken input", () => {
+		const sql = "SELECT amount FORM "; // FORM typo — broken parse
+		const items = complete(SqlDocument.create(sql, dialect), sql.length, schema);
+		expect(Array.isArray(items)).toBe(true);
+	});
 
-		// Real ATN + scope column path (NOT the broken-input FROM/JOIN token-stream fallback).
-		//
-		// The empty-projection case above (`SELECT  FROM sales`) mis-parses — the grammar reads
-		// `SELECT FROM AS sales` — so the scope has no `sales` source and the columns there come
-		// ONLY from the token-stream fallback (`fromRelationColumns`). This case uses a VALID
-		// mid-edit query: `SELECT amount FROM sales WHERE ‹caret›`. It parses cleanly (the WHERE
-		// predicate is merely unfinished), so FROM binds `sales` in the scope and the caret sits at
-		// a value/column slot reached through `columnRules` → scope. So a regression in the real
-		// scope-resolution path is caught here, where the empty-projection case (fallback-served)
-		// would not catch it.
-		//
-		// Discriminator that the columns are NOT just the fallback masking a scope regression: at a
-		// pure column slot only a columnRule fires, never a tableRule, so `complete` must NOT offer
-		// the relation `sales` as a `table` item. The FROM/JOIN fallback only ever adds `column`
-		// items — it cannot produce a `table` item — so "columns present AND no `sales` table" pins
-		// the caret to the column path. (A WHERE position rather than a second projection slot is
-		// used because it is the one value/column position that resolves uniformly across all five
-		// dialects — Databricks and BigQuery read a bare identifier in a projection slot as a
-		// relation/table reference, not a column slot.)
-		it("resolves the FROM relation's columns through the scope at a valid value position", () => {
-			const sql = "SELECT amount FROM sales WHERE ";
-			const items = complete(SqlDocument.create(sql, dialect), sql.length, schema);
-			const cols = labels(items, "column");
-			expect(cols).toContain("amount");
-			expect(cols).toContain("id");
-			// the caret is a column slot, not a relation slot — `sales` must not be a table candidate.
-			expect(labels(items, "table")).not.toContain("sales");
-		});
-	},
-);
+	// Real ATN + scope column path (NOT the broken-input FROM/JOIN token-stream fallback).
+	//
+	// The empty-projection case above (`SELECT  FROM sales`) mis-parses — the grammar reads
+	// `SELECT FROM AS sales` — so the scope has no `sales` source and the columns there come
+	// ONLY from the token-stream fallback (`fromRelationColumns`). This case uses a VALID
+	// mid-edit query: `SELECT amount FROM sales WHERE ‹caret›`. It parses cleanly (the WHERE
+	// predicate is merely unfinished), so FROM binds `sales` in the scope and the caret sits at
+	// a value/column slot reached through `columnRules` → scope. So a regression in the real
+	// scope-resolution path is caught here, where the empty-projection case (fallback-served)
+	// would not catch it.
+	//
+	// Discriminator that the columns are NOT just the fallback masking a scope regression: at a
+	// pure column slot only a columnRule fires, never a tableRule, so `complete` must NOT offer
+	// the relation `sales` as a `table` item. The FROM/JOIN fallback only ever adds `column`
+	// items — it cannot produce a `table` item — so "columns present AND no `sales` table" pins
+	// the caret to the column path. (A WHERE position rather than a second projection slot is
+	// used because it is the one value/column position that resolves uniformly across all five
+	// dialects — Databricks and BigQuery read a bare identifier in a projection slot as a
+	// relation/table reference, not a column slot.)
+	it("resolves the FROM relation's columns through the scope at a valid value position", () => {
+		const sql = "SELECT amount FROM sales WHERE ";
+		const items = complete(SqlDocument.create(sql, dialect), sql.length, schema);
+		const cols = labels(items, "column");
+		expect(cols).toContain("amount");
+		expect(cols).toContain("id");
+		// the caret is a column slot, not a relation slot — `sales` must not be a table candidate.
+		expect(labels(items, "table")).not.toContain("sales");
+	});
+});
 
 describe("complete — databricks, scope + schema aware", () => {
 	it("offers the FROM relation's columns in a SELECT expression position", () => {

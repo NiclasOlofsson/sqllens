@@ -70,7 +70,13 @@ const f = (n) => n.toFixed(2);
 console.log("parse-to-CST (two-stage SLL->LL):");
 console.log(`  cold first parse:   ${f(cold)} ms  (one-time)`);
 console.log(`  warm steady sweep:  ${f(steady)} ms  (${fps(steady)} files/s)`);
-console.log(`  per-file:           median ${f(at(0.5))} ms, mean ${f(mean)} ms, p95 ${f(at(0.95))} ms, max ${f(at(1))} ms`);
-console.log(`  pass totals (ms):   ${passTotals.map((t) => Math.round(t)).join(" -> ")}   (first sweep >> steady = lazy DFA)\n`);
+console.log(
+	`  per-file:           median ${f(at(0.5))} ms, mean ${f(mean)} ms, p95 ${f(at(0.95))} ms, max ${f(at(1))} ms`,
+);
+console.log(
+	`  pass totals (ms):   ${passTotals.map((t) => Math.round(t)).join(" -> ")}   (first sweep >> steady = lazy DFA)\n`,
+);
 console.log("full pipeline (parse + lower + resolveScopes):");
-console.log(`  warm steady sweep:  ${f(pipeTotal)} ms  (${f(pipeTotal / texts.length)} ms/file, ${fps(pipeTotal)} files/s)`);
+console.log(
+	`  warm steady sweep:  ${f(pipeTotal)} ms  (${f(pipeTotal / texts.length)} ms/file, ${fps(pipeTotal)} files/s)`,
+);

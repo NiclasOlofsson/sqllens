@@ -39,9 +39,7 @@ describe("makeErrorCollector", () => {
 		it("caps a large expecting-set to the first 5 candidates plus a remainder count", () => {
 			const tokens = Array.from({ length: 300 }, (_, i) => `'TOK${i}'`);
 			const msg = messageFor(`mismatched input ';' expecting {${tokens.join(", ")}}`);
-			expect(msg).toBe(
-				"mismatched input ';' expecting {'TOK0', 'TOK1', 'TOK2', 'TOK3', 'TOK4', … 295 more}",
-			);
+			expect(msg).toBe("mismatched input ';' expecting {'TOK0', 'TOK1', 'TOK2', 'TOK3', 'TOK4', … 295 more}");
 		});
 
 		it("leaves a small expecting-set untouched", () => {

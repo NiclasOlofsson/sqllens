@@ -49,7 +49,9 @@ describe("completeAt inside a jinja tag (REQ2b)", () => {
 	it("the callee-name slot (caret in a call's name) returns the host's callee names", () => {
 		const text = "{{ date_spine(";
 		const caret = "{{ date_s".length; // inside the callee identifier, before the paren
-		const labels = completeAt(doc(text, new Catalog()), caret, new Catalog()).map((c) => c.label).sort();
+		const labels = completeAt(doc(text, new Catalog()), caret, new Catalog())
+			.map((c) => c.label)
+			.sort();
 		expect(labels).toEqual(["date_spine", "ref", "source", "star"]);
 	});
 

@@ -173,7 +173,8 @@ function starPassthroughType(child: Scope, column: string, schema: SchemaProvide
 		const under = renamedTo ? renamedTo.from : column;
 		if (!renamedTo && star.rename?.some((r) => eq(r.from, column, d))) continue; // renamed away
 		if (star.exclude?.some((e) => eq(e, under, d))) continue;
-		if (star.ilike !== undefined && !resolveBehavior(d).likeMatch(star.ilike, resolveBehavior(d).fold(under))) continue;
+		if (star.ilike !== undefined && !resolveBehavior(d).likeMatch(star.ilike, resolveBehavior(d).fold(under)))
+			continue;
 
 		ctx.seen.add(child);
 		const replaced = star.replace?.find((r) => eq(r.column, under, d));

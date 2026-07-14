@@ -945,8 +945,7 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputC
 				// per-column source token to point at. A deliberate divergence from deriveSymbols'
 				// zero-width convention (that exists so expanded Syms are never cursor hit-test
 				// targets; these pairs are name/position enumeration, where a real span is useful).
-				for (const pair of pairs)
-					out.push({ name: behaviorOf(scope).fold(pair.name), raw: pair.name, span });
+				for (const pair of pairs) out.push({ name: behaviorOf(scope).fold(pair.name), raw: pair.name, span });
 			} else if (p.name !== undefined) {
 				const span = partSpanOf(p.aliasCst ?? p.cst);
 				if (span) out.push({ name: behaviorOf(scope).fold(p.name), raw: p.name, span });

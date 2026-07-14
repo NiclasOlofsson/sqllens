@@ -149,7 +149,9 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
 		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
-		if (schema) for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text)) add(c);
+		if (schema)
+			for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text))
+				add(c);
 	}
 
 	// functions — value/column slot: the dialect's inference-registry function names.

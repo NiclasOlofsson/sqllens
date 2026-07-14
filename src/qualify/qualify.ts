@@ -378,7 +378,11 @@ function checkSourceColumns(
 	if (src.kind === "graphtable") return known(resolved.get(src.scope));
 	if (src.kind === "pivot") {
 		return known(
-			pivotSourceOutputs(src, (s) => checkSourceColumns(s, schema, resolved, diagnostics, dialect) ?? "unknown", dialect),
+			pivotSourceOutputs(
+				src,
+				(s) => checkSourceColumns(s, schema, resolved, diagnostics, dialect) ?? "unknown",
+				dialect,
+			),
 		);
 	}
 	return src.source.columnAliases ?? known(resolved.get(src.scope));

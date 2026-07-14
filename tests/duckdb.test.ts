@@ -228,12 +228,24 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 
 	it("PIVOT/UNPIVOT statement output is never-wrong under a schema", () => {
 		// PIVOT: data-dependent output → unknown, never the raw base columns.
-		const ps = resolveScopes(parse("PIVOT cities ON year USING sum(population) GROUP BY country;", "duckdb").ast, "duckdb");
-		const pCols = qualify(ps, new Schema({ cities: { country: "string", year: "int", population: "int" } })).columnsOf(ps.root);
+		const ps = resolveScopes(
+			parse("PIVOT cities ON year USING sum(population) GROUP BY country;", "duckdb").ast,
+			"duckdb",
+		);
+		const pCols = qualify(
+			ps,
+			new Schema({ cities: { country: "string", year: "int", population: "int" } }),
+		).columnsOf(ps.root);
 		expect(pCols).toBe("unknown");
 		// UNPIVOT: static reshape → passthrough (product) + the name/value columns.
-		const us = resolveScopes(parse("UNPIVOT monthly_sales ON jan, feb INTO NAME month VALUE sales;", "duckdb").ast, "duckdb");
-		const uCols = qualify(us, new Schema({ monthly_sales: { product: "string", jan: "int", feb: "int" } })).columnsOf(us.root);
+		const us = resolveScopes(
+			parse("UNPIVOT monthly_sales ON jan, feb INTO NAME month VALUE sales;", "duckdb").ast,
+			"duckdb",
+		);
+		const uCols = qualify(
+			us,
+			new Schema({ monthly_sales: { product: "string", jan: "int", feb: "int" } }),
+		).columnsOf(us.root);
 		expect(uCols).toEqual(["product", "month", "sales"]);
 	});
 

@@ -63,7 +63,10 @@ export function parseType(
 			const raw = part.slice(0, colon).trim();
 			const name = foldField ? foldField(raw) : raw;
 			if (name) {
-				fields.push({ name, type: parseType(stripComment(part.slice(colon + 1).trim()), undefined, foldField) });
+				fields.push({
+					name,
+					type: parseType(stripComment(part.slice(colon + 1).trim()), undefined, foldField),
+				});
 			}
 		}
 		return { kind: "struct", fields };

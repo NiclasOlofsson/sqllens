@@ -48,7 +48,12 @@ describe("renderSignature", () => {
 	it("brackets a leading optional without a comma (all-optional shape)", () => {
 		expect(renderSignature(sig("rand", [{ name: "seed", optional: true }]))).toBe("rand([seed])");
 		expect(
-			renderSignature(sig("f", [{ name: "a", optional: true }, { name: "b", optional: true }])),
+			renderSignature(
+				sig("f", [
+					{ name: "a", optional: true },
+					{ name: "b", optional: true },
+				]),
+			),
 		).toBe("f([a [, b]])");
 	});
 

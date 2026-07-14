@@ -241,9 +241,10 @@ describe("lower() robustness + coverage over generated queries", { sequential: t
 			expect(r.throws, `lower() THREW on generated ${d.label} queries — it must be total`).toBe(0);
 			// Not a floor: guards that the fuzzer actually produced parseable statements, so throws===0
 			// above is a real result and not vacuously true on a mis-wired entryRule.
-			expect(r.parsed, `${d.label} fuzzer parsed nothing — entryRule/parseEntry likely mis-wired`).toBeGreaterThan(
-				0,
-			);
+			expect(
+				r.parsed,
+				`${d.label} fuzzer parsed nothing — entryRule/parseEntry likely mis-wired`,
+			).toBeGreaterThan(0);
 		});
 	}
 });

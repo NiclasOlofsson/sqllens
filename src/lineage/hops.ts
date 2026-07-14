@@ -515,7 +515,6 @@ function childExprs(expr: Expr): Expr[] {
 function dedupOrigins(origins: Origin[], dialect: string): Origin[] {
 	const b = resolveBehavior(dialect);
 	const by = new Map<string, Origin>();
-	for (const o of origins)
-		by.set(`${b.foldTableName(o.table).join(".")}.${b.fold(o.column)}`, o);
+	for (const o of origins) by.set(`${b.foldTableName(o.table).join(".")}.${b.fold(o.column)}`, o);
 	return [...by.values()];
 }

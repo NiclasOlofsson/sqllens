@@ -59,7 +59,8 @@ function refTags(tags: readonly TagNode[]): { node: TagNode; model: string; mode
 	for (const t of tags) {
 		if (t.kind !== "call" || t.name !== "ref") continue;
 		const model = t.args[t.args.length - 1];
-		if (model?.value != null && model.valueSpan) out.push({ node: t, model: model.value, modelSpan: model.valueSpan });
+		if (model?.value != null && model.valueSpan)
+			out.push({ node: t, model: model.value, modelSpan: model.valueSpan });
 	}
 	return out;
 }

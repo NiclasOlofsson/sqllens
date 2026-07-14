@@ -185,7 +185,10 @@ describe("jinja corpus gate — inc1 (R1 unified stream + R2 tag spans)", () => 
 		}
 		// and at least one plain user macro (a callee that is not a known dbt builtin).
 		const builtins = new Set(["ref", "source", "var", "env_var", "config", "docs", "print", "log", "return"]);
-		expect([...seenCallees].some((n) => !builtins.has(n)), "no user macro call in the corpus").toBe(true);
+		expect(
+			[...seenCallees].some((n) => !builtins.has(n)),
+			"no user macro call in the corpus",
+		).toBe(true);
 	});
 });
 

@@ -132,7 +132,12 @@ function slotFromCall(c: CallHit, text: string, offset: number): JinjaSlot | und
 	// already ended before the caret.
 	const inArg = c.args.findIndex((a) => offset >= a.span.start && offset <= a.span.end);
 	if (inArg >= 0) {
-		return { ...base, argIndex: inArg, prefix: stripQuote(text.slice(c.args[inArg]!.span.start, offset)), incomplete: c.incomplete };
+		return {
+			...base,
+			argIndex: inArg,
+			prefix: stripQuote(text.slice(c.args[inArg]!.span.start, offset)),
+			incomplete: c.incomplete,
+		};
 	}
 	const argIndex = c.args.filter((a) => a.span.end <= offset).length;
 	return { ...base, argIndex, prefix: "", incomplete: c.incomplete };

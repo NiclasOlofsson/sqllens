@@ -101,7 +101,9 @@ function resolveByName(
 	const name = behaviorOf(scope).fold(column);
 	const sources = [...scope.sources.values()];
 	const colsOf = (src: ResolvedSource): string[] | "unknown" =>
-		schema ? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown") : sourceOutputs(src, scope.dialect);
+		schema
+			? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown")
+			: sourceOutputs(src, scope.dialect);
 	const matches = sources.filter((s) => {
 		const cols = colsOf(s);
 		return cols !== "unknown" && cols.some((c) => behaviorOf(scope).fold(c) === name);

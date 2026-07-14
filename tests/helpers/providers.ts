@@ -4,12 +4,7 @@
 // a host (anvil) drives it.
 
 import type { Column } from "../../src/index.js";
-import {
-	DbtTemplateProvider,
-	type ExpansionShape,
-	type ResolvedRelation,
-	type TemplateCall,
-} from "../../src/index.js";
+import { DbtTemplateProvider, type ExpansionShape, type ResolvedRelation, type TemplateCall } from "../../src/index.js";
 
 // These doubles emulate a DBT-AWARE host (the shape anvil's provider takes): they extend
 // DbtTemplateProvider so the dbt builtin shapes (config -> "nothing", env_var -> string,
