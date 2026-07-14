@@ -13,19 +13,23 @@
 // arity is worse than the name-only fallback, so we skip aggressively.
 //
 // SOURCES. The scraped example corpora hold runnable SQL statements, not function-syntax blocks, so
-// they can't yield parameter names. Five dialects have an offline source in the corpus repo that DOES
+// they can't yield parameter names. Seven dialects have an offline source in the corpus repo that DOES
 // carry function SYNTAX notation: the T-SQL reference markdown (MicrosoftDocs/sql-docs, vendored at
 // vendor/sql-docs), whose ```syntaxsql``` fenced blocks are exactly `NAME ( param , … )`; the DuckDB
 // reference markdown (duckdb-web, vendored at vendor/duckdb-web), whose "#### `name(...)`" headings
 // are the per-function syntax; the PostgreSQL 18 DocBook SGML reference (vendored at
 // vendor/postgres-sgml/func.sgml), whose `<para role="func_signature">` blocks carry the same notation
-// in SGML tags; and the Databricks and Snowflake committed syntax tiers (databricks/docs/syntax and
+// in SGML tags; the Databricks and Snowflake committed syntax tiers (databricks/docs/syntax and
 // snowflake/docs/syntax, per-function N.txt Syntax blocks captured by tools/scrape-databricks-syntax.mjs
-// and tools/scrape-snowflake-syntax.mjs from the vendor docs). The remaining dialects (bigquery,
-// redshift, trino, sqlite, mysql) still have no syntax-notation source in the corpus repo (their docs
-// were consumed live by their scrapers and only the extracted example SQL landed there), so they get
-// no generated table until their raw docs are vendored or a syntax tier is scraped. Each dialect's
-// extractor is registered below; an absent source is reported, not guessed.
+// and tools/scrape-snowflake-syntax.mjs from the vendor docs); the Trino function reference (vendored
+// at vendor/trino-docs/functions, trinodb/trino release tag 482), whose MyST `:::{function}` colon-fence
+// directives carry the whole signature on the opening fence line; and the BigQuery (GoogleSQL)
+// function reference (google/googlesql docs markdown, vendored at vendor/googlesql-docs/docs), whose
+// per-function headings are followed by syntax code fences. The remaining dialects (redshift, sqlite,
+// mysql) still have no syntax-notation source in the corpus repo (their docs were consumed live by
+// their scrapers and only the extracted example SQL landed there), so they get no generated table
+// until their raw docs are vendored or a syntax tier is scraped. Each dialect's extractor is
+// registered below; an absent source is reported, not guessed.
 //
 // MERGE RULE (shared by every extractor, applied once a name's raw occurrences are collected). Occurrences
 // are deduped first — an identical param list + variadic flag collapse to one. Among the survivors: if
@@ -243,6 +247,40 @@ function* txtFiles(dir) {
 	}
 }
 
+/** Recursively unwrap a "[, x]" / "[, x [, y]]" trailing optional chain of PLAIN identifiers
+ *  (already stripped of its own outer "[" "]" and leading comma). Returns { ok:true, params,
+ *  variadic } or { ok:false, reason }. Shared by the Databricks and BigQuery extractors: both
+ *  notations use exactly this trailing-optional-chain shape. */
+function parseOptionalChainFlat(str) {
+	const s = str.trim();
+	if (s === "..." || s === "…") return { ok: true, params: [], variadic: true };
+
+	const m = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(s);
+	if (!m) return { ok: false, reason: "param-shape" };
+	const name = m[1];
+	const rest = s.slice(m[0].length).trim();
+	if (rest === "") return { ok: true, params: [{ name, optional: true }], variadic: false };
+
+	if (rest[0] !== "[" || rest[rest.length - 1] !== "]") return { ok: false, reason: "optional-group" };
+	// The bracket must cover the whole remainder (depth returns to 0 only at the last char).
+	let depth = 0;
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "[") depth++;
+		else if (rest[i] === "]") {
+			depth--;
+			if (depth === 0 && i !== rest.length - 1) return { ok: false, reason: "optional-group" };
+		}
+	}
+	if (depth !== 0) return { ok: false, reason: "optional-group" };
+
+	let inner = rest.slice(1, -1).trim();
+	if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
+	inner = inner.slice(1).trim();
+	const nested = parseOptionalChainFlat(inner);
+	if (!nested.ok) return nested;
+	return { ok: true, params: [{ name, optional: true }, ...nested.params], variadic: nested.variadic };
+}
+
 // ---------------------------------------------------------------------------
 // Databricks (Spark SQL): databricks/docs/syntax/functions/<name>/N.txt Syntax blocks, captured
 // from docs.databricks.com by tools/scrape-databricks-syntax.mjs.
@@ -272,38 +310,6 @@ const DATABRICKS_FILTER_CLAUSE_RE = /^\[\s*FILTER\s*\(\s*WHERE\s+[A-Za-z_][A-Za-
 
 function isPlainIdentDatabricks(s) {
 	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
-}
-
-/** Recursively unwrap a "[, x]" / "[, x [, y]]" trailing optional chain (already stripped of its
- *  own outer "[" "]" and leading comma). Returns { ok:true, params, variadic } or { ok:false, reason }. */
-function parseOptionalChainDatabricks(str) {
-	const s = str.trim();
-	if (s === "..." || s === "…") return { ok: true, params: [], variadic: true };
-
-	const m = /^([A-Za-z_][A-Za-z0-9_]*)/.exec(s);
-	if (!m) return { ok: false, reason: "param-shape" };
-	const name = m[1];
-	const rest = s.slice(m[0].length).trim();
-	if (rest === "") return { ok: true, params: [{ name, optional: true }], variadic: false };
-
-	if (rest[0] !== "[" || rest[rest.length - 1] !== "]") return { ok: false, reason: "optional-group" };
-	// The bracket must cover the whole remainder (depth returns to 0 only at the last char).
-	let depth = 0;
-	for (let i = 0; i < rest.length; i++) {
-		if (rest[i] === "[") depth++;
-		else if (rest[i] === "]") {
-			depth--;
-			if (depth === 0 && i !== rest.length - 1) return { ok: false, reason: "optional-group" };
-		}
-	}
-	if (depth !== 0) return { ok: false, reason: "optional-group" };
-
-	let inner = rest.slice(1, -1).trim();
-	if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
-	inner = inner.slice(1).trim();
-	const nested = parseOptionalChainDatabricks(inner);
-	if (!nested.ok) return nested;
-	return { ok: true, params: [{ name, optional: true }, ...nested.params], variadic: nested.variadic };
 }
 
 /** Parse the text captured between one call's balanced outer parens into `{ params, variadic }`,
@@ -367,7 +373,7 @@ function parseParamsTextDatabricks(paramsTextRaw) {
 		let inner = chainStr.slice(1, -1).trim();
 		if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
 		inner = inner.slice(1).trim();
-		const chain = parseOptionalChainDatabricks(inner);
+		const chain = parseOptionalChainFlat(inner);
 		if (!chain.ok) return chain;
 		optionalParams = chain.params;
 		variadic = chain.variadic;
@@ -1394,19 +1400,579 @@ function harvestPostgres() {
 }
 
 // ---------------------------------------------------------------------------
+// Trino: vendor/trino-docs/functions/*.md (trinodb/trino release tag 482, docs/src/main/sphinx/
+// functions/), MyST colon-fence directives. Every function reference is ONE opening fence line,
+// `:::{function} lower(string) -> varchar` (three or more colons; one stray ":::: {function}" with
+// a space before the brace exists in datasketches.md and is tolerated). The whole signature lives
+// on that line: the return arrow (`->`) and everything after it are ignored, and the fence body is
+// never read. Sibling `:::{data}` directives are niladic constants (current_date and friends):
+// skipped outright, never attempted.
+//
+// Widenings beyond the plain flat-list model (shape-anchored):
+//   - a `name: type` colon pair parses as { name, type } (ST_Point(lon: double, lat: double)); the
+//     merge rule compares types too, so ST_Distance's Geometry vs SphericalGeography typed forms
+//     correctly conflict rather than merge.
+//   - a bare type name stands in for the param name (lower(string), avg(real)): the postgres
+//     extractor's bare-type rule, display name only, no type field.
+//   - three trailing variadic shapes all mark the signature variadic: a bracket tail `[, ...]`, an
+//     ellipsis fused onto the last identifier (format(format, args...)), and a bare `...` as its
+//     own trailing comma segment (features(double, ...)). A non-trailing ellipsis
+//     (concat(string1, ..., stringN): stringN is a prose placeholder, not a real param) is skipped
+//     as variadic-not-trailing, never guessed.
+// ---------------------------------------------------------------------------
+
+// One file (datasketches.md) has a stray space between the colons and the brace; same directive.
+const TRINO_FENCE_RE = /^:::+\s*\{(function|data)\}\s+(.+?)\s*$/;
+const TRINO_CLAUSE_KEYWORD_RE = /\b(FROM|AS|OVER|USING|ORDER|WITHIN|IGNORE|RESPECT|BY|WHEN|THEN|ELSE|END|PARTITION)\b/i;
+const TRINO_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const TRINO_TYPED_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)$/;
+
+/** One comma segment as a param: a plain identifier (a bare type name counts, the type text IS the
+ *  display name), or a `name: type` colon pair which keeps the documented type. */
+function paramFromSegmentTrino(seg) {
+	const s = seg.trim();
+	if (TRINO_IDENT_RE.test(s)) return { name: s };
+	const t = TRINO_TYPED_RE.exec(s);
+	if (t) return { name: t[1], type: t[2] };
+	return null;
+}
+
+/** Recursively unwrap a "[, x]" / "[, x [, y]]" trailing optional chain (already stripped of its
+ *  own outer "[" "]" and leading comma); each level's head may be a typed `name: type` pair. */
+function parseOptionalChainTrino(str) {
+	const s = str.trim();
+	if (s === "..." || s === "…") return { ok: true, params: [], variadic: true };
+
+	// Longest leading ident/typed-pair token this chain level can claim.
+	const identMatch = /^[A-Za-z_][A-Za-z0-9_]*(\s*:\s*[A-Za-z_][A-Za-z0-9_]*)?/.exec(s);
+	if (!identMatch) return { ok: false, reason: "param-shape" };
+	const head = identMatch[0];
+	const param = paramFromSegmentTrino(head);
+	if (!param) return { ok: false, reason: "param-shape" };
+	const rest = s.slice(head.length).trim();
+	if (rest === "") return { ok: true, params: [{ ...param, optional: true }], variadic: false };
+
+	if (rest[0] !== "[" || rest[rest.length - 1] !== "]") return { ok: false, reason: "optional-group" };
+	// The bracket must cover the whole remainder (depth returns to 0 only at the last char).
+	let depth = 0;
+	for (let i = 0; i < rest.length; i++) {
+		if (rest[i] === "[") depth++;
+		else if (rest[i] === "]") {
+			depth--;
+			if (depth === 0 && i !== rest.length - 1) return { ok: false, reason: "optional-group" };
+		}
+	}
+	if (depth !== 0) return { ok: false, reason: "optional-group" };
+
+	let inner = rest.slice(1, -1).trim();
+	if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
+	inner = inner.slice(1).trim();
+	const nested = parseOptionalChainTrino(inner);
+	if (!nested.ok) return nested;
+	return { ok: true, params: [{ ...param, optional: true }, ...nested.params], variadic: nested.variadic };
+}
+
+/** One `{function}` fence argument into `{ name, params, variadic }`, or `{ skip: reason }`. */
+function parseSignatureTrino(argText) {
+	const nameMatch = /^([A-Za-z_][A-Za-z0-9_]*)\(/.exec(argText);
+	if (!nameMatch) return { skip: "no-signature-shape" }; // no call at all, or a ROW::fields-style head
+	const name = nameMatch[1];
+	const openIdx = nameMatch[0].length - 1;
+
+	let depth = 0;
+	let closeIdx = -1;
+	for (let i = openIdx; i < argText.length; i++) {
+		if (argText[i] === "(") depth++;
+		else if (argText[i] === ")") {
+			depth--;
+			if (depth === 0) {
+				closeIdx = i;
+				break;
+			}
+		}
+	}
+	if (closeIdx === -1) return { skip: "unbalanced" };
+
+	const trailing = argText.slice(closeIdx + 1).trim();
+	if (trailing !== "" && !trailing.startsWith("->")) return { skip: "trailing-content" };
+
+	const inner = argText.slice(openIdx + 1, closeIdx).trim();
+	if (inner === "") return { name, params: [], variadic: false };
+
+	if (inner.includes("=>")) return { skip: "complex" };
+	if (inner.includes("::=")) return { skip: "complex" };
+	if (/[{}|]/.test(inner)) return { skip: "complex" };
+	if (/<[^<>]*>/.test(inner)) return { skip: "complex" };
+	if (TRINO_CLAUSE_KEYWORD_RE.test(inner)) return { skip: "complex" };
+	if (/[()]/.test(inner)) return { skip: "complex" }; // parenthesized type params (array(T), map(K,V))
+
+	// First top-level "[": everything before it is the required prefix; the bracket chain (if any)
+	// must run to the very end.
+	depth = 0;
+	let firstBracket = -1;
+	let closeAtEnd = -1;
+	for (let i = 0; i < inner.length; i++) {
+		const c = inner[i];
+		if (c === "[") {
+			if (depth === 0 && firstBracket === -1) firstBracket = i;
+			depth++;
+		} else if (c === "]") {
+			depth--;
+			if (depth < 0) return { skip: "optional-group" };
+			if (depth === 0 && firstBracket !== -1 && closeAtEnd === -1) closeAtEnd = i;
+		}
+	}
+	if (depth !== 0) return { skip: "optional-group" };
+
+	let requiredPart, chainStr;
+	if (firstBracket === -1) {
+		requiredPart = inner;
+		chainStr = null;
+	} else {
+		if (closeAtEnd !== inner.length - 1) return { skip: "optional-group" }; // bracket not trailing
+		requiredPart = inner.slice(0, firstBracket).trim();
+		chainStr = inner.slice(firstBracket, closeAtEnd + 1);
+	}
+
+	let segments = requiredPart === "" ? [] : requiredPart.split(",").map((s) => s.trim());
+
+	// A bare "..." as its own comma segment: variadic only when it is the last segment and not the
+	// only one; an ellipsis mid-list (concat(string1, ..., stringN)) is not trailing.
+	let variadic = false;
+	const ellipsisIdx = segments.findIndex((s) => s === "..." || s === "…");
+	if (ellipsisIdx !== -1) {
+		if (ellipsisIdx !== segments.length - 1 || segments.length === 1) return { skip: "variadic-not-trailing" };
+		segments = segments.slice(0, -1);
+		variadic = true;
+	}
+
+	const requiredParams = [];
+	for (let i = 0; i < segments.length; i++) {
+		const seg = segments[i];
+		if (seg === "") return { skip: "param-shape" };
+		// An ellipsis fused onto the last identifier with no comma, e.g. "args...".
+		if (i === segments.length - 1) {
+			const fused = /^([A-Za-z_][A-Za-z0-9_]*)\.\.\.$/.exec(seg);
+			if (fused) {
+				requiredParams.push({ name: fused[1] });
+				variadic = true;
+				continue;
+			}
+		}
+		const param = paramFromSegmentTrino(seg);
+		if (!param) return { skip: "param-shape" }; // count(*), multi-word bare placeholders
+		requiredParams.push(param);
+	}
+
+	let optionalParams = [];
+	if (chainStr !== null) {
+		let chainInner = chainStr.slice(1, -1).trim();
+		if (!chainInner.startsWith(",")) return { skip: "optional-group" };
+		chainInner = chainInner.slice(1).trim();
+		const chain = parseOptionalChainTrino(chainInner);
+		if (!chain.ok) return { skip: chain.reason };
+		optionalParams = chain.params;
+		variadic = variadic || chain.variadic;
+	}
+
+	const params = requiredParams.concat(optionalParams);
+	if (variadic && params.length === 0) return { skip: "param-shape" };
+	return { name, params, variadic };
+}
+
+function sameParamListTrino(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every(
+		(p, i) => p.name === b[i].name && (p.type ?? null) === (b[i].type ?? null) && !!p.optional === !!b[i].optional,
+	);
+}
+function namesArePrefixTrino(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name && (p.type ?? null) === (longer[i].type ?? null));
+}
+
+/** Trino extractor. Returns null when the source tree is absent. */
+function harvestTrino() {
+	const src = corpusPath("vendor/trino-docs/functions");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		"no-signature-shape": 0,
+		unbalanced: 0,
+		"trailing-content": 0,
+		complex: 0,
+		"variadic-not-trailing": 0,
+		"optional-group": 0,
+		"param-shape": 0,
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of mdFiles(src)) {
+		const sourceFile = relative(src, f).split("\\").join("/");
+		const lines = readFileSync(f, "utf8").split(/\r?\n/);
+		for (const line of lines) {
+			const m = TRINO_FENCE_RE.exec(line);
+			if (!m) continue;
+			if (m[1] === "data") continue; // niladic constant directive, never attempted
+			const result = parseSignatureTrino(m[2]);
+			if (result.skip) {
+				skipCounts[result.skip]++;
+				continue;
+			}
+			const key = result.name.toLowerCase();
+			const list = occurrencesByName.get(key) ?? [];
+			list.push({ name: result.name, params: result.params, variadic: result.variadic, sourceFile });
+			occurrencesByName.set(key, list);
+		}
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let conflicts = 0;
+	for (const [key, occs] of occurrencesByName) {
+		// Dedupe identical (params + variadic) occurrences: Trino's docs duplicate some directives
+		// verbatim across pages (qdigest_agg lives in both aggregate.md and qdigest.md).
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find((d) => d.variadic === occ.variadic && sameParamListTrino(d.params, occ.params));
+			if (!dup) distinct.push(occ);
+		}
+
+		let chosen;
+		if (distinct.length === 1) {
+			chosen = distinct[0];
+		} else {
+			const maxLen = Math.max(...distinct.map((d) => d.params.length));
+			const maximal = distinct.filter((d) => d.params.length === maxLen);
+			if (maximal.length > 1) {
+				conflicts++; // e.g. length(binary) vs length(string): a real type-based overload
+				continue;
+			}
+			const longest = maximal[0];
+			const shorterOnes = distinct.filter((d) => d !== longest);
+			const allPrefixes = shorterOnes.every((d) => namesArePrefixTrino(d.params, longest.params));
+			if (!allPrefixes) {
+				conflicts++;
+				continue;
+			}
+			const minLen = Math.min(...distinct.map((d) => d.params.length));
+			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : !!p.optional }));
+			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
+			chosen = {
+				name: longest.name,
+				params: mergedParams,
+				variadic: mergedVariadic,
+				sourceFile: longest.sourceFile,
+			};
+		}
+
+		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
+		provenance[key] = chosen.sourceFile;
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts);
+
+	return {
+		signatures,
+		provenance,
+		source: "trinodb/trino release 482  vendor/trino-docs/functions/*.md (MyST `:::{function}` directives)",
+		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
+// BigQuery (GoogleSQL): vendor/googlesql-docs/docs/*.md (google/googlesql reference markdown).
+// Each function's "## `NAME`" (occasionally "###") heading is followed by one or more fenced code
+// blocks (info string "googlesql" or none) whose first non-blank line is the call syntax. The
+// extractor scans EVERY fence in every file: a fence whose first content line is not call-shaped
+// is simply not a candidate (example SELECT fences look like that constantly), never a skip.
+// Stacked same-name overload lines inside one fence each count as an occurrence; anything else
+// after the call's balanced parens (an OVER clause, a lambda sub-production) skips the fence as
+// trailing-content. Ports the Databricks required-prefix + optional-bracket-chain parser (the
+// chain via the shared parseOptionalChainFlat) with BigQuery-specific complexity triggers in place
+// of the Databricks widenings: named-arg `=>`, `{ | }` alternation, `<T>` angle generics, and an
+// extended clause-keyword list including INTERVAL. The doc casing (UPPERCASE names) is kept for
+// display; keys are lowercased as everywhere. GREATEST/LEAST's `X1,...,XN` shape stays skipped
+// as param-shape (a flagged design gap by explicit ruling, not an oversight).
+// ---------------------------------------------------------------------------
+
+const BIGQUERY_CLAUSE_KEYWORD_RE =
+	/\b(FROM|AS|OVER|WHERE|HAVING|ORDER|BY|PARTITION|DISTINCT|IGNORE|RESPECT|WITHIN|LIMIT|INTERVAL)\b/i;
+const BIGQUERY_ANGLE_GENERIC_RE = /<[^<>\n]*>/;
+const BIGQUERY_CALL_LINE_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*\(/;
+
+function isPlainIdentBigquery(s) {
+	return /^[A-Za-z_][A-Za-z0-9_]*$/.test(s.trim());
+}
+
+/** All fenced code blocks in a markdown string (any info string, including none). */
+function fencesOfBigquery(md) {
+	const out = [];
+	const re = /```([^\n]*)\r?\n([\s\S]*?)```/g;
+	let m;
+	while ((m = re.exec(md))) out.push(m[2]);
+	return out;
+}
+
+/** Parse the text between one call's balanced outer parens into `{ params, variadic }` or a skip
+ *  reason. Granular "complex:xxx" reasons in the PostgreSQL extractor's style. */
+function parseParamsTextBigquery(paramsTextRaw) {
+	const text = paramsTextRaw.trim();
+	if (text === "") return { ok: true, params: [], variadic: false };
+
+	if (text.includes("=>")) return { ok: false, reason: "complex:named-arg" };
+	if (/[{}]/.test(text)) return { ok: false, reason: "complex:alternation" };
+	if (text.includes("|")) return { ok: false, reason: "complex:alternation" };
+	if (BIGQUERY_ANGLE_GENERIC_RE.test(text)) return { ok: false, reason: "complex:angle-generic" };
+	if (text.includes("::=")) return { ok: false, reason: "complex:production-rule" };
+	if (BIGQUERY_CLAUSE_KEYWORD_RE.test(text)) return { ok: false, reason: "complex:clause-keyword" };
+	if (/[()]/.test(text)) return { ok: false, reason: "complex:leftover-parens" };
+
+	// The first top-level "[": everything before it is the required prefix; the bracket run must be
+	// trailing (reach the end of text) or the shape is a non-trailing optional group we don't model.
+	let depth = 0;
+	let firstBracket = -1;
+	let closeAtEnd = -1;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (c === "[") {
+			if (depth === 0 && firstBracket === -1) firstBracket = i;
+			depth++;
+		} else if (c === "]") {
+			depth--;
+			if (depth < 0) return { ok: false, reason: "optional-group" };
+			if (depth === 0 && firstBracket !== -1 && closeAtEnd === -1) closeAtEnd = i;
+		}
+	}
+	if (depth !== 0) return { ok: false, reason: "optional-group" };
+
+	let requiredPart, chainStr;
+	if (firstBracket === -1) {
+		requiredPart = text;
+		chainStr = null;
+	} else {
+		if (closeAtEnd !== text.length - 1) return { ok: false, reason: "optional-group" };
+		requiredPart = text.slice(0, firstBracket).trim();
+		chainStr = text.slice(firstBracket, closeAtEnd + 1);
+	}
+
+	const requiredNames = requiredPart === "" ? [] : requiredPart.split(",").map((s) => s.trim());
+	// A bare trailing "..." in the plain comma list marks the previous param as repeating, but only
+	// as the very last segment. GREATEST/LEAST's "X1,...,XN" puts a named param AFTER the ellipsis,
+	// which does not match this shape: XN fails the plain-identifier check below instead.
+	let bareVariadic = false;
+	if (chainStr === null && requiredNames.length > 1 && /^(\.\.\.|…)$/.test(requiredNames[requiredNames.length - 1])) {
+		requiredNames.pop();
+		bareVariadic = true;
+	}
+	for (const n of requiredNames) if (!isPlainIdentBigquery(n)) return { ok: false, reason: "param-shape" };
+	const requiredParams = requiredNames.map((n) => ({ name: n }));
+
+	let optionalParams = [];
+	let variadic = bareVariadic;
+	if (chainStr !== null) {
+		let inner = chainStr.slice(1, -1).trim();
+		if (!inner.startsWith(",")) return { ok: false, reason: "optional-group" };
+		inner = inner.slice(1).trim();
+		const chain = parseOptionalChainFlat(inner);
+		if (!chain.ok) return chain;
+		optionalParams = chain.params;
+		variadic = chain.variadic;
+	}
+
+	const allParams = requiredParams.concat(optionalParams);
+	if (variadic && allParams.length === 0) return { ok: false, reason: "param-shape" };
+	return { ok: true, params: allParams, variadic };
+}
+
+/** One fence body into candidates: null when the fence's first content line isn't call-shaped (not
+ *  a candidate at all), `{ skip: reason }` when it is but doesn't parse cleanly, or
+ *  `{ candidates: [...] }` (more than one when same-name overload lines stack in one fence). */
+function extractCandidatesBigquery(body, stats) {
+	const text = body.replace(/\r\n/g, "\n").replace(/\n$/, "");
+	const lines = text.split("\n");
+
+	// Strictly the fence's first NON-BLANK line: leading blank lines are formatting, but any other
+	// prose before the call line means this fence isn't a signature block at all.
+	let callLineIdx = -1;
+	let name = null;
+	for (let i = 0; i < lines.length; i++) {
+		if (lines[i].trim() === "") continue;
+		const m = BIGQUERY_CALL_LINE_RE.exec(lines[i].trim());
+		if (m) {
+			callLineIdx = i;
+			name = m[1];
+		}
+		break;
+	}
+	if (callLineIdx === -1) return null;
+
+	// Walk repeated `NAME(...)` calls from the call line down, balancing parens across line breaks
+	// (ROUND/ARRAY_AGG-style multi-line param lists).
+	let remaining = lines.slice(callLineIdx).join("\n");
+	const candidates = [];
+
+	for (;;) {
+		const trimmedStart = remaining.replace(/^\s+/, "");
+		if (trimmedStart === "") break; // clean end
+		const m = new RegExp(`^${name}\\s*\\(`, "i").exec(trimmedStart);
+		if (!m) {
+			// Non-blank remainder that isn't a repeat of the same name: an OVER clause, a
+			// sub-production, or another statement crammed into the fence.
+			stats.skip("trailing-content");
+			return { skipped: true };
+		}
+		const openIdx = trimmedStart.indexOf("(", m.index);
+		let depth = 1;
+		let closeIdx = -1;
+		for (let i = openIdx + 1; i < trimmedStart.length; i++) {
+			if (trimmedStart[i] === "(") depth++;
+			else if (trimmedStart[i] === ")") {
+				depth--;
+				if (depth === 0) {
+					closeIdx = i;
+					break;
+				}
+			}
+		}
+		if (closeIdx === -1) {
+			stats.skip("unbalanced");
+			return { skipped: true };
+		}
+
+		const parsed = parseParamsTextBigquery(trimmedStart.slice(openIdx + 1, closeIdx));
+		if (!parsed.ok) {
+			stats.skip(parsed.reason);
+			return { skipped: true };
+		}
+
+		candidates.push({ name, params: parsed.params, variadic: parsed.variadic });
+		remaining = trimmedStart.slice(closeIdx + 1);
+	}
+
+	if (candidates.length === 0) {
+		stats.skip("trailing-content");
+		return { skipped: true };
+	}
+	return { candidates };
+}
+
+function sameParamListBigquery(a, b) {
+	if (a.length !== b.length) return false;
+	return a.every((p, i) => p.name === b[i].name && !!p.optional === !!b[i].optional);
+}
+function namesArePrefixBigquery(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
+/** BigQuery extractor. Returns null when the source tree is absent. */
+function harvestBigquery() {
+	const src = corpusPath("vendor/googlesql-docs/docs");
+	if (!existsSync(src)) return null;
+
+	const skipCounts = {
+		"complex:named-arg": 0,
+		"complex:alternation": 0,
+		"complex:angle-generic": 0,
+		"complex:production-rule": 0,
+		"complex:clause-keyword": 0,
+		"complex:leftover-parens": 0,
+		"trailing-content": 0,
+		unbalanced: 0,
+		"optional-group": 0,
+		"param-shape": 0,
+	};
+	const stats = {
+		skip(reason) {
+			skipCounts[reason]++;
+		},
+	};
+	const occurrencesByName = new Map();
+
+	for (const f of mdFiles(src)) {
+		const sourceFile = relative(src, f).split("\\").join("/");
+		const md = readFileSync(f, "utf8");
+		for (const body of fencesOfBigquery(md)) {
+			const result = extractCandidatesBigquery(body, stats);
+			if (result === null || result.skipped) continue;
+			for (const cand of result.candidates) {
+				const key = cand.name.toLowerCase();
+				const list = occurrencesByName.get(key) ?? [];
+				list.push({ name: cand.name, params: cand.params, variadic: cand.variadic, sourceFile });
+				occurrencesByName.set(key, list);
+			}
+		}
+	}
+
+	const signatures = {};
+	const provenance = {};
+	let conflicts = 0;
+	for (const [key, occs] of occurrencesByName) {
+		const distinct = [];
+		for (const occ of occs) {
+			const dup = distinct.find(
+				(d) => d.variadic === occ.variadic && sameParamListBigquery(d.params, occ.params),
+			);
+			if (!dup) distinct.push(occ);
+		}
+
+		let chosen;
+		if (distinct.length === 1) {
+			chosen = distinct[0];
+		} else {
+			const maxLen = Math.max(...distinct.map((d) => d.params.length));
+			const maximal = distinct.filter((d) => d.params.length === maxLen);
+			if (maximal.length > 1) {
+				conflicts++;
+				continue;
+			}
+			const longest = maximal[0];
+			const shorterOnes = distinct.filter((d) => d !== longest);
+			const allPrefixes = shorterOnes.every((d) => namesArePrefixBigquery(d.params, longest.params));
+			if (!allPrefixes) {
+				conflicts++;
+				continue;
+			}
+			const minLen = Math.min(...distinct.map((d) => d.params.length));
+			const mergedParams = longest.params.map((p, i) => ({ ...p, optional: i >= minLen ? true : p.optional }));
+			const mergedVariadic = distinct.some((d) => d.variadic) || undefined;
+			chosen = {
+				name: longest.name,
+				params: mergedParams,
+				variadic: mergedVariadic,
+				sourceFile: longest.sourceFile,
+			};
+		}
+
+		signatures[key] = { name: chosen.name, params: chosen.params, ...(chosen.variadic ? { variadic: true } : {}) };
+		provenance[key] = chosen.sourceFile;
+	}
+
+	dropOperatorNames(signatures, provenance, skipCounts);
+
+	return {
+		signatures,
+		provenance,
+		source: "google/googlesql reference markdown  vendor/googlesql-docs/docs/*.md (per-function heading + syntax fences)",
+		stats: { emitted: Object.keys(signatures).length, conflicts, skips: skipCounts },
+	};
+}
+
+// ---------------------------------------------------------------------------
 // Registry — one entry per dialect. An extractor returns null (source absent) or a harvest result.
-// T-SQL, Databricks, Snowflake, DuckDB, and PostgreSQL have an offline syntax-block source in the
-// corpus repo today; the rest don't (see the header note).
+// Every dialect except Redshift, SQLite, and MySQL has an offline syntax-block source in the corpus
+// repo today (see the header note).
 // ---------------------------------------------------------------------------
 const EXTRACTORS = {
 	databricks: harvestDatabricks,
 	tsql: harvestTSql,
 	snowflake: harvestSnowflake,
-	bigquery: () => null,
+	bigquery: harvestBigquery,
 	redshift: () => null,
 	postgres: harvestPostgres,
 	duckdb: harvestDuckdb,
-	trino: () => null,
+	trino: harvestTrino,
 	sqlite: () => null,
 	mysql: () => null,
 };

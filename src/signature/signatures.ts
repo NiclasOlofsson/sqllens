@@ -21,8 +21,10 @@ import type { Dialect } from "../dialect.js";
 import { DATABRICKS_HARVESTED } from "./generated/databricks.js";
 import { TSQL_HARVESTED } from "./generated/tsql.js";
 import { SNOWFLAKE_HARVESTED } from "./generated/snowflake.js";
-import { DUCKDB_HARVESTED } from "./generated/duckdb.js";
+import { BIGQUERY_HARVESTED } from "./generated/bigquery.js";
 import { POSTGRES_HARVESTED } from "./generated/postgres.js";
+import { DUCKDB_HARVESTED } from "./generated/duckdb.js";
+import { TRINO_HARVESTED } from "./generated/trino.js";
 
 /** One formal parameter of a curated signature. `type` is the dialect's documented type name.
  *  `optional` marks a trailing param the caller may omit — it is consulted by the arity checker
@@ -744,8 +746,8 @@ export const FUNCTION_SIGNATURES: Record<Dialect, Record<string, FnSignature>> =
 // Harvested signatures — the LONG-TAIL layer under the curated table. Mined from each dialect's
 // reference-doc syntax blocks by tools/harvest-signatures.mjs into src/signature/generated/<dialect>.ts
 // (committed, rebuildable, never hand-edited). Only dialects with an offline syntax-block source in
-// the corpus repo have a generated table today (Databricks, T-SQL, Snowflake, DuckDB, PostgreSQL);
-// the rest (bigquery, redshift, trino, sqlite, mysql) map to an empty table and fall through to the
+// the corpus repo have a generated table today (Databricks, T-SQL, Snowflake, BigQuery, PostgreSQL,
+// DuckDB, Trino); the rest (redshift, sqlite, mysql) map to an empty table and fall through to the
 // name-only hint. See the harvester's header for why.
 // ---------------------------------------------------------------------------
 
@@ -754,11 +756,11 @@ export const HARVESTED_SIGNATURES: Record<Dialect, Record<string, FnSignature>> 
 	databricks: DATABRICKS_HARVESTED,
 	tsql: TSQL_HARVESTED,
 	snowflake: SNOWFLAKE_HARVESTED,
-	bigquery: {},
+	bigquery: BIGQUERY_HARVESTED,
 	redshift: {},
 	postgres: POSTGRES_HARVESTED,
 	duckdb: DUCKDB_HARVESTED,
-	trino: {},
+	trino: TRINO_HARVESTED,
 	sqlite: {},
 	mysql: {},
 };

@@ -58,6 +58,22 @@ describe("harvested signatures: Snowflake yield floor (ratchet)", () => {
 	});
 });
 
+describe("harvested signatures: Trino yield floor (ratchet)", () => {
+	it("harvests at least 363 Trino function signatures from the MyST function directives", () => {
+		// Pinned at the achieved yield (measured 2026-07-14, trino tag 482). A docs refresh may only
+		// raise this: a drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.trino).length).toBeGreaterThanOrEqual(363);
+	});
+});
+
+describe("harvested signatures: BigQuery yield floor (ratchet)", () => {
+	it("harvests at least 295 BigQuery function signatures from the GoogleSQL reference markdown", () => {
+		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this: a
+		// drop means the harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.bigquery).length).toBeGreaterThanOrEqual(295);
+	});
+});
+
 describe("harvested signatures — doc-verified spot checks", () => {
 	it("DATEADD(datepart, number, date) — 3 params, not variadic", () => {
 		const sig = HARVESTED_SIGNATURES.tsql.dateadd;
@@ -128,6 +144,47 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		const sig = HARVESTED_SIGNATURES.snowflake.len;
 		expect(sig.name).toBe("LEN");
 		expect(sig.params).toEqual([{ name: "expression" }]);
+	});
+
+	it("trino date_add(unit, value, timestamp): 3 params, exact names", () => {
+		// datetime.md: `:::{function} date_add(unit, value, timestamp) -> [same as input]`.
+		const sig = HARVESTED_SIGNATURES.trino.date_add;
+		expect(sig.params).toEqual([{ name: "unit" }, { name: "value" }, { name: "timestamp" }]);
+	});
+
+	it("trino ST_Point(lon: double, lat: double): typed colon-pair params, mixed-case display name", () => {
+		// geospatial.md: `:::{function} ST_Point(lon: double, lat: double) -> Point`. The colon pair
+		// keeps the documented type, and the doc's mixed casing is the display name (key lowercased).
+		const sig = HARVESTED_SIGNATURES.trino.st_point;
+		expect(sig.name).toBe("ST_Point");
+		expect(sig.params).toEqual([
+			{ name: "lon", type: "double" },
+			{ name: "lat", type: "double" },
+		]);
+	});
+
+	it("bigquery ROUND(X [, N [, rounding_mode]]): X required, N and rounding_mode optional", () => {
+		// mathematical_functions.md's nested bracket chain.
+		const sig = HARVESTED_SIGNATURES.bigquery.round;
+		expect(sig.params).toEqual([
+			{ name: "X" },
+			{ name: "N", optional: true },
+			{ name: "rounding_mode", optional: true },
+		]);
+	});
+
+	it("bigquery PARSE_DATE(format_string, date_string): 2 params, exact names", () => {
+		// date_functions.md: `PARSE_DATE(format_string, date_string)`.
+		const sig = HARVESTED_SIGNATURES.bigquery.parse_date;
+		expect(sig.params).toEqual([{ name: "format_string" }, { name: "date_string" }]);
+	});
+});
+
+describe("harvested signatures: typed-overload conflicts stay unmerged", () => {
+	it("trino length is undefined: length(binary) vs length(string) tie at arity 1 with different types", () => {
+		// binary.md and string.md each document their own length(); the merge rule compares types
+		// (and here even the bare-type display names differ), so nothing is emitted, never a guess.
+		expect(HARVESTED_SIGNATURES.trino.length).toBeUndefined();
 	});
 });
 
