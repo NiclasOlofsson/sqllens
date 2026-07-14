@@ -2,7 +2,7 @@
 // The per-NAME function docs table for databricks (issue #34), parallel to the signature table:
 // docUrl points at the vendor's published page for the same source the signature harvest read;
 // description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.
-// Built 2026-07-14. 668 names (408 with descriptions).
+// Built 2026-07-14. 668 names (589 with descriptions).
 import type { FnDoc } from "../signature/docs.js";
 
 export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
@@ -45,39 +45,48 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ai_analyze_sentiment: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_analyze_sentiment",
-		origin: "vendor-docs",
+		description: "Analyzes the sentiment of the provided text content, returning a sentiment classification.",
+		origin: "authored",
 	},
 	ai_classify: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_classify",
-		origin: "vendor-docs",
+		description: "Classifies text content into one or more provided label categories using a language model.",
+		origin: "authored",
 	},
 	ai_extract: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_extract",
-		origin: "vendor-docs",
+		description: "Extracts structured data or specific fields from unstructured text or documents using AI.",
+		origin: "authored",
 	},
 	ai_fix_grammar: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_fix_grammar",
-		origin: "vendor-docs",
+		description: "Corrects grammar and spelling errors in the provided text.",
+		origin: "authored",
 	},
 	ai_gen: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_gen",
-		origin: "vendor-docs",
+		description: "Generates text content based on the provided prompt using a language model.",
+		origin: "authored",
 	},
 	ai_mask: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_mask",
-		origin: "vendor-docs",
+		description: "Masks or redacts sensitive information matching specified labels from the input text.",
+		origin: "authored",
 	},
 	ai_parse_document: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document",
-		origin: "vendor-docs",
+		description: "Parses unstructured documents into structured content using document understanding models.",
+		origin: "authored",
 	},
 	ai_prep_search: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_prep_search",
-		origin: "vendor-docs",
+		description: "Prepares parsed document content for semantic search and retrieval operations.",
+		origin: "authored",
 	},
 	ai_query: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_query",
-		origin: "vendor-docs",
+		description: "Sends a request to a specified AI endpoint and returns the response.",
+		origin: "authored",
 	},
 	ai_similarity: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_similarity",
@@ -89,7 +98,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ai_translate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_translate",
-		origin: "vendor-docs",
+		description: "Translates text from one language to another.",
+		origin: "authored",
 	},
 	any_value: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/any_value",
@@ -113,15 +123,18 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	approx_top_k_accumulate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/approx_top_k_accumulate",
-		origin: "vendor-docs",
+		description: "Initializes or accumulates state for approximate top-k frequency estimation.",
+		origin: "authored",
 	},
 	approx_top_k_combine: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/approx_top_k_combine",
-		origin: "vendor-docs",
+		description: "Combines multiple top-k approximation states into a single state.",
+		origin: "authored",
 	},
 	approx_top_k_estimate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/approx_top_k_estimate",
-		origin: "vendor-docs",
+		description: "Extracts top-k estimates and frequencies from accumulated approximation state.",
+		origin: "authored",
 	},
 	array: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/array",
@@ -320,7 +333,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	bit_reverse: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/bit_reverse",
-		origin: "vendor-docs",
+		description: "Reverses the bit order in a numeric value.",
+		origin: "authored",
 	},
 	bit_xor: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/bit_xor",
@@ -329,7 +343,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	bitmap_and_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/bitmap_and_agg",
-		origin: "vendor-docs",
+		description: "Aggregates bitmaps using bitwise AND operation across rows.",
+		origin: "authored",
 	},
 	bitmap_bit_position: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/bitmap_bit_position",
@@ -424,7 +439,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	charindex: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/charindex",
-		origin: "vendor-docs",
+		description: "Returns the position of a substring within a string, using 1-based indexing.",
+		origin: "authored",
 	},
 	chr: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/chr",
@@ -536,7 +552,12 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the cosecant of expr, as if computed by 1/java.lang.Math.sin.",
 		origin: "spark-docs",
 	},
-	cube: { docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/cube", origin: "vendor-docs" },
+	cube: {
+		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/cube",
+		description:
+			"Generates multi-dimensional grouping sets for aggregation, including all combinations of the specified columns.",
+		origin: "authored",
+	},
 	cume_dist: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/cume_dist",
 		description: "Computes the position of a value relative to all values in the partition.",
@@ -577,7 +598,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	current_time: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/current_time",
-		origin: "vendor-docs",
+		description: "Returns the current time at the specified precision.",
+		origin: "authored",
 	},
 	current_timestamp: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/current_timestamp",
@@ -855,7 +877,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	getdate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/getdate",
-		origin: "vendor-docs",
+		description: "Returns the current date and time as a timestamp.",
+		origin: "authored",
 	},
 	greatest: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/greatest",
@@ -870,51 +893,63 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	h3_boundaryasgeojson: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_boundaryasgeojson",
-		origin: "vendor-docs",
+		description: "Returns the boundary of an H3 hexagon cell as a GeoJSON polygon.",
+		origin: "authored",
 	},
 	h3_boundaryaswkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_boundaryaswkb",
-		origin: "vendor-docs",
+		description: "Returns the boundary of an H3 hexagon cell in WKB (well-known binary) format.",
+		origin: "authored",
 	},
 	h3_boundaryaswkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_boundaryaswkt",
-		origin: "vendor-docs",
+		description: "Returns the boundary of an H3 hexagon cell as WKT (well-known text) geometry.",
+		origin: "authored",
 	},
 	h3_centerasgeojson: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_centerasgeojson",
-		origin: "vendor-docs",
+		description: "Returns the center point of an H3 hexagon cell as a GeoJSON point.",
+		origin: "authored",
 	},
 	h3_centeraswkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_centeraswkb",
-		origin: "vendor-docs",
+		description: "Returns the center point of an H3 hexagon cell in WKB (well-known binary) format.",
+		origin: "authored",
 	},
 	h3_centeraswkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_centeraswkt",
-		origin: "vendor-docs",
+		description: "Returns the center point of an H3 hexagon cell as WKT (well-known text) geometry.",
+		origin: "authored",
 	},
 	h3_compact: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_compact",
-		origin: "vendor-docs",
+		description: "Compresses a set of H3 cells to their minimal representation, combining contained cells.",
+		origin: "authored",
 	},
 	h3_coverash3: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_coverash3",
-		origin: "vendor-docs",
+		description: "Returns H3 hexagon cells that cover a given geographic area at the specified resolution.",
+		origin: "authored",
 	},
 	h3_distance: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_distance",
-		origin: "vendor-docs",
+		description: "Calculates the distance in hexagon steps between two H3 cells.",
+		origin: "authored",
 	},
 	h3_h3tostring: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_h3tostring",
-		origin: "vendor-docs",
+		description: "Converts an H3 cell ID from numeric representation to hexadecimal string format.",
+		origin: "authored",
 	},
 	h3_hexring: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_hexring",
-		origin: "vendor-docs",
+		description: "Returns the hexagon ring located k steps away from a given H3 cell.",
+		origin: "authored",
 	},
 	h3_ischildof: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_ischildof",
-		origin: "vendor-docs",
+		description: "Tests whether the first H3 cell is a child of (contained within) the second cell.",
+		origin: "authored",
 	},
 	h3_ispentagon: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/h3_ispentagon",
@@ -1120,11 +1155,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ip_as_binary: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_as_binary",
-		origin: "vendor-docs",
+		description: "Converts an IP address or CIDR notation to binary form.",
+		origin: "authored",
 	},
 	ip_as_string: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_as_string",
-		origin: "vendor-docs",
+		description: "Converts an IP address or CIDR notation to string representation.",
+		origin: "authored",
 	},
 	ip_cidr: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_cidr",
@@ -1132,7 +1169,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ip_cidr_contains: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_cidr_contains",
-		origin: "vendor-docs",
+		description: "Returns true if a CIDR range contains a given IP address or another CIDR.",
+		origin: "authored",
 	},
 	ip_host: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_host",
@@ -1144,11 +1182,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ip_network_first: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_network_first",
-		origin: "vendor-docs",
+		description: "Returns the first IP address in a network range.",
+		origin: "authored",
 	},
 	ip_network_last: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_network_last",
-		origin: "vendor-docs",
+		description: "Returns the last IP address in a network range.",
+		origin: "authored",
 	},
 	ip_prefix_length: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_prefix_length",
@@ -1156,7 +1196,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	ip_version: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/ip_version",
-		origin: "vendor-docs",
+		description: "Returns the IP version (4 or 6) of an IP address or CIDR.",
+		origin: "authored",
 	},
 	is_account_group_member: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/is_account_group_member",
@@ -1221,43 +1262,54 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	kll_merge_agg_float: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_merge_agg_float",
-		origin: "vendor-docs",
+		description:
+			"Aggregates KLL float sketches by merging them incrementally to estimate quantiles across a dataset.",
+		origin: "authored",
 	},
 	kll_sketch_agg_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_agg_bigint",
-		origin: "vendor-docs",
+		description: "Builds a KLL sketch from bigint values to enable approximate quantile queries on large datasets.",
+		origin: "authored",
 	},
 	kll_sketch_agg_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_agg_double",
-		origin: "vendor-docs",
+		description: "Builds a KLL sketch from double values to enable approximate quantile queries on large datasets.",
+		origin: "authored",
 	},
 	kll_sketch_agg_float: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_agg_float",
-		origin: "vendor-docs",
+		description: "Builds a KLL sketch from float values to enable approximate quantile queries on large datasets.",
+		origin: "authored",
 	},
 	kll_sketch_get_n_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_n_bigint",
-		origin: "vendor-docs",
+		description: "Returns the count of items that were added to the bigint KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_n_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_n_double",
-		origin: "vendor-docs",
+		description: "Returns the count of items that were added to the double KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_n_float: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_n_float",
-		origin: "vendor-docs",
+		description: "Returns the count of items that were added to the float KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_quantile_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_quantile_bigint",
-		origin: "vendor-docs",
+		description: "Returns an approximate quantile value at the given rank from a bigint KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_quantile_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_quantile_double",
-		origin: "vendor-docs",
+		description: "Returns an approximate quantile value at the given rank from a double KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_quantile_float: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_quantile_float",
-		origin: "vendor-docs",
+		description: "Returns an approximate quantile value at the given rank from a float KLL sketch.",
+		origin: "authored",
 	},
 	kll_sketch_get_rank_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_get_rank_bigint",
@@ -1273,15 +1325,18 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	kll_sketch_merge_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_merge_bigint",
-		origin: "vendor-docs",
+		description: "Merges two bigint KLL sketches into a single sketch representing both datasets.",
+		origin: "authored",
 	},
 	kll_sketch_merge_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_merge_double",
-		origin: "vendor-docs",
+		description: "Merges two double KLL sketches into a single sketch representing both datasets.",
+		origin: "authored",
 	},
 	kll_sketch_merge_float: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_merge_float",
-		origin: "vendor-docs",
+		description: "Merges two float KLL sketches into a single sketch representing both datasets.",
+		origin: "authored",
 	},
 	kll_sketch_to_string_bigint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/kll_sketch_to_string_bigint",
@@ -1412,7 +1467,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	make_time: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/make_time",
-		origin: "vendor-docs",
+		description: "Constructs a time value from hour, minute, and second components.",
+		origin: "authored",
 	},
 	make_timestamp: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/make_timestamp",
@@ -1473,7 +1529,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	match_number: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/match_number",
-		origin: "vendor-docs",
+		description: "Returns the ordinal position of the current match within a MATCH_RECOGNIZE clause.",
+		origin: "authored",
 	},
 	max: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/max",
@@ -1497,7 +1554,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	measure: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/measure",
-		origin: "vendor-docs",
+		description: "Evaluates a measure defined in a semantic model and returns its computed value.",
+		origin: "authored",
 	},
 	median: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/median",
@@ -1917,7 +1975,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	secret: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/secret",
-		origin: "vendor-docs",
+		description: "Retrieves the value of a secret from the specified scope and key.",
+		origin: "authored",
 	},
 	sequence: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/sequence",
@@ -2054,7 +2113,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_addpoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_addpoint",
-		origin: "vendor-docs",
+		description: "Adds a point to a geometry or geography, optionally at a specified index position.",
+		origin: "authored",
 	},
 	st_area: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_area",
@@ -2062,47 +2122,58 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_asbinary: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_asbinary",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to its well-known binary (WKB) representation.",
+		origin: "authored",
 	},
 	st_asewkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_asewkb",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to extended well-known binary (EWKB) format.",
+		origin: "authored",
 	},
 	st_asgeojson: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_asgeojson",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to GeoJSON format.",
+		origin: "authored",
 	},
 	st_astext: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_astext",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to its well-known text (WKT) representation.",
+		origin: "authored",
 	},
 	st_aswkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_aswkb",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to well-known binary (WKB) format.",
+		origin: "authored",
 	},
 	st_aswkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_aswkt",
-		origin: "vendor-docs",
+		description: "Converts a geometry or geography to well-known text (WKT) format.",
+		origin: "authored",
 	},
 	st_azimuth: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_azimuth",
-		origin: "vendor-docs",
+		description: "Calculates the azimuth (bearing angle) from the first geometry to the second.",
+		origin: "authored",
 	},
 	st_boundary: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_boundary",
-		origin: "vendor-docs",
+		description: "Returns the boundary geometry of a given geometry.",
+		origin: "authored",
 	},
 	st_buffer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_buffer",
-		origin: "vendor-docs",
+		description: "Creates a buffer polygon at a specified distance around a geometry.",
+		origin: "authored",
 	},
 	st_centroid: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_centroid",
-		origin: "vendor-docs",
+		description: "Returns the centroid (geometric center) of a geometry.",
+		origin: "authored",
 	},
 	st_closestpoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_closestpoint",
-		origin: "vendor-docs",
+		description: "Returns the closest point on the first geometry to the second geometry.",
+		origin: "authored",
 	},
 	st_collect: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_collect",
@@ -2110,35 +2181,44 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_concavehull: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_concavehull",
-		origin: "vendor-docs",
+		description:
+			"Returns the concave hull of a geometry, with the lengthRatio parameter controlling the degree of concavity.",
+		origin: "authored",
 	},
 	st_contains: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_contains",
-		origin: "vendor-docs",
+		description: "Tests whether the first geometry completely contains the second geometry.",
+		origin: "authored",
 	},
 	st_convexhull: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_convexhull",
-		origin: "vendor-docs",
+		description: "Returns the convex hull of a geometry, the smallest convex polygon containing all points.",
+		origin: "authored",
 	},
 	st_covers: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_covers",
-		origin: "vendor-docs",
+		description: "Tests whether the first geometry covers the second geometry without necessarily containing it.",
+		origin: "authored",
 	},
 	st_difference: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_difference",
-		origin: "vendor-docs",
+		description: "Returns the portion of the first geometry that does not intersect with the second geometry.",
+		origin: "authored",
 	},
 	st_dimension: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_dimension",
-		origin: "vendor-docs",
+		description: "Returns the dimension of a geometry as an integer: 0 for point, 1 for line, 2 for polygon.",
+		origin: "authored",
 	},
 	st_disjoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_disjoint",
-		origin: "vendor-docs",
+		description: "Tests whether two geometries have no points in common.",
+		origin: "authored",
 	},
 	st_distance: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_distance",
-		origin: "vendor-docs",
+		description: "Calculates the shortest distance between two geometries.",
+		origin: "authored",
 	},
 	st_distancesphere: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_distancesphere",
@@ -2150,11 +2230,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_dump: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_dump",
-		origin: "vendor-docs",
+		description: "Breaks down a geometry into its constituent single-part geometries.",
+		origin: "authored",
 	},
 	st_dwithin: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_dwithin",
-		origin: "vendor-docs",
+		description: "Tests whether two geometries are within a specified distance of each other.",
+		origin: "authored",
 	},
 	st_endpoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_endpoint",
@@ -2162,15 +2244,18 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_envelope: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_envelope",
-		origin: "vendor-docs",
+		description: "Returns the minimum bounding rectangle (axis-aligned box) of a geometry.",
+		origin: "authored",
 	},
 	st_envelope_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_envelope_agg",
-		origin: "vendor-docs",
+		description: "Returns the aggregate minimum bounding rectangle of multiple geometries across rows.",
+		origin: "authored",
 	},
 	st_equals: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_equals",
-		origin: "vendor-docs",
+		description: "Tests whether two geometries are spatially equal.",
+		origin: "authored",
 	},
 	st_estimatesrid: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_estimatesrid",
@@ -2178,19 +2263,23 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_exteriorring: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_exteriorring",
-		origin: "vendor-docs",
+		description: "Returns the exterior ring of a polygon as a line string.",
+		origin: "authored",
 	},
 	st_flipcoordinates: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_flipcoordinates",
-		origin: "vendor-docs",
+		description: "Swaps the X and Y coordinates of a geometry.",
+		origin: "authored",
 	},
 	st_force2d: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_force2d",
-		origin: "vendor-docs",
+		description: "Converts a geometry to 2D by removing the Z coordinate.",
+		origin: "authored",
 	},
 	st_geogfromewkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geogfromewkt",
-		origin: "vendor-docs",
+		description: "Constructs a geography from an Extended Well-Known Text (EWKT) string.",
+		origin: "authored",
 	},
 	st_geogfromgeojson: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geogfromgeojson",
@@ -2198,23 +2287,28 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_geogfromtext: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geogfromtext",
-		origin: "vendor-docs",
+		description: "Constructs a geography from a Well-Known Text (WKT) string.",
+		origin: "authored",
 	},
 	st_geogfromwkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geogfromwkb",
-		origin: "vendor-docs",
+		description: "Constructs a geography from Well-Known Binary (WKB) format.",
+		origin: "authored",
 	},
 	st_geogfromwkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geogfromwkt",
-		origin: "vendor-docs",
+		description: "Constructs a geography from a Well-Known Text (WKT) string.",
+		origin: "authored",
 	},
 	st_geohash: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geohash",
-		origin: "vendor-docs",
+		description: "Encodes a geometry as a Geohash string with optional precision parameter.",
+		origin: "authored",
 	},
 	st_geometryn: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geometryn",
-		origin: "vendor-docs",
+		description: "Returns the nth geometry from a geometry collection (1-indexed).",
+		origin: "authored",
 	},
 	st_geometrytype: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geometrytype",
@@ -2222,15 +2316,18 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_geomfromewkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromewkb",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from Extended Well-Known Binary (EWKB) format.",
+		origin: "authored",
 	},
 	st_geomfromewkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromewkt",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from an Extended Well-Known Text (EWKT) string.",
+		origin: "authored",
 	},
 	st_geomfromgeohash: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromgeohash",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from a Geohash string.",
+		origin: "authored",
 	},
 	st_geomfromgeojson: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromgeojson",
@@ -2238,31 +2335,38 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_geomfromtext: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromtext",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from a Well-Known Text (WKT) string with optional SRID.",
+		origin: "authored",
 	},
 	st_geomfromwkb: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromwkb",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from Well-Known Binary (WKB) format with optional SRID.",
+		origin: "authored",
 	},
 	st_geomfromwkt: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_geomfromwkt",
-		origin: "vendor-docs",
+		description: "Constructs a geometry from a Well-Known Text (WKT) string with optional SRID.",
+		origin: "authored",
 	},
 	st_interiorringn: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_interiorringn",
-		origin: "vendor-docs",
+		description: "Returns the nth interior ring (hole) of a polygon (1-indexed).",
+		origin: "authored",
 	},
 	st_intersection: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_intersection",
-		origin: "vendor-docs",
+		description: "Returns the geometry formed by the points common to both input geometries.",
+		origin: "authored",
 	},
 	st_intersects: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_intersects",
-		origin: "vendor-docs",
+		description: "Tests whether two geometries share any space.",
+		origin: "authored",
 	},
 	st_isempty: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_isempty",
-		origin: "vendor-docs",
+		description: "Tests whether a geometry is empty.",
+		origin: "authored",
 	},
 	st_isvalid: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_isvalid",
@@ -2270,80 +2374,103 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_length: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_length",
-		origin: "vendor-docs",
+		description: "Returns the length of the geometry along its edges.",
+		origin: "authored",
 	},
-	st_m: { docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_m", origin: "vendor-docs" },
+	st_m: {
+		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_m",
+		description: "Extracts the M (measure) coordinate from a point.",
+		origin: "authored",
+	},
 	st_makeenvelope: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_makeenvelope",
-		origin: "vendor-docs",
+		description: "Creates a rectangular geometry (envelope) from the given corner coordinates.",
+		origin: "authored",
 	},
 	st_makeline: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_makeline",
-		origin: "vendor-docs",
+		description: "Creates a line geometry from an array of point geometries.",
+		origin: "authored",
 	},
 	st_makepoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_makepoint",
-		origin: "vendor-docs",
+		description: "Creates a point geometry from x and y coordinates, optionally z and m values.",
+		origin: "authored",
 	},
 	st_makepolygon: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_makepolygon",
-		origin: "vendor-docs",
+		description: "Creates a polygon geometry from an exterior ring and optional interior rings.",
+		origin: "authored",
 	},
 	st_multi: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_multi",
-		origin: "vendor-docs",
+		description: "Converts a geometry to a multi-type geometry (Multi-Point, Multi-Line, or Multi-Polygon).",
+		origin: "authored",
 	},
 	st_ndims: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_ndims",
-		origin: "vendor-docs",
+		description: "Returns the number of dimensions (2, 3, or 4) in the geometry.",
+		origin: "authored",
 	},
 	st_npoints: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_npoints",
-		origin: "vendor-docs",
+		description: "Returns the number of points that make up the geometry.",
+		origin: "authored",
 	},
 	st_nrings: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_nrings",
-		origin: "vendor-docs",
+		description: "Returns the number of rings in the geometry.",
+		origin: "authored",
 	},
 	st_numgeometries: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_numgeometries",
-		origin: "vendor-docs",
+		description: "Returns the number of component geometries in a multi-geometry.",
+		origin: "authored",
 	},
 	st_numinteriorrings: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_numinteriorrings",
-		origin: "vendor-docs",
+		description: "Returns the number of interior rings (holes) in a polygon.",
+		origin: "authored",
 	},
 	st_numpoints: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_numpoints",
-		origin: "vendor-docs",
+		description: "Returns the number of points in the geometry.",
+		origin: "authored",
 	},
 	st_perimeter: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_perimeter",
-		origin: "vendor-docs",
+		description: "Returns the perimeter (boundary length) of the geometry.",
+		origin: "authored",
 	},
 	st_point: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_point",
-		origin: "vendor-docs",
+		description: "Creates a point geometry from x and y coordinates, optionally specifying an SRID.",
+		origin: "authored",
 	},
 	st_pointfromgeohash: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_pointfromgeohash",
-		origin: "vendor-docs",
+		description: "Creates a point geometry from a geohash string.",
+		origin: "authored",
 	},
 	st_pointn: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_pointn",
-		origin: "vendor-docs",
+		description: "Returns the point at the specified index position in the geometry.",
+		origin: "authored",
 	},
 	st_pointonsurface: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_pointonsurface",
-		origin: "vendor-docs",
+		description: "Returns a point that is guaranteed to lie on the surface of the geometry.",
+		origin: "authored",
 	},
 	st_removepoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_removepoint",
-		origin: "vendor-docs",
+		description: "Removes the point at the specified index from a geometry.",
+		origin: "authored",
 	},
 	st_reverse: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_reverse",
-		origin: "vendor-docs",
+		description: "Returns a geometry with the order of points reversed.",
+		origin: "authored",
 	},
 	st_rotate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_rotate",
@@ -2351,78 +2478,109 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	st_scale: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_scale",
-		origin: "vendor-docs",
+		description: "Returns a geometry scaled by the given factors along x, y, and optionally z axes.",
+		origin: "authored",
 	},
 	st_setpoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_setpoint",
-		origin: "vendor-docs",
+		description: "Returns a geometry with the point at the specified index replaced by another point.",
+		origin: "authored",
 	},
 	st_setsrid: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_setsrid",
-		origin: "vendor-docs",
+		description: "Returns the geometry with the spatial reference system ID set to the specified value.",
+		origin: "authored",
 	},
 	st_simplify: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_simplify",
-		origin: "vendor-docs",
+		description: "Returns a simplified geometry removing points within the specified tolerance distance.",
+		origin: "authored",
 	},
 	st_srid: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_srid",
-		origin: "vendor-docs",
+		description: "Returns the spatial reference system ID associated with the geometry.",
+		origin: "authored",
 	},
 	st_startpoint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_startpoint",
-		origin: "vendor-docs",
+		description: "Returns the first point of a line or ring geometry.",
+		origin: "authored",
 	},
 	st_touches: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_touches",
-		origin: "vendor-docs",
+		description: "Tests whether two geometries touch at one or more points without overlapping.",
+		origin: "authored",
 	},
 	st_transform: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_transform",
-		origin: "vendor-docs",
+		description: "Transforms the geometry to a different spatial reference system identified by the SRID.",
+		origin: "authored",
 	},
 	st_translate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_translate",
-		origin: "vendor-docs",
+		description:
+			"Returns a geometry translated (moved) by the specified distance along x, y, and optionally z axes.",
+		origin: "authored",
 	},
 	st_union: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_union",
-		origin: "vendor-docs",
+		description: "Returns the geometric union of two geometries.",
+		origin: "authored",
 	},
 	st_union_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_union_agg",
-		origin: "vendor-docs",
+		description: "Aggregates the union of all geometries in a column into a single geometry.",
+		origin: "authored",
 	},
 	st_within: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_within",
-		origin: "vendor-docs",
+		description: "Tests whether the first geometry is completely within the second geometry.",
+		origin: "authored",
 	},
-	st_x: { docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_x", origin: "vendor-docs" },
+	st_x: {
+		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_x",
+		description: "Extracts the X coordinate from a point.",
+		origin: "authored",
+	},
 	st_xmax: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_xmax",
-		origin: "vendor-docs",
+		description: "Returns the maximum X coordinate of the geometry's bounding box.",
+		origin: "authored",
 	},
 	st_xmin: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_xmin",
-		origin: "vendor-docs",
+		description: "Returns the minimum X coordinate of the geometry's bounding box.",
+		origin: "authored",
 	},
-	st_y: { docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_y", origin: "vendor-docs" },
+	st_y: {
+		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_y",
+		description: "Extracts the Y coordinate from a point.",
+		origin: "authored",
+	},
 	st_ymax: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_ymax",
-		origin: "vendor-docs",
+		description: "Returns the maximum Y coordinate of the geometry's bounding box.",
+		origin: "authored",
 	},
 	st_ymin: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_ymin",
-		origin: "vendor-docs",
+		description: "Returns the minimum Y coordinate of the geometry's bounding box.",
+		origin: "authored",
 	},
-	st_z: { docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_z", origin: "vendor-docs" },
+	st_z: {
+		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_z",
+		description: "Extracts the Z coordinate from a point.",
+		origin: "authored",
+	},
 	st_zmax: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_zmax",
-		origin: "vendor-docs",
+		description: "Returns the maximum Z coordinate value of a geospatial object.",
+		origin: "authored",
 	},
 	st_zmin: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/st_zmin",
-		origin: "vendor-docs",
+		description: "Returns the minimum Z coordinate value of a geospatial object.",
+		origin: "authored",
 	},
 	stack: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/stack",
@@ -2494,7 +2652,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	table_changes: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/table_changes",
-		origin: "vendor-docs",
+		description: "Returns change data capture records from a Delta table between specified versions or timestamps.",
+		origin: "authored",
 	},
 	tan: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tan",
@@ -2508,31 +2667,38 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	theta_difference: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_difference",
-		origin: "vendor-docs",
+		description: "Returns a theta sketch representing elements in the first sketch but not in the second.",
+		origin: "authored",
 	},
 	theta_intersection: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_intersection",
-		origin: "vendor-docs",
+		description: "Returns a theta sketch representing elements common to both input sketches.",
+		origin: "authored",
 	},
 	theta_intersection_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_intersection_agg",
-		origin: "vendor-docs",
+		description: "Aggregates theta sketches by computing their intersection over a set of rows.",
+		origin: "authored",
 	},
 	theta_sketch_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_sketch_agg",
-		origin: "vendor-docs",
+		description: "Aggregates distinct values into a theta sketch for cardinality estimation.",
+		origin: "authored",
 	},
 	theta_sketch_estimate: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_sketch_estimate",
-		origin: "vendor-docs",
+		description: "Returns the cardinality estimate from a theta sketch.",
+		origin: "authored",
 	},
 	theta_union: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_union",
-		origin: "vendor-docs",
+		description: "Returns a theta sketch representing elements present in either or both input sketches.",
+		origin: "authored",
 	},
 	theta_union_agg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/theta_union_agg",
-		origin: "vendor-docs",
+		description: "Aggregates theta sketches by computing their union over a set of rows.",
+		origin: "authored",
 	},
 	time_diff: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_diff",
@@ -2540,27 +2706,33 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	time_from_micros: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_from_micros",
-		origin: "vendor-docs",
+		description: "Creates a time value from an integer representing microseconds since midnight.",
+		origin: "authored",
 	},
 	time_from_millis: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_from_millis",
-		origin: "vendor-docs",
+		description: "Creates a time value from an integer representing milliseconds since midnight.",
+		origin: "authored",
 	},
 	time_from_seconds: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_from_seconds",
-		origin: "vendor-docs",
+		description: "Creates a time value from an integer representing seconds since midnight.",
+		origin: "authored",
 	},
 	time_to_micros: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_to_micros",
-		origin: "vendor-docs",
+		description: "Converts a time value to the number of microseconds since midnight.",
+		origin: "authored",
 	},
 	time_to_millis: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_to_millis",
-		origin: "vendor-docs",
+		description: "Converts a time value to the number of milliseconds since midnight.",
+		origin: "authored",
 	},
 	time_to_seconds: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_to_seconds",
-		origin: "vendor-docs",
+		description: "Converts a time value to the number of seconds since midnight.",
+		origin: "authored",
 	},
 	time_trunc: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/time_trunc",
@@ -2592,11 +2764,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	timestampadd: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/timestampadd",
-		origin: "vendor-docs",
+		description: "Adds a time interval to a timestamp and returns the resulting timestamp.",
+		origin: "authored",
 	},
 	timestampdiff: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/timestampdiff",
-		origin: "vendor-docs",
+		description: "Returns the difference between two timestamps as an integer in the specified unit.",
+		origin: "authored",
 	},
 	tinyint: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tinyint",
@@ -2726,11 +2900,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	try_ip_as_binary: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_ip_as_binary",
-		origin: "vendor-docs",
+		description: "Converts an IP address or CIDR notation to binary form, returning null on invalid input.",
+		origin: "authored",
 	},
 	try_ip_as_string: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_ip_as_string",
-		origin: "vendor-docs",
+		description: "Converts an IP address or CIDR notation to string representation, returning null on failure.",
+		origin: "authored",
 	},
 	try_ip_cidr: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_ip_cidr",
@@ -2757,7 +2933,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	try_secret: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_secret",
-		origin: "vendor-docs",
+		description: "Retrieves a secret from Databricks secret storage, returning null if the secret does not exist.",
+		origin: "authored",
 	},
 	try_subtract: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_subtract",
@@ -2790,7 +2967,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	try_to_time: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_time",
-		origin: "vendor-docs",
+		description: "Converts a string or expression to a time value with optional format, returning null on failure.",
+		origin: "authored",
 	},
 	try_to_timestamp: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_to_timestamp",
@@ -2815,31 +2993,42 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	try_zstd_decompress: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/try_zstd_decompress",
-		origin: "vendor-docs",
+		description: "Decompresses data using the ZSTD algorithm, returning null if decompression fails.",
+		origin: "authored",
 	},
 	tuple_difference_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_difference_double",
-		origin: "vendor-docs",
+		description:
+			"Returns a tuple sketch representing elements in the first sketch but not in the second with double summaries.",
+		origin: "authored",
 	},
 	tuple_difference_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_difference_integer",
-		origin: "vendor-docs",
+		description:
+			"Returns a tuple sketch representing elements in the first sketch but not in the second with integer summaries.",
+		origin: "authored",
 	},
 	tuple_intersection_agg_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_intersection_agg_double",
-		origin: "vendor-docs",
+		description: "Aggregates tuple sketches by computing their intersection with double-type summaries over rows.",
+		origin: "authored",
 	},
 	tuple_intersection_agg_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_intersection_agg_integer",
-		origin: "vendor-docs",
+		description: "Aggregates tuple sketches by computing their intersection with integer-type summaries over rows.",
+		origin: "authored",
 	},
 	tuple_intersection_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_intersection_double",
-		origin: "vendor-docs",
+		description:
+			"Returns a tuple sketch representing key-value pairs common to both sketches with double summaries.",
+		origin: "authored",
 	},
 	tuple_intersection_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_intersection_integer",
-		origin: "vendor-docs",
+		description:
+			"Returns a tuple sketch representing key-value pairs common to both sketches with integer summaries.",
+		origin: "authored",
 	},
 	tuple_sketch_agg_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_sketch_agg_double",
@@ -2859,15 +3048,18 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	tuple_sketch_summary_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_sketch_summary_double",
-		origin: "vendor-docs",
+		description: "Returns summary statistics as a double from a tuple sketch containing numeric summaries.",
+		origin: "authored",
 	},
 	tuple_sketch_summary_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_sketch_summary_integer",
-		origin: "vendor-docs",
+		description: "Returns summary statistics as an integer from a tuple sketch containing numeric summaries.",
+		origin: "authored",
 	},
 	tuple_sketch_theta_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_sketch_theta_double",
-		origin: "vendor-docs",
+		description: "Extracts the theta (inclusion probability threshold) value from a tuple sketch as a double.",
+		origin: "authored",
 	},
 	tuple_sketch_theta_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_sketch_theta_integer",
@@ -2875,19 +3067,27 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	tuple_union_agg_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_union_agg_double",
-		origin: "vendor-docs",
+		description:
+			"Aggregates unions of tuple sketches across rows to combine approximate summaries with double-typed data.",
+		origin: "authored",
 	},
 	tuple_union_agg_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_union_agg_integer",
-		origin: "vendor-docs",
+		description:
+			"Aggregates unions of tuple sketches across rows to combine approximate summaries with integer-typed data.",
+		origin: "authored",
 	},
 	tuple_union_double: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_union_double",
-		origin: "vendor-docs",
+		description:
+			"Returns the union of two tuple sketches, combining their approximate summaries of double-typed data.",
+		origin: "authored",
 	},
 	tuple_union_integer: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/tuple_union_integer",
-		origin: "vendor-docs",
+		description:
+			"Returns the union of two tuple sketches, combining their approximate summaries of integer-typed data.",
+		origin: "authored",
 	},
 	typeof: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/typeof",
@@ -2998,7 +3198,8 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	vector_avg: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_avg",
-		origin: "vendor-docs",
+		description: "Computes the element-wise average of a collection of vectors.",
+		origin: "authored",
 	},
 	vector_cosine_similarity: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_cosine_similarity",
@@ -3006,23 +3207,30 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	vector_inner_product: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_inner_product",
-		origin: "vendor-docs",
+		description: "Computes the inner (dot) product of two vectors.",
+		origin: "authored",
 	},
 	vector_l2_distance: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_l2_distance",
-		origin: "vendor-docs",
+		description: "Computes the Euclidean (L2) distance between two vectors.",
+		origin: "authored",
 	},
 	vector_norm: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_norm",
-		origin: "vendor-docs",
+		description:
+			"Computes the norm (magnitude) of a vector, with optional degree parameter to specify which norm to compute.",
+		origin: "authored",
 	},
 	vector_normalize: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_normalize",
-		origin: "vendor-docs",
+		description:
+			"Scales a vector to unit length, with optional degree parameter specifying the normalization method.",
+		origin: "authored",
 	},
 	vector_sum: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/vector_sum",
-		origin: "vendor-docs",
+		description: "Computes the element-wise sum of a collection of vectors.",
+		origin: "authored",
 	},
 	version: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/version",
@@ -3129,10 +3337,13 @@ export const DATABRICKS_FN_DOCS: Record<string, FnDoc> = {
 	},
 	zstd_compress: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/zstd_compress",
-		origin: "vendor-docs",
+		description:
+			"Compresses data using the Zstandard (zstd) algorithm, with optional compression level and streaming mode parameters.",
+		origin: "authored",
 	},
 	zstd_decompress: {
 		docUrl: "https://docs.databricks.com/aws/en/sql/language-manual/functions/zstd_decompress",
-		origin: "vendor-docs",
+		description: "Decompresses data that was compressed with the Zstandard (zstd) algorithm.",
+		origin: "authored",
 	},
 };

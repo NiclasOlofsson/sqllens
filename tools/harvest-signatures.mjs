@@ -3259,6 +3259,17 @@ const DESCRIPTION_EXTRACTORS = {
  *  always the vendor's page). */
 const DESCRIPTION_ORIGIN = { databricks: "spark-docs" };
 
+/** The AUTHORED description layer (tools/authored-descriptions/<dialect>.json): original prose
+ *  written for this project by a model-author + adversarial-verify workflow (see the file's meta),
+ *  never copied from vendor docs — the legal path for the dialects whose docs permit no
+ *  reproduction. Fills only names the extracted layers left without a description; every entry
+ *  lands as origin "authored" so consumers can rank it below vendor prose. */
+function authoredDescriptions(dialect) {
+	const p = resolve(TOOLS_DIR, "authored-descriptions", `${dialect}.json`);
+	if (!existsSync(p)) return null;
+	return JSON.parse(readFileSync(p, "utf8")).descriptions;
+}
+
 function renderFnDocsTable(dialect, docs) {
 	const constName = FN_DOCS_CONST_NAME[dialect];
 	const keys = Object.keys(docs).sort();
@@ -3432,6 +3443,20 @@ async function main() {
 				entry.origin = origin;
 				descCount++;
 			}
+		}
+		// The authored layer fills the remaining gaps, never overriding extracted prose.
+		const authored = authoredDescriptions(dialect);
+		let authoredCount = 0;
+		if (authored) {
+			for (const [key, text] of Object.entries(authored)) {
+				if (!merged.has(key)) continue;
+				const entry = (docs[key] ??= { origin: "authored" });
+				if (entry.description !== undefined) continue;
+				entry.description = text;
+				entry.origin = "authored";
+				authoredCount++;
+			}
+			descCount += authoredCount;
 		}
 		writeFileSync(fnDocsFile(dialect), renderFnDocsTable(dialect, docs));
 		const urlCount = Object.values(docs).filter((d) => d.docUrl !== undefined).length;
