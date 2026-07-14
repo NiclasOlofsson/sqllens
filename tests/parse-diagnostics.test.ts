@@ -27,4 +27,37 @@ describe("makeErrorCollector", () => {
 		c.reset();
 		expect(c.diagnostics).toEqual([]);
 	});
+
+	// issue #31: a large expected-token set must not reach the editor tooltip verbatim.
+	describe("expected-set capping", () => {
+		function messageFor(raw: string): string {
+			const c = makeErrorCollector();
+			(c.listener as any).syntaxError(null, null, 1, 0, raw, null);
+			return c.diagnostics[0]!.message;
+		}
+
+		it("caps a large expecting-set to the first 5 candidates plus a remainder count", () => {
+			const tokens = Array.from({ length: 300 }, (_, i) => `'TOK${i}'`);
+			const msg = messageFor(`mismatched input ';' expecting {${tokens.join(", ")}}`);
+			expect(msg).toBe(
+				"mismatched input ';' expecting {'TOK0', 'TOK1', 'TOK2', 'TOK3', 'TOK4', … 295 more}",
+			);
+		});
+
+		it("leaves a small expecting-set untouched", () => {
+			const raw = "mismatched input 'x' expecting {';', ',', SELECT}";
+			expect(messageFor(raw)).toBe(raw);
+		});
+
+		it("leaves a braceless single-token expecting untouched", () => {
+			const raw = "missing ';' at 'select'";
+			expect(messageFor(raw)).toBe(raw);
+		});
+
+		it("counts a quoted comma token as one candidate, not two", () => {
+			const tokens = ["','", "';'", "'('", "')'", "'.'", "'A'", "'B'"];
+			const msg = messageFor(`extraneous input 'x' expecting {${tokens.join(", ")}}`);
+			expect(msg).toBe("extraneous input 'x' expecting {',', ';', '(', ')', '.', … 2 more}");
+		});
+	});
 });

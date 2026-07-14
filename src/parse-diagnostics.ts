@@ -36,6 +36,37 @@ export interface ErrorCollector {
 	reset(): void;
 }
 
+/** Max expected-token candidates rendered in a diagnostic message (issue #31): a parser
+ *  mid-statement can expect hundreds of tokens, and the full enumeration is unusable in an
+ *  editor tooltip. The candidates are ANTLR's set order (token-type order), not relevance. */
+const MAX_EXPECTED_TOKENS = 5;
+
+/** Rewrite a trailing `expecting {a, b, …}` set to the first MAX_EXPECTED_TOKENS candidates
+ *  plus a remainder count. Braceless single-token forms and small sets pass through. */
+function capExpectedSet(msg: string): string {
+	const open = msg.lastIndexOf(" expecting {");
+	if (open === -1 || !msg.endsWith("}")) return msg;
+	const set = msg.slice(open + " expecting {".length, -1);
+	// Split on ", " outside quotes; literal display names like ',' contain the separator.
+	const parts: string[] = [];
+	let start = 0;
+	let inQuote = false;
+	for (let i = 0; i < set.length; i++) {
+		const ch = set[i];
+		if (ch === "'") inQuote = !inQuote;
+		else if (!inQuote && ch === "," && set[i + 1] === " ") {
+			parts.push(set.slice(start, i));
+			start = i + 2;
+			i++;
+		}
+	}
+	parts.push(set.slice(start));
+	if (parts.length <= MAX_EXPECTED_TOKENS) return msg;
+	const kept = parts.slice(0, MAX_EXPECTED_TOKENS).join(", ");
+	const rest = parts.length - MAX_EXPECTED_TOKENS;
+	return `${msg.slice(0, open)} expecting {${kept}, … ${rest} more}`;
+}
+
 export function makeErrorCollector(): ErrorCollector {
 	const diagnostics: SyntaxDiagnostic[] = [];
 	const listener = {
@@ -47,7 +78,7 @@ export function makeErrorCollector(): ErrorCollector {
 			msg: string,
 		): void {
 			diagnostics.push({
-				message: msg,
+				message: capExpectedSet(msg),
 				line,
 				column: charPositionInLine,
 				offset: offendingSymbol?.start,
