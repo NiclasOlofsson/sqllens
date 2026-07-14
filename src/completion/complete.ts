@@ -22,8 +22,10 @@ import { nodeAt } from "../document/node-at.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
+import { DefaultTemplateProvider } from "../qualify/template-provider.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
+import { jinjaSlotAt, type JinjaSlot } from "./jinja-slot.js";
 import { COMPLETION_CONFIG, type CompletionConfig } from "./config.js";
 import { completionMeta } from "./parser-factory.js";
 
@@ -37,11 +39,12 @@ interface WalkTok {
 }
 
 /** One completion candidate. The editor filters this list by the typed prefix and applies the
- *  chosen label at the caret; we only produce the labels, anchored at the caret offset. */
+ *  chosen label at the caret; we only produce the labels, anchored at the caret offset. The
+ *  `"template"` kind is a host candidate for a jinja call slot (a dbt model for a ref's arg). */
 export interface Completion {
 	label: string;
-	kind: "keyword" | "column" | "table" | "function";
-	/** Extra display info — e.g. a column's type when the schema knows it. */
+	kind: "keyword" | "column" | "table" | "function" | "template";
+	/** Extra display info, e.g. a column's type when the schema knows it. */
 	detail?: string;
 }
 
@@ -64,6 +67,20 @@ export const complete = completeAt;
 
 function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	const dialect = doc.dialect;
+
+	// Inside a jinja tag ({{ ref('| }}, {% if | %}, {{ a ~ | }}) the caret is not in SQL at all, so SQL
+	// completion is wrong: the tag was blanked to a placeholder sitting in some SQL slot, so the walk
+	// would otherwise offer keywords/tables/columns inside the jinja. A recognized call slot answers the
+	// host's candidates through the template provider (the neutral provider offers none); any other
+	// position strictly inside a tag answers nothing. Only a caret outside every tag falls through to
+	// ordinary SQL completion below. Tags are reused from the document, never re-parsed.
+	const tags = doc.templated?.tags;
+	if (tags) {
+		const slot = jinjaSlotAt(tags, doc.text, offset);
+		if (slot) return templateCompletions(slot, schema);
+		if (tags.some((t) => offset > t.tagSpan.start && offset < t.tagSpan.end)) return [];
+	}
+
 	const cfg = COMPLETION_CONFIG[dialect];
 
 	// Route to the statement CELL owning the caret: the visible-column lookup runs over that cell's
@@ -138,6 +155,20 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	}
 
 	return out;
+}
+
+/** The host's candidates for a jinja call slot, as completions. The template provider carries them,
+ *  so this reads the `schema` when it is one (a DbtTemplateProvider IS a SchemaProvider, and the host
+ *  already passes it here for column/table completion); the neutral provider offers none. A jinja slot
+ *  with no candidates still returns [], never SQL keywords, so a caret inside a tag never leaks SQL
+ *  completion. */
+function templateCompletions(slot: JinjaSlot, schema?: SchemaProvider): Completion[] {
+	if (!(schema instanceof DefaultTemplateProvider)) return [];
+	return schema.templateCandidates(slot.callee, slot.argIndex, slot.packageName).map((c) => ({
+		label: c.label,
+		kind: "template" as const,
+		...(c.detail !== undefined ? { detail: c.detail } : {}),
+	}));
 }
 
 /** The walk's caret token index: the first default-channel token whose `.start >= offset`; for an

@@ -188,6 +188,7 @@ export {
 	type TemplateCall,
 	type ResolvedExpansion,
 	type ResolvedRelation,
+	type TemplateCandidate,
 	type ValueType,
 	type ExpansionShape,
 } from "./qualify/template-provider.js";

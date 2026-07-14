@@ -93,6 +93,15 @@ export interface ResolvedRelation {
 	columns?: Column[];
 }
 
+/** A completion candidate a host offers for a template call slot (a dbt model for a ref's arg 0, a
+ *  source name for a source's arg 0). `label` is what the editor inserts at the caret; `detail` is
+ *  optional display text (a schema, a path). The neutral provider offers none. See
+ *  `TemplateProvider.templateCandidates`. */
+export interface TemplateCandidate {
+	label: string;
+	detail?: string;
+}
+
 /** Everything known about one call's expansion. Every field optional; `undefined` = unknown. */
 export interface ResolvedExpansion {
 	/** Parse-time shape. When absent, derived from the strongest present field:
@@ -211,6 +220,16 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	/** The items a loop collection holds. Default: unknown (loops analyze one representative pass). */
 	collectionOf(_call: TemplateCall): string[] | undefined {
 		return undefined;
+	}
+
+	/** Completion candidates for a template call slot: the caret sits in `callee`'s positional argument
+	 *  `argIndex` (a dbt ref's arg 0 answers the model names, a source's arg 0 the source names, arg 1
+	 *  the table names). `argIndex` is -1 when the caret is still in the callee name itself, so a host
+	 *  can answer the macro/callee names it knows. `packageName` is the dotted package (`dbt_utils` in
+	 *  `dbt_utils.star(...)`). The NEUTRAL provider knows no vocabulary and offers none; a host answers
+	 *  from its catalog. `completeAt` reads this when the caret is inside a jinja tag. */
+	templateCandidates(_callee: string, _argIndex: number, _packageName?: string): TemplateCandidate[] {
+		return [];
 	}
 
 	// --- The composed entry the ENGINE consults (rarely overridden wholesale). ---
