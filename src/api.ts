@@ -313,6 +313,11 @@ export type { StatementCellSpan } from "./document/split.js";
 // tables/columns + function names at the caret). Total: never throws.
 export { complete, completeAt, type Completion } from "./completion/complete.js";
 
+// The NEUTRAL half of jinja completion: which call + arg slot the caret sits in inside a jinja tag
+// (`{{ ref('cu│` → { callee: "ref", argIndex: 0, prefix: "cu" }). Carries no dbt vocabulary; a
+// consumer maps callee + argIndex to a role and supplies candidates. Reuses the parsed tags.
+export { jinjaSlotAt, type JinjaSlot } from "./completion/jinja-slot.js";
+
 // Signature help over a SqlDocument — the broken-input editor feature that shows parameter hints
 // while typing inside a call's parens. Lookup order: curated (hand-verified) → harvested (doc-derived
 // long tail, from tools/harvest-signatures.mjs) → name-only fallback. A pure token scan; never throws.

@@ -33,6 +33,8 @@ export {
 	complete,
 	completeAt,
 	type Completion,
+	jinjaSlotAt,
+	type JinjaSlot,
 	signatureAt,
 	FUNCTION_SIGNATURES,
 	HARVESTED_SIGNATURES,
