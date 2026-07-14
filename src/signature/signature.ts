@@ -28,6 +28,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { Token } from "../token/token.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { hasSignature, lookupSignature, type FnSignature, type ParamSig } from "./signatures.js";
+import { renderSignature } from "./render.js";
 
 /** One rendered overload: e.g. "date_add(start_date: date, num_days: int)". */
 export interface SignatureLabel {
@@ -163,14 +164,12 @@ function renderOverloads(overloads: readonly FnSignature[], active: number): Sig
 	return { signatures, activeSignature, activeParameter };
 }
 
-/** One overload rendered as a `name(p1: t1, …)` label plus its parameter labels. */
+/** One overload rendered through the canonical renderer (issue #33) plus its parameter labels.
+ *  Each parameter label is the same `name: type` string the rendered label contains, so an
+ *  editor's substring-based active-parameter highlighting still lands. */
 function renderOne(sig: FnSignature): SignatureLabel {
 	const parameters = sig.params.map((p) => ({ label: paramLabel(p) }));
-	const inner = sig.params.map(paramLabel);
-	// Variadic: render the repeating param with a trailing "…" so the popup shows it repeats.
-	const rendered =
-		sig.variadic && inner.length > 0 ? [...inner.slice(0, -1), `${inner[inner.length - 1]}, …`] : inner;
-	return { label: `${sig.name}(${rendered.join(", ")})`, parameters };
+	return { label: renderSignature(sig), parameters };
 }
 
 /** One param's display string: `name: type` when typed, else just `name`. */

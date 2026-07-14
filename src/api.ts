@@ -326,6 +326,7 @@ export { jinjaSlotAt, type JinjaSlot } from "./completion/jinja-slot.js";
 // name-only fallback. A pure token scan; never throws.
 export { signatureAt, type SignatureHelpInfo, type SignatureLabel } from "./signature/signature.js";
 export { SIGNATURES, lookupSignature, hasSignature, type FnSignature, type ParamSig } from "./signature/signatures.js";
+export { renderSignature, type RenderSignatureOptions } from "./signature/render.js";
 
 // References / occurrence engine — find the declaration + every occurrence of the symbol under a
 // cursor offset. The core primitive behind LSP references / documentHighlight / codeLens / rename.
