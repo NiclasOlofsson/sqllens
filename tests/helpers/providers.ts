@@ -32,6 +32,13 @@ export function shaped(shape: ExpansionShape): { provider: DbtTemplateProvider }
 	return { provider: new AlwaysShapeProvider(shape) };
 }
 
+/** `{ provider }` giving a plain dbt provider (ref/source naming, dbt builtin shapes, nothing else).
+ *  The neutral default names nothing, so any test asserting a ref/source model or source name passes
+ *  this so the names resolve and the assertion keeps catching regressions. */
+export function dbt(): { provider: DbtTemplateProvider } {
+	return { provider: new DbtTemplateProvider() };
+}
+
 /** Answers `shape` per call name (the old name-keyed shapeOf callback pattern). */
 export class NamedShapeProvider extends DbtTemplateProvider {
 	constructor(private readonly shapes: Record<string, ExpansionShape>) {

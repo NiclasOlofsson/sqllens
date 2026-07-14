@@ -558,28 +558,32 @@ export interface LateralViewSource {
 	cst: ParserRuleContext;
 }
 
-/** Present when a source was written as a minijinja template tag ({{ ref('x') }} / {{ source('a','b') }} /
- *  a macro call in a FROM slot). Attached post-lower by the jinja front end (src/minijinja/apply-tags.ts);
- *  plain SQL parses never carry it. `opaque: true` = the tag's output relation is undeterminable
- *  (macro / computed ref) and `name` is the raw placeholder — qualify treats the source as an opaque
- *  relation (no unknown-table/-column diagnostics). Without `opaque`, `name` carries the tag's literal
- *  dbt-logical name parts (ref model, or [sourceName, tableName]). This type is IR-neutral (no import
- *  from src/minijinja); consumers needing the full TagNode correlate by `span` with parseTemplated().tags. */
+/** Present when a source was written as a minijinja template tag: a call in a FROM slot
+ *  ({{ ref('x') }} / {{ source('a','b') }} / a macro), or a non-call expression. Attached post-lower by
+ *  the jinja front end (src/minijinja/apply-tags.ts); plain SQL parses never carry it. When the
+ *  TemplateProvider resolves the call's relation, `name` carries the resolved name parts and the
+ *  source's columns bind through the provider. When it does not (the neutral provider, a plain macro, a
+ *  computed call), `name` stays the raw placeholder and the source is an opaque relation (no
+ *  unknown-table/-column diagnostics). The tag AST and this marker are dbt-NEUTRAL: ref vs source is not
+ *  a stored kind but the callee name on `call` (call.name === "ref"), resolved by the provider the same
+ *  way a SQL function's type comes from a dialect registry. This type is IR-neutral (no import from
+ *  src/minijinja); consumers needing the full TagNode correlate by `span` with parseTemplated().tags. */
 export interface TemplateSourceInfo {
-	/** `"expr"` = a non-call templated expression in the slot (a bare variable `{{ t }}`, a concat
-	 *  `{{ a ~ b }}`, …) — always `opaque` (its relation is undeterminable), `name` stays the raw
-	 *  placeholder, exactly like the macro-opaque case. */
-	kind: "ref" | "source" | "macro" | "expr";
+	/** `"call"` = a template call occupies the slot; its `call` is the provider key that names the
+	 *  source and types its columns. `"expr"` = a non-call templated expression (a bare variable
+	 *  `{{ t }}`, a concat `{{ a ~ b }}`) that carries no call, so it stays opaque and `name` is the
+	 *  raw placeholder. */
+	kind: "call" | "expr";
 	/** The whole tag's span ({{ … }} inclusive), document coordinates. */
 	span: PartSpan;
 	opaque?: true;
-	/** Present when a bare `{{ t }}` resolved through a literal `{% set t = ref('x') %}`: `kind`/`name`
-	 *  carry the resolved ref/source, but the TagNode at `span` is the USE site (kind "other"), not a
-	 *  ref/source node — consumers correlating span→TagNode must not expect a ref node here. */
+	/** Present when a bare `{{ t }}` resolved through a literal `{% set t = ref('x') %}`: `name`/`call`
+	 *  carry the resolved relation, but the TagNode at `span` is the USE site (kind "other"), not the
+	 *  call node, so consumers correlating span to TagNode must not expect a call node here. */
 	indirect?: true;
-	/** The provider key for this source's tag (ref/source/macro calls, and resolved set-indirection):
-	 *  the semantic layer resolves the source through `TemplateProvider.expansion(call)`. Absent only
-	 *  on the opaque `"expr"` kind (no call to ask about). */
+	/** The provider key for this source's tag (any call in a FROM slot, and resolved set-indirection):
+	 *  the semantic layer resolves the source through `TemplateProvider.expansion(call)`. Absent only on
+	 *  the opaque `"expr"` kind (no call to ask about). */
 	call?: TemplateCall;
 }
 

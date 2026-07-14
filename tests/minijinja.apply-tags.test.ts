@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { resolveScopes } from "../src/index.js";
-import { parseTemplated } from "../src/minijinja/index.js";
+import { OPEN_PROVIDER, resolveScopes } from "../src/index.js";
+import { parseTemplated } from "./helpers/templated.js";
 import { applyTemplateTags } from "../src/minijinja/apply-tags.js";
 
 /** Navigate QueryExpr → select body → from[0] (the IR's real field is `from`, not `sources`). */
@@ -15,7 +15,7 @@ describe("R3 apply-tags", () => {
 		expect(src.kind).toBe("table");
 		expect(src.name).toEqual(["orders"]);
 		expect(src.alias).toBe("o");
-		expect(src.template).toMatchObject({ kind: "ref" });
+		expect(src.template).toMatchObject({ kind: "call", call: { name: "ref" } });
 		expect(src.template.opaque).toBeUndefined();
 	});
 
@@ -23,7 +23,7 @@ describe("R3 apply-tags", () => {
 		const r = parseTemplated("SELECT * FROM {{ source('raw', 'events') }}", "databricks");
 		const src = firstSource(r.sql.ast);
 		expect(src.name).toEqual(["raw", "events"]);
-		expect(src.template).toMatchObject({ kind: "source" });
+		expect(src.template).toMatchObject({ kind: "call", call: { name: "source" } });
 		expect(src.template.opaque).toBeUndefined();
 	});
 
@@ -33,7 +33,7 @@ describe("R3 apply-tags", () => {
 		// Since the provider cutover the marker is CONSULTABLE (call attached) instead of
 		// permanently opaque; with no provider answer it behaves exactly like the old opaque
 		// marker (exemption, no diagnostics).
-		expect(src.template).toMatchObject({ kind: "macro", call: { name: "my_macro", args: [] } });
+		expect(src.template).toMatchObject({ kind: "call", call: { name: "my_macro", args: [] } });
 		expect(src.template.opaque).toBeUndefined();
 		expect(src.name).not.toEqual(["my_macro"]); // the placeholder, NOT a fabricated name
 	});
@@ -76,7 +76,7 @@ describe("R3 apply-tags", () => {
 		const ast: any = r.sql.ast;
 		expect(firstSource(ast.ctes[0].body).name).toEqual(["a"]);
 		// The joined source rides `from` (from + joinConditions stay populated; joins is additive).
-		const joined = ast.body.from.find((s: any) => s.template?.kind === "ref" && s.name.join(".") === "b");
+		const joined = ast.body.from.find((s: any) => s.template?.call?.name === "ref" && s.name.join(".") === "b");
 		expect(joined).toBeDefined();
 		// If joins are modelled, join.source is reference-identical to the from entry.
 		if (ast.body.joins) {
@@ -89,7 +89,7 @@ describe("R3 apply-tags", () => {
 		const r = parseTemplated("SELECT 1", "databricks");
 		expect(r.sql.ast).toBeDefined();
 		// applyTemplateTags(ast, []) is a no-op that returns the same reference (structural sharing).
-		expect(applyTemplateTags(r.sql.ast, [], "SELECT 1").ast).toBe(r.sql.ast);
+		expect(applyTemplateTags(r.sql.ast, [], "SELECT 1", OPEN_PROVIDER).ast).toBe(r.sql.ast);
 	});
 
 	it("result is frozen", () => {
@@ -139,7 +139,7 @@ describe("R3 apply-tags", () => {
 		expect(() => parseTemplated(sql, "bigquery")).not.toThrow();
 		const r = parseTemplated(sql, "bigquery");
 		const from = (r.sql.ast as any).body.from;
-		const ref = from.find((s: any) => s.template?.kind === "ref");
+		const ref = from.find((s: any) => s.template?.call?.name === "ref");
 		expect(ref).toBeDefined();
 		expect(ref.name).toEqual(["a"]);
 	});
@@ -156,7 +156,7 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks");
 		const src = firstSource(r.sql.ast);
 		expect(src.name).toEqual(["stg_orders"]);
-		expect(src.template).toMatchObject({ kind: "ref", indirect: true });
+		expect(src.template).toMatchObject({ kind: "call", indirect: true, call: { name: "ref" } });
 		expect(src.template.opaque).toBeUndefined();
 	});
 
@@ -164,7 +164,7 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 		const r = parseTemplated("{% set s = source('raw', 'orders') %}\nselect * from {{ s }}", "databricks");
 		const src = firstSource(r.sql.ast);
 		expect(src.name).toEqual(["raw", "orders"]);
-		expect(src.template).toMatchObject({ kind: "source", indirect: true });
+		expect(src.template).toMatchObject({ kind: "call", indirect: true, call: { name: "source" } });
 	});
 
 	it("unresolvable bare {{ t }} gets the opaque expr marker (no placeholder table)", () => {
@@ -182,7 +182,7 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 		// var is just a callee now — the neutral core doesn't know it's a scalar. It carries its call
 		// so a provider COULD resolve it; without one it behaves opaquely (no diagnostics), like before.
 		const r = parseTemplated("select * from {{ var('t') }}", "databricks");
-		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "macro", call: { name: "var" } });
+		expect(firstSource(r.sql.ast).template).toMatchObject({ kind: "call", call: { name: "var" } });
 	});
 
 	it("guard: two sets of the same name do not resolve (ambiguous)", () => {

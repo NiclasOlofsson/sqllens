@@ -69,7 +69,7 @@ describe("jinja public surface (barrel export)", () => {
 		// TemplateSourceInfo is a public IR type: the templated FROM source carries it.
 		const from = sql.ast.body.kind === "select" ? sql.ast.body.from[0] : undefined;
 		const template: TemplateSourceInfo | undefined = from?.kind === "table" ? from.template : undefined;
-		expect(template?.kind).toBe("ref");
+		expect(template?.call?.name).toBe("ref");
 	});
 
 	it("the template-provider surface is reachable through src/index.ts", () => {

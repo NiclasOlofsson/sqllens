@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toScopes, qualify, Schema } from "../src/index.js";
-import { parseTemplated } from "../src/minijinja/index.js";
+import { parseTemplated } from "./helpers/templated.js";
 import type { ColumnRef } from "../src/ir/ir.js";
 import type { Scope } from "../src/scope/scope.js";
 

@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { parse } from "../src/api.js";
-import { parseTemplated } from "../src/minijinja/parse.js";
+import { parseTemplated } from "./helpers/templated.js";
 import { resolveScopes, type Scope } from "../src/scope/scope.js";
 import { resolveColumnRef } from "../src/sema/resolve.js";
 import { Schema } from "../src/qualify/schema.js";

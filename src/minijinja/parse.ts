@@ -331,12 +331,12 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	}
 
 	// Step 5b (R3): rewrite templated FROM/JOIN sources onto first-class TableSource
-	// nodes carrying the dbt-logical model/source name + a `template` marker, so
-	// scope/qualify/lineage bind the real model rather than the `jjj…` placeholder.
+	// nodes carrying the provider-resolved relation name and a `template` marker, so
+	// scope/qualify/lineage bind the real relation rather than the `jjj…` placeholder.
 	// Total (returns the input ast on any surprise); the reassignment stays inside
 	// build()'s caller try/catch so parseTemplated's totality holds. `correlation`
-	// carries the Task 10 tag↔IR-node join collected while rebuilding.
-	const correlation = applyTemplateTags(sql.ast, tags, text);
+	// carries the Task 10 tag to IR-node join collected while rebuilding.
+	const correlation = applyTemplateTags(sql.ast, tags, text, provider);
 	const sqlResult = { ...sql, ast: correlation.ast };
 
 	// Step 4c: merge into one source-ordered stream. SQL and jinja token spans are

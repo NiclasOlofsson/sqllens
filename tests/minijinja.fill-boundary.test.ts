@@ -7,7 +7,7 @@
 // shaped fills: `t{{ m() }}` with a conjunct answer used to fuse to `tAND 1=1`.
 
 import { describe, expect, test } from "vitest";
-import { parseTemplated } from "../src/minijinja/index.js";
+import { parseTemplated } from "./helpers/templated.js";
 import { NamedShapeProvider } from "./helpers/providers.js";
 
 describe("fill fusion boundary", () => {

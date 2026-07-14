@@ -1,7 +1,7 @@
 import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { qualify, Schema } from "../../src/index.js";
+import { DbtTemplateProvider, qualify, Schema } from "../../src/index.js";
 import {
 	parseTemplated,
 	templateRegions,
@@ -242,26 +242,28 @@ describe("jinja corpus gate — R3 templated-source IR + qualify exemption (inc2
 	for (const { name, text } of REF_SOURCE) {
 		describe(name, () => {
 			it("the IR carries a template-marked source with the real dbt-logical name (no placeholder fill)", () => {
-				const { sql, tags } = parseTemplated(text, DIALECT);
+				const { sql, tags } = parseTemplated(text, DIALECT, { provider: new DbtTemplateProvider() });
 				const tables = collectTableSources(sql.ast);
 				const templated = tables.filter((t) => t.template !== undefined);
 				// (a) at least one templated source is present — but ONLY when a ref/source tag actually
 				//     parsed to completion. A deliberately-broken totality fixture (`from {{ ref(`) yields
 				//     no complete tag, hence no templated source; that is correct, not a gate failure.
-				const hasRelationTag = tags.some((n) => n.kind === "call" && (n.name === "ref" || n.name === "source"));
+				const hasRelationTag = tags.some(
+					(n) => n.kind === "call" && !n.incomplete && (n.name === "ref" || n.name === "source"),
+				);
 				const inFrom = /\bfrom\s*(?:\()?\s*\{\{\s*(?:ref|source)\s*\(/i.test(text);
 				if (hasRelationTag && inFrom) expect(templated.length).toBeGreaterThanOrEqual(1);
 				// (b) no ref/source-tagged source's name is the `jjj…` placeholder fill (Task 2's guard
 				//     protects the honest literal name Task 1 substituted).
 				for (const t of templated) {
-					if (t.template!.kind === "ref" || t.template!.kind === "source") {
+					if (t.template!.call?.name === "ref" || t.template!.call?.name === "source") {
 						for (const part of t.name) expect(part, `name part ${part}`).not.toMatch(/jjjj/);
 					}
 				}
 			});
 
 			it("qualify with an EMPTY schema emits no unknown-table/-column against templated sources", () => {
-				const { sql } = parseTemplated(text, DIALECT);
+				const { sql } = parseTemplated(text, DIALECT, { provider: new DbtTemplateProvider() });
 				const templatedNames = new Set(
 					collectTableSources(sql.ast)
 						.filter((t) => t.template !== undefined)

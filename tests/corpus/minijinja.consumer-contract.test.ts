@@ -17,7 +17,7 @@ import {
 	type ResolvedRelation,
 	type TemplateCall,
 } from "../../src/index.js";
-import { parseTemplated } from "../../src/minijinja/index.js";
+import { parseTemplated } from "../helpers/templated.js";
 import type { Dialect } from "../../src/api.js";
 
 // ---------------------------------------------------------------------------
@@ -74,7 +74,9 @@ interface Case {
  *  its placeholder name is the honest never-wrong fallback, not a leak (same guard the
  *  R3 gate uses via `hasRelationTag`). */
 function hasCompletedRelation(text: string): boolean {
-	return parseTemplated(text, DIALECT).tags.some((n) => n.kind === "call" && (n.name === "ref" || n.name === "source"));
+	return parseTemplated(text, DIALECT).tags.some(
+		(n) => n.kind === "call" && !n.incomplete && (n.name === "ref" || n.name === "source"),
+	);
 }
 
 /** In-repo ref/source fixtures that actually complete a `{{ ref('x') }}` / `{{ source('a','b') }}` tag. */
@@ -142,7 +144,7 @@ function allScopes(root: Scope): Scope[] {
 /** True when a TableSource was written as a `{{ ref(...) }}` / `{{ source(...) }}` tag —
  *  the identity-bearing case this gate polices. A macro (opaque) source is excluded. */
 function isRefOrSource(src: TableSource): boolean {
-	return src.template?.kind === "ref" || src.template?.kind === "source";
+	return src.template?.call?.name === "ref" || src.template?.call?.name === "source";
 }
 
 describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name path (inc2)", () => {

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { toScopes, qualify, lineage, Schema } from "../src/index.js";
-import { parseTemplated } from "../src/minijinja/index.js";
+import { parseTemplated } from "./helpers/templated.js";
 import type { ResolvedSource } from "../src/scope/scope.js";
 
 // ---------------------------------------------------------------------------
@@ -35,7 +35,7 @@ describe("R3 pipeline — scope/qualify/lineage over templated sources", () => {
 		expect(o).toBeDefined();
 		expect(o!.name).toEqual(["orders"]);
 		// It is marked templated (Task 1's ref binding), never the `jjj…` placeholder run.
-		expect(o!.source.template?.kind).toBe("ref");
+		expect(o!.source.template?.call?.name).toBe("ref");
 		expect(o!.name.join(".")).not.toMatch(/jjj/);
 	});
 
@@ -75,7 +75,8 @@ describe("R3 pipeline — scope/qualify/lineage over templated sources", () => {
 		const tree = toScopes(r.sql.ast);
 		// The macro FROM tag is opaque (name stays the placeholder, template.opaque set).
 		const m = tableSource(tree, "m");
-		expect(m?.source.template?.kind).toBe("macro"); // consultable (call attached), no longer opaque
+		expect(m?.source.template?.kind).toBe("call"); // consultable (call attached), no longer opaque
+		expect(m?.source.template?.call?.name).toBe("my_macro");
 		const q = qualify(tree, new Schema({ other: { x: "int" } }));
 		const bad = q.diagnostics.filter((d) => d.kind === "unknown-table" || d.kind === "unknown-column");
 		expect(bad).toEqual([]);

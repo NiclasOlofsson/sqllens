@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { qualify, toScopes, Schema, formatType, inferType, type Column, type TableResolver } from "../src/index.js";
 import { inferNullability } from "../src/infer/nullability.js";
 import type { ResolvedRelation } from "../src/index.js";
-import { parseTemplated } from "../src/minijinja/index.js";
+import { parseTemplated } from "./helpers/templated.js";
 import { TestRelationProvider, relKey as relKeyOf } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------

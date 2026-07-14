@@ -116,7 +116,7 @@ describe("A2 — conflicting arms: primary is best-effort, arm-local joins are g
 			expect(liveRefs[0].model).toBe(expectedModel[i]);
 			const node = armDoc.templated!.nodeOf(liveRefs[0].node) as TableSource | undefined;
 			expect(node).toBeDefined(); // guaranteed nodeOf join to a live IR source node
-			expect(node!.template?.kind).toBe("ref");
+			expect(node!.template?.kind).toBe("call");
 			expect(node!.template?.call?.name).toBe("ref"); // the marker carries the call
 			expect(node!.template?.call?.args).toEqual([expectedModel[i]]);
 		});

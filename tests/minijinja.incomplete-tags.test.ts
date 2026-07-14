@@ -63,10 +63,11 @@ describe("incomplete / mid-typing tag extraction (REQ1)", () => {
 		const { sql } = parseTemplated("select * from {{ ref('cu", "databricks");
 		const body = sql.ast.body;
 		if (body.kind !== "select") throw new Error("expected select");
-		// The source (if any) carries no dbt-logical name and no ref/source template marker.
+		// The source (if any) carries no template marker at all: an incomplete call is filtered out of
+		// the relation tags, so it never names or marks a source (the placeholder name stays, unmarked).
 		const src = body.from[0];
 		if (src?.kind === "table") {
-			expect(src.template?.kind).not.toBe("ref");
+			expect(src.template).toBeUndefined();
 		}
 	});
 
