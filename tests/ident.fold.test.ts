@@ -87,6 +87,13 @@ describe("redshift", () => {
 	it("unescapes a doubled double-quote inside a quoted identifier", () => {
 		expect(foldIdentifier('"a""b"', "redshift")).toBe('a"b');
 	});
+	// issue #22: the vendor fold is ASCII-only ("ASCII letters … are folded to lowercase"):
+	// Ä and ä are distinct identifiers; A and a still conflate.
+	it("keeps non-ASCII case distinctions (ASCII-only fold)", () => {
+		expect(foldIdentifier("Äx", "redshift")).not.toBe(foldIdentifier("äx", "redshift"));
+		expect(foldIdentifier('"Äx"', "redshift")).not.toBe(foldIdentifier('"äx"', "redshift"));
+		expect(foldIdentifier("Ax", "redshift")).toBe(foldIdentifier("ax", "redshift"));
+	});
 });
 
 describe("postgres", () => {
@@ -104,6 +111,12 @@ describe("postgres", () => {
 		expect(unquoted).toBe(foldIdentifier('"foo"', "postgres"));
 		expect(unquoted).not.toBe(foldIdentifier('"Foo"', "postgres"));
 	});
+	// issue #22: unquoted downcasing is ASCII-only in a UTF-8 database (pg_ascii_tolower):
+	// Ä and ä stay distinct unquoted; A and a still conflate.
+	it("keeps non-ASCII case distinctions in unquoted identifiers (ASCII-only fold)", () => {
+		expect(foldIdentifier("Äx", "postgres")).not.toBe(foldIdentifier("äx", "postgres"));
+		expect(foldIdentifier("Ax", "postgres")).toBe(foldIdentifier("ax", "postgres"));
+	});
 });
 
 describe("duckdb", () => {
@@ -115,6 +128,13 @@ describe("duckdb", () => {
 	});
 	it("unescapes a doubled double-quote inside a quoted identifier", () => {
 		expect(foldIdentifier('"a""b"', "duckdb")).toBe('a"b');
+	});
+	// issue #22: vendor-documented: "Case-insensitivity is implemented using an ASCII-based
+	// comparison: col_A and col_a are equal but col_á is not equal to them."
+	it("keeps non-ASCII case distinctions (ASCII-only fold)", () => {
+		expect(foldIdentifier("Äx", "duckdb")).not.toBe(foldIdentifier("äx", "duckdb"));
+		expect(foldIdentifier('"Äx"', "duckdb")).not.toBe(foldIdentifier('"äx"', "duckdb"));
+		expect(foldIdentifier("Ax", "duckdb")).toBe(foldIdentifier("ax", "duckdb"));
 	});
 });
 
@@ -149,6 +169,12 @@ describe("sqlite", () => {
 		expect(unquoted).toBe(foldIdentifier("foo", "sqlite"));
 		expect(unquoted).toBe(foldIdentifier('"Foo"', "sqlite"));
 	});
+	// issue #22: sqlite3StrICmp is ASCII-only: Ä and ä are distinct identifiers.
+	it("keeps non-ASCII case distinctions (ASCII-only fold)", () => {
+		expect(foldIdentifier("Äx", "sqlite")).not.toBe(foldIdentifier("äx", "sqlite"));
+		expect(foldIdentifier('"Äx"', "sqlite")).not.toBe(foldIdentifier('"äx"', "sqlite"));
+		expect(foldIdentifier("Ax", "sqlite")).toBe(foldIdentifier("ax", "sqlite"));
+	});
 });
 
 describe("mysql", () => {
@@ -166,6 +192,12 @@ describe("mysql", () => {
 	});
 	it("unescapes a doubled backtick inside a quoted identifier", () => {
 		expect(foldIdentifier("`a``b`", "mysql")).toBe("a`b");
+	});
+	// issue #22 audit outcome: mysql stays Unicode-wide: the manual does not scope its
+	// case-insensitivity to ASCII, and identifier comparison is Unicode-collation-based
+	// (general_ci conflates Ä/ä). Deliberate contrast with the ascii-lower dialects above.
+	it("conflates non-ASCII case (Unicode-wide fold, unlike sqlite/postgres/duckdb/redshift)", () => {
+		expect(foldIdentifier("Äx", "mysql")).toBe(foldIdentifier("äx", "mysql"));
 	});
 });
 

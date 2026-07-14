@@ -5,15 +5,21 @@
 // postgresql.org/docs/18/sql-syntax-lexical.html §4.1.1 — verified live: "unquoted names are
 // always folded to lower case"; "Quoting an identifier also makes it case-sensitive" — example
 // "the identifiers FOO, foo, and "foo" are considered the same by PostgreSQL, but "Foo" and
-// "FOO" are different." Doubled-quote escape: "To include a double quote, write two double
-// quotes."
+// "FOO" are different." The manual is silent on the fold's character scope; the engine source
+// is the authority there (#22): the default downcase path folds ASCII only (pg_downcase_ident →
+// strlower_c → pg_ascii_tolower; pre-refactor downcase_identifier locale-folded high-bit bytes
+// only in single-byte server encodings), so in a UTF-8 database, the universal default, `Ä` and
+// `ä` are distinct unquoted identifiers. Hence ascii-lower for unquoted. A non-C locale provider
+// or single-byte encoding could fold more, but that is server state invisible to the SQL text
+// (same documented boundary as mysql's lower_case_table_names). Doubled-quote escape: "To include
+// a double quote, write two double quotes."
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
 export const POSTGRES_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
-	unquoted: "lower",
+	unquoted: "ascii-lower",
 	quoted: "preserve",
 };
 

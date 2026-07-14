@@ -12,13 +12,16 @@
  *  else (columns, aliases, CTE names, struct/field names, …), which is "other". */
 export type IdentKind = "table" | "other";
 
-type CaseFold = "lower" | "upper" | "preserve";
+/** "ascii-lower" folds [A-Z] only, passing every other character through, for dialects whose
+ *  engines compare identifiers ASCII-case-insensitively (sqlite, postgres, duckdb, redshift):
+ *  there `Ä` and `ä` are DISTINCT identifiers, and a Unicode-wide fold would conflate them (#22). */
+type CaseFold = "lower" | "upper" | "preserve" | "ascii-lower";
 
 export interface FoldRule {
 	/** [open, close] delimiter pairs this dialect recognizes, tried in order. */
 	delimiters: readonly (readonly [string, string])[];
 	/** Case fold applied to an unquoted identifier. */
-	unquoted: "lower" | "upper";
+	unquoted: "lower" | "upper" | "ascii-lower";
 	/** Case fold applied to a quoted (delimited) identifier. */
 	quoted: CaseFold;
 	/** BigQuery only: table identifiers preserve case whether or not they're backtick-quoted —
@@ -36,6 +39,7 @@ export interface FoldRule {
 function applyCase(text: string, fold: CaseFold): string {
 	if (fold === "lower") return text.toLowerCase();
 	if (fold === "upper") return text.toUpperCase();
+	if (fold === "ascii-lower") return text.replace(/[A-Z]/g, (c) => c.toLowerCase());
 	return text;
 }
 

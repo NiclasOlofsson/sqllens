@@ -4,16 +4,18 @@
 // duckdb.org/docs/current/sql/dialect/keywords_and_identifiers.html — verified live: "Identifiers
 // in DuckDB are always case-insensitive, similarly to PostgreSQL. However, unlike PostgreSQL...
 // DuckDB also treats quoted identifiers as case-insensitive" — quoting only preserves the
-// identifier for DISPLAY, not identity. Doubled-quote escape: "Double quotes can be escaped by
-// repeating the quote character."
+// identifier for DISPLAY, not identity. The insensitivity is ASCII-scoped, same page (#22):
+// "Case-insensitivity is implemented using an ASCII-based comparison: col_A and col_a are equal
+// but col_á is not equal to them"; hence ascii-lower for both forms. Doubled-quote escape:
+// "Double quotes can be escaped by repeating the quote character."
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
 export const DUCKDB_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
-	unquoted: "lower",
-	quoted: "lower",
+	unquoted: "ascii-lower",
+	quoted: "ascii-lower",
 };
 
 /** Fold an identifier to its DuckDB identity key. */

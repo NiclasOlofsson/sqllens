@@ -10,11 +10,9 @@
 // (sqlite3StrICmp) is ASCII case-insensitive regardless of how the name was spelled — the
 // documented quirk this module's brief calls out: unlike Postgres/Snowflake, quoting an
 // identifier does NOT make it case-sensitive in SQLite. So both unquoted AND quoted fold to
-// lower here (same shape as redshift/duckdb/trino). SQLite's own documented fold is
-// ASCII-only (it does not case-fold non-ASCII), but this module's shared applyCase uses JS
-// toLowerCase() — a Unicode-wide fold — so a rare non-ASCII identifier pair (Ä vs ä) that
-// SQLite would keep distinct conflates here: a known shared-engine limitation, consistent
-// across every dialect in this table. Bracket delimiters have no escape mechanism (the
+// lower here (same shape as redshift/duckdb). SQLite's fold is ASCII-only (sqlite3StrICmp
+// case-folds A-Z and nothing else), so the rule uses the engine's ascii-lower mode: `Ä` and
+// `ä` stay distinct identifiers while `A`/`a` conflate (#22). Bracket delimiters have no escape mechanism (the
 // lexer's `[`...`]` body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not
 // unescaped, same as this module's tsql bracket handling.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
@@ -24,8 +22,8 @@ const BACKTICK: readonly [string, string] = ["`", "`"];
 
 export const SQLITE_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
-	unquoted: "lower",
-	quoted: "lower",
+	unquoted: "ascii-lower",
+	quoted: "ascii-lower",
 };
 
 /** Fold an identifier to its SQLite identity key. */

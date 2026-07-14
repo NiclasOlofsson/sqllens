@@ -10,12 +10,14 @@ const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 // standard and delimited identifiers are case-insensitive and are folded to lowercase in the
 // database" — explicitly covers BOTH unquoted and quoted by default (the
 // enable_case_sensitive_identifier parameter can flip quoted identifiers case-sensitive; this
-// module encodes the default). Doubled-quote escape: "To use a double quotation mark in a
-// string, you must precede it with another double quotation mark character."
+// module encodes the default), and explicitly scopes the fold to ASCII letters; hence
+// ascii-lower, keeping a non-ASCII pair like `Ä`/`ä` distinct (#22). Doubled-quote escape: "To
+// use a double quotation mark in a string, you must precede it with another double quotation
+// mark character."
 export const REDSHIFT_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
-	unquoted: "lower",
-	quoted: "lower",
+	unquoted: "ascii-lower",
+	quoted: "ascii-lower",
 };
 
 /** Fold an identifier to its Redshift identity key. */
