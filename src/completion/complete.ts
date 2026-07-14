@@ -21,8 +21,11 @@ import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { QueryExpr } from "../ir/ir.js";
+import type { Column } from "../qualify/schema.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { DefaultTemplateProvider } from "../qualify/template-provider.js";
+import { callOf } from "../minijinja/apply-tags.js";
+import type { TagNode } from "../minijinja/tag-ast.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
 import { jinjaSlotAt, type JinjaSlot } from "./jinja-slot.js";
@@ -146,7 +149,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
 	if (atColumn) {
 		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
-		if (schema) for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect)) add(c);
+		if (schema) for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text)) add(c);
 	}
 
 	// functions — value/column slot: the dialect's inference-registry function names.
@@ -200,32 +203,51 @@ function intersects(a: Set<number>, b: Set<number>): boolean {
 }
 
 /**
- * Broken-input FROM-relation fallback. The grammar reads a mid-edit `SELECT ‹caret› FROM t` as
+ * Broken-input FROM-relation fallback. The grammar reads a mid-edit `SELECT <caret> FROM t` as
  * `SELECT FROM AS t` (FROM is a non-reserved identifier in Spark), so the document's scope has no
  * `t` source and scope-based columns come back empty. To still offer the FROM relation's columns,
  * scan the token stream for `<relationKeyword> <name>` (FROM/JOIN followed by an identifier) and
  * surface those tables' schema columns. Token-driven, so it survives the mis-parse; gated by config
- * token sets, so the core stays dialect-neutral.
+ * token sets, so the core stays dialect-neutral. A `{{ ref('orders') }}` FROM source blanks to a
+ * placeholder identifier, so that name token is resolved through the template provider first (see
+ * `columnsForName`), then the same schema lookup a plain table gets.
  */
 function fromRelationColumns(
 	walkTokens: readonly WalkTok[],
 	cfg: CompletionConfig,
 	schema: SchemaProvider,
-	dialect?: string,
+	dialect: string | undefined,
+	tags: readonly TagNode[] | undefined,
+	text: string,
 ): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
-	// Default-channel tokens only — hidden whitespace/comments sit between FROM and the name.
+	// Default-channel tokens only: hidden whitespace/comments sit between FROM and the name.
 	const toks = walkTokens.filter((t) => t.channel === Token.DEFAULT_CHANNEL);
 	const out: Completion[] = [];
+	const emit = (cols: Column[] | undefined): void => {
+		if (cols) for (const c of cols) out.push({ label: c.name, kind: "column", detail: c.type });
+	};
 	for (let i = 0; i + 1 < toks.length; i++) {
-		const t = toks[i];
-		const n = toks[i + 1];
-		if (!t || !n) continue;
-		if (!cfg.relationKeywordTokens.has(t.type)) continue;
-		if (!cfg.nameTokens.has(n.type)) continue;
-		const cols = schema.columnsFor([n.text ?? ""], dialect);
-		if (!cols) continue;
-		for (const c of cols) out.push({ label: c.name, kind: "column", detail: c.type });
+		const kw = toks[i];
+		const next = toks[i + 1];
+		if (!kw || !next) continue;
+		if (!cfg.relationKeywordTokens.has(kw.type)) continue;
+		// A templated source ({{ ref('orders') }}) blanks to a channel-2 tag the walk skips, so it sits
+		// in the gap between the relation keyword and the next SQL token (the alias, or the next clause).
+		// Resolve it through the provider: relationOf(call) -> name, then its columns come from the
+		// relation answer or the same schema.columnsFor a plain table gets. A plain schema / the neutral
+		// provider resolves nothing for it, so it contributes no fabricated columns.
+		const tag = tags?.find(
+			(t): t is Extract<TagNode, { kind: "call" }> =>
+				t.kind === "call" && t.tagSpan.start >= kw.start && t.tagSpan.start < next.start,
+		);
+		if (tag && schema instanceof DefaultTemplateProvider) {
+			const rel = schema.relationOf(callOf(tag, text));
+			emit(rel ? (rel.columns ?? schema.columnsFor(rel.nameParts, dialect)) : undefined);
+			continue;
+		}
+		// Plain table: the next SQL token is the relation name.
+		if (cfg.nameTokens.has(next.type)) emit(schema.columnsFor([next.text ?? ""], dialect));
 	}
 	return out;
 }

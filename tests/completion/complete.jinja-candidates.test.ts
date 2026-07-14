@@ -94,4 +94,19 @@ describe("completeAt inside a jinja tag (REQ2b)", () => {
 		const caret = text.indexOf("~ ") + 2;
 		expect(completeAt(doc(text, new Catalog()), caret, new Catalog())).toEqual([]);
 	});
+
+	it("column completion on a ref relation resolves even mid-edit SELECT list (broken parse)", () => {
+		// The incomplete SELECT drops the FROM from the parse, but the broken-input fallback maps the ref
+		// placeholder back to `orders` through the provider and offers its columns (the vanilla schema path).
+		class Rel extends DbtTemplateProvider {
+			override columnsFor(parts: string[]) {
+				return parts.join(".") === "orders" ? [{ name: "id" }, { name: "total" }] : undefined;
+			}
+		}
+		const text = "select  from {{ ref('orders') }} o";
+		const cols = completeAt(doc(text, new Rel()), "select ".length, new Rel())
+			.filter((c) => c.kind === "column")
+			.map((c) => c.label);
+		expect(cols).toEqual(["id", "total"]);
+	});
 });

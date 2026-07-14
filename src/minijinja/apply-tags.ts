@@ -230,7 +230,7 @@ const KWARG_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*=(?!=)([\s\S]*)$/;
  * carried separately (the channel-agreed TemplateCall contract: quote-stripped, escapes
  * NOT resolved, computed arguments null, kwargs never dropped).
  */
-function callOf(mc: MacroCall, text: string): TemplateCall {
+export function callOf(mc: MacroCall, text: string): TemplateCall {
 	const args: (string | null)[] = [];
 	const kwargs: { name: string; value: string | null }[] = [];
 	for (const arg of mc.args) {
