@@ -1,35 +1,31 @@
 // ---------------------------------------------------------------------------
-// Task 4 — R2 tag-AST: ref / source / macro-call nodes with the EXACT span
-// contract (docs/minijinja-front-end.md §R2). This is the HARD deliverable: the
-// dbt-anvil extension positions hover / rename / signature-help exactly on the
-// spans emitted here, so every offset must be document-true.
+// R2 tag-AST: the NEUTRAL tag node with the EXACT span contract
+// (docs/minijinja-front-end.md §R2). This is the HARD deliverable: the editor
+// positions hover / rename / signature-help exactly on the spans emitted here, so
+// every offset must be document-true.
 //
 // The walk is a small tree-navigation over the per-tag jinja parse tree, built by
-// parse.ts from a DOCUMENT-native token slice (segment.ts's `tagTokens` — the one
+// parse.ts from a DOCUMENT-native token slice (segment.ts's `tagTokens`, the one
 // whole-document tokenization, sliced per tag via antlr4ng's `ListTokenSource`).
 // Every token in that slice already carries its real document start/stop/line/
 // column, so every span read off it is document-true with NO offset/anchor
-// composition — the parity UPGRADE over the extension's single-line-lossy regex
-// extractors, now by construction rather than by a doc-offset shift.
+// composition.
 //
-// Classification is by the LEADING call name (§R2 / §the hole):
-//   - a bare `ref(...)`             → ref node    (model = last positional string)
-//   - a bare `source(...)`          → source node (source + table, both strings)
-//   - a bare `var(...)`/`env_var(…)`→ that node kind
-//   - a leading NO_OUTPUT_BUILTIN   → config → "config"; the rest → "other"
-//     (config/docs/print/log/return/exceptions — REUSES segment.ts's set, the
-//      single source of truth; `exceptions.raise_compiler_error(…)` classifies
-//      off the leading `exceptions` too)
-//   - `pkg.macro(...)` or a bare unknown call → macro node
-//   - any other expr (bare name, literal, arithmetic) → "other"
-//   - a `{% … %}` statement tag     → "control" (inc1 treatment; precise
-//     if/for/set structure + `{% do macro() %}` macro-in-stmt is inc2)
-//   - a `{# … #}` comment tag       → "other"
+// The tag AST carries NO dbt vocabulary. Every expression tag classifies into one
+// of three neutral kinds:
+//   - a leading call `name(args)` (bare or `pkg.name`) → a "call" node. ref/source/
+//     config/var/env_var/a user macro are ALL just callees, distinguished by `name`.
+//     Whether `ref` denotes a relation is the provider's knowledge, not the tag AST.
+//     Each arg carries {value, span, valueSpan}: a consumer that knows a call's arg
+//     roles (dbt: ref's model is the last arg) reads value + valueSpan straight off.
+//   - a `{% … %}` statement tag → "control" (if/for/set/macro structure).
+//   - any other expr (a bare name, a literal, arithmetic) or a `{# … #}` comment →
+//     "other".
 //
-// Never-wrong (global-constraints): a ref/source node is emitted only when its
-// required string args are actually present; a broken `{{ ref( }}` degrades to a
-// macro node (name = "ref") + the parse's positioned diagnostic, never a ref
-// node with a fabricated modelSpan and never a throw.
+// Never-wrong (global-constraints): a string arg's `value` is a real literal only
+// (a computed arg like `ref(var('x'))` has `value: null`, never fabricated); a
+// broken `{{ ref( }}` degrades to a best-effort node + the parse's positioned
+// diagnostic, never a throw.
 // ---------------------------------------------------------------------------
 
 import { ParserRuleContext, TerminalNode, type ParseTree, type Token as AntlrToken } from "antlr4ng";

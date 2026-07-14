@@ -15,12 +15,13 @@
 // expr tag fills ONE placeholder identifier per line — the name token covers only
 // the first line, but its offset still sits inside the whole-tag span.
 //
-// Substitution is LITERAL-ONLY (never-wrong): inc1's `directStringToken` guard
-// already guarantees a ref/source TagNode carries only literal names, so a `ref`
-// node's `model` and a `source` node's `sourceName`/`tableName` are real literals.
-// A macro (or computed) call in a FROM slot keeps its placeholder name and gets
-// `opaque: true` — its physical relation is undeterminable without the catalog;
-// we NEVER fabricate a name for it.
+// The tag AST is NEUTRAL (a call is a call). The dbt naming still applied here at
+// lower time lives in `dbtRelation` below (flagged: the follow-up is to name FROM
+// sources at qualify through the provider). Substitution is LITERAL-ONLY
+// (never-wrong): a call arg's `value` is a real literal or null, so a ref's model /
+// a source's parts are real literals when present. A call whose relation is not
+// resolvable (a plain macro, a computed ref) keeps its placeholder name and stays
+// opaque; we NEVER fabricate a name for it.
 //
 // The IR is frozen after lower(); this transform REBUILDS with STRUCTURAL SHARING
 // (new objects only on changed paths — an unchanged subtree keeps its original,

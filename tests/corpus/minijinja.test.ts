@@ -124,9 +124,11 @@ describe("jinja corpus gate — inc1 (R1 unified stream + R2 tag spans)", () => 
 		expect(FIXTURES.length).toBeGreaterThanOrEqual(10);
 	});
 
-	// Kinds observed across the whole set — proves the classifier actually fired
-	// on the required shapes (ref / source / macro / var / config / control).
+	// Kinds + call callees observed across the whole set — proves the classifier fired on the
+	// required shapes. Kinds are neutral now (call / control / other); ref/source/var/config are
+	// callees of "call" nodes.
 	const seenKinds = new Set<string>();
+	const seenCallees = new Set<string>();
 
 	for (const { name, text } of FIXTURES) {
 		describe(name, () => {
@@ -160,18 +162,30 @@ describe("jinja corpus gate — inc1 (R1 unified stream + R2 tag spans)", () => 
 				const { tags } = parseTemplated(text, DIALECT);
 				for (const node of tags) {
 					seenKinds.add(node.kind);
+					if (node.kind === "call") seenCallees.add(node.name);
 					assertTagSpans(node, text);
 				}
 			});
 		});
 	}
 
-	it("the fixture set exercises ref / source / macro / var / config / control nodes", () => {
+	it("the fixture set exercises the neutral kinds + the key callees (ref/source/var/config/a macro)", () => {
 		// Populated by the per-fixture span assertions above.
-		for (const { text } of FIXTURES) for (const n of parseTemplated(text, DIALECT).tags) seenKinds.add(n.kind);
-		for (const kind of ["ref", "source", "macro", "var", "config", "control"]) {
-			expect(seenKinds.has(kind), `no ${kind} node in the corpus`).toBe(true);
+		for (const { text } of FIXTURES)
+			for (const n of parseTemplated(text, DIALECT).tags) {
+				seenKinds.add(n.kind);
+				if (n.kind === "call") seenCallees.add(n.name);
+			}
+		// Neutral kinds: call + control (+ other).
+		expect(seenKinds.has("call"), "no call node in the corpus").toBe(true);
+		expect(seenKinds.has("control"), "no control node in the corpus").toBe(true);
+		// ref/source/var/config are callees now — the corpus must still exercise them.
+		for (const callee of ["ref", "source", "var", "config"]) {
+			expect(seenCallees.has(callee), `no ${callee}() call in the corpus`).toBe(true);
 		}
+		// and at least one plain user macro (a callee that is not a known dbt builtin).
+		const builtins = new Set(["ref", "source", "var", "env_var", "config", "docs", "print", "log", "return"]);
+		expect([...seenCallees].some((n) => !builtins.has(n)), "no user macro call in the corpus").toBe(true);
 	});
 });
 
