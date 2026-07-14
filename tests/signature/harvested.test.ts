@@ -18,10 +18,11 @@ import {
 const end = (s: string): number => s.length;
 
 describe("harvested signatures — T-SQL yield floor (ratchet)", () => {
-	it("harvests at least 151 T-SQL function signatures from the docs syntax blocks", () => {
-		// Pinned at the achieved yield (measured 2026-07-02). A grammar/docs refresh may only raise
-		// this — a drop means the harvester regressed and must be investigated, not lowered.
-		expect(Object.keys(HARVESTED_SIGNATURES.tsql).length).toBeGreaterThanOrEqual(151);
+	it("harvests at least 183 T-SQL function signatures from the docs syntax blocks", () => {
+		// Pinned at the achieved yield (measured 2026-07-14, after the trailing-whitespace fence fix
+		// recovered 32 pages). A grammar/docs refresh may only raise this — a drop means the harvester
+		// regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.tsql).length).toBeGreaterThanOrEqual(183);
 	});
 });
 

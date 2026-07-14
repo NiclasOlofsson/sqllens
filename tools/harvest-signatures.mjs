@@ -43,7 +43,8 @@ const TODAY = new Date().toISOString().slice(0, 10);
 /** All ```syntaxsql``` fenced blocks in a markdown string. */
 function syntaxsqlBlocks(md) {
 	const out = [];
-	const re = /```syntaxsql\r?\n([\s\S]*?)```/g;
+	// [^\S\n]* : the docs leave trailing spaces (markdown hard breaks) after the fence info string.
+	const re = /```syntaxsql[^\S\n]*\r?\n([\s\S]*?)```/g;
 	let m;
 	while ((m = re.exec(md))) out.push(m[1]);
 	return out;

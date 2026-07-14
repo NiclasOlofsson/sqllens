@@ -1,6 +1,6 @@
 // GENERATED — do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Source: MicrosoftDocs/sql-docs  docs/t-sql/functions/**/*.md (```syntaxsql``` blocks)
-// Harvested 2026-07-02. 151 signatures. Curated FUNCTION_SIGNATURES override these.
+// Harvested 2026-07-14. 183 signatures. Curated FUNCTION_SIGNATURES override these.
 import type { FnSignature } from "../signatures.js";
 
 /** Harvested (doc-syntax-derived) parameter signatures for tsql, keyed by lowercased name. */
@@ -108,15 +108,25 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	db_name: { name: "DB_NAME", params: [{ name: "database_id" }] }, // functions/db-name-transact-sql.md
 	decompress: { name: "DECOMPRESS", params: [{ name: "expression" }] }, // functions/decompress-transact-sql.md
 	degrees: { name: "DEGREES", params: [{ name: "numeric_expression" }] }, // functions/degrees-transact-sql.md
+	dense_rank: { name: "DENSE_RANK", params: [] }, // functions/dense-rank-transact-sql.md
 	difference: { name: "DIFFERENCE", params: [{ name: "character_expression" }, { name: "character_expression" }] }, // functions/difference-transact-sql.md
+	edge_id_from_parts: { name: "EDGE_ID_FROM_PARTS", params: [{ name: "object_id" }, { name: "graph_id" }] }, // functions/edge-id-from-parts-transact-sql.md
 	eomonth: { name: "EOMONTH", params: [{ name: "start_date" }, { name: "month_to_add" }] }, // functions/eomonth-transact-sql.md
 	error_line: { name: "ERROR_LINE", params: [] }, // functions/error-line-transact-sql.md
+	error_message: { name: "ERROR_MESSAGE", params: [] }, // functions/error-message-transact-sql.md
+	error_number: { name: "ERROR_NUMBER", params: [] }, // functions/error-number-transact-sql.md
 	error_procedure: { name: "ERROR_PROCEDURE", params: [] }, // functions/error-procedure-transact-sql.md
 	error_severity: { name: "ERROR_SEVERITY", params: [] }, // functions/error-severity-transact-sql.md
+	error_state: { name: "ERROR_STATE", params: [] }, // functions/error-state-transact-sql.md
 	eventdata: { name: "EVENTDATA", params: [] }, // functions/eventdata-transact-sql.md
 	exp: { name: "EXP", params: [{ name: "float_expression" }] }, // functions/exp-transact-sql.md
+	file_id: { name: "FILE_ID", params: [{ name: "file_name" }] }, // functions/file-id-transact-sql.md
+	file_idex: { name: "FILE_IDEX", params: [{ name: "file_name" }] }, // functions/file-idex-transact-sql.md
+	file_name: { name: "FILE_NAME", params: [{ name: "file_id" }] }, // functions/file-name-transact-sql.md
+	filegroup_name: { name: "FILEGROUP_NAME", params: [{ name: "filegroup_id" }] }, // functions/filegroup-name-transact-sql.md
 	filegroupproperty: { name: "FILEGROUPPROPERTY", params: [{ name: "filegroup_name" }, { name: "property" }] }, // functions/filegroupproperty-transact-sql.md
 	fileproperty: { name: "FILEPROPERTY", params: [{ name: "file_name" }, { name: "property" }] }, // functions/fileproperty-transact-sql.md
+	filepropertyex: { name: "FILEPROPERTYEX", params: [{ name: "name" }, { name: "property" }] }, // functions/filepropertyex-transact-sql.md
 	first_value: { name: "FIRST_VALUE", params: [{ name: "scalar_expression" }] }, // functions/first-value-transact-sql.md
 	floor: { name: "FLOOR", params: [{ name: "numeric_expression" }] }, // functions/floor-transact-sql.md
 	generate_series: { name: "GENERATE_SERIES", params: [{ name: "start" }, { name: "stop" }, { name: "step" }] }, // functions/generate-series-transact-sql.md
@@ -124,6 +134,8 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	get_filestream_transaction_context: { name: "GET_FILESTREAM_TRANSACTION_CONTEXT", params: [] }, // functions/get-filestream-transaction-context-transact-sql.md
 	getdate: { name: "GETDATE", params: [] }, // functions/getdate-transact-sql.md
 	getutcdate: { name: "GETUTCDATE", params: [] }, // functions/getutcdate-transact-sql.md
+	graph_id_from_edge_id: { name: "GRAPH_ID_FROM_EDGE_ID", params: [{ name: "edge_id" }] }, // functions/graph-id-from-edge-id-transact-sql.md
+	graph_id_from_node_id: { name: "GRAPH_ID_FROM_NODE_ID", params: [{ name: "node_id" }] }, // functions/graph-id-from-node-id-transact-sql.md
 	greatest: { name: "GREATEST", params: [{ name: "expression1" }, { name: "expressionN" }], variadic: true }, // functions/logical-functions-greatest-transact-sql.md
 	host_id: { name: "HOST_ID", params: [] }, // functions/host-id-transact-sql.md
 	host_name: { name: "HOST_NAME", params: [] }, // functions/host-name-transact-sql.md
@@ -152,16 +164,25 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	json_modify: { name: "JSON_MODIFY", params: [{ name: "expression" }, { name: "path" }, { name: "newValue" }] }, // functions/json-modify-transact-sql.md
 	json_path_exists: { name: "JSON_PATH_EXISTS", params: [{ name: "value_expression" }, { name: "sql_json_path" }] }, // functions/json-path-exists-transact-sql.md
 	json_value: { name: "JSON_VALUE", params: [{ name: "expression" }, { name: "path" }] }, // functions/json-value-transact-sql.md
+	lag: { name: "LAG", params: [{ name: "scalar_expression" }, { name: "offset" }, { name: "default" }] }, // functions/lag-transact-sql.md
 	last_value: { name: "LAST_VALUE", params: [{ name: "scalar_expression" }] }, // functions/last-value-transact-sql.md
 	lead: { name: "LEAD", params: [{ name: "scalar_expression" }, { name: "offset" }, { name: "default" }] }, // functions/lead-transact-sql.md
 	least: { name: "LEAST", params: [{ name: "expression1" }, { name: "expressionN" }], variadic: true }, // functions/logical-functions-least-transact-sql.md
 	left: { name: "LEFT", params: [{ name: "character_expression" }, { name: "integer_expression" }] }, // functions/left-transact-sql.md
 	left_shift: { name: "LEFT_SHIFT", params: [{ name: "expression_value" }, { name: "shift_amount" }] }, // functions/left-shift-transact-sql.md
 	len: { name: "LEN", params: [{ name: "string_expression" }] }, // functions/len-transact-sql.md
+	log10: { name: "LOG10", params: [{ name: "float_expression" }] }, // functions/log10-transact-sql.md
+	lower: { name: "LOWER", params: [{ name: "character_expression" }] }, // functions/lower-transact-sql.md
+	min_active_rowversion: { name: "MIN_ACTIVE_ROWVERSION", params: [] }, // functions/min-active-rowversion-transact-sql.md
+	month: { name: "MONTH", params: [{ name: "date" }] }, // functions/month-transact-sql.md
 	nchar: { name: "NCHAR", params: [{ name: "integer_expression" }] }, // functions/nchar-transact-sql.md
+	newid: { name: "NEWID", params: [] }, // functions/newid-transact-sql.md
 	newsequentialid: { name: "NEWSEQUENTIALID", params: [] }, // functions/newsequentialid-transact-sql.md
+	node_id_from_parts: { name: "NODE_ID_FROM_PARTS", params: [{ name: "object_id" }, { name: "graph_id" }] }, // functions/node-id-from-parts-transact-sql.md
 	ntile: { name: "NTILE", params: [{ name: "integer_expression" }] }, // functions/ntile-transact-sql.md
 	object_definition: { name: "OBJECT_DEFINITION", params: [{ name: "object_id" }] }, // functions/object-definition-transact-sql.md
+	object_id_from_edge_id: { name: "OBJECT_ID_FROM_EDGE_ID", params: [{ name: "edge_id" }] }, // functions/object-id-from-edge-id-transact-sql.md
+	object_id_from_node_id: { name: "OBJECT_ID_FROM_NODE_ID", params: [{ name: "node_id" }] }, // functions/object-id-from-node-id-transact-sql.md
 	object_name: { name: "OBJECT_NAME", params: [{ name: "object_id" }, { name: "database_id" }] }, // functions/object-name-transact-sql.md
 	object_schema_name: { name: "OBJECT_SCHEMA_NAME", params: [{ name: "object_id" }, { name: "database_id" }] }, // functions/object-schema-name-transact-sql.md
 	objectproperty: { name: "OBJECTPROPERTY", params: [{ name: "ID" }, { name: "property" }] }, // functions/objectproperty-transact-sql.md
@@ -172,6 +193,8 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	percent_rank: { name: "PERCENT_RANK", params: [] }, // functions/percent-rank-transact-sql.md
 	percentile_cont: { name: "PERCENTILE_CONT", params: [{ name: "numeric_literal" }] }, // functions/percentile-cont-transact-sql.md
 	percentile_disc: { name: "PERCENTILE_DISC", params: [{ name: "numeric_literal" }] }, // functions/percentile-disc-transact-sql.md
+	pi: { name: "PI", params: [] }, // functions/pi-transact-sql.md
+	power: { name: "POWER", params: [{ name: "float_expression" }, { name: "y" }] }, // functions/power-transact-sql.md
 	publishingservername: { name: "PUBLISHINGSERVERNAME", params: [] }, // functions/replication-functions-publishingservername.md
 	radians: { name: "RADIANS", params: [{ name: "numeric_expression" }] }, // functions/radians-transact-sql.md
 	rand: { name: "RAND", params: [{ name: "seed" }] }, // functions/rand-transact-sql.md
@@ -181,6 +204,7 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 		params: [{ name: "string_expression" }, { name: "string_pattern" }, { name: "string_replacement" }],
 	}, // functions/replace-transact-sql.md
 	replicate: { name: "REPLICATE", params: [{ name: "string_expression" }, { name: "integer_expression" }] }, // functions/replicate-transact-sql.md
+	reverse: { name: "REVERSE", params: [{ name: "string_expression" }] }, // functions/reverse-transact-sql.md
 	right: { name: "RIGHT", params: [{ name: "character_expression" }, { name: "integer_expression" }] }, // functions/right-transact-sql.md
 	right_shift: { name: "RIGHT_SHIFT", params: [{ name: "expression_value" }, { name: "shift_amount" }] }, // functions/right-shift-transact-sql.md
 	round: { name: "ROUND", params: [{ name: "numeric_expression" }, { name: "length" }, { name: "function" }] }, // functions/round-transact-sql.md
@@ -188,11 +212,21 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	rowcount_big: { name: "ROWCOUNT_BIG", params: [] }, // functions/rowcount-big-transact-sql.md
 	schema_id: { name: "SCHEMA_ID", params: [{ name: "schema_name" }] }, // functions/schema-id-transact-sql.md
 	schema_name: { name: "SCHEMA_NAME", params: [{ name: "schema_id" }] }, // functions/schema-name-transact-sql.md
+	scope_identity: { name: "SCOPE_IDENTITY", params: [] }, // functions/scope-identity-transact-sql.md
+	session_id: { name: "SESSION_ID", params: [] }, // functions/session-id-transact-sql.md
 	sessionproperty: { name: "SESSIONPROPERTY", params: [{ name: "option" }] }, // functions/sessionproperty-transact-sql.md
 	set_bit: { name: "SET_BIT", params: [{ name: "expression_value" }, { name: "bit_offset" }] }, // functions/set-bit-transact-sql.md
+	sign: { name: "SIGN", params: [{ name: "numeric_expression" }] }, // functions/sign-transact-sql.md
 	sin: { name: "SIN", params: [{ name: "float_expression" }] }, // functions/sin-transact-sql.md
+	smalldatetimefromparts: {
+		name: "SMALLDATETIMEFROMPARTS",
+		params: [{ name: "year" }, { name: "month" }, { name: "day" }, { name: "hour" }, { name: "minute" }],
+	}, // functions/smalldatetimefromparts-transact-sql.md
 	soundex: { name: "SOUNDEX", params: [{ name: "character_expression" }] }, // functions/soundex-transact-sql.md
 	space: { name: "SPACE", params: [{ name: "integer_expression" }] }, // functions/space-transact-sql.md
+	sql_variant_property: { name: "SQL_VARIANT_PROPERTY", params: [{ name: "expression" }, { name: "property" }] }, // functions/sql-variant-property-transact-sql.md
+	sqrt: { name: "SQRT", params: [{ name: "float_expression" }] }, // functions/sqrt-transact-sql.md
+	square: { name: "SQUARE", params: [{ name: "float_expression" }] }, // functions/square-transact-sql.md
 	stats_date: { name: "STATS_DATE", params: [{ name: "object_id" }, { name: "stats_id" }] }, // functions/stats-date-transact-sql.md
 	string_agg: { name: "STRING_AGG", params: [{ name: "expression" }, { name: "separator" }] }, // functions/string-agg-transact-sql.md
 	string_escape: { name: "STRING_ESCAPE", params: [{ name: "text" }, { name: "type" }] }, // functions/string-escape-transact-sql.md
@@ -262,4 +296,5 @@ export const TSQL_HARVESTED: Record<string, FnSignature> = {
 	}, // functions/verifysignedbycert-transact-sql.md
 	version: { name: "VERSION", params: [] }, // functions/version-transact-sql-metadata-functions.md
 	xact_state: { name: "XACT_STATE", params: [] }, // functions/xact-state-transact-sql.md
+	year: { name: "YEAR", params: [{ name: "date" }] }, // functions/year-transact-sql.md
 };
