@@ -14,7 +14,8 @@ class Catalog extends DbtTemplateProvider {
 		if (callee === "ref" && argIndex === 0) return [{ label: "orders" }, { label: "customers", detail: "staging" }];
 		if (callee === "source" && argIndex === 0) return [{ label: "raw" }];
 		if (callee === "source" && argIndex === 1) return [{ label: "events" }];
-		if (argIndex === -1) return [{ label: "star" }, { label: "date_spine" }]; // macro names at the callee slot
+		// The callee-name slot: every callee the host knows (builtins + macros), filtered by the prefix.
+		if (argIndex === -1) return [{ label: "ref" }, { label: "source" }, { label: "star" }, { label: "date_spine" }];
 		return [];
 	}
 }
@@ -45,13 +46,25 @@ describe("completeAt inside a jinja tag (REQ2b)", () => {
 		expect(labels).toEqual(["events"]);
 	});
 
-	it("the callee-name slot returns the host's macro names", () => {
-		// The caret is in the callee identifier of a call (slot detection needs the open paren; a bare
-		// `{{ dat` with no paren is not yet a call tag, an open REQ2a limitation, so it stays SQL).
+	it("the callee-name slot (caret in a call's name) returns the host's callee names", () => {
 		const text = "{{ date_spine(";
 		const caret = "{{ date_s".length; // inside the callee identifier, before the paren
-		const labels = completeAt(doc(text, new Catalog()), caret, new Catalog()).map((c) => c.label);
-		expect(labels).toEqual(["star", "date_spine"]);
+		const labels = completeAt(doc(text, new Catalog()), caret, new Catalog()).map((c) => c.label).sort();
+		expect(labels).toEqual(["date_spine", "ref", "source", "star"]);
+	});
+
+	it("a bare identifier being typed with no paren yet ({{ re) offers the callee names", () => {
+		const text = "select * from {{ re";
+		const items = completeAt(doc(text, new Catalog()), text.length, new Catalog());
+		expect(items.every((c) => c.kind === "template")).toBe(true);
+		expect(items.map((c) => c.label)).toContain("ref"); // the editor filters this list by the "re" prefix
+	});
+
+	it("a call embedded in a control tag ({% set m = ref('cu) flows to the host's models", () => {
+		const text = "select * from t\n{% set m = ref('cu";
+		const labels = completeAt(doc(text, new Catalog()), text.length, new Catalog()).map((c) => c.label);
+		expect(labels).toContain("customers");
+		expect(labels).toContain("orders");
 	});
 
 	it("the neutral default provider offers nothing inside a tag (no vocabulary), and no SQL leaks", () => {

@@ -61,8 +61,33 @@ describe("jinjaSlotAt", () => {
 		expect(slotAt(text, "select ".length)).toBeUndefined();
 	});
 
-	it("caret in a control tag → undefined (not a call slot)", () => {
+	it("caret in a control tag with no call → undefined (not a call slot)", () => {
 		const text = "{% if x %}";
 		expect(slotAt(text, 5)).toBeUndefined();
+	});
+
+	it("a bare leading identifier being typed ({{ re) is a callee-name slot", () => {
+		const text = "select * from {{ re";
+		expect(slotAt(text, text.length)).toEqual({ callee: "re", argIndex: -1, prefix: "re", incomplete: true });
+	});
+
+	it("a complete bare variable ({{ region }}) still offers the callee slot on its identifier", () => {
+		const text = "select {{ region }} from t";
+		expect(slotAt(text, "select {{ regi".length)).toMatchObject({ callee: "regi", argIndex: -1, prefix: "regi" });
+	});
+
+	it("a call embedded in a control tag ({% if is_incremental(| %}) is found", () => {
+		const text = "select * from t\n{% if is_incremental(";
+		expect(slotAt(text, text.length)).toMatchObject({ callee: "is_incremental", argIndex: 0 });
+	});
+
+	it("a nested call reports the INNERMOST ({{ outer(inner('cu → inner)", () => {
+		const text = "select {{ outer(inner('cu";
+		expect(slotAt(text, text.length)).toMatchObject({ callee: "inner", argIndex: 0, prefix: "cu" });
+	});
+
+	it("a bare composed expression ({{ a ~ b) is not a callee slot", () => {
+		const text = "select {{ a ~ b";
+		expect(slotAt(text, text.length)).toBeUndefined();
 	});
 });

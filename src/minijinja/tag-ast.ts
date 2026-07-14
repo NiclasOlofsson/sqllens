@@ -474,15 +474,10 @@ function macroNode(call: CallExprContext, callee: Callee, tagSpan: PartSpan, tre
 	};
 }
 
-/** An UNCLOSED / mid-typing call recovered from the raw tokens when the parser couldn't build a
- *  complete call node (`{{ ref('cu`, `{{ source('a',`). Scans the tag's significant tokens for an
- *  `id (` shape (optionally `pkg.id (`) and splits the interior into args by top-level commas.
- *  Returns undefined when there's no `id (` (a bare name / non-call expr stays "other"). Args are
- *  best-effort: a single complete STRING is value + quote-excluded span; a partial or computed arg is
- *  `value: null` + its span (never fabricated). The node is flagged `incomplete: true`. */
-function incompleteCall(tokens: readonly AntlrToken[], tagSpan: PartSpan): TagNode | undefined {
+/** The tag's significant tokens: default channel, no EOF, no `{{`/`}}`/`{%` delimiters. */
+function significantTokens(tokens: readonly AntlrToken[]): AntlrToken[] {
 	const P = MinijinjaParser;
-	const sig = tokens.filter(
+	return tokens.filter(
 		(t) =>
 			t.channel === AntlrToken.DEFAULT_CHANNEL &&
 			t.type !== AntlrToken.EOF &&
@@ -490,24 +485,48 @@ function incompleteCall(tokens: readonly AntlrToken[], tagSpan: PartSpan): TagNo
 			t.type !== P.EXPR_CLOSE &&
 			t.type !== P.STMT_OPEN,
 	);
-	let i = 0;
-	if (sig[i]?.type !== P.ID) return undefined;
-	let nameTok = sig[i]!;
-	i++;
-	let packageTok: AntlrToken | undefined;
-	if (sig[i]?.type === P.DOT && sig[i + 1]?.type === P.ID) {
-		packageTok = nameTok;
-		i += 1; // skip DOT
-		nameTok = sig[i]!;
-		i++;
+}
+
+/** The INNERMOST still-open CALL paren in `sig` (the call being typed), or undefined when none is
+ *  open. Every `(` is pushed (a call when the token before it is an `id` / `pkg.id`, else a grouping
+ *  paren = null) and every `)` pops, so `outer(inner(` reports inner, a call after a keyword
+ *  (`if is_incremental(`) is found past the leading words, and a grouping paren never masks the call
+ *  it sits inside. */
+function trailingOpenCall(
+	sig: AntlrToken[],
+): { nameTok: AntlrToken; packageTok?: AntlrToken; lparenIdx: number } | undefined {
+	const P = MinijinjaParser;
+	type Open = { nameTok: AntlrToken; packageTok?: AntlrToken; lparenIdx: number } | null;
+	const stack: Open[] = [];
+	for (let i = 0; i < sig.length; i++) {
+		const t = sig[i]!;
+		if (t.type === P.LPAREN) {
+			const prev = sig[i - 1];
+			if (prev?.type === P.ID) {
+				const packageTok = sig[i - 2]?.type === P.DOT && sig[i - 3]?.type === P.ID ? sig[i - 3]! : undefined;
+				stack.push({ nameTok: prev, ...(packageTok ? { packageTok } : {}), lparenIdx: i });
+			} else {
+				stack.push(null); // a grouping paren, not a call
+			}
+		} else if (t.type === P.RPAREN) {
+			stack.pop();
+		}
 	}
-	if (sig[i]?.type !== P.LPAREN) return undefined; // not a call — leave it as "other"
-	const lparen = sig[i]!;
-	i++;
+	for (let k = stack.length - 1; k >= 0; k--) {
+		const e = stack[k];
+		if (e) return e;
+	}
+	return undefined;
+}
+
+/** The args of an unclosed call: the significant tokens from just after its `(` (index `from`) to the
+ *  end, split into args by top-level commas. Best-effort per `argFromTokens`. */
+function argsFrom(sig: AntlrToken[], from: number): TagArg[] {
+	const P = MinijinjaParser;
 	const args: TagArg[] = [];
 	let depth = 0;
 	let cur: AntlrToken[] = [];
-	for (; i < sig.length; i++) {
+	for (let i = from; i < sig.length; i++) {
 		const t = sig[i]!;
 		if (t.type === P.LPAREN) {
 			depth++;
@@ -524,18 +543,54 @@ function incompleteCall(tokens: readonly AntlrToken[], tagSpan: PartSpan): TagNo
 		}
 	}
 	if (cur.length > 0) args.push(argFromTokens(cur));
+	return args;
+}
+
+/** The reusable MacroCall fields of the innermost unclosed call in `tokens`, or undefined when none is
+ *  open (a bare name / non-call expr). Shared by the expr-tag node recovery and the control-tag
+ *  embedded-call recovery. Args are best-effort: a complete STRING is value + quote-excluded span; a
+ *  partial or computed arg is `value: null` + its span (never fabricated). */
+function openCall(tokens: readonly AntlrToken[]): MacroCall | undefined {
+	const sig = significantTokens(tokens);
+	const open = trailingOpenCall(sig);
+	if (!open) return undefined;
+	const lparen = sig[open.lparenIdx]!;
 	const last = sig[sig.length - 1]!;
 	return {
-		kind: "call",
-		name: nameTok.text ?? "",
-		nameSpan: spanFromTokens(nameTok, nameTok),
-		...(packageTok
-			? { packageName: packageTok.text ?? "", packageSpan: spanFromTokens(packageTok, packageTok) }
+		name: open.nameTok.text ?? "",
+		nameSpan: spanFromTokens(open.nameTok, open.nameTok),
+		...(open.packageTok
+			? { packageName: open.packageTok.text ?? "", packageSpan: spanFromTokens(open.packageTok, open.packageTok) }
 			: {}),
-		callSpan: spanFromTokens(packageTok ?? nameTok, last),
-		tagSpan,
 		argsSpan: spanFromTokens(lparen, last),
-		args,
+		args: argsFrom(sig, open.lparenIdx + 1),
+	};
+}
+
+/** An UNCLOSED / mid-typing expr-tag call (`{{ ref('cu`, `{{ outer(inner(`) recovered as a neutral
+ *  "call" node flagged `incomplete: true`, so completion can place the caret's slot. Reports the
+ *  INNERMOST open call. Undefined when there's no open `id (` (a bare name / non-call expr stays
+ *  "other"). */
+function incompleteCall(tokens: readonly AntlrToken[], tagSpan: PartSpan): TagNode | undefined {
+	const c = openCall(tokens);
+	if (!c || !c.argsSpan) return undefined;
+	const from = c.packageSpan ?? c.nameSpan;
+	return {
+		kind: "call",
+		name: c.name,
+		nameSpan: c.nameSpan,
+		...(c.packageName !== undefined ? { packageName: c.packageName, packageSpan: c.packageSpan } : {}),
+		callSpan: {
+			start: from.start,
+			end: c.argsSpan.end,
+			line: from.line,
+			column: from.column,
+			endLine: c.argsSpan.endLine,
+			endColumn: c.argsSpan.endColumn,
+		},
+		tagSpan,
+		argsSpan: c.argsSpan,
+		args: c.args,
 		calls: [],
 		incomplete: true,
 	};
@@ -630,7 +685,11 @@ export function tagNodesOf(
 	if (seg.tagKind === "stmt") {
 		const selfKeyword = selfContainedKeyword(tree);
 		if (selfKeyword) return { kind: "control", tagSpan, keyword: selfKeyword, calls: [] };
-		return controlNode(tree, tagSpan);
+		const node = controlNode(tree, tagSpan);
+		// Recover a trailing UNCLOSED call being typed (`{% if is_incremental(`), which the tree parse
+		// could not build, and add it to `calls` so completion can place the caret's slot inside it.
+		const partial = openCall(tokens);
+		return partial && node.kind === "control" ? { ...node, calls: [...node.calls, partial] } : node;
 	}
 	if (seg.tagKind === "comment") return { kind: "other", tagSpan };
 
