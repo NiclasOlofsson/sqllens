@@ -1,6 +1,6 @@
 // GENERATED — do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
 // Source: trinodb/trino release 482  vendor/trino-docs/functions/*.md (MyST `:::{function}` directives)
-// Harvested 2026-07-14. 363 signatures. Curated FUNCTION_SIGNATURES override these.
+// Harvested 2026-07-14. 364 signatures. Curated FUNCTION_SIGNATURES override these.
 import type { FnSignature } from "../signatures.js";
 
 /** Harvested (doc-syntax-derived) parameter signatures for trino, keyed by lowercased name. */
@@ -112,6 +112,7 @@ export const TRINO_HARVESTED: Record<string, FnSignature> = {
 	date_add: { name: "date_add", params: [{ name: "unit" }, { name: "value" }, { name: "timestamp" }] }, // datetime.md
 	date_diff: { name: "date_diff", params: [{ name: "unit" }, { name: "timestamp1" }, { name: "timestamp2" }] }, // datetime.md
 	date_format: { name: "date_format", params: [{ name: "timestamp" }, { name: "format" }] }, // datetime.md
+	date_parse: { name: "date_parse", params: [{ name: "string" }, { name: "format" }] }, // datetime.md
 	date_trunc: { name: "date_trunc", params: [{ name: "unit" }, { name: "x" }] }, // datetime.md
 	day: { name: "day", params: [{ name: "x" }] }, // datetime.md
 	day_of_month: { name: "day_of_month", params: [{ name: "x" }] }, // datetime.md

@@ -1,10 +1,11 @@
 // GENERATED — do not edit by hand. Rebuild: node tools/harvest-signatures.mjs && npm run format
-// Source: postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` blocks)
-// Harvested 2026-07-14. 456 signatures. Curated FUNCTION_SIGNATURES override these.
+// Source: postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` and `<synopsis>` blocks)
+// Harvested 2026-07-14. 508 signatures. Curated FUNCTION_SIGNATURES override these.
 import type { FnSignature } from "../signatures.js";
 
 /** Harvested (doc-syntax-derived) parameter signatures for postgres, keyed by lowercased name. */
 export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
+	abs: { name: "abs", params: [{ name: "numeric_type" }] }, // func.sgml
 	acldefault: {
 		name: "acldefault",
 		params: [
@@ -17,6 +18,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	acosd: { name: "acosd", params: [{ name: "double precision" }] }, // func.sgml
 	acosh: { name: "acosh", params: [{ name: "double precision" }] }, // func.sgml
 	any_value: { name: "any_value", params: [{ name: "anyelement" }] }, // func.sgml
+	area: { name: "area", params: [{ name: "geometric_type" }] }, // func.sgml
 	array_append: { name: "array_append", params: [{ name: "anycompatiblearray" }, { name: "anycompatible" }] }, // func.sgml
 	array_cat: { name: "array_cat", params: [{ name: "anycompatiblearray" }, { name: "anycompatiblearray" }] }, // func.sgml
 	array_dims: { name: "array_dims", params: [{ name: "anyarray" }] }, // func.sgml
@@ -47,6 +49,14 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	array_shuffle: { name: "array_shuffle", params: [{ name: "anyarray" }] }, // func.sgml
+	array_sort: {
+		name: "array_sort",
+		params: [
+			{ name: "array", type: "anyarray" },
+			{ name: "descending", type: "boolean", optional: true },
+			{ name: "nulls_first", type: "boolean", optional: true },
+		],
+	}, // func.sgml
 	array_to_json: { name: "array_to_json", params: [{ name: "anyarray" }, { name: "boolean", optional: true }] }, // func.sgml
 	array_to_string: {
 		name: "array_to_string",
@@ -101,16 +111,35 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	cardinality: { name: "cardinality", params: [{ name: "anyarray" }] }, // func.sgml
 	casefold: { name: "casefold", params: [{ name: "text" }] }, // func.sgml
 	cbrt: { name: "cbrt", params: [{ name: "double precision" }] }, // func.sgml
+	center: { name: "center", params: [{ name: "geometric_type" }] }, // func.sgml
 	char_length: { name: "char_length", params: [{ name: "text" }] }, // func.sgml
 	character_length: { name: "character_length", params: [{ name: "text" }] }, // func.sgml
 	chr: { name: "chr", params: [{ name: "integer" }] }, // func.sgml
 	clock_timestamp: { name: "clock_timestamp", params: [] }, // func.sgml
+	coalesce: { name: "COALESCE", params: [{ name: "value" }], variadic: true }, // func.sgml
 	col_description: {
 		name: "col_description",
 		params: [
 			{ name: "table", type: "oid" },
 			{ name: "column", type: "integer" },
 		],
+	}, // func.sgml
+	concat: {
+		name: "concat",
+		params: [
+			{ name: "val1", type: '"any"' },
+			{ name: "val2", type: '"any"', optional: true },
+		],
+		variadic: true,
+	}, // func.sgml
+	concat_ws: {
+		name: "concat_ws",
+		params: [
+			{ name: "sep", type: "text" },
+			{ name: "val1", type: '"any"' },
+			{ name: "val2", type: '"any"', optional: true },
+		],
+		variadic: true,
 	}, // func.sgml
 	convert: {
 		name: "convert",
@@ -163,7 +192,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	}, // func.sgml
 	crc32: { name: "crc32", params: [{ name: "bytea" }] }, // func.sgml
 	crc32c: { name: "crc32c", params: [{ name: "bytea" }] }, // func.sgml
-	cume_dist: { name: "cume_dist", params: [] }, // func.sgml
+	cume_dist: { name: "cume_dist", params: [{ name: "args", optional: true }] }, // func.sgml
 	current_catalog: { name: "current_catalog", params: [] }, // func.sgml
 	current_database: { name: "current_database", params: [] }, // func.sgml
 	current_date: { name: "current_date", params: [] }, // func.sgml
@@ -199,7 +228,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	degrees: { name: "degrees", params: [{ name: "double precision" }] }, // func.sgml
-	dense_rank: { name: "dense_rank", params: [] }, // func.sgml
+	dense_rank: { name: "dense_rank", params: [{ name: "args", optional: true }] }, // func.sgml
 	diagonal: { name: "diagonal", params: [{ name: "box" }] }, // func.sgml
 	diameter: { name: "diameter", params: [{ name: "circle" }] }, // func.sgml
 	div: {
@@ -225,6 +254,14 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	factorial: { name: "factorial", params: [{ name: "bigint" }] }, // func.sgml
 	family: { name: "family", params: [{ name: "inet" }] }, // func.sgml
 	first_value: { name: "first_value", params: [{ name: "value", type: "anyelement" }] }, // func.sgml
+	format: {
+		name: "format",
+		params: [
+			{ name: "formatstr", type: "text" },
+			{ name: "formatarg", type: '"any"', optional: true },
+		],
+		variadic: true,
+	}, // func.sgml
 	format_type: {
 		name: "format_type",
 		params: [
@@ -233,6 +270,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	gamma: { name: "gamma", params: [{ name: "double precision" }] }, // func.sgml
+	gcd: { name: "gcd", params: [{ name: "numeric_type" }, { name: "numeric_type" }] }, // func.sgml
 	gen_random_uuid: { name: "gen_random_uuid", params: [] }, // func.sgml
 	generate_subscripts: {
 		name: "generate_subscripts",
@@ -251,6 +289,8 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	}, // func.sgml
 	get_current_ts_config: { name: "get_current_ts_config", params: [] }, // func.sgml
 	gin_clean_pending_list: { name: "gin_clean_pending_list", params: [{ name: "index", type: "regclass" }] }, // func.sgml
+	greatest: { name: "GREATEST", params: [{ name: "value" }], variadic: true }, // func.sgml
+	grouping: { name: "GROUPING", params: [{ name: "group_by_expression(s)" }] }, // func.sgml
 	height: { name: "height", params: [{ name: "box" }] }, // func.sgml
 	host: { name: "host", params: [{ name: "inet" }] }, // func.sgml
 	hostmask: { name: "hostmask", params: [{ name: "inet" }] }, // func.sgml
@@ -324,6 +364,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 			{ name: "from_json", type: "json" },
 		],
 	}, // func.sgml
+	json_scalar: { name: "json_scalar", params: [{ name: "expression" }] }, // func.sgml
 	json_strip_nulls: {
 		name: "json_strip_nulls",
 		params: [
@@ -389,6 +430,96 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	jsonb_object_keys: { name: "jsonb_object_keys", params: [{ name: "jsonb" }] }, // func.sgml
+	jsonb_path_exists: {
+		name: "jsonb_path_exists",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_exists_tz: {
+		name: "jsonb_path_exists_tz",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_match: {
+		name: "jsonb_path_match",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_match_tz: {
+		name: "jsonb_path_match_tz",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query: {
+		name: "jsonb_path_query",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query_array: {
+		name: "jsonb_path_query_array",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query_array_tz: {
+		name: "jsonb_path_query_array_tz",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query_first: {
+		name: "jsonb_path_query_first",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query_first_tz: {
+		name: "jsonb_path_query_first_tz",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
+	jsonb_path_query_tz: {
+		name: "jsonb_path_query_tz",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "jsonpath" },
+			{ name: "vars", type: "jsonb", optional: true },
+			{ name: "silent", type: "boolean", optional: true },
+		],
+	}, // func.sgml
 	jsonb_populate_record: {
 		name: "jsonb_populate_record",
 		params: [
@@ -420,6 +551,16 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 			{ name: "create_if_missing", type: "boolean", optional: true },
 		],
 	}, // func.sgml
+	jsonb_set_lax: {
+		name: "jsonb_set_lax",
+		params: [
+			{ name: "target", type: "jsonb" },
+			{ name: "path", type: "text[]" },
+			{ name: "new_value", type: "jsonb" },
+			{ name: "create_if_missing", type: "boolean", optional: true },
+			{ name: "null_value_treatment", type: "text", optional: true },
+		],
+	}, // func.sgml
 	jsonb_strip_nulls: {
 		name: "jsonb_strip_nulls",
 		params: [
@@ -433,8 +574,26 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	justify_days: { name: "justify_days", params: [{ name: "interval" }] }, // func.sgml
 	justify_hours: { name: "justify_hours", params: [{ name: "interval" }] }, // func.sgml
 	justify_interval: { name: "justify_interval", params: [{ name: "interval" }] }, // func.sgml
+	lag: {
+		name: "lag",
+		params: [
+			{ name: "value", type: "anycompatible" },
+			{ name: "offset", type: "integer", optional: true },
+			{ name: "default", type: "anycompatible", optional: true },
+		],
+	}, // func.sgml
 	last_value: { name: "last_value", params: [{ name: "value", type: "anyelement" }] }, // func.sgml
 	lastval: { name: "lastval", params: [] }, // func.sgml
+	lcm: { name: "lcm", params: [{ name: "numeric_type" }, { name: "numeric_type" }] }, // func.sgml
+	lead: {
+		name: "lead",
+		params: [
+			{ name: "value", type: "anycompatible" },
+			{ name: "offset", type: "integer", optional: true },
+			{ name: "default", type: "anycompatible", optional: true },
+		],
+	}, // func.sgml
+	least: { name: "LEAST", params: [{ name: "value" }], variadic: true }, // func.sgml
 	left: {
 		name: "left",
 		params: [
@@ -461,6 +620,18 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 			{ name: "year", type: "int" },
 			{ name: "month", type: "int" },
 			{ name: "day", type: "int" },
+		],
+	}, // func.sgml
+	make_interval: {
+		name: "make_interval",
+		params: [
+			{ name: "years", type: "int", optional: true },
+			{ name: "months", type: "int", optional: true },
+			{ name: "weeks", type: "int", optional: true },
+			{ name: "days", type: "int", optional: true },
+			{ name: "hours", type: "int", optional: true },
+			{ name: "mins", type: "int", optional: true },
+			{ name: "secs", type: "double precision", optional: true },
 		],
 	}, // func.sgml
 	make_time: {
@@ -504,8 +675,17 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	masklen: { name: "masklen", params: [{ name: "inet" }] }, // func.sgml
+	max: { name: "max", params: [{ name: "see text" }] }, // func.sgml
 	merge_action: { name: "merge_action", params: [] }, // func.sgml
+	min: { name: "min", params: [{ name: "see text" }] }, // func.sgml
 	min_scale: { name: "min_scale", params: [{ name: "numeric" }] }, // func.sgml
+	mod: {
+		name: "mod",
+		params: [
+			{ name: "y", type: "numeric_type" },
+			{ name: "x", type: "numeric_type" },
+		],
+	}, // func.sgml
 	mode: { name: "mode", params: [] }, // func.sgml
 	multirange: { name: "multirange", params: [{ name: "anyrange" }] }, // func.sgml
 	mxid_age: { name: "mxid_age", params: [{ name: "xid" }] }, // func.sgml
@@ -514,6 +694,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	nextval: { name: "nextval", params: [{ name: "regclass" }] }, // func.sgml
 	normalize: { name: "normalize", params: [{ name: "text" }, { name: "form", optional: true }] }, // func.sgml
 	now: { name: "now", params: [] }, // func.sgml
+	npoints: { name: "npoints", params: [{ name: "geometric_type" }] }, // func.sgml
 	nth_value: {
 		name: "nth_value",
 		params: [
@@ -522,6 +703,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	ntile: { name: "ntile", params: [{ name: "num_buckets", type: "integer" }] }, // func.sgml
+	nullif: { name: "NULLIF", params: [{ name: "value1" }, { name: "value2" }] }, // func.sgml
 	num_nonnulls: { name: "num_nonnulls", params: [{ name: '"any"' }], variadic: true }, // func.sgml
 	num_nulls: { name: "num_nulls", params: [{ name: '"any"' }], variadic: true }, // func.sgml
 	numnode: { name: "numnode", params: [{ name: "tsquery" }] }, // func.sgml
@@ -534,7 +716,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	}, // func.sgml
 	path: { name: "path", params: [{ name: "polygon" }] }, // func.sgml
 	pclose: { name: "pclose", params: [{ name: "path" }] }, // func.sgml
-	percent_rank: { name: "percent_rank", params: [] }, // func.sgml
+	percent_rank: { name: "percent_rank", params: [{ name: "args", optional: true }] }, // func.sgml
 	pg_advisory_unlock_all: { name: "pg_advisory_unlock_all", params: [] }, // func.sgml
 	pg_available_wal_summaries: { name: "pg_available_wal_summaries", params: [] }, // func.sgml
 	pg_backend_pid: { name: "pg_backend_pid", params: [] }, // func.sgml
@@ -578,6 +760,15 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	pg_control_recovery: { name: "pg_control_recovery", params: [] }, // func.sgml
 	pg_control_system: { name: "pg_control_system", params: [] }, // func.sgml
 	pg_conversion_is_visible: { name: "pg_conversion_is_visible", params: [{ name: "conversion", type: "oid" }] }, // func.sgml
+	pg_copy_logical_replication_slot: {
+		name: "pg_copy_logical_replication_slot",
+		params: [
+			{ name: "src_slot_name", type: "name" },
+			{ name: "dst_slot_name", type: "name" },
+			{ name: "temporary", type: "boolean", optional: true },
+			{ name: "plugin", type: "name", optional: true },
+		],
+	}, // func.sgml
 	pg_copy_physical_replication_slot: {
 		name: "pg_copy_physical_replication_slot",
 		params: [
@@ -605,6 +796,8 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	}, // func.sgml
 	pg_drop_replication_slot: { name: "pg_drop_replication_slot", params: [{ name: "slot_name", type: "name" }] }, // func.sgml
 	pg_encoding_to_char: { name: "pg_encoding_to_char", params: [{ name: "encoding", type: "integer" }] }, // func.sgml
+	pg_event_trigger_ddl_commands: { name: "pg_event_trigger_ddl_commands", params: [] }, // func.sgml
+	pg_event_trigger_dropped_objects: { name: "pg_event_trigger_dropped_objects", params: [] }, // func.sgml
 	pg_event_trigger_table_rewrite_oid: { name: "pg_event_trigger_table_rewrite_oid", params: [] }, // func.sgml
 	pg_event_trigger_table_rewrite_reason: { name: "pg_event_trigger_table_rewrite_reason", params: [] }, // func.sgml
 	pg_export_snapshot: { name: "pg_export_snapshot", params: [] }, // func.sgml
@@ -808,6 +1001,7 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	pg_ls_summariesdir: { name: "pg_ls_summariesdir", params: [] }, // func.sgml
 	pg_ls_tmpdir: { name: "pg_ls_tmpdir", params: [{ name: "tablespace", type: "oid", optional: true }] }, // func.sgml
 	pg_ls_waldir: { name: "pg_ls_waldir", params: [] }, // func.sgml
+	pg_mcv_list_items: { name: "pg_mcv_list_items", params: [{ name: "pg_mcv_list" }] }, // func.sgml
 	pg_my_temp_schema: { name: "pg_my_temp_schema", params: [] }, // func.sgml
 	pg_notification_queue_usage: { name: "pg_notification_queue_usage", params: [] }, // func.sgml
 	pg_numa_available: { name: "pg_numa_available", params: [] }, // func.sgml
@@ -943,7 +1137,35 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	quote_ident: { name: "quote_ident", params: [{ name: "text" }] }, // func.sgml
 	radians: { name: "radians", params: [{ name: "double precision" }] }, // func.sgml
 	radius: { name: "radius", params: [{ name: "circle" }] }, // func.sgml
-	rank: { name: "rank", params: [] }, // func.sgml
+	random_normal: {
+		name: "random_normal",
+		params: [
+			{ name: "mean", type: "double precision", optional: true },
+			{ name: "stddev", type: "double precision", optional: true },
+		],
+	}, // func.sgml
+	rank: { name: "rank", params: [{ name: "args", optional: true }] }, // func.sgml
+	regexp_count: {
+		name: "regexp_count",
+		params: [
+			{ name: "string", type: "text" },
+			{ name: "pattern", type: "text" },
+			{ name: "start", type: "integer", optional: true },
+			{ name: "flags", type: "text", optional: true },
+		],
+	}, // func.sgml
+	regexp_instr: {
+		name: "regexp_instr",
+		params: [
+			{ name: "string", type: "text" },
+			{ name: "pattern", type: "text" },
+			{ name: "start", type: "integer", optional: true },
+			{ name: "N", type: "integer", optional: true },
+			{ name: "endoption", type: "integer", optional: true },
+			{ name: "flags", type: "text", optional: true },
+			{ name: "subexpr", type: "integer", optional: true },
+		],
+	}, // func.sgml
 	regexp_like: {
 		name: "regexp_like",
 		params: [
@@ -968,15 +1190,6 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 			{ name: "flags", type: "text", optional: true },
 		],
 	}, // func.sgml
-	regexp_replace: {
-		name: "regexp_replace",
-		params: [
-			{ name: "string", type: "text" },
-			{ name: "pattern", type: "text" },
-			{ name: "replacement", type: "text" },
-			{ name: "flags", type: "text", optional: true },
-		],
-	}, // func.sgml
 	regexp_split_to_array: {
 		name: "regexp_split_to_array",
 		params: [
@@ -991,6 +1204,17 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 			{ name: "string", type: "text" },
 			{ name: "pattern", type: "text" },
 			{ name: "flags", type: "text", optional: true },
+		],
+	}, // func.sgml
+	regexp_substr: {
+		name: "regexp_substr",
+		params: [
+			{ name: "string", type: "text" },
+			{ name: "pattern", type: "text" },
+			{ name: "start", type: "integer", optional: true },
+			{ name: "N", type: "integer", optional: true },
+			{ name: "flags", type: "text", optional: true },
+			{ name: "subexpr", type: "integer", optional: true },
 		],
 	}, // func.sgml
 	regr_avgx: {
@@ -1147,6 +1371,9 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 		],
 	}, // func.sgml
 	statement_timestamp: { name: "statement_timestamp", params: [] }, // func.sgml
+	stddev: { name: "stddev", params: [{ name: "numeric_type" }] }, // func.sgml
+	stddev_pop: { name: "stddev_pop", params: [{ name: "numeric_type" }] }, // func.sgml
+	stddev_samp: { name: "stddev_samp", params: [{ name: "numeric_type" }] }, // func.sgml
 	string_agg: {
 		name: "string_agg",
 		params: [
@@ -1267,6 +1494,29 @@ export const POSTGRES_HARVESTED: Record<string, FnSignature> = {
 	uuid_extract_version: { name: "uuid_extract_version", params: [{ name: "uuid" }] }, // func.sgml
 	uuidv4: { name: "uuidv4", params: [] }, // func.sgml
 	uuidv7: { name: "uuidv7", params: [{ name: "shift", type: "interval", optional: true }] }, // func.sgml
+	var_pop: { name: "var_pop", params: [{ name: "numeric_type" }] }, // func.sgml
+	var_samp: { name: "var_samp", params: [{ name: "numeric_type" }] }, // func.sgml
+	variance: { name: "variance", params: [{ name: "numeric_type" }] }, // func.sgml
 	version: { name: "version", params: [] }, // func.sgml
 	width: { name: "width", params: [{ name: "box" }] }, // func.sgml
+	xmlagg: { name: "xmlagg", params: [{ name: "xml" }] }, // func.sgml
+	xmlcomment: { name: "xmlcomment", params: [{ name: "text" }] }, // func.sgml
+	xmlconcat: { name: "xmlconcat", params: [{ name: "xml" }], variadic: true }, // func.sgml
+	xmltext: { name: "xmltext", params: [{ name: "text" }] }, // func.sgml
+	xpath: {
+		name: "xpath",
+		params: [
+			{ name: "xpath", type: "text" },
+			{ name: "xml", type: "xml" },
+			{ name: "nsarray", type: "text[]", optional: true },
+		],
+	}, // func.sgml
+	xpath_exists: {
+		name: "xpath_exists",
+		params: [
+			{ name: "xpath", type: "text" },
+			{ name: "xml", type: "xml" },
+			{ name: "nsarray", type: "text[]", optional: true },
+		],
+	}, // func.sgml
 };

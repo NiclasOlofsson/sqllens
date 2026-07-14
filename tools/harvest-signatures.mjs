@@ -53,7 +53,27 @@ const OUT_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..", "src", "s
 const TODAY = new Date().toISOString().slice(0, 10);
 
 // ---------------------------------------------------------------------------
-// T-SQL — MicrosoftDocs/sql-docs docs/t-sql/functions/**/*.md, ```syntaxsql``` blocks.
+// T-SQL: MicrosoftDocs/sql-docs docs/t-sql/{functions,language-elements}/**/*.md, ```syntaxsql```
+// blocks.
+//
+// Three widenings beyond the plain flat-list model (shape-anchored; everything else stays exactly
+// as strict as the NEVER-WRONG CONTRACT requires):
+//   - a leading "[ ALL | DISTINCT ]" / "[ ALL ]" calling-convention modifier ahead of an aggregate's
+//     first param is not a param: stripped via the shared DISTINCT_ALL_GROUP_RE (defined below,
+//     forward-referenced here since T-SQL is the first extractor in the file) before parsing.
+//     Recovers sum/avg/min/max (count's own page wraps the modifier one level deeper, inside a
+//     "{ ... | * }" alternation the flat-list model still can't represent, so it stays unrecovered).
+//   - the shared MERGE RULE's prefix-merge branch (mirroring the Databricks/Snowflake/DuckDB
+//     extractors): when same-page variants disagree in LENGTH rather than in optionality, and every
+//     shorter variant is a name-for-name prefix of the single longest, they merge into the longest
+//     with the tail marked optional. Recovers LTRIM/RTRIM's pre-2022 1-arg vs 2022+ 2-arg forms.
+//     (Equal-length variants that only disagree on which params are optional still take the
+//     older per-product OR-merge path below, SUBSTRING's SQL-Server-required/Fabric-optional
+//     `length`, since that is a different documented ambiguity, not a name-prefix relationship.)
+//   - the scan root also covers docs/t-sql/language-elements (COALESCE, NULLIF and their siblings
+//     live there, not under functions/), so the shared operator/predicate blocklist below (also
+//     forward-referenced) now applies to T-SQL too: that directory mixes in operator and
+//     control-flow pages (BETWEEN, CASE, IN, LIKE, ...) whose syntax blocks can render call-shaped.
 // ---------------------------------------------------------------------------
 
 /** All ```syntaxsql``` fenced blocks in a markdown string. */
@@ -103,6 +123,10 @@ function parseTSqlSig(block) {
 	let inner = line.slice(start + 1, end).trim();
 	if (inner === "") return { name, params: [], variadic: false };
 
+	// Strip a leading "[ ALL | DISTINCT ]" / "[ ALL ]" calling-convention modifier (aggregate-function
+	// pages) before parsing: not a param. See the section header for what this does and doesn't reach.
+	inner = inner.replace(DISTINCT_ALL_GROUP_RE, "").trim();
+
 	// A `[ , …n ]` / trailing `...` marks the last param as repeating.
 	let variadic = false;
 	if (/\[\s*,?\s*\.\.\.\s*n?\s*\]|\.\.\.\s*n?\s*$|,\s*\.\.\./.test(inner)) variadic = true;
@@ -143,8 +167,7 @@ function parseTSqlSig(block) {
 	// from them). A doc shape with an optional before a required param cannot be represented, so it
 	// is skipped; flattening it to all-required (the pre-2026-07-14 behavior) asserted a wrong arity.
 	const firstOptional = params.findIndex((p) => p.optional);
-	if (firstOptional !== -1 && params.slice(firstOptional).some((p) => !p.optional))
-		return { skip: "optional-group" };
+	if (firstOptional !== -1 && params.slice(firstOptional).some((p) => !p.optional)) return { skip: "optional-group" };
 	return { name, params, variadic };
 }
 
@@ -156,84 +179,117 @@ function* mdFiles(dir) {
 	}
 }
 
+function namesArePrefixTSql(shorter, longer) {
+	if (shorter.length > longer.length) return false;
+	return shorter.every((p, i) => p.name === longer[i].name);
+}
+
 /** T-SQL extractor. Returns null when the source tree is absent. */
 function harvestTSql() {
-	const src = corpusPath("vendor/sql-docs/docs/t-sql/functions");
-	if (!existsSync(src)) return null;
+	const functionsDir = corpusPath("vendor/sql-docs/docs/t-sql/functions");
+	if (!existsSync(functionsDir)) return null;
+	const languageElementsDir = corpusPath("vendor/sql-docs/docs/t-sql/language-elements");
+	const dirs = existsSync(languageElementsDir) ? [functionsDir, languageElementsDir] : [functionsDir];
+
 	const signatures = {};
 	const provenance = {};
 	const skips = { complex: 0, "optional-group": 0, "param-shape": 0 };
 	let conflicts = 0;
 	let pagesNoSig = 0;
 
-	for (const f of mdFiles(src)) {
-		// Per page (= one function's reference), collect each name's candidate signatures. A page that
-		// documents overloads with DIFFERENT parameter lists is a conflict → skip that name.
-		const cands = new Map();
-		for (const block of syntaxsqlBlocks(readFileSync(f, "utf8"))) {
-			const r = parseTSqlSig(block);
-			if (!r) continue;
-			if (r.skip) {
-				skips[r.skip]++;
+	for (const dir of dirs) {
+		for (const f of mdFiles(dir)) {
+			// Per page (= one function's reference), collect each name's candidate signatures. A page that
+			// documents overloads with DIFFERENT parameter lists is a conflict → skip that name.
+			const cands = new Map();
+			for (const block of syntaxsqlBlocks(readFileSync(f, "utf8"))) {
+				const r = parseTSqlSig(block);
+				if (!r) continue;
+				if (r.skip) {
+					skips[r.skip]++;
+					continue;
+				}
+				const key = r.name.toLowerCase();
+				if (!cands.has(key)) cands.set(key, new Map());
+				const sig = { name: r.name, params: r.params, variadic: r.variadic };
+				cands.get(key).set(JSON.stringify([r.params, r.variadic]), sig);
+			}
+			if (cands.size === 0) {
+				pagesNoSig++;
 				continue;
 			}
-			const key = r.name.toLowerCase();
-			if (!cands.has(key)) cands.set(key, new Map());
-			const sig = { name: r.name, params: r.params, variadic: r.variadic };
-			cands.get(key).set(JSON.stringify([r.params, r.variadic]), sig);
-		}
-		if (cands.size === 0) {
-			pagesNoSig++;
-			continue;
-		}
-		for (const [key, variants] of cands) {
-			const sigs = [...variants.values()];
-			let sig = sigs[0];
-			if (sigs.length > 1) {
-				// Blocks that agree on the name sequence but disagree on which params are optional are
-				// per-product syntax variants of ONE form (SUBSTRING's length is required on SQL Server,
-				// optional on Fabric), not overloads: merge by OR-ing optionality, a param is omittable
-				// when ANY documented form omits it (the lax reading can miss a diagnostic, never fake
-				// one). Anything else stays a conflict.
-				const same = sigs.every(
-					(s) =>
-						s.variadic === sig.variadic &&
-						s.params.length === sig.params.length &&
-						s.params.every((p, i) => p.name === sig.params[i].name),
-				);
-				if (!same) {
-					conflicts++;
-					continue;
+			for (const [key, variants] of cands) {
+				const sigs = [...variants.values()];
+				let sig = sigs[0];
+				if (sigs.length > 1) {
+					// Blocks that agree on the name sequence but disagree on which params are optional are
+					// per-product syntax variants of ONE form (SUBSTRING's length is required on SQL Server,
+					// optional on Fabric), not overloads: merge by OR-ing optionality, a param is omittable
+					// when ANY documented form omits it (the lax reading can miss a diagnostic, never fake
+					// one).
+					const same = sigs.every(
+						(s) =>
+							s.variadic === sig.variadic &&
+							s.params.length === sig.params.length &&
+							s.params.every((p, i) => p.name === sig.params[i].name),
+					);
+					if (same) {
+						sig = {
+							name: sig.name,
+							params: sig.params.map((p, i) =>
+								sigs.some((s) => s.params[i].optional)
+									? { name: p.name, optional: true }
+									: { name: p.name },
+							),
+							variadic: sig.variadic,
+						};
+						// The OR can leave an optional ahead of a required param, which ParamSig cannot represent.
+						const firstOpt = sig.params.findIndex((p) => p.optional);
+						if (firstOpt !== -1 && sig.params.slice(firstOpt).some((p) => !p.optional)) {
+							conflicts++;
+							continue;
+						}
+					} else {
+						// Not per-product variants of one shape: fall back to the shared MERGE RULE. If every
+						// shorter param list is a name-for-name prefix of the single longest, merge to the
+						// longest with the tail extras marked optional (mirrors the Databricks/Snowflake/DuckDB
+						// extractors). Recovers LTRIM/RTRIM's pre-2022 1-arg vs 2022+ 2-arg forms. Anything
+						// else (two lists tied for longest, or a shorter list that isn't a clean prefix)
+						// stays a conflict.
+						const maxLen = Math.max(...sigs.map((s) => s.params.length));
+						const maximal = sigs.filter((s) => s.params.length === maxLen);
+						if (maximal.length > 1 || !sigs.every((s) => namesArePrefixTSql(s.params, maximal[0].params))) {
+							conflicts++;
+							continue;
+						}
+						const longest = maximal[0];
+						const minLen = Math.min(...sigs.map((s) => s.params.length));
+						sig = {
+							name: longest.name,
+							params: longest.params.map((p, i) => (i >= minLen ? { name: p.name, optional: true } : p)),
+							variadic: longest.variadic,
+						};
+					}
 				}
-				sig = {
-					name: sig.name,
-					params: sig.params.map((p, i) =>
-						sigs.some((s) => s.params[i].optional) ? { name: p.name, optional: true } : { name: p.name },
-					),
-					variadic: sig.variadic,
-				};
-				// The OR can leave an optional ahead of a required param, which ParamSig cannot represent.
-				const firstOpt = sig.params.findIndex((p) => p.optional);
-				if (firstOpt !== -1 && sig.params.slice(firstOpt).some((p) => !p.optional)) {
-					conflicts++;
-					continue;
-				}
+				signatures[key] = sig;
+				provenance[key] = relative(corpusPath("vendor/sql-docs/docs/t-sql"), f).split("\\").join("/");
 			}
-			signatures[key] = sig;
-			provenance[key] = relative(corpusPath("vendor/sql-docs/docs/t-sql"), f).split("\\").join("/");
 		}
 	}
+
+	dropOperatorNames(signatures, provenance, skips);
+
 	return {
 		signatures,
 		provenance,
-		source: "MicrosoftDocs/sql-docs  docs/t-sql/functions/**/*.md (```syntaxsql``` blocks)",
+		source: "MicrosoftDocs/sql-docs  docs/t-sql/{functions,language-elements}/**/*.md (```syntaxsql``` blocks)",
 		stats: { emitted: Object.keys(signatures).length, conflicts, pagesNoSig, skips },
 	};
 }
 
 // ---------------------------------------------------------------------------
 // Operator blocklist — shared by every extractor whose source tree mixes function pages with
-// operator/predicate pages (all but T-SQL, whose source tree is functions-only markdown).
+// operator/predicate pages (T-SQL included, since its language-elements scan root does too).
 // ---------------------------------------------------------------------------
 
 // Operator/predicate keywords whose doc pages can render function-call-shaped syntax (the databricks
@@ -1172,13 +1228,33 @@ function harvestDuckdb() {
 
 // ---------------------------------------------------------------------------
 // PostgreSQL — the PostgreSQL 18 DocBook SGML function reference, vendor/postgres-sgml/func.sgml,
-// `<para role="func_signature">` blocks.
+// `<para role="func_signature">` blocks, plus (widening 4 below) `<synopsis>` blocks.
 //
 // Param emission: a `<parameter>name</parameter>` immediately followed by a `<type>t</type>` emits
 // `{ name, type: t }`. A BARE `<type>t</type>` with no parameter name (the common case for PostgreSQL's
 // polymorphic math/string functions, which document the argument only by its type) emits `{ name: t }`
 // with NO type field — the rendered docs show the type standing in for the argument name, and carrying
 // it as both name and type would render "text: text" in signature help.
+//
+// Four widenings beyond the plain flat-list model (shape-anchored; everything else stays exactly as
+// strict as the NEVER-WRONG CONTRACT requires):
+//   - `<replaceable>t</replaceable>` is accepted everywhere `<type>t</type>` is: bare (a polymorphic
+//     placeholder standing in for the name, no type field, recovers ABS) or after a
+//     `<parameter>name</parameter>` (recovers MOD's own `y`/`x` param names).
+//   - the trailing-optional peel is now a proper recursive descent over nested `<optional>` tags
+//     (`parseOptionalChainPostgres` below) instead of a single non-greedy regex pass, so a chain that
+//     nests several levels deep parses one level at a time. Recovers MAKE_INTERVAL's 7-deep
+//     `years [, months [, weeks [, ... secs ] ] ] ] ] ]` chain (all seven optional).
+//   - inside that recursive descent, a bare `...`/`&hellip;` fully wraps ONE further nesting level
+//     without a `trailingParams`-tracked prior sibling required first (the old single-pass loop
+//     demanded one, which is why CONCAT/CONCAT_WS/FORMAT's "next value, then optionally an ellipsis"
+//     idiom used to fail as one unrecognized blob). Recovers CONCAT/CONCAT_WS/FORMAT's variadic tail.
+//   - the outer scan also matches `<synopsis>...</synopsis>` blocks (the same `processParaPostgres`
+//     parse, just fed a different wrapper tag), recovering COALESCE/NULLIF/GREATEST/LEAST: documented
+//     that way instead of in a `<para role="func_signature">`, so the func_signature scan never even
+//     sees them. Only names the func_signature scan has NO candidates for at all are filled from
+//     `<synopsis>`, so it can only add coverage, never re-litigate a name the primary scan already
+//     resolved (conflict or not).
 // ---------------------------------------------------------------------------
 
 const POSTGRES_ENTITY_MAP = {
@@ -1213,13 +1289,78 @@ function paramShapePostgres(text) {
 	if ((m = /^<parameter>([^<]*)<\/parameter>$/.exec(t))) {
 		return { name: decodeEntitiesPostgres(m[1].trim()) };
 	}
+	// `<replaceable>` plays the same two roles `<type>` does above (ABS documents its arg as a bare
+	// `<replaceable>numeric_type</replaceable>`; MOD names each param with `<parameter>` then types it
+	// with `<replaceable>numeric_type</replaceable>` instead of `<type>`).
+	if ((m = /^<parameter>([^<]*)<\/parameter>\s*<replaceable>([^<]*)<\/replaceable>$/.exec(t))) {
+		return { name: decodeEntitiesPostgres(m[1].trim()), type: decodeEntitiesPostgres(m[2].trim()) };
+	}
+	if ((m = /^<replaceable>([^<]*)<\/replaceable>$/.exec(t))) {
+		return { name: decodeEntitiesPostgres(m[1].trim()) }; // bare placeholder stands in for the name
+	}
 	return null;
 }
 
 const POSTGRES_FN_NAME_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
+const OPTIONAL_OPEN = "<optional>";
+const OPTIONAL_CLOSE = "</optional>";
 
-/** Parses one func_signature para's raw SGML body into `{ name, params, variadic, sourceFile }`, or
- *  records a skip reason and returns null. */
+/** Finds the index (within `s`) of the "</optional>" that closes the "<optional>" opening at
+ *  `openIdx`, honoring nesting (SGML's `<optional>` tag pairs play the depth-matching role the other
+ *  dialects' extractors depth-match on literal "[" "]" brackets). -1 when unbalanced. */
+function matchOptionalClosePostgres(s, openIdx) {
+	let i = openIdx + OPTIONAL_OPEN.length;
+	let depth = 1;
+	while (i < s.length) {
+		if (s.startsWith(OPTIONAL_OPEN, i)) {
+			depth++;
+			i += OPTIONAL_OPEN.length;
+		} else if (s.startsWith(OPTIONAL_CLOSE, i)) {
+			depth--;
+			if (depth === 0) return i;
+			i += OPTIONAL_CLOSE.length;
+		} else {
+			i++;
+		}
+	}
+	return -1;
+}
+
+/** Recursively parses ONE "<optional>[,] BODY</optional>" group. `text` must run from that group's
+ *  own opening tag to its own matching closing tag, with nothing outside either. BODY is either a
+ *  bare "..."/"&hellip;" variadic-repeat marker with no further nesting (CONCAT's innermost level),
+ *  or one paramShapePostgres()-shaped param optionally followed by a further-nested `<optional>`
+ *  group continuing the chain (REGEXP_REPLACE's single flat level, MAKE_INTERVAL's 7-deep chain, and
+ *  CONCAT/FORMAT's "next value, then an ellipsis" 2-deep chain all share this one shape). Returns
+ *  `{ ok:true, params, variadic }` (params already marked `optional: true`) or `{ ok:false, reason }`. */
+function parseOptionalChainPostgres(text) {
+	const s = text.trim();
+	const m = /^<optional>\s*(,\s*)?/.exec(s);
+	if (!m || !s.endsWith(OPTIONAL_CLOSE)) return { ok: false, reason: "complex:trailing-optional-unrecognized-shape" };
+	const body = s.slice(m[0].length, s.length - OPTIONAL_CLOSE.length);
+
+	const nestedOpenIdx = body.indexOf(OPTIONAL_OPEN);
+	const headText = (nestedOpenIdx === -1 ? body : body.slice(0, nestedOpenIdx)).trim();
+
+	if (headText === "..." || headText === "&hellip;") {
+		if (nestedOpenIdx !== -1) return { ok: false, reason: "complex:trailing-optional-unrecognized-shape" };
+		return { ok: true, params: [], variadic: true };
+	}
+	const shape = paramShapePostgres(headText);
+	if (!shape) return { ok: false, reason: "complex:trailing-optional-unrecognized-shape" };
+	const param = { name: shape.name, ...(shape.type !== undefined ? { type: shape.type } : {}), optional: true };
+	if (nestedOpenIdx === -1) return { ok: true, params: [param], variadic: !!shape.variadic };
+
+	const closeIdx = matchOptionalClosePostgres(body, nestedOpenIdx);
+	if (closeIdx === -1 || body.slice(closeIdx + OPTIONAL_CLOSE.length).trim() !== "")
+		return { ok: false, reason: "complex:trailing-optional-unrecognized-shape" };
+	const nested = parseOptionalChainPostgres(body.slice(nestedOpenIdx, closeIdx + OPTIONAL_CLOSE.length));
+	if (!nested.ok) return nested;
+	return { ok: true, params: [param, ...nested.params], variadic: !!shape.variadic || nested.variadic };
+}
+
+/** Parses one func_signature (or synopsis) para's raw SGML body into `{ name, params, variadic,
+ *  sourceFile }`, or records a skip reason and returns null. */
 function processParaPostgres(body, sourceFile, stats) {
 	const fnTags = [...body.matchAll(/<function>([^<]*)<\/function>/g)];
 	if (fnTags.length === 0) {
@@ -1274,31 +1415,26 @@ function processParaPostgres(body, sourceFile, stats) {
 
 	let rest = tail.slice(parenIdx + 1, endIdx);
 
-	// Peel trailing "<optional> [,] simple-param </optional>" groups off the tail, one at a time. Per
-	// the contract, only TAIL optional groups unwrap; anything else is complex.
-	const trailingParams = [];
+	// Peel the trailing "<optional>...</optional>" chain off the tail, recursively (see
+	// parseOptionalChainPostgres for the nested shapes this now reaches). Only a chain that runs
+	// cleanly to the very end of `rest` unwraps. Anything else (no trailing optional group at all, or
+	// one that doesn't close out the string, e.g. to_tsvector's leading config param) leaves `rest`
+	// untouched for the interior-optional check right below.
+	let trailingParams = [];
 	let variadic = false;
-	for (;;) {
-		const m = /<optional>\s*(,\s*)?([\s\S]*?)<\/optional>\s*$/.exec(rest);
-		if (!m) break;
-		const inner = m[2].trim();
-		if (inner === "..." || inner === "&hellip;") {
-			if (trailingParams.length === 0) {
-				stats.skip("complex:ellipsis-no-prior-param");
+	const firstOptionalIdx = rest.indexOf(OPTIONAL_OPEN);
+	if (firstOptionalIdx !== -1) {
+		const closeIdx = matchOptionalClosePostgres(rest, firstOptionalIdx);
+		if (closeIdx !== -1 && rest.slice(closeIdx + OPTIONAL_CLOSE.length).trim() === "") {
+			const chain = parseOptionalChainPostgres(rest.slice(firstOptionalIdx));
+			if (!chain.ok) {
+				stats.skip(chain.reason);
 				return null;
 			}
-			variadic = true;
-			rest = rest.slice(0, m.index);
-			continue;
+			trailingParams = chain.params;
+			variadic = chain.variadic;
+			rest = rest.slice(0, firstOptionalIdx);
 		}
-		const shape = paramShapePostgres(inner);
-		if (!shape) {
-			stats.skip("complex:trailing-optional-unrecognized-shape");
-			return null;
-		}
-		if (shape.variadic) variadic = true;
-		trailingParams.unshift({ ...shape, optional: true });
-		rest = rest.slice(0, m.index);
 	}
 
 	if (/<\/?optional>/.test(rest)) {
@@ -1400,6 +1536,10 @@ function harvestPostgres() {
 		"non-identifier-name": 0,
 		"complex:junk-before-paren": 0,
 		"complex:unbalanced-parens": 0,
+		// Never incremented since the trailing-optional peel became recursive (widening 6): a bare
+		// ellipsis with no prior sibling now resolves through parseOptionalChainPostgres's own
+		// "complex:trailing-optional-unrecognized-shape" instead. Kept (rather than deleted) so this
+		// stays a visible, honest zero instead of a silently vanished counter.
 		"complex:ellipsis-no-prior-param": 0,
 		"complex:trailing-optional-unrecognized-shape": 0,
 		"complex:leading-or-interior-optional": 0,
@@ -1426,7 +1566,28 @@ function harvestPostgres() {
 		}
 	}
 
-	const { emitted, conflicts } = aggregatePostgres(byName);
+	// Widening 4: also scan <synopsis> blocks, the same parse, just a different wrapper tag (see the
+	// section header). func.sgml's <synopsis> blocks are mostly non-function syntax diagrams (operator
+	// forms, JSON_TABLE's clause grammar, …), which fail this parse's own rules for the same reasons
+	// any other unrecognized shape does (no widening beyond "try the existing rules" was added for
+	// this scan). A name is only filled in from here when the func_signature scan above found it NO
+	// candidates at all, so this can only add coverage, never re-litigate a name already resolved
+	// (conflict or not) by the primary scan.
+	const synopsisByName = new Map();
+	const synopsisRe = /<synopsis>([\s\S]*?)<\/synopsis>/g;
+	while ((m = synopsisRe.exec(txt))) {
+		const sig = processParaPostgres(m[1], "func.sgml", stats);
+		if (sig && !byName.has(sig.name)) {
+			if (!synopsisByName.has(sig.name)) synopsisByName.set(sig.name, []);
+			synopsisByName.get(sig.name).push(sig);
+		}
+	}
+
+	const { emitted, conflicts: fnSigConflicts } = aggregatePostgres(byName);
+	const { emitted: synopsisEmitted, conflicts: synopsisConflicts } = aggregatePostgres(synopsisByName);
+	for (const [name, sig] of synopsisEmitted) if (!emitted.has(name)) emitted.set(name, sig);
+	const conflicts = fnSigConflicts + synopsisConflicts;
+
 	const signatures = {};
 	const provenance = {};
 	for (const [name, sig] of emitted) {
@@ -1440,7 +1601,7 @@ function harvestPostgres() {
 	return {
 		signatures,
 		provenance,
-		source: 'postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` blocks)',
+		source: 'postgresql.org PostgreSQL 18 DocBook SGML  vendor/postgres-sgml/func.sgml (`<para role="func_signature">` and `<synopsis>` blocks)',
 		stats: { emitted: Object.keys(signatures).length, conflicts, parasFound, skips: skipCounts },
 	};
 }
@@ -1465,10 +1626,13 @@ function harvestPostgres() {
 //     own trailing comma segment (features(double, ...)). A non-trailing ellipsis
 //     (concat(string1, ..., stringN): stringN is a prose placeholder, not a real param) is skipped
 //     as variadic-not-trailing, never guessed.
+//   - the fence-kind alternation also matches `:::{js:function}` (one occurrence in the whole corpus,
+//     datetime.md's DATE_PARSE), which in turn uses a literal U+2192 "→" return arrow instead of the
+//     usual ASCII "->" (accepted as an equivalent trailing-arrow marker below, never read past).
 // ---------------------------------------------------------------------------
 
 // One file (datasketches.md) has a stray space between the colons and the brace; same directive.
-const TRINO_FENCE_RE = /^:::+\s*\{(function|data)\}\s+(.+?)\s*$/;
+const TRINO_FENCE_RE = /^:::+\s*\{(function|data|js:function)\}\s+(.+?)\s*$/;
 const TRINO_CLAUSE_KEYWORD_RE = /\b(FROM|AS|OVER|USING|ORDER|WITHIN|IGNORE|RESPECT|BY|WHEN|THEN|ELSE|END|PARTITION)\b/i;
 const TRINO_IDENT_RE = /^[A-Za-z_][A-Za-z0-9_]*$/;
 const TRINO_TYPED_RE = /^([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([A-Za-z_][A-Za-z0-9_]*)$/;
@@ -1540,7 +1704,8 @@ function parseSignatureTrino(argText) {
 	if (closeIdx === -1) return { skip: "unbalanced" };
 
 	const trailing = argText.slice(closeIdx + 1).trim();
-	if (trailing !== "" && !trailing.startsWith("->")) return { skip: "trailing-content" };
+	// "→" (U+2192) is the one js:function directive's own return-arrow spelling; never read past either.
+	if (trailing !== "" && !trailing.startsWith("->") && !trailing.startsWith("→")) return { skip: "trailing-content" };
 
 	const inner = argText.slice(openIdx + 1, closeIdx).trim();
 	if (inner === "") return { name, params: [], variadic: false };

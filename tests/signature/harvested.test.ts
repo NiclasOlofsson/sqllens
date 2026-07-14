@@ -18,11 +18,12 @@ import {
 const end = (s: string): number => s.length;
 
 describe("harvested signatures — T-SQL yield floor (ratchet)", () => {
-	it("harvests at least 183 T-SQL function signatures from the docs syntax blocks", () => {
-		// Pinned at the achieved yield (measured 2026-07-14, after the trailing-whitespace fence fix
-		// recovered 32 pages). A grammar/docs refresh may only raise this — a drop means the harvester
-		// regressed and must be investigated, not lowered.
-		expect(Object.keys(HARVESTED_SIGNATURES.tsql).length).toBeGreaterThanOrEqual(183);
+	it("harvests at least 199 T-SQL function signatures from the docs syntax blocks", () => {
+		// Pinned at the achieved yield (measured 2026-07-14, after: the ltrim/rtrim prefix-merge, the
+		// leading ALL|DISTINCT strip, and widening the scan root to also cover language-elements).
+		// A grammar/docs refresh may only raise this. A drop means the harvester regressed and must be
+		// investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.tsql).length).toBeGreaterThanOrEqual(199);
 	});
 });
 
@@ -35,10 +36,12 @@ describe("harvested signatures — DuckDB yield floor (ratchet)", () => {
 });
 
 describe("harvested signatures — PostgreSQL yield floor (ratchet)", () => {
-	it("harvests at least 456 PostgreSQL function signatures from the func.sgml doc", () => {
-		// Pinned at the achieved yield (measured 2026-07-14). A docs refresh may only raise this — a
-		// drop means the harvester regressed and must be investigated, not lowered.
-		expect(Object.keys(HARVESTED_SIGNATURES.postgres).length).toBeGreaterThanOrEqual(456);
+	it("harvests at least 508 PostgreSQL function signatures from the func.sgml doc", () => {
+		// Pinned at the achieved yield (measured 2026-07-14, after: accepting <replaceable> as a type
+		// stand-in, the recursive optional-chain peel, and also scanning <synopsis> blocks). A docs
+		// refresh may only raise this. A drop means the harvester regressed and must be investigated,
+		// not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.postgres).length).toBeGreaterThanOrEqual(508);
 	});
 });
 
@@ -59,10 +62,11 @@ describe("harvested signatures: Snowflake yield floor (ratchet)", () => {
 });
 
 describe("harvested signatures: Trino yield floor (ratchet)", () => {
-	it("harvests at least 363 Trino function signatures from the MyST function directives", () => {
-		// Pinned at the achieved yield (measured 2026-07-14, trino tag 482). A docs refresh may only
-		// raise this: a drop means the harvester regressed and must be investigated, not lowered.
-		expect(Object.keys(HARVESTED_SIGNATURES.trino).length).toBeGreaterThanOrEqual(363);
+	it("harvests at least 364 Trino function signatures from the MyST function directives", () => {
+		// Pinned at the achieved yield (measured 2026-07-14, trino tag 482, after also matching the
+		// `:::{js:function}` fence spelling). A docs refresh may only raise this: a drop means the
+		// harvester regressed and must be investigated, not lowered.
+		expect(Object.keys(HARVESTED_SIGNATURES.trino).length).toBeGreaterThanOrEqual(364);
 	});
 });
 
@@ -109,6 +113,13 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		expect(sig.params.at(-1)!.name).toBe("argumentN");
 	});
 
+	it("LTRIM(character_expression, characters?): the prefix-merge across pre-2022/2022+ page variants", () => {
+		// functions/ltrim-transact-sql.md documents two blocks of different LENGTH (pre-2022 1-arg,
+		// 2022+ 2-arg): the prefix-merge widening merges them to the longest with the tail optional.
+		const sig = HARVESTED_SIGNATURES.tsql.ltrim;
+		expect(sig.params).toEqual([{ name: "character_expression" }, { name: "characters", optional: true }]);
+	});
+
 	it("duckdb substring(string, start, length) — length trails as optional", () => {
 		// sql/functions/text.md: `substring(string, start, length?)`.
 		const sig = HARVESTED_SIGNATURES.duckdb.substring;
@@ -120,6 +131,30 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		// emitted param is named "text" and carries no separate type (never "text: text").
 		const sig = HARVESTED_SIGNATURES.postgres.char_length;
 		expect(sig.params).toEqual([{ name: "text" }]);
+	});
+
+	it("postgres make_interval: all 7 params optional, via the recursive nested-<optional> peel", () => {
+		// func.sgml wraps even the FIRST param (years) in the outer <optional> of a 7-deep chain
+		// (years [, months [, weeks [, days [, hours [, mins [, secs ]]]]]]); only a recursive descent
+		// through the nesting (not a single non-greedy regex pass) unwraps every level.
+		const sig = HARVESTED_SIGNATURES.postgres.make_interval;
+		expect(sig.params).toEqual([
+			{ name: "years", type: "int", optional: true },
+			{ name: "months", type: "int", optional: true },
+			{ name: "weeks", type: "int", optional: true },
+			{ name: "days", type: "int", optional: true },
+			{ name: "hours", type: "int", optional: true },
+			{ name: "mins", type: "int", optional: true },
+			{ name: "secs", type: "double precision", optional: true },
+		]);
+	});
+
+	it("postgres coalesce(value, ...): variadic, from a <synopsis> block the func_signature scan never sees", () => {
+		// func.sgml documents COALESCE only as `<synopsis><function>COALESCE</function>(<replaceable>value</replaceable>
+		// <optional>, ...</optional>)</synopsis>`, not inside a <para role="func_signature">.
+		const sig = HARVESTED_SIGNATURES.postgres.coalesce;
+		expect(sig.params).toEqual([{ name: "value" }]);
+		expect(sig.variadic).toBe(true);
 	});
 
 	it("databricks date_add(startDate, numDays): 2 params, exact names", () => {
@@ -152,6 +187,14 @@ describe("harvested signatures — doc-verified spot checks", () => {
 		// datetime.md: `:::{function} date_add(unit, value, timestamp) -> [same as input]`.
 		const sig = HARVESTED_SIGNATURES.trino.date_add;
 		expect(sig.params).toEqual([{ name: "unit" }, { name: "value" }, { name: "timestamp" }]);
+	});
+
+	it("trino date_parse(string, format): the lone :::{js:function} fence spelling", () => {
+		// datetime.md:437 is `:::{js:function} date_parse(string, format) → timestamp(3)`, the only
+		// js:function-fenced directive in the corpus, and its return arrow is a literal "→" (U+2192)
+		// rather than the usual ASCII "->".
+		const sig = HARVESTED_SIGNATURES.trino.date_parse;
+		expect(sig.params).toEqual([{ name: "string" }, { name: "format" }]);
 	});
 
 	it("trino ST_Point(lon: double, lat: double): typed colon-pair params, mixed-case display name", () => {
