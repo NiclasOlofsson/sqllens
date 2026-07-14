@@ -134,7 +134,8 @@ export function applyTemplateTags(ast: QueryExpr, tags: TagNode[], text: string)
 	try {
 		// config is a no-output tag (whitespace-filled) — it can never yield a table
 		// source, so it stays out of the correlation set even though ExprTag admits it.
-		const relTags = tags.filter((t): t is RelationTag => t.kind === "call" || t.kind === "other");
+		// An incomplete/mid-typing call (`{{ ref('cu`) is NOT a resolved source, so skip it.
+		const relTags = tags.filter((t): t is RelationTag => (t.kind === "call" && !t.incomplete) || t.kind === "other");
 		if (relTags.length === 0) return { ast, byNode, byTag };
 		const ctx: TagContext = { relTags, sets: resolveSets(tags, text), text, byNode, byTag };
 		const next = transformQuery(ast, ctx);

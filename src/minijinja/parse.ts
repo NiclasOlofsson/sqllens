@@ -321,7 +321,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 		}
 
 		const { tree, diagnostics } = parseSliceTag(slice);
-		const tag = tagNodesOf(seg, tree);
+		const tag = tagNodesOf(seg, tree, slice);
 		if (tag) {
 			tags.push(tag);
 			segToTag.set(seg, tag);

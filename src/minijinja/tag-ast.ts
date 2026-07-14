@@ -28,7 +28,7 @@
 // diagnostic, never a throw.
 // ---------------------------------------------------------------------------
 
-import { ParserRuleContext, TerminalNode, type ParseTree, type Token as AntlrToken } from "antlr4ng";
+import { ParserRuleContext, TerminalNode, Token as AntlrToken, type ParseTree } from "antlr4ng";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import {
 	Arg_listContext,
@@ -110,6 +110,12 @@ export type TagNode =
 			 * uniformly for control AND macro nodes.
 			 */
 			calls: MacroCall[];
+			/** Present (true) when the call is UNCLOSED / mid-typing (`{{ ref('cu`) and was recovered
+			 *  from the raw tokens because the parser could not build a complete call node. Its args are
+			 *  best-effort (a partial string arg has `value: null`); a consumer knows not to treat it as
+			 *  a confirmed reference, and completion uses it to place the caret's arg slot. Absent on a
+			 *  normally-parsed (closed) call. */
+			incomplete?: true;
 	  }
 	| {
 			kind: "control";
@@ -468,6 +474,83 @@ function macroNode(call: CallExprContext, callee: Callee, tagSpan: PartSpan, tre
 	};
 }
 
+/** An UNCLOSED / mid-typing call recovered from the raw tokens when the parser couldn't build a
+ *  complete call node (`{{ ref('cu`, `{{ source('a',`). Scans the tag's significant tokens for an
+ *  `id (` shape (optionally `pkg.id (`) and splits the interior into args by top-level commas.
+ *  Returns undefined when there's no `id (` (a bare name / non-call expr stays "other"). Args are
+ *  best-effort: a single complete STRING is value + quote-excluded span; a partial or computed arg is
+ *  `value: null` + its span (never fabricated). The node is flagged `incomplete: true`. */
+function incompleteCall(tokens: readonly AntlrToken[], tagSpan: PartSpan): TagNode | undefined {
+	const P = MinijinjaParser;
+	const sig = tokens.filter(
+		(t) =>
+			t.channel === AntlrToken.DEFAULT_CHANNEL &&
+			t.type !== AntlrToken.EOF &&
+			t.type !== P.EXPR_OPEN &&
+			t.type !== P.EXPR_CLOSE &&
+			t.type !== P.STMT_OPEN,
+	);
+	let i = 0;
+	if (sig[i]?.type !== P.ID) return undefined;
+	let nameTok = sig[i]!;
+	i++;
+	let packageTok: AntlrToken | undefined;
+	if (sig[i]?.type === P.DOT && sig[i + 1]?.type === P.ID) {
+		packageTok = nameTok;
+		i += 1; // skip DOT
+		nameTok = sig[i]!;
+		i++;
+	}
+	if (sig[i]?.type !== P.LPAREN) return undefined; // not a call — leave it as "other"
+	const lparen = sig[i]!;
+	i++;
+	const args: TagArg[] = [];
+	let depth = 0;
+	let cur: AntlrToken[] = [];
+	for (; i < sig.length; i++) {
+		const t = sig[i]!;
+		if (t.type === P.LPAREN) {
+			depth++;
+			cur.push(t);
+		} else if (t.type === P.RPAREN) {
+			if (depth === 0) break;
+			depth--;
+			cur.push(t);
+		} else if (t.type === P.COMMA && depth === 0) {
+			if (cur.length > 0) args.push(argFromTokens(cur));
+			cur = [];
+		} else {
+			cur.push(t);
+		}
+	}
+	if (cur.length > 0) args.push(argFromTokens(cur));
+	const last = sig[sig.length - 1]!;
+	return {
+		kind: "call",
+		name: nameTok.text ?? "",
+		nameSpan: spanFromTokens(nameTok, nameTok),
+		...(packageTok
+			? { packageName: packageTok.text ?? "", packageSpan: spanFromTokens(packageTok, packageTok) }
+			: {}),
+		callSpan: spanFromTokens(packageTok ?? nameTok, last),
+		tagSpan,
+		argsSpan: spanFromTokens(lparen, last),
+		args,
+		calls: [],
+		incomplete: true,
+	};
+}
+
+/** One arg of an incomplete call from its raw tokens: a lone complete STRING → value + quote-excluded
+ *  span; anything else (a partial/unterminated string, a computed expression) → value null + span. */
+function argFromTokens(toks: AntlrToken[]): TagArg {
+	const span = spanFromTokens(toks[0]!, toks[toks.length - 1]!);
+	if (toks.length === 1 && toks[0]!.type === MinijinjaParser.STRING) {
+		return { value: stringValue(toks[0]!), span, valueSpan: stringContentSpan(toks[0]!) };
+	}
+	return { value: null, span };
+}
+
 /** Keywords whose stmt declares a name we surface (set target / macro name / for loop var). */
 const NAME_DECLARING = new Set(["set", "macro", "for"]);
 
@@ -515,7 +598,11 @@ function controlNode(tree: ParserRuleContext, tagSpan: PartSpan): TagNode {
  * offset/anchor composition anywhere in this file). Returns undefined only for an
  * empty/degenerate tree (never throws).
  */
-export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | undefined {
+export function tagNodesOf(
+	seg: TagSegment,
+	tree: ParserRuleContext,
+	tokens: readonly AntlrToken[] = [],
+): TagNode | undefined {
 	// tagSpan is the whole tag including delimiters — the segment bounds are exact
 	// (they cover `{{ … }}` / `{% … %}` / `{# … #}` and any `-` whitespace control);
 	// its line/column come from the tree's own start token (the tag's OPEN token).
@@ -549,7 +636,11 @@ export function tagNodesOf(seg: TagSegment, tree: ParserRuleContext): TagNode | 
 
 	// Expr tag: classify by the leading call.
 	const call = findTopCall(tree);
-	if (!call) return { kind: "other", tagSpan };
+	if (!call) {
+		// No complete call node: recover an UNCLOSED/mid-typing call from the raw tokens
+		// (`{{ ref('cu`) so completion can place the caret's slot. A bare non-call expr stays "other".
+		return incompleteCall(tokens, tagSpan) ?? { kind: "other", tagSpan };
+	}
 	const callee = decomposeCallee(call);
 	if (!callee) return { kind: "other", tagSpan };
 
