@@ -617,6 +617,10 @@ export interface TableSource {
 	/** Present when this source was written as a minijinja template tag in a FROM/JOIN slot; attached
 	 *  post-lower by the jinja front end (src/minijinja/apply-tags.ts). See TemplateSourceInfo. */
 	template?: TemplateSourceInfo;
+	/** True when the LIBRARY built this node rather than lowering it from user syntax (a graph
+	 *  element variable exposed as a relation). Catalog existence semantics don't apply: a closed
+	 *  world's unknown-table never fires for a synthesized source. */
+	synthesized?: true;
 	cst: ParserRuleContext;
 }
 

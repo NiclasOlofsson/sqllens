@@ -13,6 +13,7 @@ import {
 	pivotSourceOutputs,
 	sourceOutputs,
 	splitColumnRefInScope,
+	sourcesMatchingQualifier,
 	type ColumnResolution,
 	type ResolvedSource,
 	type Scope,
@@ -54,18 +55,27 @@ function resolveParts(
 	clause: ColumnRef["clause"] | undefined,
 	schema: SchemaProvider | undefined,
 ): ColumnResolution {
-	const split = splitColumnRefInScope(scope, parts);
-
-	// Qualified: bind to the nearest enclosing scope that defines the qualifier source.
-	if (split.qualifier !== undefined) {
+	// Qualified (issue #38): longest-qualifier-first within each scope, nearest scope first, with
+	// the leading parts VALIDATED against the source relation's key (sourcesMatchingQualifier). A
+	// four-part `catalog.schema.table.column` consumes a three-part qualifier; `wrong.orders.col`
+	// matches nothing and falls through to the unqualified reading (then diagnosed, never bound).
+	if (parts.length > 1) {
+		const maxQualifier = Math.min(parts.length - 1, behaviorOf(scope).nameConfig.roles.length + 1);
 		for (let s: Scope | undefined = scope; s; s = s.parent) {
-			const source = s.sources.get(split.qualifier);
-			if (source) return { kind: "bound", source, column: split.column, fields: split.fields };
+			for (let qlen = maxQualifier; qlen >= 1; qlen--) {
+				const matches = sourcesMatchingQualifier(s, parts.slice(0, qlen));
+				if (matches.length === 1) {
+					return { kind: "bound", source: matches[0]!, column: parts[qlen]!, fields: parts.slice(qlen + 1) };
+				}
+				if (matches.length > 1) return { kind: "ambiguous", candidates: matches };
+			}
 		}
-		return { kind: "unresolved" }; // qualifier was visible a moment ago — defensive only
 	}
 
-	// Unqualified: resolve the column name against sources, walking enclosing scopes (correlation).
+	// Unqualified (or no qualifier matched): the first part is the column, the rest field navigation.
+	const split = { column: parts[0] ?? "", fields: parts.slice(1) };
+
+	// Resolve the column name against sources, walking enclosing scopes (correlation).
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
 		const r = resolveByName(s, split.column, split.fields, schema);
 		if (r.kind === "bound" || r.kind === "ambiguous") return r;
@@ -99,7 +109,9 @@ function resolveByName(
 	schema: SchemaProvider | undefined,
 ): ColumnResolution {
 	const name = behaviorOf(scope).fold(column);
-	const sources = [...scope.sources.values()];
+	// sourceList, not the map: colliding keys (joined FQN tables sharing a last part) hide a
+	// source from the map, and ambiguity detection must see every source (#38).
+	const sources = scope.sourceList.map((e) => e.source);
 	const colsOf = (src: ResolvedSource): string[] | "unknown" =>
 		schema
 			? (columnNamesOf(src, schema, undefined, scope.dialect) ?? "unknown")

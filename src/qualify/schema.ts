@@ -36,8 +36,22 @@ export type SchemaMapping = { [key: string]: SchemaMapping | SchemaLeaf };
 interface DialectIndex {
 	/** Folded full dotted path (e.g. "cat.sch.t") -> columns. */
 	byPath: Map<string, Column[]>;
-	/** Folded bare table name -> columns, as a fallback for partially-qualified references. */
+	/** Folded bare table name -> columns of the FIRST table with that name — the completion listing
+	 *  only (`tables()`); resolution never reads it (#38: the bare-name fallback silently served the
+	 *  wrong schema's table). */
 	byTable: Map<string, Column[]>;
+	/** Folded last part -> every declared table sharing it, with full folded path parts — the
+	 *  suffix-matching index: a partial qualification resolves iff exactly ONE declared path ends
+	 *  with the written parts, on part boundaries. */
+	byLast: Map<string, { parts: string[]; cols: Column[] }[]>;
+}
+
+/** Whether `path` ends with `suffix`, comparing whole parts (never string suffixes — `s.orders`
+ *  must not match `logs.orders`). */
+function endsWithParts(path: string[], suffix: string[]): boolean {
+	if (suffix.length > path.length) return false;
+	const off = path.length - suffix.length;
+	return suffix.every((p, i) => p === path[off + i]);
 }
 
 export class Schema implements SchemaProvider {
@@ -57,12 +71,31 @@ export class Schema implements SchemaProvider {
 	}
 
 	/** Columns for a table identified by its name parts, or undefined if unknown. `parts` are RAW
-	 *  (unfolded) — the fold for `dialect` happens here, once. */
+	 *  (unfolded) — the fold for `dialect` happens here, once. Resolution is exact-path first, then
+	 *  UNIQUE suffix match on part boundaries (#38): a partial qualification (`gold.orders` for
+	 *  declared `prod.gold.orders`) resolves; a nonexistent qualified path or an ambiguous bare
+	 *  name is a MISS (closed world: unknown table / ambiguity diagnosed by the caller via
+	 *  `tableCandidates`), never silently some same-named table from another schema. */
 	columnsFor(parts: string[], dialect?: string): Column[] | undefined {
+		const exact = this.matches(parts, dialect);
+		return exact.length === 1 ? exact[0]!.cols : undefined;
+	}
+
+	/** Every declared table whose full path ends with `parts` (folded, part-boundary suffix) — the
+	 *  candidates a reference COULD mean. Exactly one = resolvable; several = ambiguous (the caller
+	 *  diagnoses, naming them); none = unknown. Exact full-path hits return just that hit. */
+	tableCandidates(parts: string[], dialect?: string): string[][] {
+		return this.matches(parts, dialect).map((m) => m.parts);
+	}
+
+	private matches(parts: string[], dialect?: string): { parts: string[]; cols: Column[] }[] {
 		const idx = this.indexFor(dialect);
 		const fold = (p: string) => resolveBehavior(dialect).fold(p, "table");
-		const full = parts.map(fold).join(".");
-		return idx.byPath.get(full) ?? idx.byTable.get(fold(parts[parts.length - 1] ?? ""));
+		const fp = parts.map(fold);
+		const exact = idx.byPath.get(fp.join("."));
+		if (exact) return [{ parts: fp, cols: exact }];
+		const last = idx.byLast.get(fp[fp.length - 1] ?? "") ?? [];
+		return last.filter((c) => endsWithParts(c.parts, fp));
 	}
 
 	/** The bare names of every table in the catalog — the table-name candidate list for completion.
@@ -74,7 +107,7 @@ export class Schema implements SchemaProvider {
 	private indexFor(dialect: string | undefined): DialectIndex {
 		let idx = this.indexes.get(dialect);
 		if (!idx) {
-			idx = { byPath: new Map(), byTable: new Map() };
+			idx = { byPath: new Map(), byTable: new Map(), byLast: new Map() };
 			this.ingest(this.mapping, [], idx, dialect);
 			this.indexes.set(dialect, idx);
 		}
@@ -88,9 +121,13 @@ export class Schema implements SchemaProvider {
 		if (isTable) {
 			const cols: Column[] = entries.map(([name, leaf]) => toColumn(name, leaf as SchemaLeaf));
 			const fold = (p: string) => resolveBehavior(dialect).fold(p, "table");
-			idx.byPath.set(path.map(fold).join("."), cols);
-			const bare = fold(path[path.length - 1] ?? "");
+			const foldedPath = path.map(fold);
+			idx.byPath.set(foldedPath.join("."), cols);
+			const bare = foldedPath[foldedPath.length - 1] ?? "";
 			if (!idx.byTable.has(bare)) idx.byTable.set(bare, cols);
+			const bucket = idx.byLast.get(bare) ?? [];
+			bucket.push({ parts: foldedPath, cols });
+			idx.byLast.set(bare, bucket);
 			return;
 		}
 		for (const [name, child] of entries) {

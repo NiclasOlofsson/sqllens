@@ -31,6 +31,11 @@ export interface SchemaProvider {
 	/** Columns for a table identified by its RAW (unfolded) name parts, or undefined if unknown.
 	 *  Folding for `dialect` happens inside the implementation, once. */
 	columnsFor(parts: string[], dialect?: string): Column[] | undefined;
+	/** OPTIONAL (#38): every declared table whose full path the written `parts` could mean (folded,
+	 *  part-boundary suffix match), as full path-part arrays. Lets the caller tell an AMBIGUOUS
+	 *  partial name (several candidates — diagnosed by naming them) from an unknown one (none).
+	 *  A provider without a navigable namespace simply omits it; `columnsFor` alone then decides. */
+	tableCandidates?(parts: string[], dialect?: string): string[][];
 	/** Bare table-name candidates for completion. */
 	tables(dialect?: string): string[];
 	/** Monotonic invalidation signal: a bump means "answers may have changed — drop memos keyed on

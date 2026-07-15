@@ -8,7 +8,6 @@ import {
 	applyUnpivotCols,
 	mergeByName,
 	pivotSourceOutputs,
-	splitColumnRefInScope,
 	type ResolvedSource,
 	type Scope,
 	type ScopeTree,
@@ -31,6 +30,7 @@ import { resolveColumnRef, resolveColumnSource, type ResolvedColumn } from "../s
 export interface Diagnostic {
 	kind:
 		| "unknown-table"
+		| "ambiguous-table"
 		| "unknown-column"
 		| "ambiguous-column"
 		| "unknown-field"
@@ -91,6 +91,13 @@ export function qualify(tree: ScopeTree, schema: SchemaProvider): Qualification 
 	// stage depends on the scope of the relation entering it (a sibling), also visited first by order.
 	const visit = (scope: Scope): void => {
 		for (const child of scope.children) visit(child);
+		// Every table source gets its existence checked, star or no star (#38: a starless
+		// `select amount from prod.bronze.orders` must still fire unknown-table in a closed
+		// world; the check used to run only through star expansion). checkSourceColumns
+		// dedupes by source, so the star path can't double-diagnose.
+		for (const { source } of scope.sourceList) {
+			if (source.kind === "table") checkSourceColumns(source, schema, resolved, diagnostics, scope.dialect);
+		}
 		resolved.set(scope, resolveColumns(scope, schema, resolved, diagnostics, starPairs));
 		for (const ref of bodyColumns(scope)) checkColumn(scope, ref, schema, resolved, diagnostics);
 	};
@@ -352,6 +359,12 @@ function applyStarModifiersToPairs(
 /** The output column names of a source — schema for a table (reporting unknown-table if absent),
  *  the resolved child names for a CTE/subquery (column aliases rename them), the AS columns for a
  *  lateral view. Types are not threaded here; type inference (src/infer) owns types. */
+/** Per-qualify-call dedupe of source-level diagnostics, keyed by the call's own diagnostics array
+ *  (unique per qualify(), frozen when it returns): the eager per-scope sweep and the star-expansion
+ *  path both check the same sources, and a source must diagnose ONCE. Keyed this way instead of a
+ *  threaded parameter so the four call chains keep their signatures. */
+const diagnosedBy = new WeakMap<Diagnostic[], WeakSet<object>>();
+
 function checkSourceColumns(
 	src: ResolvedSource,
 	schema: SchemaProvider,
@@ -363,11 +376,30 @@ function checkSourceColumns(
 		if (src.source.columnAliases) return src.source.columnAliases;
 		// A templated source ({{ ref('x') }} / {{ source(…) }} / a macro call in FROM) resolves its real columns through TemplateProvider.expansion().
 		if (src.source.template) return templateColumns(src.source.template, schema, dialect);
+		// A library-synthesized relation (a graph element variable) is not a catalog table —
+		// closed-world existence semantics don't apply to nodes the user never wrote.
+		if (src.source.synthesized) return undefined;
 		const cols = schema.columnsFor(src.name, dialect);
 		if (!cols) {
 			// Miss semantics are the provider's `world`: a CLOSED world declares completeness, so the
 			// miss IS "table does not exist"; an OPEN world's miss is unknown — never-wrong, no diagnostic.
-			if ((schema.world ?? "closed") === "closed") diagnostics.push(unknownTable(src.name, src.source.cst));
+			// With a candidates-aware provider (#38) an AMBIGUOUS partial name is its own diagnosis,
+			// naming every table the reference could mean — never first-wins. One diagnostic per
+			// source node, however many paths re-check it (the eager per-scope sweep + star expansion).
+			let diagnosed = diagnosedBy.get(diagnostics);
+			if (!diagnosed) {
+				diagnosed = new WeakSet();
+				diagnosedBy.set(diagnostics, diagnosed);
+			}
+			if ((schema.world ?? "closed") === "closed" && !diagnosed.has(src.source)) {
+				diagnosed.add(src.source);
+				const candidates = schema.tableCandidates?.(src.name, dialect);
+				if (candidates && candidates.length > 1) {
+					diagnostics.push(ambiguousTable(src.name, candidates, src.source.cst));
+				} else {
+					diagnostics.push(unknownTable(src.name, src.source.cst));
+				}
+			}
 			return undefined;
 		}
 		return cols.map((c) => c.name);
@@ -425,55 +457,41 @@ function checkColumn(
 	// be placeholder leakage, and a provider-typed value is not a column at all).
 	if (ref.template) return;
 
-	// A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias
-	// rather than a column — don't flag it. resolveColumnRef applies the alias + precedence rules.
-	if (resolveColumnRef(scope, ref).kind === "alias") return;
+	// ONE binder decides (issue #38): the same qualified/unqualified resolution scope, sema, infer
+	// and lineage ride, so the checker can never drift from what binding actually did. Qualified
+	// references validate their leading parts against the source relation's key at any depth
+	// (4-part refs bind; `wrong.orders.col` does not).
+	const r = resolveColumnRef(scope, ref, schema);
 
-	// Split off struct/field navigation: `t.c.f` checks the column `c`, then walks the field
-	// path `f` against `c`'s struct type — resolved from a table schema or threaded through a
-	// derived (CTE/subquery) column; see checkFieldPath.
-	const split = splitColumnRefInScope(scope, ref.parts);
-	const name = behaviorOf(scope).fold(split.column);
+	// A bare name in GROUP BY/HAVING/ORDER BY (incl. after a UNION) may reference a SELECT alias.
+	if (r.kind === "alias") return;
+	if (r.kind === "needs-schema") return;
 
-	if (split.qualifier !== undefined) {
-		for (let s: Scope | undefined = scope; s; s = s.parent) {
-			const src = s.sources.get(split.qualifier);
-			if (!src) continue;
-			const cols = sourceColumns(src, schema, resolved, s.dialect);
-			if (cols && !cols.some((c) => behaviorOf(s).fold(c) === name)) {
-				diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
-				return; // base column missing — don't also walk its (nonexistent) fields
-			}
-			checkFieldPath(split.fields, scope, schema, ref, diagnostics);
-			return; // qualifier resolved (or columns unknown) — done
-		}
-		return; // qualifier visible but not found in this chain — defensive; don't flag
+	if (r.kind === "ambiguous") {
+		diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${ref.parts.join(".")}`));
+		return;
 	}
 
-	// Unqualified: the innermost scope with a known match wins; ambiguous if several here.
+	if (r.kind === "bound") {
+		// A qualified binding fixes the source without consulting its columns — check membership.
+		const cols = sourceColumns(r.source, schema, resolved, scope.dialect);
+		if (cols && !cols.some((c) => behaviorOf(scope).fold(c) === behaviorOf(scope).fold(r.column))) {
+			diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
+			return; // base column missing — don't also walk its (nonexistent) fields
+		}
+		checkFieldPath(r.fields, scope, schema, ref, diagnostics);
+		return;
+	}
+
+	// Unresolved. If ANY visible source's columns are unknown, the reference might live there —
+	// never-wrong, stay silent. Otherwise every source is known and none has it.
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
-		const sources = [...s.sources.values()];
-		if (sources.length === 0) continue;
-		let matches = 0;
-		let unknown = 0;
-		for (const src of sources) {
-			const cols = sourceColumns(src, schema, resolved, s.dialect);
-			if (!cols) unknown++;
-			else if (cols.some((c) => behaviorOf(s).fold(c) === name)) matches++;
+		for (const { source: src } of s.sourceList) {
+			if (!sourceColumns(src, schema, resolved, s.dialect)) return;
 		}
-		if (matches > 1) {
-			diagnostics.push(columnDiag("ambiguous-column", ref, `Ambiguous column: ${split.column}`));
-			return;
-		}
-		if (matches === 1) {
-			checkFieldPath(split.fields, scope, schema, ref, diagnostics);
-			return;
-		}
-		if (unknown > 0) return; // might live in a source whose columns we don't know
-		// all sources here known, none has it — try an enclosing scope (correlation)
 	}
 	// The message shows the reference as WRITTEN (display), never the folded identity key.
-	diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${split.column}`));
+	diagnostics.push(columnDiag("unknown-column", ref, `Unknown column: ${ref.parts.join(".")}`));
 }
 
 /**
@@ -550,4 +568,14 @@ function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): 
 
 function unknownTable(name: string[], cst: ParserRuleContext): Diagnostic {
 	return Object.freeze({ kind: "unknown-table", message: `Unknown table: ${name.join(".")}`, ...spanOf(cst) });
+}
+
+/** A partial name several declared tables could mean (#38) — named so the fix is obvious. */
+function ambiguousTable(name: string[], candidates: string[][], cst: ParserRuleContext): Diagnostic {
+	const list = candidates.map((c) => c.join(".")).join(", ");
+	return Object.freeze({
+		kind: "ambiguous-table",
+		message: `Ambiguous table: ${name.join(".")} matches ${list}`,
+		...spanOf(cst),
+	});
 }

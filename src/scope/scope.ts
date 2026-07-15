@@ -41,8 +41,13 @@ export interface ScopeTree {
 export interface Scope {
 	/** The query body this scope describes (a SELECT, or a set operation). */
 	body: QueryBody;
-	/** Visible relations, keyed by alias (or the table's last name part). */
+	/** Visible relations, keyed by alias (or the table's last name part). NOTE: two sources whose
+	 *  keys collide (joined FQN tables sharing a last part) occupy ONE slot here — resolution that
+	 *  must see every source reads `sourceList` (#38). */
 	sources: Map<string, ResolvedSource>;
+	/** Every visible relation in registration order, with its binding key — the collision-proof
+	 *  twin of `sources`. Qualifier matching and ambiguity detection walk THIS (#38). */
+	sourceList: { key: string; source: ResolvedSource }[];
 	/** CTEs defined for this query block, keyed by normalized name. */
 	ctes: Map<string, CteRef>;
 	/** Output column names, or "unknown" when a star/anonymous projection needs a schema. */
@@ -145,6 +150,35 @@ export function splitColumnRefInScope(scope: Scope, parts: string[]): SplitRef {
 	return splitColumnRef(parts, (key) => hasVisibleSource(scope, key), scope.dialect);
 }
 
+/**
+ * The sources of ONE scope matching a column reference's QUALIFIER (issue #38) — with the leading
+ * parts VALIDATED, at any depth the dialect's namespace admits:
+ *  - a single-part qualifier matches an alias or a source's binding key (today's semantics);
+ *  - a multi-part qualifier matches only an UNALIASED table source whose `relation.key` ends with
+ *    the folded qualifier parts, ALL of them (an alias supersedes the table name for
+ *    qualification, so aliased sources never match multi-part). `wrong.orders.amount` therefore
+ *    binds nowhere, where the last-part heuristic used to bind it to any `orders`.
+ * Returns every match: 1 = bound, >1 = a genuinely ambiguous qualifier, 0 = try shorter/elsewhere.
+ */
+export function sourcesMatchingQualifier(scope: Scope, qualParts: string[]): ResolvedSource[] {
+	const b = behaviorOf(scope);
+	const matchesKeyPart = (raw: string, keyPart: string): boolean =>
+		b.fold(raw) === keyPart || b.fold(raw, "table") === keyPart;
+	const out: ResolvedSource[] = [];
+	for (const { key, source } of scope.sourceList) {
+		if (qualParts.length === 1) {
+			if (key !== "" && matchesKeyPart(qualParts[0]!, key)) out.push(source);
+			continue;
+		}
+		if (source.kind !== "table" || source.source.alias) continue;
+		const k = source.source.relation.key;
+		if (qualParts.length > k.length) continue;
+		const off = k.length - qualParts.length;
+		if (qualParts.every((p, i) => matchesKeyPart(p, k[off + i]!))) out.push(source);
+	}
+	return out;
+}
+
 /** True if `key` names a source in this scope or any enclosing one (for correlation). */
 function hasVisibleSource(scope: Scope, key: string): boolean {
 	for (let s: Scope | undefined = scope; s; s = s.parent) if (s.sources.has(key)) return true;
@@ -179,6 +213,7 @@ function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
 	return {
 		body,
 		sources: new Map(),
+		sourceList: [],
 		ctes: new Map(),
 		outputs: "unknown",
 		parent,
@@ -236,13 +271,16 @@ function fillScope(scope: Scope): void {
 	const pivotAlias = body.pivot?.alias ?? body.unpivot?.alias;
 	if (pivotAlias) {
 		const base = body.from.map((source) => resolveSource(scope, source));
-		scope.sources.set(behaviorOf(scope).fold(pivotAlias), {
+		const pivotKey = behaviorOf(scope).fold(pivotAlias);
+		const pivotSource: ResolvedSource = {
 			kind: "pivot",
 			alias: pivotAlias,
 			base,
 			pivot: body.pivot?.alias ? body.pivot : undefined,
 			unpivot: body.unpivot?.alias ? body.unpivot : undefined,
-		});
+		};
+		scope.sources.set(pivotKey, pivotSource);
+		scope.sourceList.push({ key: pivotKey, source: pivotSource });
 	} else {
 		for (const source of body.from) registerSource(scope, source);
 	}
@@ -319,7 +357,9 @@ function buildStageScope(pipeScope: Scope, stage: PipeStage, incoming: Scope): S
 	ss.pipeStage = stage;
 	ss.pipeIncoming = incoming;
 	// The relation entering this stage, exposed unqualified (key "").
-	ss.sources.set("", { kind: "relation", scope: incoming });
+	const incomingRelation: ResolvedSource = { kind: "relation", scope: incoming };
+	ss.sources.set("", incomingRelation);
+	ss.sourceList.push({ key: "", source: incomingRelation });
 
 	if (stage.op === "join") registerSource(ss, stage.source);
 	if (stage.op === "with") {
@@ -345,7 +385,9 @@ function registerSource(scope: Scope, source: Source): void {
 	const resolved = resolveSource(scope, source);
 	// A name that resolved to a CTE keys with the "other" fold — CTE names are column-class
 	// identifiers everywhere (only real table identifiers get BigQuery's case-preserving fold).
-	scope.sources.set(sourceKey(source, scope.dialect, resolved.kind === "cte"), resolved);
+	const key = sourceKey(source, scope.dialect, resolved.kind === "cte");
+	scope.sources.set(key, resolved);
+	scope.sourceList.push({ key, source: resolved });
 }
 
 /** Resolve a Source to a ResolvedSource (building child scopes for subqueries / graph tables) WITHOUT
@@ -390,13 +432,13 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 			// A synthesized single-part name: a graph element variable has no namespace.
 			relation: synthesizedQualifiedName([el.variable], behaviorOf(scope).nameConfig),
 			alias: el.variable,
+			synthesized: true,
 			cst: el.variableCst ?? el.cst,
 		};
-		scope.sources.set(behaviorOf(scope).fold(el.variable), {
-			kind: "table",
-			name: [el.variable],
-			source: ts,
-		});
+		const elKey = behaviorOf(scope).fold(el.variable);
+		const elSource: ResolvedSource = { kind: "table", name: [el.variable], source: ts };
+		scope.sources.set(elKey, elSource);
+		scope.sourceList.push({ key: elKey, source: elSource });
 	}
 	scope.outputs = outputsOf(body);
 	return scope;
