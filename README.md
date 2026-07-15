@@ -17,6 +17,25 @@ The front end is error-tolerant and token-first, so the library drives editor
 features (completion, hover, diagnostics, go-to-definition) over incomplete,
 mid-edit text. See [Editor / language tooling](#editor--language-tooling).
 
+## Guiding principles
+
+Two principles govern every layer of this library, and they are duals of each other:
+
+- **Never wrong.** A wrong answer is worse than no answer. A name, type, or binding
+  that cannot be derived from a documented source stays absent or `unknown`; it is
+  never guessed. Where a function's return type depends on an argument's value, the
+  answer is `unknown`, not a plausible guess. Where a relation cannot be resolved,
+  its name is the text the user wrote, never something the library invented.
+- **Lossless.** Parsing never discards information the input carried. Every token
+  survives with its exact source span (even on broken input), identifiers keep their
+  as-written spelling and quoting alongside their folded identity, and what the parse
+  knew structurally the IR carries, so no downstream layer has to re-derive it by
+  heuristic.
+
+Never wrong constrains what the library claims; lossless constrains what it keeps.
+Together they are why analysis results can be trusted in an editor: what you are
+shown is derived, and what you wrote is still there.
+
 ```bash
 npm install sqllens
 ```
