@@ -1,3 +1,16 @@
+# [1.4.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.3.0...v1.4.0) (2026-07-15)
+
+
+### Bug Fixes
+
+* **completion:** the token being typed is the caret token ([56f4da3](https://github.com/NiclasOlofsson/sqllens/commit/56f4da3cf05e19873fc181a3d9fcd8dd31e2a029)), closes [#36](https://github.com/NiclasOlofsson/sqllens/issues/36)
+* **minijinja:** unresolved template sources take the raw tag text as their name, never the fill ([36cb274](https://github.com/NiclasOlofsson/sqllens/commit/36cb274ef092c18bdaa8cc81b59aa6f9f7306408)), closes [#35](https://github.com/NiclasOlofsson/sqllens/issues/35)
+
+
+### Features
+
+* **completion:** templateCandidates receives the whole call; numeric literal args carry values ([ef35ade](https://github.com/NiclasOlofsson/sqllens/commit/ef35adeea2f3e5ab1cdd7b9706502222eb26eebc)), closes [#37](https://github.com/NiclasOlofsson/sqllens/issues/37)
+
 # [1.3.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.2.0...v1.3.0) (2026-07-15)
 
 
