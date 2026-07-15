@@ -27,7 +27,7 @@ describe("R3 apply-tags", () => {
 		expect(src.template.opaque).toBeUndefined();
 	});
 
-	it("macro call in FROM stays placeholder-named and carries its provider key", () => {
+	it("macro call in FROM takes the raw tag text as its name and carries its provider key", () => {
 		const r = parseTemplated("SELECT * FROM {{ my_macro() }} m", "databricks");
 		const src = firstSource(r.sql.ast);
 		// Since the provider cutover the marker is CONSULTABLE (call attached) instead of
@@ -35,7 +35,7 @@ describe("R3 apply-tags", () => {
 		// marker (exemption, no diagnostics).
 		expect(src.template).toMatchObject({ kind: "call", call: { name: "my_macro", args: [] } });
 		expect(src.template.opaque).toBeUndefined();
-		expect(src.name).not.toEqual(["my_macro"]); // the placeholder, NOT a fabricated name
+		expect(src.name).toEqual(["{{ my_macro() }}"]); // the user's text, NOT a fabricated name (#35)
 	});
 
 	it("multi-line ref correlates by containment", () => {
@@ -222,5 +222,50 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 		const names = JSON.stringify(scopes, (k, v) => (k === "cst" || k === "aliasCst" ? undefined : v));
 		expect(names).toContain("stg_orders");
 		expect(names).not.toMatch(/jjj/);
+	});
+});
+
+// issue #35 (reported by anvil): the placeholder fill is scaffolding sqllens invented so the
+// grammar parses — it must NEVER escape as a relation name. An unresolved templated source takes
+// the RAW TAG TEXT as its name (the bytes the user wrote), on every unresolved branch.
+describe("unresolved template sources never leak the placeholder fill (#35)", () => {
+	it("providerless ref in FROM: name is the raw tag text, not the fill", () => {
+		const r = parseTemplated("select x as location_id from {{ ref('silver__loc') }}", "databricks", {
+			provider: OPEN_PROVIDER,
+		});
+		const src = firstSource(r.sql.ast);
+		expect(src.name).toEqual(["{{ ref('silver__loc') }}"]);
+		expect(src.template).toMatchObject({ kind: "call", call: { name: "ref" } });
+	});
+
+	it("providerless source() in FROM: raw tag text, not the fill", () => {
+		const r = parseTemplated("select * from {{ source('raw', 'events') }}", "databricks", {
+			provider: OPEN_PROVIDER,
+		});
+		expect(firstSource(r.sql.ast).name).toEqual(["{{ source('raw', 'events') }}"]);
+	});
+
+	it("providerless set-indirection: raw tag text of the USE site, not the fill", () => {
+		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks", {
+			provider: OPEN_PROVIDER,
+		});
+		expect(firstSource(r.sql.ast).name).toEqual(["{{ t }}"]);
+	});
+
+	it("opaque expression tag in FROM: raw tag text, not the fill", () => {
+		const r = parseTemplated("select * from {{ a ~ b }}", "databricks", { provider: OPEN_PROVIDER });
+		const src = firstSource(r.sql.ast);
+		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
+		expect(src.name).toEqual(["{{ a ~ b }}"]);
+	});
+
+	it("the fill never reaches scope through an unresolved source", () => {
+		const r = parseTemplated("select x from {{ ref('silver__loc') }}", "databricks", {
+			provider: OPEN_PROVIDER,
+		});
+		const scopes = resolveScopes(r.sql.ast, "databricks");
+		const names = JSON.stringify(scopes, (k, v) => (k === "cst" || k === "aliasCst" ? undefined : v));
+		expect(names).not.toMatch(/jjj/);
+		expect(names).toContain("silver__loc");
 	});
 });

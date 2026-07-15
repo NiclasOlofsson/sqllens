@@ -17,8 +17,9 @@
 // TemplateProvider for a call's relation (`provider.relationOf`) and carries no ref/source vocabulary
 // itself. The NEUTRAL provider answers nothing, so a bare parse leaves calls opaque; a
 // DbtTemplateProvider names ref/source. Naming is never-wrong: a resolved name comes from the call's
-// literal args, and a call whose relation the provider does not resolve keeps its placeholder name and
-// stays opaque. We NEVER fabricate a name.
+// literal args, and a call whose relation the provider does not resolve takes the RAW TAG TEXT as its
+// name ({{ ref('m') }} verbatim) and stays opaque. We NEVER fabricate a name — in particular the
+// placeholder fill (scaffolding this library invented) never escapes as one (issue #35).
 //
 // The IR is frozen after lower(); this transform REBUILDS with STRUCTURAL SHARING (new objects only on
 // changed paths, an unchanged subtree keeps its original already-frozen reference) and re-freezes the
@@ -470,6 +471,12 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	const aliasTok = src.aliasCst?.start;
 	const base = aliasTok != null && inSpan(aliasTok.start, tag.tagSpan) ? withoutAlias(src) : src;
 
+	// An unresolved source's name is the RAW TAG TEXT — the bytes the user actually wrote. The
+	// placeholder fill is scaffolding this library invented so the grammar parses; letting it
+	// escape as a relation name (scope sources, lineage dependencies, go-to-def) is fabrication
+	// under the never-wrong rule (issue #35, reported by anvil).
+	const rawTagName = [ctx.text.slice(tag.tagSpan.start, tag.tagSpan.end)];
+
 	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR
 	// therefore also freezes the TagNode.tagSpan object returned in `.tags`, benign
 	// since spans are read-only. Every call marker carries its `call`, the provider key
@@ -478,10 +485,10 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 		const call = callOf(tag, ctx.text);
 		const rel = ctx.provider.relationOf(call);
 		// A call in a FROM slot (ref/source/a TVF-like macro). When the provider resolves its
-		// relation, carry the resolved name; otherwise keep the placeholder name (never fabricated).
+		// relation, carry the resolved name; otherwise the raw tag text (never the fill).
 		// Either way the `call` keeps it consultable, so an unresolved call is not a dead end: a
 		// provider added later resolves it. ref vs source is not stored here, it is call.name.
-		const named = rel ? { ...base, name: [...rel.nameParts] } : base;
+		const named = { ...base, name: rel ? [...rel.nameParts] : rawTagName };
 		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, call };
 		return attach(ctx, { ...named, template }, tag);
 	}
@@ -489,14 +496,14 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	// Non-call expression tag (var / env_var / other) in a FROM slot. A bare `{{ t }}` resolving
 	// through a `{% set t = … %}` single-call RHS carries the resolved relation name (when the
 	// provider resolved it) or the call identity alone; every other case gets the opaque "expr"
-	// marker, so the placeholder name stops posing as a real table.
+	// marker. In every unresolved case the name is the raw tag text, never the fill.
 	const ident = tag.kind === "other" ? bareIdentOf(tag, ctx.text) : undefined;
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
 	if (resolved) {
-		const named = resolved.name ? { ...base, name: [...resolved.name] } : base;
+		const named = { ...base, name: resolved.name ? [...resolved.name] : rawTagName };
 		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, indirect: true, call: resolved.call };
 		return attach(ctx, { ...named, template }, tag);
 	}
 	const template: TemplateSourceInfo = { kind: "expr", span: tag.tagSpan, opaque: true };
-	return attach(ctx, { ...base, template }, tag);
+	return attach(ctx, { ...base, name: rawTagName, template }, tag);
 }
