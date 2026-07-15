@@ -181,7 +181,7 @@ describe("Snowflake lineage", () => {
 		const tree = scopes("WITH c AS (SELECT a FROM t) SELECT a AS out_a FROM c");
 		const cols = lineage(tree, T);
 		const out = cols.find((c) => c.output === "out_a");
-		expect(out?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain("T.a");
+		expect(out?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain("t.a");
 	});
 });
 

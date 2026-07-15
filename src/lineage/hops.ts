@@ -226,10 +226,14 @@ function followColumn(scope: Scope, parts: string[], walk: Walk, trail: ViaStep[
 	if (!binding) return [{ kind: "unresolved", via }];
 	const { source, column } = binding;
 	if (source.kind === "table") {
-		// A recursive CTE's self-reference is a plain table here (see Walk.activeCtes) — cycle-guard it.
-		if (source.name.length === 1 && walk.activeCtes.has(behaviorOf(scope).fold(source.name[0])))
+		// A recursive CTE's self-reference is a plain table here (see Walk.activeCtes) — cycle-guard
+		// it. activeCtes keys are the DEFAULT ("other") fold of the declared raw name, so fold the
+		// self-reference's raw text the same way (single-part ⇒ relation.fqn IS the raw text).
+		if (source.name.length === 1 && walk.activeCtes.has(behaviorOf(scope).fold(source.source.relation.fqn))) {
 			return [{ kind: "unresolved", via }];
-		return [{ kind: "origin", origin: { table: source.name, column }, via }];
+		}
+		// Origins are DISPLAY-facing: the as-written parts, never the folded key.
+		return [{ kind: "origin", origin: { table: source.source.relation.parts, column }, via }];
 	}
 
 	const child = childScopeOf(source);

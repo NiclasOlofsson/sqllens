@@ -218,7 +218,8 @@ function columnRefOrigins(parts: string[], scope: Scope, schema: SchemaProvider,
  *  lineage walk (src/lineage/hops.ts) can defer pipe/lateral/graphtable/pivot sources — the ones
  *  it has no hop model for — to this exact shared origin walk, so the two walks can't drift. */
 export function columnOrigins(src: ResolvedSource, column: string, schema: SchemaProvider, seen: Set<Scope>): Origin[] {
-	if (src.kind === "table") return [{ table: src.name, column }];
+	// Origins are DISPLAY-facing: the as-written parts (relation.parts), never the folded key.
+	if (src.kind === "table") return [{ table: src.source.relation.parts, column }];
 	if (src.kind === "cte") return derivedOrigins(src.ref.scope, column, src.ref.def.columnAliases, schema, seen);
 	if (src.kind === "subquery") return derivedOrigins(src.scope, column, src.source.columnAliases, schema, seen);
 	if (src.kind === "relation") return derivedOrigins(src.scope, column, undefined, schema, seen); // prior pipe stage
