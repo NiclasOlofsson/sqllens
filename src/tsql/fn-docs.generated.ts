@@ -2,7 +2,7 @@
 // The per-NAME function docs table for tsql (issue #34), parallel to the signature table:
 // docUrl points at the vendor's published page for the same source the signature harvest read;
 // description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.
-// Built 2026-07-15. 198 names (198 with descriptions).
+// Built 2026-07-15. 205 names (198 with descriptions).
 import type { FnDoc } from "../signature/docs.js";
 
 export const TSQL_FN_DOCS: Record<string, FnDoc> = {
@@ -90,6 +90,10 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 			"`BIT_COUNT` takes one parameter and returns the number of bits set to 1 in that parameter as a **bigint** type.",
 		origin: "vendor-docs",
 	},
+	cast: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql",
+		origin: "vendor-docs",
+	},
 	ceiling: {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/ceiling-transact-sql",
 		description:
@@ -116,6 +120,10 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 	checksum_agg: {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/checksum-agg-transact-sql",
 		description: "This function returns the checksum of the values in a group.",
+		origin: "vendor-docs",
+	},
+	choose: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/logical-functions-choose-transact-sql",
 		origin: "vendor-docs",
 	},
 	coalesce: {
@@ -175,6 +183,10 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 			"This function returns the **context_info** value either set for the current session or batch, or derived through use of the SET CONTEXT_INFO statement.",
 		origin: "vendor-docs",
 	},
+	convert: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql",
+		origin: "vendor-docs",
+	},
 	cos: {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cos-transact-sql",
 		description:
@@ -185,6 +197,10 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cot-transact-sql",
 		description:
 			"A mathematical function that returns the trigonometric cotangent of the specified angle - in radians - in the specified **float** expression.",
+		origin: "vendor-docs",
+	},
+	count: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/count-transact-sql",
 		origin: "vendor-docs",
 	},
 	crypt_gen_random: {
@@ -651,6 +667,10 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 		description: "Distributes the rows in an ordered partition into a specified number of groups.",
 		origin: "vendor-docs",
 	},
+	nullif: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/language-elements/nullif-transact-sql",
+		origin: "vendor-docs",
+	},
 	object_definition: {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/object-definition-transact-sql",
 		description: "Returns the !INCLUDE[tsql] source text of the definition of a specified object.",
@@ -986,6 +1006,11 @@ export const TSQL_FN_DOCS: Record<string, FnDoc> = {
 		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/translate-transact-sql",
 		description:
 			"Returns the string provided as a first argument, after some characters specified in the second argument are translated into a destination set of characters, specified in the third argument.",
+		origin: "vendor-docs",
+	},
+	trim: { docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/trim-transact-sql", origin: "vendor-docs" },
+	try_convert: {
+		docUrl: "https://learn.microsoft.com/en-us/sql/t-sql/functions/try-convert-transact-sql",
 		origin: "vendor-docs",
 	},
 	type_name: {

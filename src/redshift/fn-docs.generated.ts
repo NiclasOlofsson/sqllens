@@ -2,7 +2,7 @@
 // The per-NAME function docs table for redshift (issue #34), parallel to the signature table:
 // docUrl points at the vendor's published page for the same source the signature harvest read;
 // description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.
-// Built 2026-07-15. 305 names (266 with descriptions).
+// Built 2026-07-15. 307 names (266 with descriptions).
 import type { FnDoc } from "../signature/docs.js";
 
 export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
@@ -128,7 +128,11 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the cube root of a numeric value.",
 		origin: "authored",
 	},
-	ceiling: { description: "Rounds a numeric value up to the nearest integer.", origin: "authored" },
+	ceiling: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_CEILING_FLOOR.html",
+		description: "Rounds a numeric value up to the nearest integer.",
+		origin: "authored",
+	},
 	change_query_priority: {
 		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_CHANGE_QUERY_PRIORITY.html",
 		origin: "vendor-docs",
@@ -159,6 +163,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the first non-null expression from a list of expressions.",
 		origin: "authored",
 	},
+	concat: { docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_CONCAT.html", origin: "vendor-docs" },
 	convert: {
 		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_CONVERT_function.html",
 		description: "Converts an expression to a different data type.",
@@ -229,6 +234,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	date_part: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATE_PART_function.html",
 		description: "Extracts a specific component (year, month, day, hour, etc.) from a timestamp.",
 		origin: "authored",
 	},
@@ -242,8 +248,13 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		description: "Truncates a timestamp to the specified precision level.",
 		origin: "authored",
 	},
-	dateadd: { description: "Adds a specified interval to a date, returning the new date.", origin: "authored" },
+	dateadd: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATEADD_function.html",
+		description: "Adds a specified interval to a date, returning the new date.",
+		origin: "authored",
+	},
 	datediff: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATEDIFF_function.html",
 		description: "Calculates the difference between two dates in the specified datepart units.",
 		origin: "authored",
 	},
@@ -263,6 +274,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	decode: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_DECODE_expression.html",
 		description: "Returns result values based on comparisons, acting as a conditional expression.",
 		origin: "authored",
 	},
@@ -553,6 +565,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	lpad: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_LPAD.html",
 		description: "Returns a string left-padded to a specified length with an optional padding character.",
 		origin: "authored",
 	},
@@ -696,7 +709,11 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	pi: { docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_PI.html", origin: "vendor-docs" },
-	power: { description: "Returns the result of raising a base number to an exponent.", origin: "authored" },
+	power: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_POWER.html",
+		description: "Returns the result of raising a base number to an exponent.",
+		origin: "authored",
+	},
 	quote_ident: {
 		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_QUOTE_IDENT.html",
 		description: "Escapes and quotes an identifier for safe use in SQL statements.",
@@ -768,10 +785,12 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	rpad: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_LPAD.html",
 		description: "Pads a string on the right to reach a specified length using a fill character or string.",
 		origin: "authored",
 	},
 	rtrim: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_RTRIM.html",
 		description: "Removes trailing whitespace or specified characters from the right side of a string.",
 		origin: "authored",
 	},
@@ -804,6 +823,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	split_part: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/SPLIT_PART.html",
 		description: "Splits a string by a delimiter and returns the specified part (1-based index).",
 		origin: "authored",
 	},
@@ -887,6 +907,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	st_collect: {
+		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/ST_Collect-function.html",
 		description: "Combines two geometries into a multi-geometry, or aggregates geometries from a column.",
 		origin: "authored",
 	},
@@ -1418,6 +1439,7 @@ export const REDSHIFT_FN_DOCS: Record<string, FnDoc> = {
 		description: "Replaces characters in an expression based on character-to-character substitution rules.",
 		origin: "authored",
 	},
+	trim: { docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_TRIM.html", origin: "vendor-docs" },
 	trunc: { docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_TRUNC.html", origin: "vendor-docs" },
 	upper: {
 		docUrl: "https://docs.aws.amazon.com/redshift/latest/dg/r_UPPER.html",

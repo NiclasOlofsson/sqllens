@@ -153,7 +153,11 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the arc sine of `x`.",
 		origin: "vendor-docs",
 	},
-	at_timezone: { description: "Converts `x` to a time zone specified in `zone`.", origin: "vendor-docs" },
+	at_timezone: {
+		docUrl: "https://trino.io/docs/current/functions/datetime.html#at_timezone",
+		description: "Converts `x` to a time zone specified in `zone`.",
+		origin: "vendor-docs",
+	},
 	atan: {
 		docUrl: "https://trino.io/docs/current/functions/math.html#atan",
 		description: "Returns the arc tangent of `x`.",
@@ -338,6 +342,7 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	concat_ws: {
+		docUrl: "https://trino.io/docs/current/functions/string.html#concat_ws",
 		description:
 			"Returns the concatenation of `string1`, `string2`, `...`, `stringN` using `separator` to join the values.",
 		origin: "vendor-docs",
@@ -490,7 +495,11 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the constant Euler's number.",
 		origin: "vendor-docs",
 	},
-	element_at: { description: "Returns element of `array` at given `index`.", origin: "vendor-docs" },
+	element_at: {
+		docUrl: "https://trino.io/docs/current/functions/array.html#element_at",
+		description: "Returns element of `array` at given `index`.",
+		origin: "vendor-docs",
+	},
 	empty_approx_set: {
 		docUrl: "https://trino.io/docs/current/functions/hyperloglog.html#empty_approx_set",
 		description: "Returns an empty `HyperLogLog`.",
@@ -886,6 +895,7 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	listagg: {
+		docUrl: "https://trino.io/docs/current/functions/aggregate.html#listagg",
 		description: "Returns the concatenated input values, separated by the `separator` string.",
 		origin: "vendor-docs",
 	},
@@ -1112,7 +1122,11 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the rank of a value in a group of values.",
 		origin: "vendor-docs",
 	},
-	reduce: { description: "Returns a single value reduced from `array`.", origin: "vendor-docs" },
+	reduce: {
+		docUrl: "https://trino.io/docs/current/functions/array.html#reduce",
+		description: "Returns a single value reduced from `array`.",
+		origin: "vendor-docs",
+	},
 	regexp_count: {
 		docUrl: "https://trino.io/docs/current/functions/regexp.html#regexp_count",
 		description: "Returns the number of occurrence of `pattern` in `string`.",
@@ -1790,6 +1804,7 @@ export const TRINO_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	transform: {
+		docUrl: "https://trino.io/docs/current/functions/array.html#transform",
 		description: "Returns an array that is the result of applying `function` to each element of `array`.",
 		origin: "vendor-docs",
 	},

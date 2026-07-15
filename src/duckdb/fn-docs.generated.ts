@@ -285,7 +285,11 @@ export const DUCKDB_FN_DOCS: Record<string, FnDoc> = {
 		description: "Concatenates multiple strings or lists.",
 		origin: "vendor-docs",
 	},
-	concat_ws: { description: "Concatenates many strings, separated by `separator`.", origin: "vendor-docs" },
+	concat_ws: {
+		docUrl: "https://duckdb.org/docs/current/sql/functions/text.html#concat_wsseparator-string-",
+		description: "Concatenates many strings, separated by `separator`.",
+		origin: "vendor-docs",
+	},
 	constant_or_null: {
 		docUrl: "https://duckdb.org/docs/current/sql/functions/utility.html#constant_or_nullarg1-arg2",
 		description: "If `arg2` is `NULL`, return `NULL`.",
@@ -718,7 +722,11 @@ export const DUCKDB_FN_DOCS: Record<string, FnDoc> = {
 		description: "Surrogate sort key used to sort special characters according to the specific locale.",
 		origin: "vendor-docs",
 	},
-	if: { description: "Ternary conditional operator; returns b if a, else returns c.", origin: "vendor-docs" },
+	if: {
+		docUrl: "https://duckdb.org/docs/current/sql/functions/utility.html#ifa-b-c",
+		description: "Ternary conditional operator; returns b if a, else returns c.",
+		origin: "vendor-docs",
+	},
 	ifnull: {
 		docUrl: "https://duckdb.org/docs/current/sql/functions/utility.html#ifnullexpr-other",
 		description: "A two-argument version of coalesce.",
@@ -955,6 +963,7 @@ export const DUCKDB_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	list_filter: {
+		docUrl: "https://duckdb.org/docs/current/sql/functions/list.html#list_filterlist-lambdax",
 		description:
 			"Constructs a list from those elements of the input `list` for which the `lambda` function returns `true`.",
 		origin: "vendor-docs",
@@ -1056,6 +1065,7 @@ export const DUCKDB_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	list_reduce: {
+		docUrl: "https://duckdb.org/docs/current/sql/functions/list.html#list_reducelist-lambdaxy-initial_value",
 		description:
 			"Reduces all elements of the input `list` into a single scalar value by executing the `lambda` function on a running result and the next list element.",
 		origin: "vendor-docs",
@@ -1116,6 +1126,7 @@ export const DUCKDB_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	list_transform: {
+		docUrl: "https://duckdb.org/docs/current/sql/functions/list.html#list_transformlist-lambdax",
 		description:
 			"Returns a list that is the result of applying the `lambda` function to each element of the input `list`.",
 		origin: "vendor-docs",

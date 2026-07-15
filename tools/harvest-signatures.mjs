@@ -2983,6 +2983,84 @@ const CONST_NAME = {
 const FN_DOCS_CONST_NAME = Object.fromEntries(Object.keys(CONST_NAME).map((d) => [d, `${d.toUpperCase()}_FN_DOCS`]));
 const fnDocsFile = (dialect) => resolve(ROOT_DIR, "src", dialect, "fn-docs.generated.ts");
 
+/** Hand-cited docUrls for the names no resolver can derive: curated entries whose vendor page the
+ *  harvest never saw (syntax the never-wrong contract skips — CAST/COUNT/TRIM shapes) or whose
+ *  page/anchor spelling is irregular (snowflake POWER lives at /pow; bigquery SAFE_CAST's section
+ *  id is #safe_casting). Every URL verified against the vendored tree, the capture manifest, or
+ *  the live page (2026-07-15). Wins over the derived resolvers. */
+const HAND_CITED_DOC_URLS = {
+	tsql: {
+		cast: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql",
+		convert: "https://learn.microsoft.com/en-us/sql/t-sql/functions/cast-and-convert-transact-sql",
+	},
+	snowflake: {
+		power: "https://docs.snowflake.com/en/sql-reference/functions/pow",
+	},
+	bigquery: {
+		array_agg: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#array_agg",
+		avg: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#avg",
+		count: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#count",
+		max: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#max",
+		min: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#min",
+		string_agg: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#string_agg",
+		sum: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#sum",
+		cast: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions#cast",
+		safe_cast: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions#safe_casting",
+	},
+	redshift: {
+		ceiling: "https://docs.aws.amazon.com/redshift/latest/dg/r_CEILING_FLOOR.html",
+		date_part: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATE_PART_function.html",
+		dateadd: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATEADD_function.html",
+		datediff: "https://docs.aws.amazon.com/redshift/latest/dg/r_DATEDIFF_function.html",
+		decode: "https://docs.aws.amazon.com/redshift/latest/dg/r_DECODE_expression.html",
+		lpad: "https://docs.aws.amazon.com/redshift/latest/dg/r_LPAD.html",
+		rpad: "https://docs.aws.amazon.com/redshift/latest/dg/r_LPAD.html",
+		power: "https://docs.aws.amazon.com/redshift/latest/dg/r_POWER.html",
+		trim: "https://docs.aws.amazon.com/redshift/latest/dg/r_TRIM.html",
+	},
+	postgres: {
+		array_agg: "https://www.postgresql.org/docs/18/functions-aggregate.html",
+		position: "https://www.postgresql.org/docs/18/functions-string.html",
+		substring: "https://www.postgresql.org/docs/18/functions-string.html",
+	},
+	duckdb: {
+		list_filter: "https://duckdb.org/docs/current/sql/functions/list.html#list_filterlist-lambdax",
+		list_reduce: "https://duckdb.org/docs/current/sql/functions/list.html#list_reducelist-lambdaxy-initial_value",
+		list_transform: "https://duckdb.org/docs/current/sql/functions/list.html#list_transformlist-lambdax",
+	},
+	trino: {
+		concat_ws: "https://trino.io/docs/current/functions/string.html#concat_ws",
+		element_at: "https://trino.io/docs/current/functions/array.html#element_at",
+		reduce: "https://trino.io/docs/current/functions/array.html#reduce",
+		transform: "https://trino.io/docs/current/functions/array.html#transform",
+	},
+	sqlite: {
+		date: "https://sqlite.org/lang_datefunc.html",
+		datetime: "https://sqlite.org/lang_datefunc.html",
+		julianday: "https://sqlite.org/lang_datefunc.html",
+		strftime: "https://sqlite.org/lang_datefunc.html",
+		time: "https://sqlite.org/lang_datefunc.html",
+		timediff: "https://sqlite.org/lang_datefunc.html",
+		unixepoch: "https://sqlite.org/lang_datefunc.html",
+	},
+};
+
+/** Last-resort docUrl per dialect: the vendor's function-reference index. Guarantees every
+ *  signature name links SOMEWHERE useful when no per-function page or anchor is derivable — an
+ *  index link is honest and helpful; no link is neither. All live-verified 200 (2026-07-15). */
+const FUNCTION_INDEX_URL = {
+	databricks: "https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-functions-builtin",
+	tsql: "https://learn.microsoft.com/en-us/sql/t-sql/functions/functions",
+	snowflake: "https://docs.snowflake.com/en/sql-reference-functions",
+	bigquery: "https://cloud.google.com/bigquery/docs/reference/standard-sql/functions-all",
+	redshift: "https://docs.aws.amazon.com/redshift/latest/dg/c_SQL_functions.html",
+	postgres: "https://www.postgresql.org/docs/18/functions.html",
+	duckdb: "https://duckdb.org/docs/current/sql/functions/overview",
+	trino: "https://trino.io/docs/current/functions.html",
+	sqlite: "https://sqlite.org/lang.html",
+	mysql: "https://dev.mysql.com/doc/refman/8.4/en/functions.html",
+};
+
 /** databricks/snowflake: manifest keys are the full per-function page URLs; map last path segment
  *  (the function name as it appears in the URL) -> URL, dead pages (non-200) excluded. */
 function urlManifest(relPath) {
@@ -3063,7 +3141,19 @@ function buildDocUrlResolvers() {
 		databricks: perFunction(databricksManifest),
 		snowflake: perFunction(snowflakeManifest),
 		tsql: (key, comment) => {
-			const f = firstProvenanceFile(comment);
+			let f = firstProvenanceFile(comment);
+			if (!f) {
+				// Curated entry with no harvest provenance: derive the page from the name and keep it
+				// only if that page actually exists in the vendored tree (existence-checked, never
+				// guessed — COUNT's page is real even though its syntax block defeats the harvest).
+				const slug = `${key.replace(/_/g, "-")}-transact-sql.md`;
+				for (const root of ["functions", "language-elements"]) {
+					if (existsSync(corpusPath(join("vendor/sql-docs/docs/t-sql", root, slug)))) {
+						f = `${root}/${slug}`;
+						break;
+					}
+				}
+			}
 			return f ? `https://learn.microsoft.com/en-us/sql/t-sql/${f.replace(/\.md$/, "")}` : undefined;
 		},
 		duckdb: (key, comment, harvestResult) => {
@@ -3479,12 +3569,22 @@ async function main() {
 
 		writeFileSync(outFile(dialect), renderTable(dialect, merged, harvestResult));
 
-		// The parallel per-NAME docs table (issue #34): docUrl per name where resolvable, plus a
-		// description where a permissively licensed vendored source carries one.
+		// The parallel per-NAME docs table (issue #34): docUrl per name, plus a description where a
+		// permissively licensed source carries one. Every signature name gets a link ("great
+		// experience for the developers" — Niclas, 2026-07-15): a hand-cited override docUrl wins,
+		// else the provenance-derived resolver (for a curated entry, falling back to the HARVEST's
+		// own provenance for the same name — the override replaced the signature, not the source
+		// page), else the dialect's function-reference index.
 		const docs = {};
 		const resolveDocUrl = docUrlResolvers[dialect];
 		for (const key of merged.keys()) {
-			const docUrl = resolveDocUrl(key, merged.get(key).comment, harvestResult);
+			const docUrl =
+				HAND_CITED_DOC_URLS[dialect]?.[key] ??
+				resolveDocUrl(key, merged.get(key).comment, harvestResult) ??
+				(harvestResult?.provenance?.[key] !== undefined
+					? resolveDocUrl(key, harvestResult.provenance[key], harvestResult)
+					: undefined) ??
+				FUNCTION_INDEX_URL[dialect];
 			if (docUrl !== undefined) docs[key] = { docUrl, origin: "vendor-docs" };
 		}
 		const descriptions = dialect === "tsql" ? describeTsqlFor(merged) : DESCRIPTION_EXTRACTORS[dialect]();

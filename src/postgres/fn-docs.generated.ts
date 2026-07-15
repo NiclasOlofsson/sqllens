@@ -11,7 +11,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		description: "Creates an abbreviated display format as text.",
 		origin: "vendor-docs",
 	},
-	abs: { description: "Absolute value", origin: "vendor-docs" },
+	abs: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-math.html",
+		description: "Absolute value",
+		origin: "vendor-docs",
+	},
 	acldefault: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-info.html",
 		description:
@@ -55,7 +59,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 			"Computes area. Available for box, path, circle. A path input must be closed, else NULL is returned. Also, if the path is self-intersecting, the result may be meaningless.",
 		origin: "vendor-docs",
 	},
-	array_agg: { description: "Collects all the input values, including nulls, into an array.", origin: "vendor-docs" },
+	array_agg: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-aggregate.html",
+		description: "Collects all the input values, including nulls, into an array.",
+		origin: "vendor-docs",
+	},
 	array_append: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-array.html",
 		description:
@@ -401,7 +409,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		description: "Cotangent, argument in degrees",
 		origin: "vendor-docs",
 	},
-	count: { description: "Computes the number of input rows.", origin: "vendor-docs" },
+	count: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-aggregate.html",
+		description: "Computes the number of input rows.",
+		origin: "vendor-docs",
+	},
 	covar_pop: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-aggregate.html",
 		description: "Computes the population covariance.",
@@ -494,6 +506,7 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	date_bin: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-datetime.html",
 		description: "Bin input into specified interval aligned with specified origin; see",
 		origin: "vendor-docs",
 	},
@@ -771,7 +784,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		description: "Builds a possibly-heterogeneously-typed JSON array out of a variadic argument list.",
 		origin: "vendor-docs",
 	},
-	json_build_object: { description: "Builds a JSON object out of a variadic argument list.", origin: "vendor-docs" },
+	json_build_object: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-json.html",
+		description: "Builds a JSON object out of a variadic argument list.",
+		origin: "vendor-docs",
+	},
 	json_each: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-json.html",
 		description: "Expands the top-level JSON object into a set of key/value pairs.",
@@ -1126,14 +1143,22 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the netmask length in bits.",
 		origin: "vendor-docs",
 	},
-	max: { description: "Computes the maximum of the non-null input values.", origin: "vendor-docs" },
+	max: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-aggregate.html",
+		description: "Computes the maximum of the non-null input values.",
+		origin: "vendor-docs",
+	},
 	md5: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-string.html",
 		description: "Computes the MD5 hash of the argument, with the result written in hexadecimal.",
 		origin: "vendor-docs",
 	},
 	merge_action: { docUrl: "https://www.postgresql.org/docs/18/functions-merge-support.html", origin: "vendor-docs" },
-	min: { description: "Computes the minimum of the non-null input values.", origin: "vendor-docs" },
+	min: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-aggregate.html",
+		description: "Computes the minimum of the non-null input values.",
+		origin: "vendor-docs",
+	},
 	min_scale: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-math.html",
 		description:
@@ -2184,6 +2209,7 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	position: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-string.html",
 		description:
 			"Returns first starting index of the specified substring within string, or zero if it's not present.",
 		origin: "vendor-docs",
@@ -2570,6 +2596,7 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	substring: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-string.html",
 		description:
 			"Extracts the substring of string starting at the start'th character if that is specified, and stopping after count characters if that is specified.",
 		origin: "vendor-docs",
@@ -2630,7 +2657,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		description: "Converts time stamp to string according to the given format.",
 		origin: "vendor-docs",
 	},
-	to_date: { description: "Converts string to date according to the given format.", origin: "vendor-docs" },
+	to_date: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-formatting.html",
+		description: "Converts string to date according to the given format.",
+		origin: "vendor-docs",
+	},
 	to_hex: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-string.html",
 		description: "Converts the number to its equivalent two's complement hexadecimal representation.",
@@ -2642,7 +2673,11 @@ export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	to_jsonb: { docUrl: "https://www.postgresql.org/docs/18/functions-json.html", origin: "vendor-docs" },
-	to_number: { description: "Converts string to numeric according to the given format.", origin: "vendor-docs" },
+	to_number: {
+		docUrl: "https://www.postgresql.org/docs/18/functions-formatting.html",
+		description: "Converts string to numeric according to the given format.",
+		origin: "vendor-docs",
+	},
 	to_oct: {
 		docUrl: "https://www.postgresql.org/docs/18/functions-string.html",
 		description: "Converts the number to its equivalent two's complement octal representation.",

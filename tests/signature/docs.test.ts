@@ -34,6 +34,14 @@ describe("fn-docs tables — structural gates", () => {
 		}
 	});
 
+	it("EVERY signature name has a docUrl — total link coverage, no dialect exceptions", () => {
+		for (const dialect of DIALECTS) {
+			for (const name of Object.keys(SIGNATURES[dialect])) {
+				expect(FN_DOCS[dialect][name]?.docUrl, `${dialect}.${name} has no docUrl`).toBeDefined();
+			}
+		}
+	});
+
 	it("descriptions are single-line, non-empty, and tooltip-sized", () => {
 		for (const dialect of DIALECTS) {
 			for (const [name, doc] of Object.entries(FN_DOCS[dialect])) {

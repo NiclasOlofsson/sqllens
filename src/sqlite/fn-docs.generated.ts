@@ -106,10 +106,12 @@ export const SQLITE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	date: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description: "The date() function returns the date as text in this format: YYYY-MM-DD.",
 		origin: "vendor-docs",
 	},
 	datetime: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description:
 			"The datetime() function returns the date and time formatted as YYYY-MM-DD HH:MM:SS or as YYYY-MM-DD HH:MM:SS.",
 		origin: "vendor-docs",
@@ -272,6 +274,7 @@ export const SQLITE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	julianday: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description:
 			"The julianday() function returns the Julian day - the fractional number of days since noon in Greenwich on November 24, 4714 B.",
 		origin: "vendor-docs",
@@ -552,6 +555,7 @@ export const SQLITE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	strftime: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description:
 			"The strftime() function returns the date formatted according to the format string specified as the first argument.",
 		origin: "vendor-docs",
@@ -590,10 +594,12 @@ export const SQLITE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	time: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description: "The time() function returns the time as text in formatted as HH:MM:SS or as HH:MM:SS.",
 		origin: "vendor-docs",
 	},
 	timediff: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description:
 			"The timediff(A,B) function returns a string that describes the amount of time that must be added to B in order to reach time A.",
 		origin: "vendor-docs",
@@ -650,6 +656,7 @@ export const SQLITE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	unixepoch: {
+		docUrl: "https://sqlite.org/lang_datefunc.html",
 		description:
 			"The unixepoch() function returns a unix timestamp - the number of seconds since 1970-01-01 00:00:00 UTC.",
 		origin: "vendor-docs",

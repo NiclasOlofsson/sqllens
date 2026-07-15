@@ -6,7 +6,11 @@
 import type { FnDoc } from "../signature/docs.js";
 
 export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
-	abs: { description: "Computes absolute value.", origin: "vendor-docs" },
+	abs: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#abs",
+		description: "Computes absolute value.",
+		origin: "vendor-docs",
+	},
 	acos: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#acos",
 		description: "Computes the principal value of the inverse cosine of X.",
@@ -27,7 +31,11 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		description: "Aggregates a [measure type][measure-type].",
 		origin: "vendor-docs",
 	},
-	array_agg: { description: "Returns an ARRAY of `expression` values.", origin: "vendor-docs" },
+	array_agg: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#array_agg",
+		description: "Returns an ARRAY of `expression` values.",
+		origin: "vendor-docs",
+	},
 	array_avg: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/array_functions",
 		description: "Returns the average of non-`NULL` values in an array.",
@@ -146,7 +154,11 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		description: "Computes the inverse hyperbolic tangent of X.",
 		origin: "vendor-docs",
 	},
-	avg: { description: "Returns the average of non-`NULL` values in an aggregated group.", origin: "vendor-docs" },
+	avg: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#avg",
+		description: "Returns the average of non-`NULL` values in an aggregated group.",
+		origin: "vendor-docs",
+	},
 	bit_cast_to_int32: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/bit_functions",
 		description: "GoogleSQL supports bit casting to `INT32`.",
@@ -189,6 +201,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	cast: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions#cast",
 		description:
 			"Cast syntax is used in a query to indicate that the result type of an expression should be converted to some other type.",
 		origin: "vendor-docs",
@@ -245,7 +258,11 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions",
 		origin: "vendor-docs",
 	},
-	concat: { description: "Concatenates one or more values into a single result.", origin: "vendor-docs" },
+	concat: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions",
+		description: "Concatenates one or more values into a single result.",
+		origin: "vendor-docs",
+	},
 	cos: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cos",
 		description: "Computes the cosine of X where X is specified in radians.",
@@ -272,6 +289,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	count: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#count",
 		description:
 			"Gets the number of rows in the input or the number of rows with an expression evaluated to any value other than `NULL`.",
 		origin: "vendor-docs",
@@ -576,6 +594,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	json_extract: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_extract",
 		description: "Extracts a JSON value and converts it to a SQL JSON-formatted `STRING` or `JSON` value.",
 		origin: "vendor-docs",
 	},
@@ -607,6 +626,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	json_query: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_query",
 		description: "Extracts a JSON value and converts it to a SQL JSON-formatted `STRING` or `JSON` value.",
 		origin: "vendor-docs",
 	},
@@ -794,13 +814,21 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		description: "Identical to [TRIM][string-link-to-trim], but only removes leading characters.",
 		origin: "vendor-docs",
 	},
-	max: { description: "Returns the maximum non-`NULL` value in an aggregated group.", origin: "vendor-docs" },
+	max: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#max",
+		description: "Returns the maximum non-`NULL` value in an aggregated group.",
+		origin: "vendor-docs",
+	},
 	md5: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/hash_functions",
 		description: "Computes the hash of the input using the [MD5 algorithm][hash-link-to-md5-wikipedia].",
 		origin: "vendor-docs",
 	},
-	min: { description: "Returns the minimum non-`NULL` value in an aggregated group.", origin: "vendor-docs" },
+	min: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#min",
+		description: "Returns the minimum non-`NULL` value in an aggregated group.",
+		origin: "vendor-docs",
+	},
 	mod: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#mod",
 		description: "Modulo function: returns the remainder of the division of X by Y.",
@@ -1092,6 +1120,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	safe_cast: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conversion_functions#safe_casting",
 		description: "When using `CAST`, a query can fail if GoogleSQL is unable to perform the cast.",
 		origin: "vendor-docs",
 	},
@@ -1545,6 +1574,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	string_agg: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#string_agg",
 		description: "Returns a value (either `STRING` or `BYTES`) obtained by concatenating non-`NULL` values.",
 		origin: "vendor-docs",
 	},
@@ -1567,7 +1597,11 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions",
 		origin: "vendor-docs",
 	},
-	sum: { description: "Returns the sum of non-`NULL` values in an aggregated group.", origin: "vendor-docs" },
+	sum: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/aggregate_functions#sum",
+		description: "Returns the sum of non-`NULL` values in an aggregated group.",
+		origin: "vendor-docs",
+	},
 	tan: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#tan",
 		description: "Computes the tangent of X where X is specified in radians.",
@@ -1683,7 +1717,11 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 			"In `expression`, replaces each character in `source_characters` with the corresponding character in `target_characters`.",
 		origin: "vendor-docs",
 	},
-	trim: { description: "Takes a `STRING` or `BYTES` value to trim.", origin: "vendor-docs" },
+	trim: {
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/string_functions",
+		description: "Takes a `STRING` or `BYTES` value to trim.",
+		origin: "vendor-docs",
+	},
 	trunc: {
 		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#trunc",
 		description:

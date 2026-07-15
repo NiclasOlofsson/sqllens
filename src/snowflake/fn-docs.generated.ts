@@ -1539,7 +1539,11 @@ export const SNOWFLAKE_FN_DOCS: Record<string, FnDoc> = {
 		description: "Returns the position (1-based) of the first occurrence of expr1 in expr2, or 0 if not found.",
 		origin: "authored",
 	},
-	power: { description: "Raises a numeric base to a numeric exponent.", origin: "authored" },
+	power: {
+		docUrl: "https://docs.snowflake.com/en/sql-reference/functions/pow",
+		description: "Raises a numeric base to a numeric exponent.",
+		origin: "authored",
+	},
 	previous_day: {
 		docUrl: "https://docs.snowflake.com/en/sql-reference/functions/previous_day",
 		description: "Returns the previous occurrence of a specified day of the week before the given date.",
@@ -2071,6 +2075,7 @@ export const SNOWFLAKE_FN_DOCS: Record<string, FnDoc> = {
 		origin: "authored",
 	},
 	substring: {
+		docUrl: "https://docs.snowflake.com/en/sql-reference/functions/substr",
 		description: "Returns a substring starting at a specified position with optional length.",
 		origin: "authored",
 	},
