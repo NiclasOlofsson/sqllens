@@ -104,6 +104,29 @@ export class Schema implements SchemaProvider {
 		return [...this.indexFor(dialect).byTable.keys()];
 	}
 
+	/** The immediate children of a namespace path (#38 stage 6): segment completion after a
+	 *  qualifier dot. `prefixParts` are RAW (as typed); matching folds per level. Names return AS
+	 *  DECLARED (display), each the NEXT SEGMENT only — a completion client replaces the token at
+	 *  the caret, so a full path would double-insert. [] when the prefix names no namespace. */
+	childrenOf(prefixParts: string[], dialect?: string): { name: string; kind: "namespace" | "table" }[] {
+		const fold = (p: string) => resolveBehavior(dialect).fold(p, "table");
+		let node: SchemaMapping = this.mapping;
+		for (const raw of prefixParts) {
+			const want = fold(raw);
+			const next = Object.entries(node).find(([k, v]) => typeof v === "object" && !isLeaf(v) && fold(k) === want);
+			if (!next) return [];
+			node = next[1] as SchemaMapping;
+		}
+		const out: { name: string; kind: "namespace" | "table" }[] = [];
+		for (const [name, child] of Object.entries(node)) {
+			if (typeof child !== "object" || isLeaf(child)) continue; // a column leaf — prefix was a table
+			const entries = Object.entries(child);
+			const isTable = entries.length > 0 && entries.every(([, v]) => typeof v === "string" || isLeaf(v));
+			out.push({ name, kind: isTable ? "table" : "namespace" });
+		}
+		return out;
+	}
+
 	private indexFor(dialect: string | undefined): DialectIndex {
 		let idx = this.indexes.get(dialect);
 		if (!idx) {

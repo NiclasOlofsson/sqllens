@@ -138,6 +138,62 @@ describe("complete — databricks, scope + schema aware", () => {
 		});
 	});
 
+	// issue #38 stage 6 — the two consumer-reported relation-slot gaps (anvil items 1+3, both
+	// pinned by LSP sentinels): in-scope CTE names as candidates, and namespace SEGMENT
+	// candidates after a qualifier dot (never full paths — LSP clients replace the caret token).
+	describe("relation-slot candidates: CTEs and namespace segments", () => {
+		const nested = new Schema({
+			analytics: { sales: { orders: { id: "int" } }, marketing: { leads: { id: "int" } } },
+		});
+
+		it("offers in-scope CTE names at a relation slot, ahead of catalog tables", () => {
+			const sql = "with recent as (select 1 id) select * from ";
+			const items = complete(SqlDocument.create(sql, "databricks"), sql.length, schema);
+			const kinds = items.map((c) => `${c.kind}:${c.label}`);
+			expect(kinds).toContain("cte:recent");
+			expect(kinds).toContain("table:sales");
+			expect(kinds.indexOf("cte:recent")).toBeLessThan(kinds.indexOf("table:sales")); // shadow rank
+		});
+
+		it("after a qualifier dot, offers the NEXT SEGMENT only (namespaces)", () => {
+			const sql = "select * from analytics.";
+			const items = complete(SqlDocument.create(sql, "databricks"), sql.length, nested);
+			const labels = items.map((c) => `${c.kind}:${c.label}`);
+			expect(labels).toContain("namespace:sales");
+			expect(labels).toContain("namespace:marketing");
+			expect(items.every((c) => !c.label.includes("."))).toBe(true); // segments, never full paths
+			expect(labels.some((l) => l.startsWith("cte:"))).toBe(false); // no CTEs after a dot
+		});
+
+		it("after a deeper qualifier, offers that namespace's tables", () => {
+			const sql = "select * from analytics.sales.";
+			const items = complete(SqlDocument.create(sql, "databricks"), sql.length, nested);
+			expect(items.map((c) => `${c.kind}:${c.label}`)).toContain("table:orders");
+			expect(items.map((c) => c.label)).not.toContain("leads"); // other namespace's table
+		});
+
+		it("a partial segment after the dot keeps the same segment list (editor filters)", () => {
+			const sql = "select * from analytics.sa";
+			const items = complete(SqlDocument.create(sql, "databricks"), sql.length, nested);
+			expect(items.map((c) => `${c.kind}:${c.label}`)).toContain("namespace:sales");
+		});
+
+		it("a column qualifier dot restricts columns to THAT source (anvil item 2)", () => {
+			const two = new Schema({
+				orders: { order_id: "int", amount: "decimal" },
+				customers: { cust_id: "int", email: "string" },
+			});
+			const sql = "select o. from orders o join customers c on c.cust_id = o.order_id";
+			const offset = "select o.".length;
+			const items = complete(SqlDocument.create(sql, "databricks"), offset, two);
+			const cols = items.filter((c) => c.kind === "column").map((c) => c.label);
+			expect(cols).toContain("order_id");
+			expect(cols).toContain("amount");
+			expect(cols).not.toContain("email"); // the other source's columns stay out
+			expect(cols).not.toContain("cust_id");
+		});
+	});
+
 	it("never throws without a schema (no table list, still keywords)", () => {
 		const sql = "SELECT amount FROM ";
 		const items = complete(SqlDocument.create(sql, "databricks"), sql.length);

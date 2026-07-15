@@ -36,6 +36,11 @@ export interface SchemaProvider {
 	 *  partial name (several candidates — diagnosed by naming them) from an unknown one (none).
 	 *  A provider without a navigable namespace simply omits it; `columnsFor` alone then decides. */
 	tableCandidates?(parts: string[], dialect?: string): string[][];
+	/** OPTIONAL (#38): the immediate children of a namespace path — segment completion after a
+	 *  qualifier dot (`analytics.|` → the datasets/schemas/tables inside `analytics`). Each entry
+	 *  is the NEXT SEGMENT only, as declared. A host with a dotted catalog (a dbt manifest, an
+	 *  information_schema mirror) implements this to power qualified-path completion. */
+	childrenOf?(prefixParts: string[], dialect?: string): { name: string; kind: "namespace" | "table" }[];
 	/** Bare table-name candidates for completion. */
 	tables(dialect?: string): string[];
 	/** Monotonic invalidation signal: a bump means "answers may have changed — drop memos keyed on

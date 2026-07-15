@@ -26,7 +26,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { DefaultTemplateProvider } from "../qualify/template-provider.js";
 import { callOf } from "../minijinja/apply-tags.js";
 import type { TagNode } from "../minijinja/tag-ast.js";
-import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
+import { sourcesMatchingQualifier, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { collectCandidates } from "./atn-walk.js";
 import { jinjaSlotAt, type JinjaSlot } from "./jinja-slot.js";
 import { COMPLETION_CONFIG, type CompletionConfig } from "./config.js";
@@ -46,7 +46,7 @@ interface WalkTok {
  *  `"template"` kind is a host candidate for a jinja call slot (a dbt model for a ref's arg). */
 export interface Completion {
 	label: string;
-	kind: "keyword" | "column" | "table" | "function" | "template";
+	kind: "keyword" | "column" | "table" | "cte" | "namespace" | "function" | "template";
 	/** Extra display info, e.g. a column's type when the schema knows it. */
 	detail?: string;
 }
@@ -59,8 +59,9 @@ export interface Completion {
 export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
 	try {
 		return collect(doc, offset, schema);
-	} catch {
+	} catch (e) {
 		// Total by contract: a walk/parse hiccup must not surface to the editor.
+		if (process.env.SQLLENS_DEBUG_COMPLETE) throw e;
 		return [];
 	}
 }
@@ -136,27 +137,54 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 		if (label) add({ label, kind: "keyword" });
 	}
 
+	// A RELATION PATH position (#38 stage 6): a dotted chain right before the caret whose anchor
+	// token is FROM/JOIN-family (cfg.relationKeywordTokens — the same per-dialect set the
+	// broken-input fallback uses). Mid-path the ATN reports a generic identifier slot, so the
+	// anchor, not the rule set, is the discriminator. The candidates are the typed prefix's NEXT
+	// SEGMENTS (segment labels only — a client replaces the caret token, so a full path would
+	// double-insert), never CTEs, and never the column/function noise the identifier slot would
+	// otherwise pour in.
+	const path = dottedPrefixAt(walkTokens, caretIdx);
+	const atRelationPath =
+		path.parts.length > 0 && path.anchorIdx >= 0 && cfg.relationKeywordTokens.has(walkTokens[path.anchorIdx]!.type);
 	const atTable = intersects(cand.rules, cfg.tableRules);
 	const atColumn = intersects(cand.rules, cfg.columnRules);
 
-	// tables — relation-name slot, and only when a schema lists them.
-	if (atTable && schema) {
-		for (const t of schema.tables(dialect)) add({ label: t, kind: "table" });
-	}
-
-	// columns — value/column slot: the columns visible from the enclosing scope, plus a broken-input
-	// fallback that reads FROM/JOIN relation names straight off the token stream (the document's batch
-	// parse mis-reads a mid-edit `SELECT  FROM t` — see the fallback's comment).
-	if (atColumn) {
-		for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
-		if (schema)
-			for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text))
-				add(c);
-	}
-
-	// functions — value/column slot: the dialect's inference-registry function names.
-	if (atColumn) {
-		for (const fn of Object.keys(resolveBehavior(dialect).functions)) add({ label: fn, kind: "function" });
+	if (atRelationPath) {
+		if (schema?.childrenOf) {
+			for (const child of schema.childrenOf(path.parts, dialect)) add({ label: child.name, kind: child.kind });
+		}
+	} else if (path.parts.length > 0) {
+		// A qualified MEMBER position (`o.|`, `gold.orders.|`) — anvil item 2: only the columns of
+		// the source the qualifier matches (the same validated any-depth primitive binding uses),
+		// no function/keyword noise. Deliberately NOT gated on the walk's rules: at a dangling dot
+		// mid-edit the walk often reports nothing, but the dot chain itself is the member-position
+		// evidence (it is the completion trigger character), and an unmatched qualifier answers [].
+		const scoped = qualifiedSourceColumns(cellScopes, cellAst, cellOffset, path.parts, dialect, schema);
+		for (const c of scoped) add(c);
+		// Mid-edit the dangling dot often breaks the FROM parse and the scope is EMPTY — the same
+		// failure the bare-slot fallback covers. Its member twin: read `FROM/JOIN name [alias]`
+		// pairs off the token stream and answer the matching relation's schema columns.
+		if (scoped.length === 0 && schema) {
+			for (const c of qualifiedFallbackColumns(walkTokens, cfg, path.parts, schema, dialect)) add(c);
+		}
+	} else {
+		if (atTable) {
+			// Bare relation slot: in-scope CTE names FIRST (they shadow same-named catalog tables),
+			// then the catalog's tables.
+			for (const name of visibleCteNames(cellScopes, cellAst, cellOffset)) add({ label: name, kind: "cte" });
+			if (schema) for (const t of schema.tables(dialect)) add({ label: t, kind: "table" });
+		}
+		// columns — value/column slot: the columns visible from the enclosing scope, plus a
+		// broken-input fallback reading FROM/JOIN relation names straight off the token stream.
+		if (atColumn) {
+			for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
+			if (schema)
+				for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text))
+					add(c);
+			// functions — value/column slot: the dialect's inference-registry function names.
+			for (const fn of Object.keys(resolveBehavior(dialect).functions)) add({ label: fn, kind: "function" });
+		}
 	}
 
 	return out;
@@ -174,6 +202,43 @@ function templateCompletions(slot: JinjaSlot, schema?: SchemaProvider): Completi
 		kind: "template" as const,
 		...(c.detail !== undefined ? { detail: c.detail } : {}),
 	}));
+}
+
+/** The dotted qualifier immediately before the caret (#38): `analytics.` → ["analytics"],
+ *  `analytics.sales.` → ["analytics","sales"], `analytics.sa|` (typing a segment) → ["analytics"].
+ *  Reads the walk's own token stream backwards from the caret token: an optional partial segment,
+ *  then (DOT ident)+ chains. `anchorIdx` is the default-channel token BEFORE the whole chain
+ *  (-1 at document start) — its type says what the chain qualifies (FROM/JOIN → a relation path).
+ *  parts: [] when no dot chain precedes the caret. Raw texts, delimiters intact — the schema
+ *  folds. */
+function dottedPrefixAt(toks: readonly WalkTok[], caretIdx: number): { parts: string[]; anchorIdx: number } {
+	const prev = (i: number): number => {
+		for (let j = i - 1; j >= 0; j--) if (toks[j]!.channel === Token.DEFAULT_CHANNEL) return j;
+		return -1;
+	};
+	let i = caretIdx;
+	// A word-like caret token is the partial segment being typed — the chain sits before it.
+	if (toks[i] && /^\w/.test(toks[i]!.text)) i = prev(i);
+	// `i` is now the DOT itself (partial-segment case) or the caret slot (then look back one).
+	let d = toks[i]?.text === "." ? i : prev(i);
+	const parts: string[] = [];
+	let anchorIdx = d;
+	while (d >= 0 && toks[d]?.text === ".") {
+		const ident = prev(d);
+		if (ident < 0 || !/^[\w"`[\]]/.test(toks[ident]!.text)) break;
+		parts.unshift(toks[ident]!.text);
+		anchorIdx = prev(ident);
+		d = anchorIdx;
+	}
+	return { parts, anchorIdx };
+}
+
+/** The CTE names visible from the caret's enclosing scope, as declared (display text). */
+function visibleCteNames(scopes: ScopeTree, ast: QueryExpr, offset: number): string[] {
+	const scope = enclosingScope(scopes, ast, offset);
+	const out: string[] = [];
+	for (let s = scope; s; s = s.parent) for (const cte of s.ctes.values()) out.push(cte.def.name);
+	return out;
 }
 
 /** The walk's caret token index. Two rules, in order (anvil 2026-07-15; antlr4-c3's own caret
@@ -260,6 +325,72 @@ function fromRelationColumns(
 		if (cfg.nameTokens.has(next.type)) emit(schema.columnsFor([next.text ?? ""], dialect));
 	}
 	return out;
+}
+
+/** The columns of the ONE source a dotted qualifier matches from the caret's scope (anvil item 2):
+ *  `o.|` answers o's columns only. Matching is sourcesMatchingQualifier — the same validated,
+ *  any-depth primitive column BINDING uses — walking enclosing scopes nearest-first. Ambiguous or
+ *  unmatched qualifiers answer nothing (never a fabricated union). */
+function qualifiedSourceColumns(
+	scopes: ScopeTree,
+	ast: QueryExpr,
+	offset: number,
+	qualParts: string[],
+	dialect: string,
+	schema?: SchemaProvider,
+): Completion[] {
+	const scope = enclosingScope(scopes, ast, offset);
+	if (!scope) return [];
+	const behavior = resolveBehavior(dialect);
+	for (let s: Scope | undefined = scope; s; s = s.parent) {
+		const matches = sourcesMatchingQualifier(s, qualParts);
+		if (matches.length > 1) return [];
+		if (matches.length === 1) {
+			return columnsOf(matches[0]!, dialect, schema).map((c) => ({ ...c, label: behavior.displayName(c.label) }));
+		}
+	}
+	return [];
+}
+
+/** The member-position twin of `fromRelationColumns` (#38): when the scope is empty (the dangling
+ *  dot broke the FROM parse), read `FROM/JOIN name(.name)* [AS] [alias]` off the token stream and
+ *  answer the columns of the ONE relation the qualifier matches — the alias when present, else the
+ *  name's own trailing parts. No match (or several) answers [] — never a fabricated union. */
+function qualifiedFallbackColumns(
+	walkTokens: readonly WalkTok[],
+	cfg: CompletionConfig,
+	qualParts: string[],
+	schema: SchemaProvider,
+	dialect: string | undefined,
+): Completion[] {
+	if (cfg.relationKeywordTokens.size === 0) return [];
+	const b = resolveBehavior(dialect);
+	const toks = walkTokens.filter((t) => t.channel === Token.DEFAULT_CHANNEL);
+	const hits: Completion[][] = [];
+	for (let i = 0; i + 1 < toks.length; i++) {
+		if (!cfg.relationKeywordTokens.has(toks[i]!.type)) continue;
+		let j = i + 1;
+		if (!toks[j] || !cfg.nameTokens.has(toks[j]!.type)) continue;
+		const parts = [toks[j]!.text];
+		j++;
+		while (toks[j]?.text === "." && toks[j + 1] && cfg.nameTokens.has(toks[j + 1]!.type)) {
+			parts.push(toks[j + 1]!.text);
+			j += 2;
+		}
+		let alias: string | undefined;
+		if (toks[j] && b.fold(toks[j]!.text) === "as" && toks[j + 1] && cfg.nameTokens.has(toks[j + 1]!.type)) j++;
+		if (toks[j] && cfg.nameTokens.has(toks[j]!.type)) alias = toks[j]!.text;
+		const matches = alias
+			? qualParts.length === 1 && b.fold(qualParts[0]!) === b.fold(alias)
+			: qualParts.length <= parts.length &&
+				qualParts.every(
+					(p, k) => b.fold(p, "table") === b.fold(parts[parts.length - qualParts.length + k]!, "table"),
+				);
+		if (!matches) continue;
+		const cols = schema.columnsFor(parts, dialect);
+		if (cols) hits.push(cols.map((c) => ({ label: c.name, kind: "column" as const, detail: c.type })));
+	}
+	return hits.length === 1 ? hits[0]! : [];
 }
 
 /** The columns visible from the scope enclosing `offset` (a CELL-relative offset into `scopes`).
