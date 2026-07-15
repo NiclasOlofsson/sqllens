@@ -1,3 +1,23 @@
+# [1.3.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.2.0...v1.3.0) (2026-07-15)
+
+
+### Bug Fixes
+
+* **fold:** ASCII-only identifier folding for sqlite, postgres, duckdb and redshift ([095d994](https://github.com/NiclasOlofsson/sqllens/commit/095d99487ccf9797df5f02f2368e620a711a2791)), closes [hi#bit](https://github.com/hi/issues/bit) [#22](https://github.com/NiclasOlofsson/sqllens/issues/22)
+* **parse:** cap expected-token enumeration in syntax error messages ([037ce88](https://github.com/NiclasOlofsson/sqllens/commit/037ce88ecf490c617fd45219ad24e8cfe3cd3484)), closes [#31](https://github.com/NiclasOlofsson/sqllens/issues/31)
+
+
+### Features
+
+* **signature:** authored descriptions for the license-blocked dialects ([9ce4995](https://github.com/NiclasOlofsson/sqllens/commit/9ce4995187b8001bfb96fbbae09b98e4547999f8))
+* **signature:** canonical renderSignature with vendor bracket notation ([eabbdbc](https://github.com/NiclasOlofsson/sqllens/commit/eabbdbcbe18dcb1899fdb817c8659f71d1b0af2e)), closes [#33](https://github.com/NiclasOlofsson/sqllens/issues/33)
+* **signature:** databricks function descriptions from Apache Spark's builtin reference ([c171f05](https://github.com/NiclasOlofsson/sqllens/commit/c171f0525cb6710e585d8fe5d71729b461b52583))
+* **signature:** every function name now links to vendor documentation ([91a2b65](https://github.com/NiclasOlofsson/sqllens/commit/91a2b65569e29ea42996e819f00c321af7f8f5d2)), closes [#safe_casting](https://github.com/NiclasOlofsson/sqllens/issues/safe_casting)
+* **signature:** harvest one-line descriptions from the permissively licensed doc sources ([6a535f9](https://github.com/NiclasOlofsson/sqllens/commit/6a535f946b57bdaf7e101b2b38abc58593993c49))
+* **signature:** per-function anchors on the docUrls where the source provides them ([b105fe5](https://github.com/NiclasOlofsson/sqllens/commit/b105fe53bbb1de3f2c688d21cc9f7e4ef9b3a16d))
+* **signature:** per-name function docs tables with vendor docUrl for every dialect ([1b5d969](https://github.com/NiclasOlofsson/sqllens/commit/1b5d969b04986488e1f74b11f23376be99eaaadc)), closes [#34](https://github.com/NiclasOlofsson/sqllens/issues/34)
+* **signature:** sqlite function descriptions from the public-domain doc bundle ([51fb4b1](https://github.com/NiclasOlofsson/sqllens/commit/51fb4b1d6d4005a7b8a48d6fbb2e224ff0e7b452))
+
 # [1.2.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.1.0...v1.2.0) (2026-07-14)
 
 
