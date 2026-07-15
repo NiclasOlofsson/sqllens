@@ -66,6 +66,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { DATABRICKS_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, DATABRICKS_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // CST navigation helpers
@@ -423,7 +431,7 @@ function lowerSparkPipeRhs(rhs: ParserRuleContext): PipeStage {
 	const join = directChildrenOfRule(rhs, P.RULE_joinRelation)[0];
 	if (join) {
 		const rel = directChildrenOfRule(join, P.RULE_relationPrimary)[0];
-		const source: Source = rel ? buildSource(rel) : { kind: "table", name: [], cst: rhs };
+		const source: Source = rel ? buildSource(rel) : { kind: "table", name: [], relation: relationOf([]), cst: rhs };
 		const joinConditions: Expr[] = [];
 		const columns: ColumnRef[] = [];
 		const crit = directChildrenOfRule(join, P.RULE_joinCriteria)[0];
@@ -547,7 +555,7 @@ function buildTableShorthand(queryPrimary: ParserRuleContext): SelectExpr {
 	return {
 		kind: "select",
 		projections: [{ isStar: true, expr: star, cst: queryPrimary }],
-		from: [{ kind: "table", name, namePartSpans, cst: queryPrimary }],
+		from: [{ kind: "table", name, relation: relationOf(name), namePartSpans, cst: queryPrimary }],
 		columns: [],
 		aggregated: false,
 		cst: queryPrimary,
@@ -1494,6 +1502,7 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
 	return {
 		kind: "table",
 		name: parts,
+		relation: relationOf(parts),
 		namePartSpans,
 		alias,
 		aliasCst,

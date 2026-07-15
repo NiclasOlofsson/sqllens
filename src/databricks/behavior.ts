@@ -4,7 +4,7 @@ import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
-import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
+import { displayName, fold, foldTableName, matchesSourceKey, DATABRICKS_NAME_CONFIG } from "./fold.js";
 import { databricksLiteral, databricksParseType, DATABRICKS_FUNCTION_RETURNS } from "./infer.js";
 
 export const databricksBehavior: DialectBehavior = {
@@ -12,6 +12,7 @@ export const databricksBehavior: DialectBehavior = {
 	displayName,
 	foldTableName,
 	matchesSourceKey,
+	nameConfig: DATABRICKS_NAME_CONFIG,
 	likeMatch: (pattern, value) => likePatternToRegExp(pattern).test(value),
 	literal: databricksLiteral,
 	parseType: databricksParseType,

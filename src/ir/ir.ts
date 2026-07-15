@@ -1,8 +1,10 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { PartSpan } from "./part-span.js";
+import type { QualifiedName } from "./qualified-name.js";
 import type { StatementCategory } from "./statement.js";
 
 export type { PartSpan } from "./part-span.js";
+export type { QualifiedName, QualifiedNameConfig, NameRole } from "./qualified-name.js";
 
 /**
  * The identity of one template call, the `expansion()` key. Args are LITERAL
@@ -591,6 +593,12 @@ export interface TableSource {
 	kind: "table";
 	/** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
 	name: string[];
+	/** The STRUCTURED name (issue #38): parts with dialect-assigned roles, folded identity key,
+	 *  display-ready fqn. Built by the dialect's lower() (the one layer that knows the namespace
+	 *  shape); consumers read structure here instead of re-deriving it from `name`. `name` is kept
+	 *  during the migration and mirrors `relation.parts`' raw forms; it retires when every
+	 *  consumer reads `relation`. */
+	relation: QualifiedName;
 	/** Per-part spans PARALLEL to `name`, one per multipart segment — same all-or-nothing convention
 	 *  as `ColumnRef.partSpans` (absent when any part lacks a real token). Lets a consumer hit-test a
 	 *  cursor on `catalog` vs `schema` vs `t` in `catalog.schema.t`, and recover each part's raw

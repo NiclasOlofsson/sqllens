@@ -21,7 +21,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "./fold.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { displayName, DUCKDB_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, DUCKDB_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — DuckDB (fork of this repo's grammars/postgres pair, TVL lineage)
@@ -298,7 +305,16 @@ function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
 	const isPivot = stmt.ruleIndex === P.RULE_pivotstmt;
 	const from: Source[] = [];
 	const qn = directChildrenOfRule(stmt, P.RULE_qualified_name)[0];
-	if (qn) from.push({ kind: "table", name: nameParts(qn), namePartSpans: columnPartSpans(qn), cst: qn });
+	if (qn) {
+		const pivotParts = nameParts(qn);
+		from.push({
+			kind: "table",
+			name: pivotParts,
+			relation: relationOf(pivotParts),
+			namePartSpans: columnPartSpans(qn),
+			cst: qn,
+		});
+	}
 	const sw = directChildrenOfRule(stmt, P.RULE_select_with_parens)[0];
 	if (sw) {
 		const inner = innerSelect(sw);
@@ -707,9 +723,11 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	// FROM 'file.parquet' — a string-literal relation (replacement scan, data/overview.md).
 	const fileRel = directChildrenOfRule(tr, P.RULE_sconst)[0];
 	if (fileRel) {
+		const fileRelName = [stripStringQuotes(fileRel.getText())];
 		return {
 			kind: "table",
-			name: [stripStringQuotes(fileRel.getText())],
+			name: fileRelName,
+			relation: relationOf(fileRelName),
 			namePartSpans: partSpansOf([fileRel]),
 			alias,
 			aliasCst,
@@ -741,9 +759,11 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	if (funcTable) {
 		const fname = firstShallow(funcTable, P.RULE_func_name);
 		const funcAlias = directChildrenOfRule(tr, P.RULE_func_alias_clause)[0];
+		const funcTableName = [fname ? lastName(fname) : funcTable.getText()];
 		return {
 			kind: "table",
-			name: [fname ? lastName(fname) : funcTable.getText()],
+			name: funcTableName,
+			relation: relationOf(funcTableName),
 			alias: alias ?? (funcAlias ? funcAliasName(funcAlias) : undefined),
 			aliasCst,
 			cst: tr,
@@ -752,7 +772,15 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 
 	const jsonTable = directChildrenOfRule(tr, P.RULE_json_table)[0];
 	if (jsonTable) {
-		return { kind: "table", name: ["json_table"], alias, aliasCst, columnAliases, cst: tr };
+		return {
+			kind: "table",
+			name: ["json_table"],
+			relation: relationOf(["json_table"]),
+			alias,
+			aliasCst,
+			columnAliases,
+			cst: tr,
+		};
 	}
 
 	const nestedTr = directChildrenOfRule(tr, P.RULE_table_ref)[0];
@@ -766,7 +794,8 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		if (innerFrom.length) return innerFrom[0];
 	}
 
-	return { kind: "table", name: [textOrEmpty(tr)], alias, aliasCst, columnAliases, cst: tr };
+	const tableName = [textOrEmpty(tr)];
+	return { kind: "table", name: tableName, relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
 }
 
 const nestedJoinConditions: Expr[] = [];
@@ -780,7 +809,16 @@ function buildTableFromRelation(
 	const qn = directChildrenOfRule(rel, P.RULE_qualified_name)[0];
 	const parts = qn ? nameParts(qn) : [textOrEmpty(rel)];
 	const namePartSpans = qn ? columnPartSpans(qn) : undefined;
-	return { kind: "table", name: parts, namePartSpans, alias, aliasCst, columnAliases, cst: rel };
+	return {
+		kind: "table",
+		name: parts,
+		relation: relationOf(parts),
+		namePartSpans,
+		alias,
+		aliasCst,
+		columnAliases,
+		cst: rel,
+	};
 }
 
 /** The alias identifier node — under table_alias (AS slot) or bare_table_alias (AS-less slot). */

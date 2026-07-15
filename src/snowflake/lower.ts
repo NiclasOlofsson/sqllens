@@ -20,7 +20,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "./fold.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { displayName, SNOWFLAKE_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, SNOWFLAKE_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — Snowflake (grammars-v4 sql/snowflake fork) CST -> the shared,
@@ -843,7 +850,15 @@ function buildSource(ref: ParserRuleContext): Source {
 		if (name.toLowerCase() === "split_to_table") {
 			return { kind: "lateral", alias, aliasCst, columns: SPLIT_TO_TABLE_COLUMNS, cst: ref };
 		}
-		return { kind: "table", name: [name], alias, aliasCst, columnAliases: columnListAliases(ref), cst: ref };
+		return {
+			kind: "table",
+			name: [name],
+			relation: relationOf([name]),
+			alias,
+			aliasCst,
+			columnAliases: columnListAliases(ref),
+			cst: ref,
+		};
 	}
 
 	// @stage[/path] — an opaque staged-file source ($1-style columns need the file).
@@ -852,7 +867,14 @@ function buildSource(ref: ParserRuleContext): Source {
 		directChildrenOfRule(ref, P.RULE_user_stage)[0] ??
 		directChildrenOfRule(ref, P.RULE_table_stage)[0];
 	if (stage) {
-		return { kind: "table", name: [stage.getText()], alias, aliasCst, cst: ref };
+		return {
+			kind: "table",
+			name: [stage.getText()],
+			relation: relationOf([stage.getText()]),
+			alias,
+			aliasCst,
+			cst: ref,
+		};
 	}
 
 	// CONNECT BY hierarchies: object_name START WITH predicate CONNECT BY prior_list? — the base
@@ -863,6 +885,7 @@ function buildSource(ref: ParserRuleContext): Source {
 	return {
 		kind: "table",
 		name: parts,
+		relation: relationOf(parts),
 		namePartSpans: objectName ? namePartSpans(objectName) : undefined,
 		alias,
 		aliasCst,

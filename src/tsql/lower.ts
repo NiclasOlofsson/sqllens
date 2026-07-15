@@ -20,7 +20,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName, fold } from "./fold.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { displayName, fold, TSQL_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, TSQL_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — T-SQL (grammars-v4 sql/tsql) CST -> the shared, dialect-neutral IR
@@ -522,6 +529,7 @@ function buildSource(item: ParserRuleContext): Source {
 		return {
 			kind: "table",
 			name: [al?.text ?? (isJson ? "openjson" : "openxml")],
+			relation: relationOf([al?.text ?? (isJson ? "openjson" : "openxml")]),
 			alias: al?.text,
 			aliasCst: al?.cst,
 			columnAliases,
@@ -537,6 +545,7 @@ function buildSource(item: ParserRuleContext): Source {
 		return {
 			kind: "table",
 			name: [leftmostToken(limited)?.toLowerCase() ?? "openquery"],
+			relation: relationOf([leftmostToken(limited)?.toLowerCase() ?? "openquery"]),
 			alias: alias?.text,
 			aliasCst: alias?.cst,
 			columnAliases: columnAliasList(item),
@@ -553,6 +562,7 @@ function buildSource(item: ParserRuleContext): Source {
 		return {
 			kind: "table",
 			name: [fn ? functionName(fn) : "nodes"],
+			relation: relationOf([fn ? functionName(fn) : "nodes"]),
 			alias: alias?.text,
 			aliasCst: alias?.cst,
 			columnAliases: columnAliasList(item), // `… AS f(c1, c2)` declares the output columns
@@ -563,7 +573,15 @@ function buildSource(item: ParserRuleContext): Source {
 	const full = directChildrenOfRule(item, P.RULE_full_table_name)[0];
 	const parts = full ? nameParts(full) : [item.getText()];
 	const namePartSpans = full ? columnPartSpans(full) : undefined;
-	return { kind: "table", name: parts, namePartSpans, alias: alias?.text, aliasCst: alias?.cst, cst: item };
+	return {
+		kind: "table",
+		name: parts,
+		relation: relationOf(parts),
+		namePartSpans,
+		alias: alias?.text,
+		aliasCst: alias?.cst,
+		cst: item,
+	};
 }
 
 /** The as_table_alias nested inside an open_json/open_xml node (not a direct child of the item). */

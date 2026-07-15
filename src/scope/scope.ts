@@ -17,6 +17,7 @@ import type {
 } from "../ir/ir.js";
 import type { StatementCategory } from "../ir/statement.js";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
+import { synthesizedQualifiedName } from "../ir/qualified-name.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import { likePatternToRegExp } from "./like-pattern.js";
 
@@ -386,6 +387,8 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 		const ts: TableSource = {
 			kind: "table",
 			name: [el.variable],
+			// A synthesized single-part name: a graph element variable has no namespace.
+			relation: synthesizedQualifiedName([el.variable], behaviorOf(scope).nameConfig),
 			alias: el.variable,
 			cst: el.variableCst ?? el.cst,
 		};

@@ -4,7 +4,7 @@ import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
-import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
+import { displayName, fold, foldTableName, matchesSourceKey, TRINO_NAME_CONFIG } from "./fold.js";
 import { trinoLiteral, trinoParseType, TRINO_FUNCTION_RETURNS } from "./infer.js";
 
 // Trino implicit coercion: no VARCHAR<->numeric, no bool<->numeric — trino does NOT implicitly coerce.
@@ -16,6 +16,7 @@ export const trinoBehavior: DialectBehavior = {
 	displayName,
 	foldTableName,
 	matchesSourceKey,
+	nameConfig: TRINO_NAME_CONFIG,
 	likeMatch: (pattern, value) => likePatternToRegExp(pattern).test(value),
 	literal: trinoLiteral,
 	parseType: trinoParseType,

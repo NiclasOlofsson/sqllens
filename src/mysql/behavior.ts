@@ -1,7 +1,7 @@
 // The mysql DialectBehavior: everything the semantic layer needs for mysql, assembled from
 // this folder's own pieces. The registry wires it; nothing here reaches a central per-dialect table.
 import { mysqlLiteral, mysqlParseType, MYSQL_FUNCTION_RETURNS } from "./infer.js";
-import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
+import { displayName, fold, foldTableName, matchesSourceKey, MYSQL_NAME_CONFIG } from "./fold.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
@@ -12,6 +12,7 @@ export const mysqlBehavior: DialectBehavior = {
 	displayName,
 	foldTableName,
 	matchesSourceKey,
+	nameConfig: MYSQL_NAME_CONFIG,
 	likeMatch: (pattern, value) => likePatternToRegExp(pattern).test(value),
 	literal: mysqlLiteral,
 	parseType: mysqlParseType,

@@ -21,7 +21,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { displayName } from "./fold.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { displayName, REDSHIFT_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, REDSHIFT_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — Amazon Redshift (bytebase/parser fork, a PostgreSQL-grammar fork)
@@ -618,9 +625,11 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	if (funcTable) {
 		const fname = firstShallow(funcTable, P.RULE_func_name);
 		const funcAlias = directChildrenOfRule(tr, P.RULE_func_alias_clause)[0];
+		const funcTableName = [fname ? lastName(fname) : funcTable.getText()];
 		return {
 			kind: "table",
-			name: [fname ? lastName(fname) : funcTable.getText()],
+			name: funcTableName,
+			relation: relationOf(funcTableName),
 			alias: alias ?? (funcAlias ? funcAliasName(funcAlias) : undefined),
 			aliasCst,
 			cst: tr,
@@ -642,7 +651,8 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		if (innerFrom.length) return innerFrom[0];
 	}
 
-	return { kind: "table", name: [textOrEmpty(tr)], alias, aliasCst, columnAliases, cst: tr };
+	const tableName = [textOrEmpty(tr)];
+	return { kind: "table", name: tableName, relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
 }
 
 // Parenthesized-join ON conditions surfaced from a nested table_ref, drained by buildSelect's caller.
@@ -681,7 +691,16 @@ function buildTableFromRelation(
 		}
 	}
 	const namePartSpans = qn ? partSpansOf(nameNodes) : undefined;
-	return { kind: "table", name: parts, namePartSpans, alias, aliasCst, columnAliases, cst: rel };
+	return {
+		kind: "table",
+		name: parts,
+		relation: relationOf(parts),
+		namePartSpans,
+		alias,
+		aliasCst,
+		columnAliases,
+		cst: rel,
+	};
 }
 
 function aliasName(aliasClause: ParserRuleContext): string | undefined {

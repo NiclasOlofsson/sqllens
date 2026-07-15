@@ -137,7 +137,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
-import { fold } from "./fold.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { fold, TRINO_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, TRINO_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — Trino (the first-party trinodb SqlBase.g4, split in grammars/trino/) CST -> the
@@ -403,7 +410,14 @@ function lowerQueryPrimary(prim: ParserRuleContext, holder: ParserRuleContext, c
 	if (node instanceof TableContext) {
 		// TABLE t — equivalent to SELECT * FROM t (modelled, not flagged).
 		const qn = node.qualifiedName();
-		const src: Source = { kind: "table", name: nameParts(qn), namePartSpans: namePartSpans(qn), cst: node };
+		const name = nameParts(qn);
+		const src: Source = {
+			kind: "table",
+			name,
+			relation: relationOf(name),
+			namePartSpans: namePartSpans(qn),
+			cst: node,
+		};
 		return {
 			kind: "select",
 			projections: [{ isStar: true, expr: { kind: "star", cst: node }, cst: node }],
@@ -681,7 +695,8 @@ function lowerRelationPrimary(
 ): (Source & { alias?: string }) | null {
 	if (rp instanceof TableNameContext) {
 		const qn = rp.qualifiedName();
-		return { kind: "table", name: nameParts(qn), namePartSpans: namePartSpans(qn), cst: rp };
+		const name = nameParts(qn);
+		return { kind: "table", name, relation: relationOf(name), namePartSpans: namePartSpans(qn), cst: rp };
 	}
 	if (rp instanceof SubqueryRelationContext) {
 		return { kind: "subquery", query: lowerQuery(rp.query(), ctx, rp), cst: rp };
@@ -701,7 +716,13 @@ function lowerRelationPrimary(
 		const call = rp.tableFunctionCall();
 		const qn = call?.qualifiedName();
 		const name = qn ? nameParts(qn) : ["table_function"];
-		return { kind: "table", name, namePartSpans: qn ? namePartSpans(qn) : undefined, cst: rp };
+		return {
+			kind: "table",
+			name,
+			relation: relationOf(name),
+			namePartSpans: qn ? namePartSpans(qn) : undefined,
+			cst: rp,
+		};
 	}
 	if (rp instanceof ParenthesizedRelationContext) {
 		const inner: Source[] = [];

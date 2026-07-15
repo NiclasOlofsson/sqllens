@@ -2,6 +2,7 @@
 // depends on. Bound once at resolveScopes and carried on the Scope via the carrier. NOT part of the
 // public API — never re-exported from src/api.ts or src/index.ts.
 import type { IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 import type { FnRule } from "../infer/functions.js";
 import type { Type } from "../infer/types.js";
 import type { Expr } from "../ir/ir.js";
@@ -13,6 +14,10 @@ export interface DialectBehavior {
 	displayName(raw: string): string;
 	foldTableName(parts: string[]): string[];
 	matchesSourceKey(key: string, rawPart: string): boolean;
+	/** The dialect's namespace shape + fold rule for building QualifiedNames outside lower()
+	 *  (shared layers synthesizing sources, apply-tags renaming templated ones). Same object the
+	 *  dialect's own lower() uses; declared in src/<dialect>/fold.ts (issue #38). */
+	nameConfig: QualifiedNameConfig;
 
 	// --- name matching (was likePatternToRegExp, inlined at the star-expansion call sites) ---
 	likeMatch(pattern: string, name: string): boolean;

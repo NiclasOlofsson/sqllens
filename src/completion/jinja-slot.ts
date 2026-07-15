@@ -124,7 +124,15 @@ function macroHit(c: MacroCall): CallHit {
 function slotFromCall(c: CallHit, text: string, offset: number): JinjaSlot | undefined {
 	// The whole call rides the slot (#37): callOf reads name + literal args off the source text,
 	// the same extraction apply-tags feeds the provider everywhere else.
-	const call = callOf({ name: c.name, nameSpan: c.nameSpan, args: c.args, ...(c.packageName !== undefined ? { packageName: c.packageName } : {}) } as MacroCall, text);
+	const call = callOf(
+		{
+			name: c.name,
+			nameSpan: c.nameSpan,
+			args: c.args,
+			...(c.packageName !== undefined ? { packageName: c.packageName } : {}),
+		} as MacroCall,
+		text,
+	);
 	const base = { callee: c.name, call, ...(c.packageName !== undefined ? { packageName: c.packageName } : {}) };
 
 	// Callee-name slot: the caret is still within (or right at the end of) the callee identifier,

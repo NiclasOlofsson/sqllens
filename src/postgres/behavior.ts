@@ -4,7 +4,7 @@ import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
-import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
+import { displayName, fold, foldTableName, matchesSourceKey, POSTGRES_NAME_CONFIG } from "./fold.js";
 import { postgresLiteral, postgresParseType, POSTGRES_FUNCTION_RETURNS } from "./infer.js";
 
 // PostgreSQL implicit coercion: str->num=true, bool<->num=false.
@@ -13,6 +13,7 @@ export const postgresBehavior: DialectBehavior = {
 	displayName,
 	foldTableName,
 	matchesSourceKey,
+	nameConfig: POSTGRES_NAME_CONFIG,
 	likeMatch: (pattern, value) => likePatternToRegExp(pattern).test(value),
 	literal: postgresLiteral,
 	parseType: postgresParseType,

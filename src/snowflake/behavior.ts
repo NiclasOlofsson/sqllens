@@ -4,7 +4,7 @@ import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
-import { displayName, fold, foldTableName, matchesSourceKey } from "./fold.js";
+import { displayName, fold, foldTableName, matchesSourceKey, SNOWFLAKE_NAME_CONFIG } from "./fold.js";
 import { snowflakeLiteral, snowflakeParseType, SNOWFLAKE_FUNCTION_RETURNS, snowflakeSpecial } from "./infer.js";
 
 // Snowflake implicit coercion: VARCHAR containing a number coerces to NUMBER (str->num), no bool<->num.
@@ -16,6 +16,7 @@ export const snowflakeBehavior: DialectBehavior = {
 	displayName,
 	foldTableName,
 	matchesSourceKey,
+	nameConfig: SNOWFLAKE_NAME_CONFIG,
 	likeMatch: (pattern, value) => likePatternToRegExp(pattern).test(value),
 	literal: snowflakeLiteral,
 	parseType: snowflakeParseType,

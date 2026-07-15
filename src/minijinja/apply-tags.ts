@@ -28,6 +28,8 @@
 // ---------------------------------------------------------------------------
 
 import { freezeIR } from "../ir/freeze.js";
+import { qualifiedNameOf, synthesizedQualifiedName, type QualifiedNameConfig } from "../ir/qualified-name.js";
+import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type {
 	CteDef,
 	PartSpan,
@@ -67,6 +69,10 @@ interface TagContext {
 	relTags: RelationTag[];
 	sets: ReadonlyMap<string, SetResolution>;
 	text: string;
+	/** The dialect's namespace config (from `ast.dialect` via the behavior registry) — a renamed
+	 *  source rebuilds `relation` so it never drifts from `name`. Absent only on an untagged ast
+	 *  (never the parseTemplated path); then a rename keeps the source's original relation. */
+	nameConfig?: QualifiedNameConfig;
 	/** Names a call's relation (ref/source/a TVF-like macro). The NEUTRAL provider knows no macro
 	 *  vocabulary, so a bare parse leaves calls opaque; a DbtTemplateProvider names ref/source. */
 	provider: TemplateProvider;
@@ -122,7 +128,16 @@ export function applyTemplateTags(
 			(t): t is RelationTag => (t.kind === "call" && !t.incomplete) || t.kind === "other",
 		);
 		if (relTags.length === 0) return { ast, byNode, byTag };
-		const ctx: TagContext = { relTags, sets: resolveSets(tags, text, provider), text, provider, byNode, byTag };
+		const nameConfig = ast.dialect !== undefined ? resolveBehavior(ast.dialect).nameConfig : undefined;
+		const ctx: TagContext = {
+			relTags,
+			sets: resolveSets(tags, text, provider),
+			text,
+			provider,
+			byNode,
+			byTag,
+			...(nameConfig ? { nameConfig } : {}),
+		};
 		const next = transformQuery(ast, ctx);
 		// Scalar-slot marking: every column-shaped node whose token is a tag's placeholder
 		// fill gets a `template` marker (span + provider key), so inference resolves it
@@ -480,6 +495,18 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	// under the never-wrong rule (issue #35, reported by anvil).
 	const rawTagName = [ctx.text.slice(tag.tagSpan.start, tag.tagSpan.end)];
 
+	// Renaming a source rebuilds `relation` in lockstep with `name` (#38): a provider-resolved
+	// name is SYNTHESIZED (plain logical parts, quoted where rendering needs it); the raw-tag-text
+	// fallback is source text. Without a dialect tag on the ast (never the parseTemplated path)
+	// the original relation stays — name and relation may then diverge, the documented degrade.
+	const renamed = (b: TableSource, parts: string[], synthesized: boolean): TableSource => {
+		if (!ctx.nameConfig) return { ...b, name: parts };
+		const relation = synthesized
+			? synthesizedQualifiedName(parts, ctx.nameConfig)
+			: qualifiedNameOf(parts, ctx.nameConfig);
+		return { ...b, name: parts, relation };
+	};
+
 	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR
 	// therefore also freezes the TagNode.tagSpan object returned in `.tags`, benign
 	// since spans are read-only. Every call marker carries its `call`, the provider key
@@ -491,7 +518,7 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 		// relation, carry the resolved name; otherwise the raw tag text (never the fill).
 		// Either way the `call` keeps it consultable, so an unresolved call is not a dead end: a
 		// provider added later resolves it. ref vs source is not stored here, it is call.name.
-		const named = { ...base, name: rel ? [...rel.nameParts] : rawTagName };
+		const named = rel ? renamed(base, [...rel.nameParts], true) : renamed(base, rawTagName, false);
 		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, call };
 		return attach(ctx, { ...named, template }, tag);
 	}
@@ -503,10 +530,10 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	const ident = tag.kind === "other" ? bareIdentOf(tag, ctx.text) : undefined;
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
 	if (resolved) {
-		const named = { ...base, name: resolved.name ? [...resolved.name] : rawTagName };
+		const named = resolved.name ? renamed(base, [...resolved.name], true) : renamed(base, rawTagName, false);
 		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, indirect: true, call: resolved.call };
 		return attach(ctx, { ...named, template }, tag);
 	}
 	const template: TemplateSourceInfo = { kind: "expr", span: tag.tagSpan, opaque: true };
-	return attach(ctx, { ...base, name: rawTagName, template }, tag);
+	return attach(ctx, { ...renamed(base, rawTagName, false), template }, tag);
 }

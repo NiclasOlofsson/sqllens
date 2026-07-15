@@ -26,6 +26,18 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpanOf, partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { synthesizedQualifiedName, type QualifiedName } from "../ir/qualified-name.js";
+import { BIGQUERY_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's parts (issue #38). BigQuery's lower() strips
+ *  backtick delimiters from every identifier (the documented exception in
+ *  docs/identifier-delimiter-contract.md), so parts arrive BARE: the synthesized builder is the
+ *  correct one (identity is unaffected — quoted and unquoted fold identically in this dialect),
+ *  and `fqn` re-renders quoting only where a part needs it. The byte-exact written form stays
+ *  recoverable via namePartSpans, per the contract's own remedy. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return synthesizedQualifiedName(rawParts, BIGQUERY_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — BigQuery / GoogleSQL (forked bytebase/parser googlesql/) CST ->
@@ -258,10 +270,11 @@ function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 	// `TABLE name` ≡ `SELECT * FROM name`.
 	const path = directChildrenOfRule(primary, P.RULE_path_expression)[0];
 	if (path) {
+		const name = pathParts(path);
 		return {
 			kind: "select",
 			projections: [implicitStar(primary)],
-			from: [{ kind: "table", name: pathParts(path), namePartSpans: pathPartSpans(path), cst: path }],
+			from: [{ kind: "table", name, relation: relationOf(name), namePartSpans: pathPartSpans(path), cst: path }],
 			columns: [],
 			aggregated: false,
 			cst: primary,
@@ -410,10 +423,22 @@ function lowerPipeSetOperand(operand: ParserRuleContext): QueryExpr {
 	if (tc) {
 		// table_clause: TABLE path_expression | TABLE tvf — `TABLE name` ≡ `SELECT * FROM name`.
 		const path = directChildrenOfRule(tc, P.RULE_path_expression)[0];
+		const name = path ? pathParts(path) : undefined;
 		const body: SelectExpr = {
 			kind: "select",
 			projections: path ? [implicitStar(tc)] : [],
-			from: path ? [{ kind: "table", name: pathParts(path), namePartSpans: pathPartSpans(path), cst: path }] : [],
+			from:
+				path && name
+					? [
+							{
+								kind: "table",
+								name,
+								relation: relationOf(name),
+								namePartSpans: pathPartSpans(path),
+								cst: path,
+							},
+						]
+					: [],
 			columns: [],
 			aggregated: false,
 			cst: tc,
@@ -449,7 +474,7 @@ function lowerPipeJoin(join: ParserRuleContext, cst: ParserRuleContext): PipeSta
 	const out: Source[] = [];
 	const tp = directChildrenOfRule(join, P.RULE_table_primary)[0];
 	if (tp) collectTablePrimary(tp, out, unsupported);
-	const source: Source = out[0] ?? { kind: "table", name: [], cst: join };
+	const source: Source = out[0] ?? { kind: "table", name: [], relation: relationOf([]), cst: join };
 	const joinConditions: Expr[] = [];
 	const columns: ColumnRef[] = [];
 	const onUsing = directChildrenOfRule(join, P.RULE_on_or_using_clause)[0];
@@ -948,9 +973,11 @@ function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Sou
 	if (tvf) {
 		const path = firstOfRule(tvf, P.RULE_path_expression);
 		const aliasInfo = aliasOf(directChildrenOfRule(tvf, P.RULE_pivot_or_unpivot_clause_and_aliases)[0]);
+		const name = path ? pathParts(path) : [tp.getText()];
 		return {
 			kind: "table",
-			name: path ? pathParts(path) : [tp.getText()],
+			name,
+			relation: relationOf(name),
 			namePartSpans: path ? pathPartSpans(path) : undefined,
 			alias: aliasInfo?.alias,
 			aliasCst: aliasInfo?.cst,
@@ -958,7 +985,8 @@ function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Sou
 		};
 	}
 
-	return { kind: "table", name: [stripBackticks(tp.getText())], cst: tp };
+	const name = [stripBackticks(tp.getText())];
+	return { kind: "table", name, relation: relationOf(name), cst: tp };
 }
 
 // --- graph / GQL -----------------------------------------------------------------
@@ -1111,7 +1139,15 @@ function buildPathSource(pathExpr: ParserRuleContext): Source {
 	const path = base ? firstOfRule(base, P.RULE_path_expression) : undefined;
 	const name = path ? pathParts(path) : base ? dashedPathParts(base) : [stripBackticks(pathExpr.getText())];
 	const namePartSpans = path ? pathPartSpans(path) : undefined;
-	return { kind: "table", name, namePartSpans, alias: aliasInfo?.alias, aliasCst: aliasInfo?.cst, cst: pathExpr };
+	return {
+		kind: "table",
+		name,
+		relation: relationOf(name),
+		namePartSpans,
+		alias: aliasInfo?.alias,
+		aliasCst: aliasInfo?.cst,
+		cst: pathExpr,
+	};
 }
 
 /** table_path_alias_or_qualify / table_path_pivot_suffix / pivot_or_unpivot_clause_and_aliases → its leading identifier. */

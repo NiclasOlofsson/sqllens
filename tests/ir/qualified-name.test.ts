@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parse } from "../../src/index.js";
 import { qualifiedNameOf, synthesizedQualifiedName } from "../../src/ir/qualified-name.js";
 import { DATABRICKS_NAME_CONFIG } from "../../src/databricks/fold.js";
 import { TSQL_NAME_CONFIG } from "../../src/tsql/fold.js";
@@ -84,6 +85,52 @@ describe("qualifiedNameOf — source-derived names", () => {
 		expect(q.catalog).toBe("b"); // right-aligned within the known roles
 		expect(q.schema).toBe("c");
 		expect(q.server).toBeUndefined(); // databricks has no server level — never fabricated
+	});
+});
+
+describe("lower() carries relation on every table source (stage 2)", () => {
+	it("databricks: FROM prod.gold.orders builds roles, key and as-written fqn", () => {
+		const r = parse("select 1 from Prod.Gold.Orders", "databricks");
+		const src = (r.ast.body as { from: { relation?: unknown }[] }).from[0] as {
+			relation: { name: string; catalog?: string; schema?: string; key: string[]; fqn: string };
+		};
+		expect(src.relation.name).toBe("Orders");
+		expect(src.relation.catalog).toBe("Prod");
+		expect(src.relation.schema).toBe("Gold");
+		expect(src.relation.key).toEqual(["prod", "gold", "orders"]);
+		expect(src.relation.fqn).toBe("Prod.Gold.Orders");
+	});
+
+	it("tsql: a four-part name carries the server role", () => {
+		const r = parse("select 1 from lnk.prod.dbo.orders", "tsql");
+		const src = (r.ast.body as { from: { relation?: unknown }[] }).from[0] as {
+			relation: { server?: string; catalog?: string; schema?: string; name: string };
+		};
+		expect(src.relation.server).toBe("lnk");
+		expect(src.relation.catalog).toBe("prod");
+		expect(src.relation.schema).toBe("dbo");
+		expect(src.relation.name).toBe("orders");
+	});
+
+	it("every dialect's simple FROM carries a relation whose key binds the table", () => {
+		for (const d of [
+			"databricks",
+			"tsql",
+			"snowflake",
+			"bigquery",
+			"redshift",
+			"postgres",
+			"duckdb",
+			"trino",
+			"sqlite",
+			"mysql",
+		] as const) {
+			const r = parse("select 1 from gold.orders", d);
+			const src = (r.ast.body as { from: { relation?: { name: string; parts: string[] } }[] }).from[0]!;
+			expect(src.relation, d).toBeDefined();
+			expect(src.relation!.name, d).toBe("orders");
+			expect(src.relation!.parts, d).toEqual(["gold", "orders"]);
+		}
 	});
 });
 

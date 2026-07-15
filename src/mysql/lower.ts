@@ -19,6 +19,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { collapsePartSpans, dotIdPartSpanOf, partSpanOf, type PartSpan } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { MYSQL_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, MYSQL_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — MySQL (grammars-v4 sql/mysql/Positive-Technologies fork, Ivan
@@ -681,7 +689,7 @@ function buildFrom(fromClause: ParserRuleContext): {
 		// tableSource: tableSourceItem joinPart* | '(' tableSourceItem joinPart* ')' | jsonTable.
 		const jt = directChildrenOfRule(ts, P.RULE_jsonTable)[0];
 		if (jt) {
-			from.push({ kind: "table", name: [jt.getText()], cst: jt });
+			from.push({ kind: "table", name: [jt.getText()], relation: relationOf([jt.getText()]), cst: jt });
 			continue;
 		}
 		const base = directChildrenOfRule(ts, P.RULE_tableSourceItem)[0];
@@ -754,9 +762,18 @@ function buildSourceItem(item: ParserRuleContext, fromSubqueries: Set<ParserRule
 	const seq = directChildrenOfRule(item, P.RULE_sequenceFunctionName)[0];
 	if (seq) {
 		const alias = directChildrenOfRule(item, P.RULE_uid)[0];
-		return [{ kind: "table", name: [seq.getText()], alias: alias?.getText(), aliasCst: alias, cst: item }];
+		return [
+			{
+				kind: "table",
+				name: [seq.getText()],
+				relation: relationOf([seq.getText()]),
+				alias: alias?.getText(),
+				aliasCst: alias,
+				cst: item,
+			},
+		];
 	}
-	return [{ kind: "table", name: [item.getText()], cst: item }];
+	return [{ kind: "table", name: [item.getText()], relation: relationOf([item.getText()]), cst: item }];
 }
 
 function tableSourceFromName(
@@ -769,6 +786,7 @@ function tableSourceFromName(
 	return {
 		kind: "table",
 		name: parts.length ? parts : [tn.getText()],
+		relation: relationOf(parts.length ? parts : [tn.getText()]),
 		namePartSpans: collapsePartSpans(spans),
 		alias: alias?.getText(),
 		aliasCst: alias,

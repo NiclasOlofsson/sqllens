@@ -18,6 +18,14 @@ import type {
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
 import { partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
+import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
+import { SQLITE_NAME_CONFIG } from "./fold.js";
+
+/** The structured name for a table source's raw parts (issue #38) — role assignment + identity
+ *  key + fqn happen HERE, at lowering, where the dialect's namespace shape is known. */
+function relationOf(rawParts: string[]): QualifiedName {
+	return qualifiedNameOf(rawParts, SQLITE_NAME_CONFIG);
+}
 
 // ---------------------------------------------------------------------------
 // Lowering — SQLite (grammars-v4 sql/sqlite fork, Martin Mirchev's precedence-
@@ -395,9 +403,11 @@ function buildSource(tos: ParserRuleContext): Source {
 	if (tfn) {
 		const schemaName = directChildrenOfRule(tos, P.RULE_schema_name)[0];
 		const partNodes = [schemaName, tfn].filter((n): n is ParserRuleContext => n !== undefined);
+		const name = partNodes.map((n) => n.getText());
 		return {
 			kind: "table",
-			name: partNodes.map((n) => n.getText()),
+			name,
+			relation: relationOf(name),
 			namePartSpans: partSpansOf(partNodes),
 			alias,
 			aliasCst,
@@ -410,9 +420,11 @@ function buildSource(tos: ParserRuleContext): Source {
 	const schemaName = directChildrenOfRule(tos, P.RULE_schema_name)[0];
 	const partNodes = [schemaName, tableName].filter((n): n is ParserRuleContext => n !== undefined);
 	const parts = partNodes.map((n) => n.getText());
+	const name = parts.length ? parts : [tos.getText()];
 	return {
 		kind: "table",
-		name: parts.length ? parts : [tos.getText()],
+		name,
+		relation: relationOf(name),
 		namePartSpans: partNodes.length ? partSpansOf(partNodes) : undefined,
 		alias,
 		aliasCst,
