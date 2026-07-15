@@ -1273,6 +1273,16 @@ function harvestDuckdb() {
 	// name -> occurrences [{ params, variadic, sourceFile }], one page-relative-name scan per heading.
 	const occurrencesByName = new Map();
 
+	// Published-page anchor per name, from the FIRST heading occurrence (matching the provenance
+	// rule): duckdb.org renders headings with kramdown auto_ids — lowercase, characters other than
+	// [\w -] dropped, spaces to hyphens. Verified live 2026-07-15: `abs(x)` -> #absx,
+	// `atan2(y, x)` -> #atan2y-x, `list_transform(list, lambda(x))` -> #list_transformlist-lambdax.
+	const anchors = {};
+	const kramdownSlug = (heading) =>
+		heading
+			.toLowerCase()
+			.replace(/[^\w\s-]/g, "")
+			.replace(/\s+/g, "-");
 	for (const f of mdFiles(src)) {
 		const sourceFile = relative(corpusPath("vendor/duckdb-web/docs/current"), f).split("\\").join("/");
 		const text = readFileSync(f, "utf8");
@@ -1290,6 +1300,7 @@ function harvestDuckdb() {
 			const list = occurrencesByName.get(outer.name) ?? [];
 			list.push({ params: sig.params, variadic: sig.variadic, sourceFile });
 			occurrencesByName.set(outer.name, list);
+			anchors[outer.name.toLowerCase()] ??= kramdownSlug(heading);
 		}
 	}
 
@@ -1316,6 +1327,7 @@ function harvestDuckdb() {
 	return {
 		signatures,
 		provenance,
+		anchors,
 		source: 'duckdb-web  docs/current/sql/functions/*.md ("#### `name(...)`" headings)',
 		stats: { emitted: Object.keys(signatures).length, overloadSets, skips: skipCounts },
 	};
@@ -2993,10 +3005,14 @@ function firstProvenanceFile(comment) {
 	return comment.split(", ")[0];
 }
 
-/** Per-dialect docUrl resolvers: (lowercased name, provenance comment) -> public URL | undefined.
- *  Page-level except databricks/snowflake, whose sources are per-function pages. Bases are the
- *  published homes of the exact vendored/captured sources the harvest reads (see each extractor's
- *  `source` string); the manifest files record the same bases. */
+/** Per-dialect docUrl resolvers: (lowercased name, provenance comment, harvest result) -> public
+ *  URL | undefined. databricks/snowflake link per-function pages; tsql/redshift are per-function
+ *  pages by path; trino/bigquery/duckdb/sqlite/mysql deep-link a per-function ANCHOR where one is
+ *  mechanically derivable from the source itself (never guessed — each scheme is live-verified or
+ *  reproduced verbatim; see each branch), else page-level. postgres stays page-level: its
+ *  published pages carry only positional generated ids (id-1.5.8...), nothing stable to link.
+ *  Bases are the published homes of the exact vendored/captured sources the harvest reads (see
+ *  each extractor's `source` string); the manifest files record the same bases. */
 function buildDocUrlResolvers() {
 	const databricksManifest = urlManifest("databricks/docs/syntax/manifest.json");
 	const snowflakeManifest = urlManifest("snowflake/docs/syntax/manifest.json");
@@ -3004,6 +3020,35 @@ function buildDocUrlResolvers() {
 		const f = firstProvenanceFile(comment);
 		return f ? f.split("/")[0] : null;
 	};
+	// sqlite/mysql: verbatim per-function anchors from the committed tiers (name -> page#anchor).
+	const tierAnchors = (relPath, field) => {
+		const p = corpusPath(relPath);
+		if (!existsSync(p)) return {};
+		return JSON.parse(readFileSync(p, "utf8"))[field] ?? {};
+	};
+	const sqliteAnchors = tierAnchors("sqlite/docs/descriptions.json", "anchors");
+	const mysqlAnchors = tierAnchors("mysql/docs/anchors.json", "anchors");
+	// bigquery: each vendored page's own in-page TOC links every function as
+	// `<a href="#anchor"><code>NAME</code></a>` — reproduced verbatim, keyed per file. The same
+	// anchors exist on the published cloud.google.com pages (live-verified: #abs).
+	const bigqueryTocAnchors = (() => {
+		const cache = new Map();
+		return (file) => {
+			if (!cache.has(file)) {
+				const map = new Map();
+				const p = corpusPath(join("vendor/googlesql-docs/docs", file));
+				if (existsSync(p)) {
+					const md = readFileSync(p, "utf8");
+					for (const m of md.matchAll(/<a href="#([^"]+)"><code>([A-Za-z0-9_.]+)<\/code>/g)) {
+						const name = m[2].toLowerCase();
+						if (!map.has(name)) map.set(name, m[1]);
+					}
+				}
+				cache.set(file, map);
+			}
+			return cache.get(file);
+		};
+	})();
 	// Per-function manifests join by key first, then by the captured page dir (the provenance path's
 	// first segment under functions/), which IS the URL slug when it differs from the key (snowflake's
 	// system$… functions, punctuation-mangled names).
@@ -3021,9 +3066,13 @@ function buildDocUrlResolvers() {
 			const f = firstProvenanceFile(comment);
 			return f ? `https://learn.microsoft.com/en-us/sql/t-sql/${f.replace(/\.md$/, "")}` : undefined;
 		},
-		duckdb: (key, comment) => {
+		duckdb: (key, comment, harvestResult) => {
 			const f = firstProvenanceFile(comment);
-			return f ? `https://duckdb.org/docs/current/${f.replace(/\.md$/, ".html")}` : undefined;
+			if (!f) return undefined;
+			// Anchor: kramdown auto_id of the function's first heading (live-verified scheme; see
+			// harvestDuckdb's anchors map).
+			const anchor = harvestResult?.anchors?.[key];
+			return `https://duckdb.org/docs/current/${f.replace(/\.md$/, ".html")}${anchor ? `#${anchor}` : ""}`;
 		},
 		postgres: (key, comment) => {
 			const f = firstProvenanceFile(comment);
@@ -3031,23 +3080,29 @@ function buildDocUrlResolvers() {
 		},
 		trino: (key, comment) => {
 			const f = firstProvenanceFile(comment);
-			return f ? `https://trino.io/docs/current/functions/${f.replace(/\.md$/, ".html")}` : undefined;
+			// Anchor: the MyST function directive's generated id IS the function name
+			// (live-verified: functions/math.html#abs).
+			return f ? `https://trino.io/docs/current/functions/${f.replace(/\.md$/, ".html")}#${key}` : undefined;
 		},
 		bigquery: (key, comment) => {
 			const f = firstProvenanceFile(comment);
-			return f
-				? `https://cloud.google.com/bigquery/docs/reference/standard-sql/${f.replace(/\.md$/, "")}`
-				: undefined;
+			if (!f) return undefined;
+			const anchor = bigqueryTocAnchors(f).get(key);
+			return `https://cloud.google.com/bigquery/docs/reference/standard-sql/${f.replace(/\.md$/, "")}${anchor ? `#${anchor}` : ""}`;
 		},
 		redshift: (key, comment) => {
 			const page = pageOf(comment);
 			return page ? `https://docs.aws.amazon.com/redshift/latest/dg/${page}.html` : undefined;
 		},
 		mysql: (key, comment) => {
+			const ref = mysqlAnchors[key];
+			if (ref) return `https://dev.mysql.com/doc/refman/8.4/en/${ref}`;
 			const page = pageOf(comment);
 			return page ? `https://dev.mysql.com/doc/refman/8.4/en/${page}.html` : undefined;
 		},
 		sqlite: (key, comment) => {
+			const ref = sqliteAnchors[key];
+			if (ref) return `https://sqlite.org/${ref}`;
 			const page = pageOf(comment);
 			return page ? `https://sqlite.org/${page}.html` : undefined;
 		},
@@ -3429,7 +3484,7 @@ async function main() {
 		const docs = {};
 		const resolveDocUrl = docUrlResolvers[dialect];
 		for (const key of merged.keys()) {
-			const docUrl = resolveDocUrl(key, merged.get(key).comment);
+			const docUrl = resolveDocUrl(key, merged.get(key).comment, harvestResult);
 			if (docUrl !== undefined) docs[key] = { docUrl, origin: "vendor-docs" };
 		}
 		const descriptions = dialect === "tsql" ? describeTsqlFor(merged) : DESCRIPTION_EXTRACTORS[dialect]();

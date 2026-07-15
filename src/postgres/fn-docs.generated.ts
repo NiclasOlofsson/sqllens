@@ -2,7 +2,7 @@
 // The per-NAME function docs table for postgres (issue #34), parallel to the signature table:
 // docUrl points at the vendor's published page for the same source the signature harvest read;
 // description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.
-// Built 2026-07-14. 596 names (537 with descriptions).
+// Built 2026-07-15. 596 names (537 with descriptions).
 import type { FnDoc } from "../signature/docs.js";
 
 export const POSTGRES_FN_DOCS: Record<string, FnDoc> = {

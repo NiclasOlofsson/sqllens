@@ -48,18 +48,30 @@ describe("fn-docs tables — structural gates", () => {
 
 // One well-known name per dialect: the docUrl must point at the dialect's own doc host. Pins
 // the resolver's host/path mapping without depending on page-internal structure.
-const SPOT: Record<Dialect, { name: string; host: string; path: string }> = {
+const SPOT: Record<Dialect, { name: string; host: string; path: string; hash?: string }> = {
 	databricks: { name: "abs", host: "docs.databricks.com", path: "/functions/abs" },
 	tsql: { name: "abs", host: "learn.microsoft.com", path: "/sql/t-sql/functions/abs-transact-sql" },
 	snowflake: { name: "abs", host: "docs.snowflake.com", path: "/functions/abs" },
-	bigquery: { name: "acos", host: "cloud.google.com", path: "/standard-sql/mathematical_functions" },
+	bigquery: {
+		name: "acos",
+		host: "cloud.google.com",
+		path: "/standard-sql/mathematical_functions",
+		hash: "#acos",
+	},
 	redshift: { name: "abs", host: "docs.aws.amazon.com", path: "/redshift/latest/dg/r_ABS.html" },
 	// abs is a curated override there (no source page, hence no docUrl by design) — use a harvested name.
 	postgres: { name: "acos", host: "www.postgresql.org", path: "/docs/18/functions-math.html" },
-	duckdb: { name: "abs", host: "duckdb.org", path: "/sql/functions/numeric.html" },
-	trino: { name: "abs", host: "trino.io", path: "/functions/math.html" },
-	sqlite: { name: "abs", host: "sqlite.org", path: "/lang_corefunc.html" },
-	mysql: { name: "abs", host: "dev.mysql.com", path: "/refman/8.4/en/mathematical-functions.html" },
+	// duckdb anchor: kramdown auto_id of the heading `abs(x)` (live-verified scheme).
+	duckdb: { name: "abs", host: "duckdb.org", path: "/sql/functions/numeric.html", hash: "#absx" },
+	trino: { name: "abs", host: "trino.io", path: "/functions/math.html", hash: "#abs" },
+	sqlite: { name: "abs", host: "sqlite.org", path: "/lang_corefunc.html", hash: "#abs" },
+	// mysql anchor: the refman's own name= id, underscores spelled as hyphens.
+	mysql: {
+		name: "abs",
+		host: "dev.mysql.com",
+		path: "/refman/8.4/en/mathematical-functions.html",
+		hash: "#function_abs",
+	},
 };
 
 describe("fn-docs — per-dialect docUrl spot checks", () => {
@@ -71,6 +83,7 @@ describe("fn-docs — per-dialect docUrl spot checks", () => {
 			const url = new URL(doc!.docUrl!);
 			expect(url.host).toBe(spot.host);
 			expect(url.pathname).toContain(spot.path);
+			if (spot.hash !== undefined) expect(url.hash).toBe(spot.hash);
 		});
 	}
 });

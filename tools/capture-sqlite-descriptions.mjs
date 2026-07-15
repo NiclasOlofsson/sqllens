@@ -61,24 +61,31 @@ function namesIn(text) {
 	return [...names];
 }
 
-/** The <dl> detail pages: dt (signature, maybe several <br>-separated overloads) + dd (prose). */
-function extractDlDescriptions(html, into) {
-	const re = /<dt><p[^>]*><b>([\s\S]*?)<\/b>\s*(?:<\/p>)?\s*<\/dt>\s*<dd>(?:<p>)?([\s\S]*?)<\/dd>/g;
+/** The <dl> detail pages: dt (signature, maybe several <br>-separated overloads) + dd (prose).
+ *  A `<a name="X"></a>` immediately before the dt is the entry's own anchor (reproduced verbatim
+ *  into the anchors map). */
+function extractDlDescriptions(html, page, into, anchors) {
+	const re =
+		/(?:<a name="([^"]+)"><\/a>\s*)?<dt><p[^>]*><b>([\s\S]*?)<\/b>\s*(?:<\/p>)?\s*<\/dt>\s*<dd>(?:<p>)?([\s\S]*?)<\/dd>/g;
 	for (const m of html.matchAll(re)) {
-		const desc = firstSentenceOf(stripTags(m[2]));
+		const desc = firstSentenceOf(stripTags(m[3]));
 		if (!desc) continue;
-		for (const name of namesIn(stripTags(m[1]))) if (!into.has(name)) into.set(name, desc);
+		for (const name of namesIn(stripTags(m[2]))) {
+			if (!into.has(name)) into.set(name, desc);
+			if (m[1] && !anchors.has(name)) anchors.set(name, `${page}#${m[1]}`);
+		}
 	}
 }
 
-/** json1.html: h2 section headings name the functions; the section's first sentence describes them. */
-function extractJson1Descriptions(html, into) {
+/** json1.html: h2 section headings name the functions; the section's first sentence describes
+ *  them, and the heading's own id is their anchor. */
+function extractJson1Descriptions(html, into, anchors) {
 	const start = html.indexOf('<h1 id="function_details"');
 	if (start === -1) return;
 	const body = html.slice(start);
-	const headings = [...body.matchAll(/<h2 id="[^"]+"[^>]*>([\s\S]*?)<\/h2>/g)];
+	const headings = [...body.matchAll(/<h2 id="([^"]+)"[^>]*>([\s\S]*?)<\/h2>/g)];
 	for (let i = 0; i < headings.length; i++) {
-		const names = namesIn(stripTags(headings[i][1])).filter((n) => /^jsonb?(_\w+)?$/.test(n));
+		const names = namesIn(stripTags(headings[i][2])).filter((n) => /^jsonb?(_\w+)?$/.test(n));
 		if (names.length === 0) continue;
 		const sectionEnd = i + 1 < headings.length ? headings[i + 1].index : body.length;
 		const section = body.slice(headings[i].index + headings[i][0].length, sectionEnd);
@@ -86,7 +93,20 @@ function extractJson1Descriptions(html, into) {
 		if (!firstPara) continue;
 		const desc = firstSentenceOf(stripTags(firstPara[1]));
 		if (!desc) continue;
-		for (const name of names) if (!into.has(name)) into.set(name, desc);
+		for (const name of names) {
+			if (!into.has(name)) into.set(name, desc);
+			if (!anchors.has(name)) anchors.set(name, `json1.html#${headings[i][1]}`);
+		}
+	}
+}
+
+/** The index-list pages (corefunc/aggfunc/mathfunc) link every function as
+ *  `<a href='PAGE#anchor'>name(...)</a>` — the anchors, reproduced verbatim. */
+function extractIndexAnchors(html, page, anchors) {
+	const re = new RegExp(`<a href='${page}#([^']*)'>([a-z_][a-z0-9_]*)\\(`, "g");
+	for (const m of html.matchAll(re)) {
+		const name = m[2].toLowerCase();
+		if (!anchors.has(name)) anchors.set(name, `${page}#${m[1]}`);
 	}
 }
 
@@ -111,6 +131,7 @@ function extractDatefuncDescriptions(html, into) {
 
 function main() {
 	const descriptions = new Map();
+	const anchors = new Map();
 	const pages = {};
 	for (const page of [...DL_PAGES, "json1.html", "lang_datefunc.html"]) {
 		const p = join(DOC_DIR, page);
@@ -121,8 +142,10 @@ function main() {
 		}
 		const html = readFileSync(p, "utf8");
 		const before = descriptions.size;
-		if (DL_PAGES.includes(page)) extractDlDescriptions(html, descriptions);
-		else if (page === "json1.html") extractJson1Descriptions(html, descriptions);
+		if (DL_PAGES.includes(page)) {
+			extractDlDescriptions(html, page, descriptions, anchors);
+			extractIndexAnchors(html, page, anchors);
+		} else if (page === "json1.html") extractJson1Descriptions(html, descriptions, anchors);
 		else extractDatefuncDescriptions(html, descriptions);
 		pages[page] = descriptions.size - before;
 		console.log(`${page}: ${descriptions.size - before} descriptions`);
@@ -132,9 +155,11 @@ function main() {
 		bundle: `sqlite-doc-${DOC_VER}`,
 		pages,
 		descriptions: Object.fromEntries([...descriptions.entries()].sort(([a], [b]) => a.localeCompare(b))),
+		// name -> page.html#anchor, reproduced verbatim from the pages' own anchors/index links.
+		anchors: Object.fromEntries([...anchors.entries()].sort(([a], [b]) => a.localeCompare(b))),
 	};
 	writeFileSync(OUT, JSON.stringify(out, null, 1));
-	console.log(`done: ${descriptions.size} descriptions -> ${OUT}`);
+	console.log(`done: ${descriptions.size} descriptions, ${anchors.size} anchors -> ${OUT}`);
 }
 
 main();

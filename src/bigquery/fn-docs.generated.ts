@@ -2,18 +2,18 @@
 // The per-NAME function docs table for bigquery (issue #34), parallel to the signature table:
 // docUrl points at the vendor's published page for the same source the signature harvest read;
 // description (where present) is origin-tagged prose. Same lowercased-name keys as *_SIGNATURES.
-// Built 2026-07-14. 342 names (334 with descriptions).
+// Built 2026-07-15. 342 names (334 with descriptions).
 import type { FnDoc } from "../signature/docs.js";
 
 export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 	abs: { description: "Computes absolute value.", origin: "vendor-docs" },
 	acos: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#acos",
 		description: "Computes the principal value of the inverse cosine of X.",
 		origin: "vendor-docs",
 	},
 	acosh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#acosh",
 		description: "Computes the inverse hyperbolic cosine of X.",
 		origin: "vendor-docs",
 	},
@@ -121,28 +121,28 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	asin: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#asin",
 		description: "Computes the principal value of the inverse sine of X.",
 		origin: "vendor-docs",
 	},
 	asinh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#asinh",
 		description: "Computes the inverse hyperbolic sine of X.",
 		origin: "vendor-docs",
 	},
 	atan: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#atan",
 		description: "Computes the principal value of the inverse tangent of X.",
 		origin: "vendor-docs",
 	},
 	atan2: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#atan2",
 		description:
 			"Calculates the principal value of the inverse tangent of X/Y using the signs of the two arguments to determine the quadrant.",
 		origin: "vendor-docs",
 	},
 	atanh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#atanh",
 		description: "Computes the inverse hyperbolic tangent of X.",
 		origin: "vendor-docs",
 	},
@@ -173,12 +173,12 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	bool: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#bool_for_json",
 		description: "Converts a JSON boolean to a SQL `BOOL` value.",
 		origin: "vendor-docs",
 	},
 	bool_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#bool_array_for_json",
 		description: "Converts a JSON array of booleans to a SQL `ARRAY<BOOL>` value.",
 		origin: "vendor-docs",
 	},
@@ -194,17 +194,17 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	cbrt: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cbrt",
 		description: "Computes the cube root of `X`.",
 		origin: "vendor-docs",
 	},
 	ceil: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#ceil",
 		description: "Returns the smallest integral value that isn't less than X.",
 		origin: "vendor-docs",
 	},
 	ceiling: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#ceiling",
 		description: "Synonym of CEIL(X)",
 		origin: "vendor-docs",
 	},
@@ -225,7 +225,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	coalesce: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#coalesce",
 		description: "Returns the value of the first non-`NULL` expression, if any, otherwise `NULL`.",
 		origin: "vendor-docs",
 	},
@@ -247,27 +247,27 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 	},
 	concat: { description: "Concatenates one or more values into a single result.", origin: "vendor-docs" },
 	cos: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cos",
 		description: "Computes the cosine of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
 	cosh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cosh",
 		description: "Computes the hyperbolic cosine of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
 	cosine_distance: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cosine_distance",
 		description: "Computes the [cosine distance][wiki-cosine-distance] between two vectors.",
 		origin: "vendor-docs",
 	},
 	cot: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#cot",
 		description: "Computes the cotangent for the angle of `X`, where `X` is specified in radians.",
 		origin: "vendor-docs",
 	},
 	coth: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#coth",
 		description: "Computes the hyperbolic cotangent for the angle of `X`, where `X` is specified in radians.",
 		origin: "vendor-docs",
 	},
@@ -277,12 +277,12 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	csc: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#csc",
 		description: "Computes the cosecant of the input angle, which is in radians.",
 		origin: "vendor-docs",
 	},
 	csch: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#csch",
 		description: "Computes the hyperbolic cosecant of the input angle, which is in radians.",
 		origin: "vendor-docs",
 	},
@@ -354,7 +354,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	div: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#div",
 		description: "Returns the result of integer division of X by Y.",
 		origin: "vendor-docs",
 	},
@@ -389,12 +389,12 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	euclidean_distance: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#euclidean_distance",
 		description: "Computes the [Euclidean distance][wiki-euclidean-distance] between two vectors.",
 		origin: "vendor-docs",
 	},
 	exp: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#exp",
 		description: "Computes *e* to the power of X, also called the natural exponential function.",
 		origin: "vendor-docs",
 	},
@@ -411,7 +411,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	floor: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#floor",
 		description: "Returns the largest integral value that isn't greater than X.",
 		origin: "vendor-docs",
 	},
@@ -477,12 +477,12 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	ieee_divide: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#ieee_divide",
 		description: "Divides X by Y; this function never fails.",
 		origin: "vendor-docs",
 	},
 	if: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#if",
 		description:
 			"If `expr` evaluates to `TRUE`, returns `true_result`, else returns the evaluation for `else_result`.",
 		origin: "vendor-docs",
@@ -493,7 +493,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	ifnull: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#ifnull",
 		description: "If `expr` evaluates to `NULL`, returns `null_result`.",
 		origin: "vendor-docs",
 	},
@@ -509,22 +509,22 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	int32: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#int32_for_json",
 		description: "Converts a JSON number to a SQL `INT32` value.",
 		origin: "vendor-docs",
 	},
 	int32_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#int32_array_for_json",
 		description: "Converts a JSON number to a SQL `INT32_ARRAY` value.",
 		origin: "vendor-docs",
 	},
 	int64: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#int64_for_json",
 		description: "Converts a JSON number to a SQL `INT64` value.",
 		origin: "vendor-docs",
 	},
 	int64_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#int64_array_for_json",
 		description: "Converts a JSON array of numbers to a SQL `INT64_ARRAY` value.",
 		origin: "vendor-docs",
 	},
@@ -540,7 +540,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	is_inf: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#is_inf",
 		description: "Returns `TRUE` if the value is positive or negative infinity.",
 		origin: "vendor-docs",
 	},
@@ -551,7 +551,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	is_nan: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#is_nan",
 		description: "Returns `TRUE` if the value is a `NaN` value.",
 		origin: "vendor-docs",
 	},
@@ -571,7 +571,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	json_contains: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_contains",
 		description: "Checks if a JSON document contains another JSON document.",
 		origin: "vendor-docs",
 	},
@@ -580,29 +580,29 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	json_extract_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_extract_array",
 		description:
 			"Extracts a JSON array and converts it to a SQL `ARRAY<JSON-formatted STRING>` or `ARRAY<JSON>` value.",
 		origin: "vendor-docs",
 	},
 	json_extract_scalar: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_extract_scalar",
 		description: "Extracts a JSON scalar value and converts it to a SQL `STRING` value.",
 		origin: "vendor-docs",
 	},
 	json_extract_string_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_extract_string_array",
 		description: "Extracts a JSON array of scalar values and converts it to a SQL `ARRAY<STRING>` value.",
 		origin: "vendor-docs",
 	},
 	json_flatten: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_flatten",
 		description:
 			"Produces a new SQL `ARRAY<JSON>` value containing all non-array values that are either directly in the input JSON value or children of one or more consecutively nested arrays in the input JSON value.",
 		origin: "vendor-docs",
 	},
 	json_object: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_object",
 		description: "Creates a JSON object, using key-value pairs.",
 		origin: "vendor-docs",
 	},
@@ -611,28 +611,28 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	json_query_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_query_array",
 		description:
 			"Extracts a JSON array and converts it to a SQL `ARRAY<JSON-formatted STRING>` or `ARRAY<JSON>` value.",
 		origin: "vendor-docs",
 	},
 	json_remove: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_remove",
 		origin: "vendor-docs",
 	},
 	json_type: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_type",
 		description:
 			"Gets the JSON type of the outermost JSON value and converts the name of this type to a SQL `STRING` value.",
 		origin: "vendor-docs",
 	},
 	json_value: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_value",
 		description: "Extracts a JSON scalar value and converts it to a SQL `STRING` value.",
 		origin: "vendor-docs",
 	},
 	json_value_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#json_value_array",
 		description: "Extracts a JSON array of scalar values and converts it to a SQL `ARRAY<STRING>` value.",
 		origin: "vendor-docs",
 	},
@@ -669,82 +669,82 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	lax_bool: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_bool",
 		description: "Attempts to convert a JSON value to a SQL `BOOL` value.",
 		origin: "vendor-docs",
 	},
 	lax_bool_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_bool_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<BOOL>` value.",
 		origin: "vendor-docs",
 	},
 	lax_double: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_double",
 		description: "Attempts to convert a JSON value to a SQL `DOUBLE` value.",
 		origin: "vendor-docs",
 	},
 	lax_double_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_double_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<DOUBLE>` value.",
 		origin: "vendor-docs",
 	},
 	lax_float: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_float",
 		description: "Attempts to convert a JSON value to a SQL `FLOAT` value.",
 		origin: "vendor-docs",
 	},
 	lax_float_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_float_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<FLOAT>` value.",
 		origin: "vendor-docs",
 	},
 	lax_int32: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_int32",
 		description: "Attempts to convert a JSON value to a SQL `INT32` value.",
 		origin: "vendor-docs",
 	},
 	lax_int32_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_int32_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<INT32>` value.",
 		origin: "vendor-docs",
 	},
 	lax_int64: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_int64",
 		description: "Attempts to convert a JSON value to a SQL `INT64` value.",
 		origin: "vendor-docs",
 	},
 	lax_int64_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_int64_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<INT64>` value.",
 		origin: "vendor-docs",
 	},
 	lax_string: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_string",
 		description: "Attempts to convert a JSON value to a SQL `STRING` value.",
 		origin: "vendor-docs",
 	},
 	lax_string_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_string_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<STRING>` value.",
 		origin: "vendor-docs",
 	},
 	lax_uint32: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_uint32",
 		description: "Attempts to convert a JSON value to a SQL `UINT32` value.",
 		origin: "vendor-docs",
 	},
 	lax_uint32_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_uint32_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<UINT32>` value.",
 		origin: "vendor-docs",
 	},
 	lax_uint64: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_uint64",
 		description: "Attempts to convert a JSON value to a SQL `UINT64` value.",
 		origin: "vendor-docs",
 	},
 	lax_uint64_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#lax_uint64_array",
 		description: "Attempts to convert a JSON value to a SQL `ARRAY<UINT64>` value.",
 		origin: "vendor-docs",
 	},
@@ -765,17 +765,17 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	ln: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#ln",
 		description: "Computes the natural logarithm of X.",
 		origin: "vendor-docs",
 	},
 	log: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#log",
 		description: "If only X is present, `LOG` is a synonym of `LN`.",
 		origin: "vendor-docs",
 	},
 	log10: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#log10",
 		description: "Similar to `LOG`, but computes logarithm to base 10.",
 		origin: "vendor-docs",
 	},
@@ -802,7 +802,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 	},
 	min: { description: "Returns the minimum non-`NULL` value in an aggregated group.", origin: "vendor-docs" },
 	mod: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#mod",
 		description: "Modulo function: returns the remainder of the division of X by Y.",
 		origin: "vendor-docs",
 	},
@@ -839,7 +839,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	nullif: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#nullif",
 		description: "Returns `NULL` if `expr = expr_to_match` evaluates to `TRUE`, otherwise returns `expr`.",
 		origin: "vendor-docs",
 	},
@@ -849,7 +849,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	nullifzero: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#nullifzero",
 		description: "Returns `NULL` if the value of `expr` is `0`.",
 		origin: "vendor-docs",
 	},
@@ -914,27 +914,27 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	pi: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#pi",
 		description: "Returns the mathematical constant `π` as a `DOUBLE` value.",
 		origin: "vendor-docs",
 	},
 	pi_bignumeric: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#pi_bignumeric",
 		description: "Returns the mathematical constant `π` as a `BIGNUMERIC` value.",
 		origin: "vendor-docs",
 	},
 	pi_numeric: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#pi_numeric",
 		description: "Returns the mathematical constant `π` as a `NUMERIC` value.",
 		origin: "vendor-docs",
 	},
 	pow: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#pow",
 		description: "Returns the value of X raised to the power of Y.",
 		origin: "vendor-docs",
 	},
 	power: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#power",
 		description: "Synonym of [`POW(X, Y)`][pow].",
 		origin: "vendor-docs",
 	},
@@ -960,7 +960,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	rand: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#rand",
 		description:
 			"Generates a pseudo-random value of type `DOUBLE` in the range of [0, 1), inclusive of 0 and exclusive of 1.",
 		origin: "vendor-docs",
@@ -972,7 +972,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	range_bucket: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#range_bucket",
 		description:
 			"`RANGE_BUCKET` scans through a sorted array and returns the 0-based position of the point's upper bound.",
 		origin: "vendor-docs",
@@ -1067,7 +1067,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	round: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#round",
 		description: "If only X is present, rounds X to the nearest integer.",
 		origin: "vendor-docs",
 	},
@@ -1087,7 +1087,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	safe_add: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#safe_add",
 		description: "Equivalent to the addition operator (`+`), but returns `NULL` if overflow occurs.",
 		origin: "vendor-docs",
 	},
@@ -1101,39 +1101,39 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	safe_divide: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#safe_divide",
 		description:
 			"Equivalent to the division operator (`X / Y`), but returns `NULL` if an error occurs, such as a division by zero error.",
 		origin: "vendor-docs",
 	},
 	safe_multiply: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#safe_multiply",
 		description: "Equivalent to the multiplication operator (`*`), but returns `NULL` if overflow occurs.",
 		origin: "vendor-docs",
 	},
 	safe_negate: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#safe_negate",
 		description: "Equivalent to the unary minus operator (`-`), but returns `NULL` if overflow occurs.",
 		origin: "vendor-docs",
 	},
 	safe_subtract: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#safe_subtract",
 		description: "Returns the result of Y subtracted from X.",
 		origin: "vendor-docs",
 	},
 	safe_to_json: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#safe_to_json",
 		description:
 			"Similar to the `TO_JSON` function, but for each unsupported field in the input argument, produces a JSON null instead of an error.",
 		origin: "vendor-docs",
 	},
 	sec: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sec",
 		description: "Computes the secant for the angle of `X`, where `X` is specified in radians.",
 		origin: "vendor-docs",
 	},
 	sech: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sech",
 		description: "Computes the hyperbolic secant for the angle of `X`, where `X` is specified in radians.",
 		origin: "vendor-docs",
 	},
@@ -1158,17 +1158,17 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	sign: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sign",
 		description: "Returns `-1`, `0`, or `+1` for negative, zero and positive arguments respectively.",
 		origin: "vendor-docs",
 	},
 	sin: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sin",
 		description: "Computes the sine of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
 	sinh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sinh",
 		description: "Computes the hyperbolic sine of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
@@ -1195,342 +1195,342 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	sqrt: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#sqrt",
 		description: "Computes the square root of X.",
 		origin: "vendor-docs",
 	},
 	st_angle: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_angle",
 		description: "Takes three point `GEOGRAPHY` values, which represent two intersecting lines.",
 		origin: "vendor-docs",
 	},
 	st_area: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_area",
 		description: "Returns the area in square meters covered by the polygons in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_asbinary: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_asbinary",
 		description: "Returns the [WKB][wkb-link] representation of an input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_asgeojson: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_asgeojson",
 		description:
 			"Returns the [RFC 7946][GeoJSON-spec-link] compliant [GeoJSON][geojson-link] representation of the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_askml: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_askml",
 		description: "Takes a `GEOGRAPHY` and returns a `STRING` [KML geometry][kml-geometry-link].",
 		origin: "vendor-docs",
 	},
 	st_astext: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_astext",
 		description: "Returns the [WKT][wkt-link] representation of an input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_azimuth: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_azimuth",
 		description:
 			"Takes two point `GEOGRAPHY` values, and returns the azimuth of the line segment formed by points 1 and 2.",
 		origin: "vendor-docs",
 	},
 	st_boundary: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_boundary",
 		description:
 			"Returns a single `GEOGRAPHY` that contains the union of the boundaries of each component in the given input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_boundingbox: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_boundingbox",
 		description: "Returns a `STRUCT` that represents the bounding box for the specified geography.",
 		origin: "vendor-docs",
 	},
 	st_centroid: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_centroid",
 		description: "Returns the _centroid_ of the input `GEOGRAPHY` as a single point `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_closestpoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_closestpoint",
 		description:
 			"Returns a `GEOGRAPHY` containing a point on `geography_1` with the smallest possible distance to `geography_2`.",
 		origin: "vendor-docs",
 	},
 	st_clusterdbscan: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_clusterdbscan",
 		origin: "vendor-docs",
 	},
 	st_contains: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_contains",
 		description:
 			"Returns `TRUE` if no point of `geography_2` is outside `geography_1`, and the interiors intersect; returns `FALSE` otherwise.",
 		origin: "vendor-docs",
 	},
 	st_convexhull: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_convexhull",
 		description: "Returns the convex hull for the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_coveredby: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_coveredby",
 		description: "Returns `FALSE` if `geography_1` or `geography_2` is empty.",
 		origin: "vendor-docs",
 	},
 	st_covers: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_covers",
 		description: "Returns `FALSE` if `geography_1` or `geography_2` is empty.",
 		origin: "vendor-docs",
 	},
 	st_difference: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_difference",
 		description:
 			"Returns a `GEOGRAPHY` that represents the point set difference of `geography_1` and `geography_2`.",
 		origin: "vendor-docs",
 	},
 	st_dimension: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_dimension",
 		description: "Returns the dimension of the highest-dimensional element in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_disjoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_disjoint",
 		description:
 			"Returns `TRUE` if the intersection of `geography_1` and `geography_2` is empty, that is, no point in `geography_1` also appears in `geography_2`.",
 		origin: "vendor-docs",
 	},
 	st_distance: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_distance",
 		description: "Returns the shortest distance in meters between two non-empty `GEOGRAPHY`s.",
 		origin: "vendor-docs",
 	},
 	st_dump: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_dump",
 		description:
 			"Returns an `ARRAY` of simple `GEOGRAPHY`s where each element is a component of the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_dumppoints: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_dumppoints",
 		description:
 			"Takes an input geography and returns all of its points, line vertices, and polygon vertices as an array of point geographies.",
 		origin: "vendor-docs",
 	},
 	st_dwithin: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_dwithin",
 		description:
 			"Returns `TRUE` if the distance between at least one point in `geography_1` and one point in `geography_2` is less than or equal to the distance given by the `distance` argument; otherwise, returns `FALSE`.",
 		origin: "vendor-docs",
 	},
 	st_endpoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_endpoint",
 		description: "Returns the last point of a linestring geography as a point geography.",
 		origin: "vendor-docs",
 	},
 	st_equals: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_equals",
 		description: "Checks if two `GEOGRAPHY` values represent the same `GEOGRAPHY` value.",
 		origin: "vendor-docs",
 	},
 	st_extent: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_extent",
 		description: "Returns a `STRUCT` that represents the bounding box for the set of input `GEOGRAPHY` values.",
 		origin: "vendor-docs",
 	},
 	st_exteriorring: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_exteriorring",
 		description: "Returns a linestring geography that corresponds to the outermost ring of a polygon geography.",
 		origin: "vendor-docs",
 	},
 	st_geogfrom: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geogfrom",
 		description: "Converts an expression for a `STRING` or `BYTES` value into a `GEOGRAPHY` value.",
 		origin: "vendor-docs",
 	},
 	st_geogfromkml: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geogfromkml",
 		origin: "vendor-docs",
 	},
 	st_geogpoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geogpoint",
 		description: "Creates a `GEOGRAPHY` with a single point.",
 		origin: "vendor-docs",
 	},
 	st_geogpointfromgeohash: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geogpointfromgeohash",
 		description:
 			"Returns a `GEOGRAPHY` value that corresponds to a point in the middle of a bounding box defined in the [GeoHash][geohash-link].",
 		origin: "vendor-docs",
 	},
 	st_geohash: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geohash",
 		description:
 			"Takes a single-point `GEOGRAPHY` and returns a [GeoHash][geohash-link] representation of that `GEOGRAPHY` object.",
 		origin: "vendor-docs",
 	},
 	st_geometrytype: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_geometrytype",
 		description:
 			"Returns the [Open Geospatial Consortium][ogc-link] (OGC) geometry type that describes the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_interiorrings: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_interiorrings",
 		description:
 			"Returns an array of linestring geographies that corresponds to the interior rings of a polygon geography.",
 		origin: "vendor-docs",
 	},
 	st_intersection: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_intersection",
 		description: "Returns a `GEOGRAPHY` that represents the point set intersection of the two input `GEOGRAPHY`s.",
 		origin: "vendor-docs",
 	},
 	st_intersects: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_intersects",
 		description: "Returns `TRUE` if the point set intersection of `geography_1` and `geography_2` is non-empty.",
 		origin: "vendor-docs",
 	},
 	st_intersectsbox: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_intersectsbox",
 		description:
 			"Returns `TRUE` if `geography` intersects the rectangle between `[lng1, lng2]` and `[lat1, lat2]`.",
 		origin: "vendor-docs",
 	},
 	st_isclosed: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_isclosed",
 		description:
 			"Returns `TRUE` for a non-empty Geography, where each element in the Geography has an empty boundary.",
 		origin: "vendor-docs",
 	},
 	st_iscollection: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_iscollection",
 		description: "Returns `TRUE` if the total number of points, linestrings, and polygons is greater than one.",
 		origin: "vendor-docs",
 	},
 	st_isempty: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_isempty",
 		description:
 			"Returns `TRUE` if the given `GEOGRAPHY` is empty; that is, the `GEOGRAPHY` doesn't contain any points, lines, or polygons.",
 		origin: "vendor-docs",
 	},
 	st_isring: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_isring",
 		description:
 			"Returns `TRUE` if the input `GEOGRAPHY` is a linestring and if the linestring is both [`ST_ISCLOSED`][st-isclosed] and simple.",
 		origin: "vendor-docs",
 	},
 	st_length: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_length",
 		description: "Returns the total length in meters of the lines in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_lineinterpolatepoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_lineinterpolatepoint",
 		description: "Gets a point at a specific fraction in a linestring `GEOGRAPHY` value.",
 		origin: "vendor-docs",
 	},
 	st_linelocatepoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_linelocatepoint",
 		description:
 			"Gets a section of a linestring between the start point and a selected point (a point on the linestring closest to the `point_geography` argument).",
 		origin: "vendor-docs",
 	},
 	st_linesubstring: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_linesubstring",
 		description: "Gets a segment of a linestring at a specific starting and ending fraction.",
 		origin: "vendor-docs",
 	},
 	st_makeline: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_makeline",
 		description:
 			"Creates a `GEOGRAPHY` with a single linestring by concatenating the point or line vertices of each of the input `GEOGRAPHY`s in the order they are given.",
 		origin: "vendor-docs",
 	},
 	st_makepolygon: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_makepolygon",
 		description:
 			"Creates a `GEOGRAPHY` containing a single polygon from linestring inputs, where each input linestring is used to construct a polygon ring.",
 		origin: "vendor-docs",
 	},
 	st_makepolygonoriented: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_makepolygonoriented",
 		description:
 			"Like `ST_MAKEPOLYGON`, but the vertex ordering of each input linestring determines the orientation of each polygon ring.",
 		origin: "vendor-docs",
 	},
 	st_maxdistance: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_maxdistance",
 		origin: "vendor-docs",
 	},
 	st_npoints: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_npoints",
 		description: "An alias of [ST_NUMPOINTS][st-numpoints].",
 		origin: "vendor-docs",
 	},
 	st_numgeometries: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_numgeometries",
 		description: "Returns the number of geometries in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_numpoints: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_numpoints",
 		description: "Returns the number of vertices in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_perimeter: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_perimeter",
 		description: "Returns the length in meters of the boundary of the polygons in the input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_pointn: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_pointn",
 		description: "Returns the Nth point of a linestring geography as a point geography, where N is the index.",
 		origin: "vendor-docs",
 	},
 	st_simplify: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_simplify",
 		description: "Returns a simplified version of `geography`, the given input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_snaptogrid: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_snaptogrid",
 		description: "Returns the input `GEOGRAPHY`, where each vertex has been snapped to a longitude/latitude grid.",
 		origin: "vendor-docs",
 	},
 	st_startpoint: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_startpoint",
 		description: "Returns the first point of a linestring geography as a point geography.",
 		origin: "vendor-docs",
 	},
 	st_touches: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_touches",
 		description: "Returns `TRUE` provided the following two conditions are satisfied.",
 		origin: "vendor-docs",
 	},
 	st_union: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_union",
 		description: "Returns a `GEOGRAPHY` that represents the point set union of all input `GEOGRAPHY`s.",
 		origin: "vendor-docs",
 	},
 	st_union_agg: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_union_agg",
 		description: "Returns a `GEOGRAPHY` that represents the point set union of all input `GEOGRAPHY`s.",
 		origin: "vendor-docs",
 	},
 	st_within: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_within",
 		description:
 			"Returns `TRUE` if no point of `geography_1` is outside of `geography_2` and the interiors of `geography_1` and `geography_2` intersect.",
 		origin: "vendor-docs",
 	},
 	st_x: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_x",
 		description: "Returns the longitude in degrees of the single-point input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
 	st_y: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/geography_functions#st_y",
 		description: "Returns the latitude in degrees of the single-point input `GEOGRAPHY`.",
 		origin: "vendor-docs",
 	},
@@ -1549,7 +1549,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	string_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#string_array_for_json",
 		description: "Converts a JSON array of strings to a SQL `ARRAY<STRING>` value.",
 		origin: "vendor-docs",
 	},
@@ -1569,12 +1569,12 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 	},
 	sum: { description: "Returns the sum of non-`NULL` values in an aggregated group.", origin: "vendor-docs" },
 	tan: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#tan",
 		description: "Computes the tangent of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
 	tanh: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#tanh",
 		description: "Computes the hyperbolic tangent of X where X is specified in radians.",
 		origin: "vendor-docs",
 	},
@@ -1668,7 +1668,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	to_json_string: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#to_json_string",
 		description: "Converts a SQL value to a JSON-formatted `STRING` value.",
 		origin: "vendor-docs",
 	},
@@ -1685,28 +1685,28 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 	},
 	trim: { description: "Takes a `STRING` or `BYTES` value to trim.", origin: "vendor-docs" },
 	trunc: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/mathematical_functions#trunc",
 		description:
 			"If only X is present, `TRUNC` rounds X to the nearest integer whose absolute value isn't greater than the absolute value of X.",
 		origin: "vendor-docs",
 	},
 	uint32: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#uint32_for_json",
 		description: "Converts a JSON number to a SQL `UINT32` value.",
 		origin: "vendor-docs",
 	},
 	uint32_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#uint32_array_for_json",
 		description: "Converts a JSON number to a SQL `UINT32_ARRAY` value.",
 		origin: "vendor-docs",
 	},
 	uint64: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#uint64_for_json",
 		description: "Converts a JSON number to a SQL `UINT64` value.",
 		origin: "vendor-docs",
 	},
 	uint64_array: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/json_functions#uint64_array_for_json",
 		description: "Converts a JSON number to a SQL `UINT64_ARRAY` value.",
 		origin: "vendor-docs",
 	},
@@ -1741,7 +1741,7 @@ export const BIGQUERY_FN_DOCS: Record<string, FnDoc> = {
 		origin: "vendor-docs",
 	},
 	zeroifnull: {
-		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions",
+		docUrl: "https://cloud.google.com/bigquery/docs/reference/standard-sql/conditional_expressions#zeroifnull",
 		description: "Returns `0` if the value of `expr` is `NULL`.",
 		origin: "vendor-docs",
 	},
