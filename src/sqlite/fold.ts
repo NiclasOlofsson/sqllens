@@ -16,6 +16,7 @@
 // lexer's `[`...`]` body is `~']'*` — no doubling), so a doubled `]]` inside `[...]` is not
 // unescaped, same as this module's tsql bracket handling.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 const BACKTICK: readonly [string, string] = ["`", "`"];
@@ -24,6 +25,13 @@ export const SQLITE_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE, BACKTICK, ["[", "]"]],
 	unquoted: "ascii-lower",
 	quoted: "ascii-lower",
+};
+
+/** schema.table, two levels only — the schema is an attached database name (or main/temp);
+ *  sqlite.org/lang_attach + lang_naming. */
+export const SQLITE_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["schema"],
+	rule: SQLITE_FOLD_RULE,
 };
 
 /** Fold an identifier to its SQLite identity key. */

@@ -27,6 +27,7 @@
 // character within an identifier, quote the identifier and double the quote character" (example:
 // `` `a``b` `` → `` a`b ``).
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const BACKTICK: readonly [string, string] = ["`", "`"];
 
@@ -34,6 +35,13 @@ export const MYSQL_FOLD_RULE: FoldRule = {
 	delimiters: [BACKTICK],
 	unquoted: "lower",
 	quoted: "lower",
+};
+
+/** schema.table, two levels — MySQL's database IS its schema
+ *  (dev.mysql.com/doc/refman/8.4/en/identifier-qualifiers.html). */
+export const MYSQL_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["schema"],
+	rule: MYSQL_FOLD_RULE,
 };
 
 /** Fold an identifier to its MySQL identity key. */

@@ -17,6 +17,7 @@
 // per this module's citation policy; flagged as a discrepancy, not resolved against a live
 // engine.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
@@ -24,6 +25,12 @@ export const TRINO_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
 	unquoted: "lower",
 	quoted: "lower",
+};
+
+/** catalog.schema.table (trino.io/docs/current/overview/concepts — catalog/schema/table). */
+export const TRINO_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: TRINO_FOLD_RULE,
 };
 
 /** Fold an identifier to its Trino identity key. */

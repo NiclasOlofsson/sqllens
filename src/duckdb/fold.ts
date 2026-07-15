@@ -9,6 +9,7 @@
 // but col_á is not equal to them"; hence ascii-lower for both forms. Doubled-quote escape:
 // "Double quotes can be escaped by repeating the quote character."
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
@@ -16,6 +17,13 @@ export const DUCKDB_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
 	unquoted: "ascii-lower",
 	quoted: "ascii-lower",
+};
+
+/** catalog.schema.table — an attached database is a catalog
+ *  (duckdb.org/docs/current/sql/statements/attach). */
+export const DUCKDB_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: DUCKDB_FOLD_RULE,
 };
 
 /** Fold an identifier to its DuckDB identity key. */

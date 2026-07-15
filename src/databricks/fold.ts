@@ -5,6 +5,7 @@
 // "Identifiers are case-insensitive when referenced." Backtick escaping is doubling, not
 // case-quoting: "Use ` to escape ` itself" (example: `` `a``b` `` → `` a`b ``).
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const BACKTICK: readonly [string, string] = ["`", "`"];
 
@@ -12,6 +13,13 @@ export const DATABRICKS_FOLD_RULE: FoldRule = {
 	delimiters: [BACKTICK],
 	unquoted: "lower",
 	quoted: "lower",
+};
+
+/** Unity Catalog's three-level namespace: catalog.schema.object
+ *  (docs.databricks.com/en/data-governance/unity-catalog — "three-level namespace"). */
+export const DATABRICKS_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: DATABRICKS_FOLD_RULE,
 };
 
 /** Fold an identifier to its Databricks identity key. */

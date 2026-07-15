@@ -12,6 +12,7 @@
 // collation is a documented boundary this module does not cross. Delimiting with `[ ]` or
 // `" "` does not itself change case behavior — quoting only unlocks reserved words/specials.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
@@ -19,6 +20,14 @@ export const TSQL_FOLD_RULE: FoldRule = {
 	delimiters: [["[", "]"], DOUBLE_QUOTE],
 	unquoted: "lower",
 	quoted: "lower",
+};
+
+/** Four-part names: linked_server.database.schema.object, with elidable middle parts
+ *  (`db..t` = default schema) — learn.microsoft.com "Transact-SQL syntax conventions",
+ *  multipart names. Normalized vocabulary: server = linked server, catalog = database. */
+export const TSQL_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["server", "catalog", "schema"],
+	rule: TSQL_FOLD_RULE,
 };
 
 /** Fold an identifier to its T-SQL identity key. */

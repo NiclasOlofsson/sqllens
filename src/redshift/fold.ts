@@ -3,6 +3,7 @@
 // used at two stages). Redshift folds both unquoted and quoted identifiers to lowercase; double-quote
 // is the delimiter, doubled to escape.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
@@ -18,6 +19,13 @@ export const REDSHIFT_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
 	unquoted: "ascii-lower",
 	quoted: "ascii-lower",
+};
+
+/** database.schema.table (docs.aws.amazon.com/redshift — cross-database queries address
+ *  three-part names). Normalized vocabulary: catalog = database. */
+export const REDSHIFT_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: REDSHIFT_FOLD_RULE,
 };
 
 /** Fold an identifier to its Redshift identity key. */

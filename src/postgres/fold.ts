@@ -14,6 +14,7 @@
 // (same documented boundary as mysql's lower_case_table_names). Doubled-quote escape: "To include
 // a double quote, write two double quotes."
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const DOUBLE_QUOTE: readonly [string, string] = ['"', '"'];
 
@@ -21,6 +22,14 @@ export const POSTGRES_FOLD_RULE: FoldRule = {
 	delimiters: [DOUBLE_QUOTE],
 	unquoted: "ascii-lower",
 	quoted: "preserve",
+};
+
+/** database.schema.table (postgresql.org/docs/18/sql-syntax-lexical + ddl-schemas — cross-
+ *  database references are rejected at runtime but the three-part form parses). Normalized
+ *  vocabulary: catalog = database. */
+export const POSTGRES_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: POSTGRES_FOLD_RULE,
 };
 
 /** Fold an identifier to its PostgreSQL identity key. */

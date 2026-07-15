@@ -15,6 +15,7 @@
 // does not implement BigQuery's full string-literal escape grammar (\n, \xHH, \uXXXX, octal, …),
 // out of scope for an identifier fold — those escapes are exotic in identifier text.
 import { displayWith, foldWith, type FoldRule, type IdentKind } from "../ident/fold.js";
+import type { QualifiedNameConfig } from "../ir/qualified-name.js";
 
 const BACKTICK: readonly [string, string] = ["`", "`"];
 
@@ -24,6 +25,15 @@ export const BIGQUERY_FOLD_RULE: FoldRule = {
 	quoted: "lower",
 	tableCase: "preserve",
 	escapeStyle: "backslash",
+};
+
+/** project.dataset.table (cloud.google.com/bigquery/docs — "Qualifying table names").
+ *  Normalized vocabulary: catalog = project, schema = dataset. Relation-path parts keep case in
+ *  the identity key (this rule's tableCase: "preserve" — dataset and table names are
+ *  case-sensitive). */
+export const BIGQUERY_NAME_CONFIG: QualifiedNameConfig = {
+	roles: ["catalog", "schema"],
+	rule: BIGQUERY_FOLD_RULE,
 };
 
 /** Fold an identifier to its BigQuery identity key. */
