@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { completeAt, DbtTemplateProvider, SqlDocument, type TemplateCandidate } from "../../src/index.js";
+import {
+	completeAt,
+	DbtTemplateProvider,
+	SqlDocument,
+	type TemplateCall,
+	type TemplateCandidate,
+} from "../../src/index.js";
 import { minijinja } from "../../src/minijinja/index.js";
 
 // REQ2b: completeAt fires inside a jinja tag. The NEUTRAL half (which call + arg slot the caret is in)
@@ -8,12 +14,18 @@ import { minijinja } from "../../src/minijinja/index.js";
 // completions, and never SQL keywords. The library default provider knows no vocabulary and offers
 // none, so a bare document stays quiet inside a tag.
 
-/** A host catalog: ref arg 0 → models, source arg 0/1 → source/table names, callee slot → macro names. */
+/** A host catalog: ref arg 0 → models, source arg 0/1 → source/table names, callee slot → macro names.
+ *  source arg 1 is ARG-DEPENDENT (#37): the tables OF the source named in arg 0. */
 class Catalog extends DbtTemplateProvider {
-	override templateCandidates(callee: string, argIndex: number): TemplateCandidate[] {
-		if (callee === "ref" && argIndex === 0) return [{ label: "orders" }, { label: "customers", detail: "staging" }];
-		if (callee === "source" && argIndex === 0) return [{ label: "raw" }];
-		if (callee === "source" && argIndex === 1) return [{ label: "events" }];
+	override templateCandidates(call: TemplateCall, argIndex: number): TemplateCandidate[] {
+		if (call.name === "ref" && argIndex === 0)
+			return [{ label: "orders" }, { label: "customers", detail: "staging" }];
+		if (call.name === "source" && argIndex === 0) return [{ label: "raw" }, { label: "stripe" }];
+		if (call.name === "source" && argIndex === 1) {
+			if (call.args[0] === "raw") return [{ label: "events" }];
+			if (call.args[0] === "stripe") return [{ label: "payments" }];
+			return [{ label: "events" }, { label: "payments" }]; // group unknown → union
+		}
 		// The callee-name slot: every callee the host knows (builtins + macros), filtered by the prefix.
 		if (argIndex === -1) return [{ label: "ref" }, { label: "source" }, { label: "star" }, { label: "date_spine" }];
 		return [];
@@ -40,10 +52,16 @@ describe("completeAt inside a jinja tag (REQ2b)", () => {
 		expect(labels).toContain("orders");
 	});
 
-	it("source's second arg returns the table candidates for that slot", () => {
+	it("source's second arg returns the tables OF the group named in arg 0 (#37)", () => {
 		const text = "select * from {{ source('raw', '";
 		const labels = completeAt(doc(text, new Catalog()), text.length, new Catalog()).map((c) => c.label);
-		expect(labels).toEqual(["events"]);
+		expect(labels).toEqual(["events"]); // raw's tables only — NOT stripe's payments
+	});
+
+	it("source's second arg for the OTHER group answers that group's tables (#37)", () => {
+		const text = "select * from {{ source('stripe', '";
+		const labels = completeAt(doc(text, new Catalog()), text.length, new Catalog()).map((c) => c.label);
+		expect(labels).toEqual(["payments"]);
 	});
 
 	it("the callee-name slot (caret in a call's name) returns the host's callee names", () => {

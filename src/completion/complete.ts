@@ -169,7 +169,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
  *  completion. */
 function templateCompletions(slot: JinjaSlot, schema?: SchemaProvider): Completion[] {
 	if (!(schema instanceof DefaultTemplateProvider)) return [];
-	return schema.templateCandidates(slot.callee, slot.argIndex, slot.packageName).map((c) => ({
+	return schema.templateCandidates(slot.call, slot.argIndex).map((c) => ({
 		label: c.label,
 		kind: "template" as const,
 		...(c.detail !== undefined ? { detail: c.detail } : {}),

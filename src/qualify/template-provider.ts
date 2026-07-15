@@ -227,8 +227,11 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	 *  the table names). `argIndex` is -1 when the caret is still in the callee name itself, so a host
 	 *  can answer the macro/callee names it knows. `packageName` is the dotted package (`dbt_utils` in
 	 *  `dbt_utils.star(...)`). The NEUTRAL provider knows no vocabulary and offers none; a host answers
-	 *  from its catalog. `completeAt` reads this when the caret is inside a jinja tag. */
-	templateCandidates(_callee: string, _argIndex: number, _packageName?: string): TemplateCandidate[] {
+	 *  from its catalog. `completeAt` reads this when the caret is inside a jinja tag. The WHOLE
+	 *  parsed call comes along (issue #37) — a slot's candidates can depend on the sibling args:
+	 *  `source('raw', '|')`'s candidates are the tables OF the source named in `call.args[0]`.
+	 *  `argIndex` is the positional arg the caret is in (`-1` = the callee-name slot). */
+	templateCandidates(_call: TemplateCall, _argIndex: number): TemplateCandidate[] {
 		return [];
 	}
 

@@ -20,6 +20,8 @@
 // ---------------------------------------------------------------------------
 
 import type { PartSpan } from "../ir/part-span.js";
+import type { TemplateCall } from "../qualify/template-provider.js";
+import { callOf } from "../minijinja/apply-tags.js";
 import type { MacroCall, TagArg, TagNode } from "../minijinja/tag-ast.js";
 
 /** Where the caret sits inside a jinja call tag. NEUTRAL, the callee is a bare string; the dbt
@@ -29,6 +31,11 @@ export interface JinjaSlot {
 	callee: string;
 	/** Dotted package before the callee (`dbt_utils` in `dbt_utils.star(...)`). */
 	packageName?: string;
+	/** The WHOLE parsed call (issue #37): name, packageParts and every sibling arg's literal value
+	 *  (null where computed) — the same TemplateCall shape every provider method receives. A slot's
+	 *  candidates can depend on the other args (source('raw', '|')'s candidates are the tables OF
+	 *  raw), so the provider callback gets the call, not just the callee name. */
+	call: TemplateCall;
 	/** 0-based index of the positional arg the caret is in. The callee-name slot (caret still in the
 	 *  callee identifier, `{{ my_mac|`) is `-1`. */
 	argIndex: number;
@@ -115,7 +122,10 @@ function macroHit(c: MacroCall): CallHit {
 
 /** The slot for a caret inside a resolved call: the callee name, or the positional argument. */
 function slotFromCall(c: CallHit, text: string, offset: number): JinjaSlot | undefined {
-	const base = { callee: c.name, ...(c.packageName !== undefined ? { packageName: c.packageName } : {}) };
+	// The whole call rides the slot (#37): callOf reads name + literal args off the source text,
+	// the same extraction apply-tags feeds the provider everywhere else.
+	const call = callOf({ name: c.name, nameSpan: c.nameSpan, args: c.args, ...(c.packageName !== undefined ? { packageName: c.packageName } : {}) } as MacroCall, text);
+	const base = { callee: c.name, call, ...(c.packageName !== undefined ? { packageName: c.packageName } : {}) };
 
 	// Callee-name slot: the caret is still within (or right at the end of) the callee identifier,
 	// before the open paren, the user is typing the macro name itself.
@@ -155,7 +165,8 @@ function bareCalleeSlot(tags: readonly TagNode[], text: string, offset: number):
 	const before = text.slice(tag.tagSpan.start + 2, offset);
 	const m = /^\s*([A-Za-z_]\w*)$/.exec(before);
 	if (!m) return undefined;
-	return { callee: m[1]!, argIndex: -1, prefix: m[1]!, incomplete: true };
+	// No parsed call exists yet (`{{ re`) — the slot's call is the bare callee with no args.
+	return { callee: m[1]!, call: { name: m[1]!, args: [] }, argIndex: -1, prefix: m[1]!, incomplete: true };
 }
 
 /** Drop a single leading quote from a partial string arg (`'cu` -> `cu`) so the prefix is the value

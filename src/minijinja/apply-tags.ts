@@ -218,7 +218,10 @@ function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
 // ---------------------------------------------------------------------------
 
 /** Match a direct string-literal argument's raw text (no escapes, one token). */
-const LITERAL_ARG = /^(['"])([^'"\\]*)\1$/;
+/** A literal argument's value: a quoted string (quote-stripped) or a bare numeric literal —
+ *  both are the user's own text, never computed. Everything else stays `null` (computed). */
+const LITERAL_ARG = /^(?:(['"])([^'"\\]*)\1|(-?\d+(?:\.\d+)?))$/;
+const literalValueOf = (m: RegExpExecArray): string => m[2] ?? m[3]!;
 
 /** The raw text of a span. */
 function sliceSpan(text: string, span: PartSpan): string {
@@ -241,10 +244,10 @@ export function callOf(mc: MacroCall, text: string): TemplateCall {
 		const kw = KWARG_RE.exec(raw);
 		if (kw) {
 			const m = LITERAL_ARG.exec(kw[2].trim());
-			kwargs.push({ name: kw[1], value: m ? m[2] : null });
+			kwargs.push({ name: kw[1], value: m ? literalValueOf(m) : null });
 		} else {
 			const m = LITERAL_ARG.exec(raw);
-			args.push(m ? m[2] : null);
+			args.push(m ? literalValueOf(m) : null);
 		}
 	}
 	return {
