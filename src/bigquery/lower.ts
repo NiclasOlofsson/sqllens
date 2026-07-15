@@ -274,7 +274,7 @@ function lowerQueryPrimary(primary: ParserRuleContext): QueryBody {
 		return {
 			kind: "select",
 			projections: [implicitStar(primary)],
-			from: [{ kind: "table", name, relation: relationOf(name), namePartSpans: pathPartSpans(path), cst: path }],
+			from: [{ kind: "table", relation: relationOf(name), namePartSpans: pathPartSpans(path), cst: path }],
 			columns: [],
 			aggregated: false,
 			cst: primary,
@@ -432,7 +432,6 @@ function lowerPipeSetOperand(operand: ParserRuleContext): QueryExpr {
 					? [
 							{
 								kind: "table",
-								name,
 								relation: relationOf(name),
 								namePartSpans: pathPartSpans(path),
 								cst: path,
@@ -474,7 +473,7 @@ function lowerPipeJoin(join: ParserRuleContext, cst: ParserRuleContext): PipeSta
 	const out: Source[] = [];
 	const tp = directChildrenOfRule(join, P.RULE_table_primary)[0];
 	if (tp) collectTablePrimary(tp, out, unsupported);
-	const source: Source = out[0] ?? { kind: "table", name: [], relation: relationOf([]), cst: join };
+	const source: Source = out[0] ?? { kind: "table", relation: relationOf([]), cst: join };
 	const joinConditions: Expr[] = [];
 	const columns: ColumnRef[] = [];
 	const onUsing = directChildrenOfRule(join, P.RULE_on_or_using_clause)[0];
@@ -976,7 +975,6 @@ function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Sou
 		const name = path ? pathParts(path) : [tp.getText()];
 		return {
 			kind: "table",
-			name,
 			relation: relationOf(name),
 			namePartSpans: path ? pathPartSpans(path) : undefined,
 			alias: aliasInfo?.alias,
@@ -986,7 +984,7 @@ function buildSource(tp: ParserRuleContext, unsupported: UnsupportedFlag[]): Sou
 	}
 
 	const name = [stripBackticks(tp.getText())];
-	return { kind: "table", name, relation: relationOf(name), cst: tp };
+	return { kind: "table", relation: relationOf(name), cst: tp };
 }
 
 // --- graph / GQL -----------------------------------------------------------------
@@ -1141,7 +1139,6 @@ function buildPathSource(pathExpr: ParserRuleContext): Source {
 	const namePartSpans = path ? pathPartSpans(path) : undefined;
 	return {
 		kind: "table",
-		name,
 		relation: relationOf(name),
 		namePartSpans,
 		alias: aliasInfo?.alias,

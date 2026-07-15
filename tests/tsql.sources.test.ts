@@ -36,7 +36,7 @@ describe("T-SQL APPLY / OPENJSON / OPENXML sources", () => {
 		if (b.kind !== "select") throw new Error("select");
 		expect(b.from.find((s) => s.kind === "table" && s.alias === "f")).toMatchObject({
 			kind: "table",
-			name: ["fn"],
+			relation: { parts: ["fn"] },
 			alias: "f",
 		});
 	});

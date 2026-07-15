@@ -119,24 +119,24 @@ describe("temporal queries — FOR SYSTEM_TIME (from-transact-sql#system_time)",
 		"ALL",
 	])("parses FOR SYSTEM_TIME %s and still resolves the table", (clause) => {
 		const body = q(`SELECT * FROM t FOR SYSTEM_TIME ${clause}`);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("works with an alias after the temporal clause", () => {
 		const body = q("SELECT x.a FROM t FOR SYSTEM_TIME AS OF '2024-01-01' AS x");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"], alias: "x" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] }, alias: "x" });
 	});
 });
 
 describe("TABLESAMPLE (from-transact-sql#tablesample-clause)", () => {
 	it("percent form with SYSTEM and REPEATABLE", () => {
 		const body = q("SELECT * FROM t TABLESAMPLE SYSTEM (10 PERCENT) REPEATABLE (123)");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("rows form after an alias", () => {
 		const body = q("SELECT s.a FROM t AS s TABLESAMPLE (100 ROWS)");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"], alias: "s" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] }, alias: "s" });
 	});
 });
 

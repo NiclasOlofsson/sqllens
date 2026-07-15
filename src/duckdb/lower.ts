@@ -309,7 +309,6 @@ function lowerPivotStmt(stmt: ParserRuleContext): QueryExpr {
 		const pivotParts = nameParts(qn);
 		from.push({
 			kind: "table",
-			name: pivotParts,
 			relation: relationOf(pivotParts),
 			namePartSpans: columnPartSpans(qn),
 			cst: qn,
@@ -726,7 +725,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		const fileRelName = [stripStringQuotes(fileRel.getText())];
 		return {
 			kind: "table",
-			name: fileRelName,
 			relation: relationOf(fileRelName),
 			namePartSpans: partSpansOf([fileRel]),
 			alias,
@@ -762,7 +760,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		const funcTableName = [fname ? lastName(fname) : funcTable.getText()];
 		return {
 			kind: "table",
-			name: funcTableName,
 			relation: relationOf(funcTableName),
 			alias: alias ?? (funcAlias ? funcAliasName(funcAlias) : undefined),
 			aliasCst,
@@ -774,7 +771,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	if (jsonTable) {
 		return {
 			kind: "table",
-			name: ["json_table"],
 			relation: relationOf(["json_table"]),
 			alias,
 			aliasCst,
@@ -795,7 +791,7 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	}
 
 	const tableName = [textOrEmpty(tr)];
-	return { kind: "table", name: tableName, relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
+	return { kind: "table", relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
 }
 
 const nestedJoinConditions: Expr[] = [];
@@ -811,7 +807,6 @@ function buildTableFromRelation(
 	const namePartSpans = qn ? columnPartSpans(qn) : undefined;
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans,
 		alias,

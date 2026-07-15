@@ -130,6 +130,7 @@ export type {
 	PipeStage,
 	PivotInfo,
 	Projection,
+	QualifiedName,
 	QueryBody,
 	QueryExpr,
 	SelectExpr,

@@ -19,7 +19,7 @@ describe("lower: CST -> IR", () => {
 
 		expect(ir.body.projections.map((p) => p.name)).toEqual(["a"]);
 		expect(ir.body.from).toHaveLength(1);
-		expect(ir.body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(ir.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("does not throw on a non-query statement; flags it as non-query", () => {
@@ -57,19 +57,19 @@ describe("lower: CST -> IR", () => {
 		expect(ir.ctes[0].body.body.kind).toBe("select");
 
 		// The main query still resolves its own FROM independently of the CTE body.
-		expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", name: ["c"] }]);
+		expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", relation: { parts: ["c"] } }]);
 	});
 
 	it("captures a table alias", () => {
 		const ir = lower(parseDatabricks("SELECT x FROM t AS a").tree);
-		expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", name: ["t"], alias: "a" }]);
+		expect(asSelect(ir.body).from).toMatchObject([{ kind: "table", relation: { parts: ["t"] }, alias: "a" }]);
 	});
 
 	it("captures both relations of a JOIN as separate sources", () => {
 		const ir = lower(parseDatabricks("SELECT x FROM a JOIN b ON a.id = b.id").tree);
 		expect(asSelect(ir.body).from).toMatchObject([
-			{ kind: "table", name: ["a"] },
-			{ kind: "table", name: ["b"] },
+			{ kind: "table", relation: { parts: ["a"] } },
+			{ kind: "table", relation: { parts: ["b"] } },
 		]);
 	});
 
@@ -83,7 +83,7 @@ describe("lower: CST -> IR", () => {
 		expect(src.alias).toBe("sub");
 		expect(src.query.body.kind).toBe("select");
 		if (src.query.body.kind !== "select") throw new Error("expected select");
-		expect(src.query.body.from).toMatchObject([{ kind: "table", name: ["t"] }]);
+		expect(src.query.body.from).toMatchObject([{ kind: "table", relation: { parts: ["t"] } }]);
 	});
 
 	it("names an implicit projection alias (no AS)", () => {
@@ -124,7 +124,7 @@ describe("lower: CST -> IR", () => {
 
 	it("uses the query's own FROM, not a scalar subquery's in the SELECT list", () => {
 		const sel = asSelect(lower(parseDatabricks("SELECT (SELECT x FROM inner_t) AS s, a FROM main_t").tree).body);
-		expect(sel.from).toMatchObject([{ kind: "table", name: ["main_t"] }]);
+		expect(sel.from).toMatchObject([{ kind: "table", relation: { parts: ["main_t"] } }]);
 	});
 
 	it("does not count a scalar subquery's inner projection as a top-level projection", () => {
@@ -137,8 +137,8 @@ describe("lower: CST -> IR", () => {
 			lower(parseDatabricks("SELECT a FROM t JOIN u ON t.id IN (SELECT id FROM other)").tree).body,
 		);
 		expect(sel.from).toMatchObject([
-			{ kind: "table", name: ["t"] },
-			{ kind: "table", name: ["u"] },
+			{ kind: "table", relation: { parts: ["t"] } },
+			{ kind: "table", relation: { parts: ["u"] } },
 		]);
 	});
 
@@ -183,8 +183,8 @@ describe("lower: CST -> IR", () => {
 		expect(ir.body.left.kind).toBe("select");
 		expect(ir.body.right.kind).toBe("select");
 		if (ir.body.left.kind !== "select" || ir.body.right.kind !== "select") throw new Error("selects");
-		expect(ir.body.left.from).toMatchObject([{ kind: "table", name: ["t"] }]);
-		expect(ir.body.right.from).toMatchObject([{ kind: "table", name: ["u"] }]);
+		expect(ir.body.left.from).toMatchObject([{ kind: "table", relation: { parts: ["t"] } }]);
+		expect(ir.body.right.from).toMatchObject([{ kind: "table", relation: { parts: ["u"] } }]);
 	});
 });
 

@@ -109,7 +109,7 @@ describe("per-hop lineage — spec acceptance", () => {
 		expect(head).toBeDefined();
 		expect(head!.downstream).toHaveLength(2);
 		// k binds to `a AS k` in leg1 (pos 0) and `c AS k` in leg2 (pos 1) — by name, not position.
-		expect(head!.downstream.flatMap(terminals).sort()).toEqual(["t1.a", "t2.c"]);
+		expect(head!.downstream.flatMap(terminals).sort()).toEqual(["T1.a", "T2.c"]);
 	});
 
 	// (c-duckdb) same UNION BY NAME shape, native DuckDB syntax — proves the fix (`byName` now rides
@@ -141,7 +141,7 @@ describe("per-hop lineage — spec acceptance", () => {
 		expect(exprText(sql, head!)).toBe("a+1");
 		expect(aliasText(sql, head!)).toBe('"Col"'); // quotes + mixed case preserved verbatim
 		expect(head!.downstream).toEqual([]);
-		expect(terminals(head!)).toEqual(["t.a"]); // resolves ONLY because quoted fold preserved case
+		expect(terminals(head!)).toEqual(["T.a"]); // resolves ONLY because quoted fold preserved case
 
 		// Control — a wrong-case quoted outer ref does NOT match the preserved-case CTE column,
 		// so the hop strands `unresolved`. This is what proves the positive above is load-bearing.
@@ -467,7 +467,7 @@ describe("via trail — ITEM 12 (flow view: collapsed/descended scopes are repor
 		const sql = "WITH a AS (SELECT x AS y FROM t), b AS (SELECT A.Y AS z FROM a) SELECT z FROM b";
 		const scopes = snowScopes(sql);
 		const head = lineageAt(scopes, offsetOf(sql, "z", 2));
-		expect(terminals(head!)).toEqual(["t.x"]);
+		expect(terminals(head!)).toEqual(["T.x"]);
 		expect(head!.via).toEqual([
 			{ scope: cteScope(scopes, "b"), kind: "rename" },
 			{ scope: cteScope(scopes, "a"), kind: "rename" },

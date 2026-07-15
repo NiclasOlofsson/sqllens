@@ -406,7 +406,6 @@ function buildSource(tos: ParserRuleContext): Source {
 		const name = partNodes.map((n) => n.getText());
 		return {
 			kind: "table",
-			name,
 			relation: relationOf(name),
 			namePartSpans: partSpansOf(partNodes),
 			alias,
@@ -423,7 +422,6 @@ function buildSource(tos: ParserRuleContext): Source {
 	const name = parts.length ? parts : [tos.getText()];
 	return {
 		kind: "table",
-		name,
 		relation: relationOf(name),
 		namePartSpans: partNodes.length ? partSpansOf(partNodes) : undefined,
 		alias,

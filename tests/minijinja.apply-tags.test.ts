@@ -13,7 +13,7 @@ describe("R3 apply-tags", () => {
 		const r = parseTemplated("SELECT o.id FROM {{ ref('orders') }} o", "databricks");
 		const src = firstSource(r.sql.ast);
 		expect(src.kind).toBe("table");
-		expect(src.name).toEqual(["orders"]);
+		expect(src.relation.parts).toEqual(["orders"]);
 		expect(src.alias).toBe("o");
 		expect(src.template).toMatchObject({ kind: "call", call: { name: "ref" } });
 		expect(src.template.opaque).toBeUndefined();
@@ -22,7 +22,7 @@ describe("R3 apply-tags", () => {
 	it("source() substitutes two-part name", () => {
 		const r = parseTemplated("SELECT * FROM {{ source('raw', 'events') }}", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["raw", "events"]);
+		expect(src.relation.parts).toEqual(["raw", "events"]);
 		expect(src.template).toMatchObject({ kind: "call", call: { name: "source" } });
 		expect(src.template.opaque).toBeUndefined();
 	});
@@ -35,18 +35,18 @@ describe("R3 apply-tags", () => {
 		// marker (exemption, no diagnostics).
 		expect(src.template).toMatchObject({ kind: "call", call: { name: "my_macro", args: [] } });
 		expect(src.template.opaque).toBeUndefined();
-		expect(src.name).toEqual(["{{ my_macro() }}"]); // the user's text, NOT a fabricated name (#35)
+		expect(src.relation.parts).toEqual(["{{ my_macro() }}"]); // the user's text, NOT a fabricated name (#35)
 	});
 
 	it("multi-line ref correlates by containment", () => {
 		const r = parseTemplated("SELECT * FROM {{ ref(\n  'orders'\n) }}", "databricks");
-		expect(firstSource(r.sql.ast).name).toEqual(["orders"]);
+		expect(firstSource(r.sql.ast).relation.parts).toEqual(["orders"]);
 	});
 
 	it("multi-line ref (no user alias) drops the placeholder-fill alias and binds under the real name", () => {
 		const r = parseTemplated("SELECT * FROM {{ ref(\n  'orders'\n) }}", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["orders"]);
+		expect(src.relation.parts).toEqual(["orders"]);
 		expect(src.alias).toBeUndefined(); // NOT the fabricated `jjj…` second-line fill
 		// The load-bearing assertion: scope binds under `orders`, not the garbage alias.
 		const scopes = resolveScopes(r.sql.ast);
@@ -58,14 +58,14 @@ describe("R3 apply-tags", () => {
 	it("single-line ref with a real user alias preserves it (fix must not drop real aliases)", () => {
 		const r = parseTemplated("SELECT * FROM {{ ref('x') }} o", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["x"]);
+		expect(src.relation.parts).toEqual(["x"]);
 		expect(src.alias).toBe("o");
 	});
 
 	it("two templated sources with real aliases preserve both (no cross-drop)", () => {
 		const r = parseTemplated("SELECT * FROM {{ ref('a') }} x, {{ ref('b') }} y", "databricks");
 		const from = (r.sql.ast as any).body.from;
-		const byName = (n: string) => from.find((s: any) => s.name.join(".") === n);
+		const byName = (n: string) => from.find((s: any) => s.relation.parts.join(".") === n);
 		expect(byName("a").alias).toBe("x");
 		expect(byName("b").alias).toBe("y");
 	});
@@ -74,13 +74,15 @@ describe("R3 apply-tags", () => {
 		const sql = "WITH c AS (SELECT * FROM {{ ref('a') }}) SELECT * FROM c JOIN {{ ref('b') }} b ON c.x = b.x";
 		const r = parseTemplated(sql, "databricks");
 		const ast: any = r.sql.ast;
-		expect(firstSource(ast.ctes[0].body).name).toEqual(["a"]);
+		expect(firstSource(ast.ctes[0].body).relation.parts).toEqual(["a"]);
 		// The joined source rides `from` (from + joinConditions stay populated; joins is additive).
-		const joined = ast.body.from.find((s: any) => s.template?.call?.name === "ref" && s.name.join(".") === "b");
+		const joined = ast.body.from.find(
+			(s: any) => s.template?.call?.name === "ref" && s.relation.parts.join(".") === "b",
+		);
 		expect(joined).toBeDefined();
 		// If joins are modelled, join.source is reference-identical to the from entry.
 		if (ast.body.joins) {
-			const jsrc = ast.body.joins.map((j: any) => j.source).find((s: any) => s.name?.join(".") === "b");
+			const jsrc = ast.body.joins.map((j: any) => j.source).find((s: any) => s.relation?.parts.join(".") === "b");
 			expect(jsrc).toBe(joined);
 		}
 	});
@@ -141,7 +143,7 @@ describe("R3 apply-tags", () => {
 		const from = (r.sql.ast as any).body.from;
 		const ref = from.find((s: any) => s.template?.call?.name === "ref");
 		expect(ref).toBeDefined();
-		expect(ref.name).toEqual(["a"]);
+		expect(ref.relation.parts).toEqual(["a"]);
 	});
 });
 
@@ -155,7 +157,7 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 	it("{% set t = ref('x') %} … from {{ t }} binds the real model, indirect", () => {
 		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["stg_orders"]);
+		expect(src.relation.parts).toEqual(["stg_orders"]);
 		expect(src.template).toMatchObject({ kind: "call", indirect: true, call: { name: "ref" } });
 		expect(src.template.opaque).toBeUndefined();
 	});
@@ -163,7 +165,7 @@ describe("bare-variable FROM sources — set indirection + the expr marker", () 
 	it("{% set s = source('raw','orders') %} resolves the two-part name", () => {
 		const r = parseTemplated("{% set s = source('raw', 'orders') %}\nselect * from {{ s }}", "databricks");
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["raw", "orders"]);
+		expect(src.relation.parts).toEqual(["raw", "orders"]);
 		expect(src.template).toMatchObject({ kind: "call", indirect: true, call: { name: "source" } });
 	});
 
@@ -234,7 +236,7 @@ describe("unresolved template sources never leak the placeholder fill (#35)", ()
 			provider: OPEN_PROVIDER,
 		});
 		const src = firstSource(r.sql.ast);
-		expect(src.name).toEqual(["{{ ref('silver__loc') }}"]);
+		expect(src.relation.parts).toEqual(["{{ ref('silver__loc') }}"]);
 		expect(src.template).toMatchObject({ kind: "call", call: { name: "ref" } });
 	});
 
@@ -242,21 +244,21 @@ describe("unresolved template sources never leak the placeholder fill (#35)", ()
 		const r = parseTemplated("select * from {{ source('raw', 'events') }}", "databricks", {
 			provider: OPEN_PROVIDER,
 		});
-		expect(firstSource(r.sql.ast).name).toEqual(["{{ source('raw', 'events') }}"]);
+		expect(firstSource(r.sql.ast).relation.parts).toEqual(["{{ source('raw', 'events') }}"]);
 	});
 
 	it("providerless set-indirection: raw tag text of the USE site, not the fill", () => {
 		const r = parseTemplated("{% set t = ref('stg_orders') %}\nselect * from {{ t }}", "databricks", {
 			provider: OPEN_PROVIDER,
 		});
-		expect(firstSource(r.sql.ast).name).toEqual(["{{ t }}"]);
+		expect(firstSource(r.sql.ast).relation.parts).toEqual(["{{ t }}"]);
 	});
 
 	it("opaque expression tag in FROM: raw tag text, not the fill", () => {
 		const r = parseTemplated("select * from {{ a ~ b }}", "databricks", { provider: OPEN_PROVIDER });
 		const src = firstSource(r.sql.ast);
 		expect(src.template).toMatchObject({ kind: "expr", opaque: true });
-		expect(src.name).toEqual(["{{ a ~ b }}"]);
+		expect(src.relation.parts).toEqual(["{{ a ~ b }}"]);
 	});
 
 	it("the fill never reaches scope through an unresolved source", () => {

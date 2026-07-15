@@ -33,7 +33,7 @@ describe("TableSource.namePartSpans", () => {
 			expect(r.errors).toBe(0);
 			const body = r.ast.body as SelectExpr;
 			const src = body.from[0] as TableSource;
-			expect(src.name).toEqual(multipart.parts);
+			expect(src.relation.parts).toEqual(multipart.parts);
 			expect(src.namePartSpans).toBeDefined();
 			expect(src.namePartSpans).toHaveLength(multipart.parts.length);
 			for (const span of src.namePartSpans!) expect(span.start).toBeLessThan(span.end);
@@ -44,7 +44,7 @@ describe("TableSource.namePartSpans", () => {
 			expect(r.errors).toBe(0);
 			const body = r.ast.body as SelectExpr;
 			const src = body.from[0] as TableSource;
-			expect(src.name).toEqual(["t"]);
+			expect(src.relation.parts).toEqual(["t"]);
 			expect(src.namePartSpans).toBeDefined();
 			expect(src.namePartSpans).toHaveLength(1);
 		});
@@ -54,7 +54,7 @@ describe("TableSource.namePartSpans", () => {
 		const r = parse("select 1 from a.b", "mysql");
 		expect(r.errors).toBe(0);
 		const src = (r.ast.body as SelectExpr).from[0] as TableSource;
-		expect(src.name).toEqual(["a", "b"]);
+		expect(src.relation.parts).toEqual(["a", "b"]);
 		// `a` is a uid; `b` comes from the fused DOT_ID `.b` (its span starts one past the dot).
 		expect(src.namePartSpans!.map((sp) => [sp.start, sp.end])).toEqual([
 			[14, 15],

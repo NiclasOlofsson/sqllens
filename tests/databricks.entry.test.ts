@@ -40,7 +40,7 @@ describe("time-travel @ shorthand", () => {
 		expect(r.errors).toBe(0);
 		const ir = lower(r.tree);
 		if (ir.body.kind !== "select") throw new Error("select");
-		expect(ir.body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(ir.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("parses the timestamp form t@20240101000000000", () => {

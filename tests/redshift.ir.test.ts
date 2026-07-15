@@ -28,12 +28,12 @@ describe("Redshift lower — SELECT skeleton", () => {
 		const b = selectBody("SELECT a, b FROM t");
 		expect(b.projections.map((p) => p.name)).toEqual(["a", "b"]);
 		expect(b.from).toHaveLength(1);
-		expect(b.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(b.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("table alias and qualified name", () => {
 		const b = selectBody("SELECT x.a FROM schema.tbl x");
-		expect(b.from[0]).toMatchObject({ kind: "table", name: ["schema", "tbl"], alias: "x" });
+		expect(b.from[0]).toMatchObject({ kind: "table", relation: { parts: ["schema", "tbl"] }, alias: "x" });
 		expect(b.projections[0].expr).toMatchObject({ kind: "column", parts: ["x", "a"] });
 	});
 
@@ -244,7 +244,7 @@ describe("Redshift lower — PIVOT / UNPIVOT / CONNECT BY modelled", () => {
 describe("Redshift lower — Redshift-specific sources", () => {
 	it("catalog path database@namespace.schema.table keeps every name part (no silent truncation)", () => {
 		const b = selectBody("SELECT * FROM b@a.c.d");
-		expect(b.from[0]).toMatchObject({ kind: "table", name: ["b", "a", "c", "d"] });
+		expect(b.from[0]).toMatchObject({ kind: "table", relation: { parts: ["b", "a", "c", "d"] } });
 	});
 
 	// PartiQL SUPER object unpivoting: UNPIVOT expr AS value AT attribute is a FROM item that reshapes a

@@ -175,10 +175,12 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 				const refSrcs = collectTableSources(sql.ast).filter(isRefOrSource);
 				expect(refSrcs.length, "at least one ref/source IR source").toBeGreaterThanOrEqual(1);
 				for (const t of refSrcs) {
-					for (const part of t.name) expect(isPlaceholderRun(part), `IR name part "${part}"`).toBe(false);
-					expect(expected.has(t.name.join(".")), `IR name "${t.name.join(".")}" is a real tag name`).toBe(
-						true,
-					);
+					for (const part of t.relation.parts)
+						expect(isPlaceholderRun(part), `IR name part "${part}"`).toBe(false);
+					expect(
+						expected.has(t.relation.parts.join(".")),
+						`IR name "${t.relation.parts.join(".")}" is a real tag name`,
+					).toBe(true);
 				}
 			});
 

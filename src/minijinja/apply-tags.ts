@@ -495,16 +495,16 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	// under the never-wrong rule (issue #35, reported by anvil).
 	const rawTagName = [ctx.text.slice(tag.tagSpan.start, tag.tagSpan.end)];
 
-	// Renaming a source rebuilds `relation` in lockstep with `name` (#38): a provider-resolved
-	// name is SYNTHESIZED (plain logical parts, quoted where rendering needs it); the raw-tag-text
-	// fallback is source text. Without a dialect tag on the ast (never the parseTemplated path)
-	// the original relation stays — name and relation may then diverge, the documented degrade.
+	// Renaming a source rebuilds `relation` (#38): a provider-resolved name is SYNTHESIZED (plain
+	// logical parts, quoted where rendering needs it); the raw-tag-text fallback is source text.
+	// Without a dialect tag on the ast (never the parseTemplated path) the source keeps its
+	// original relation — the documented degrade.
 	const renamed = (b: TableSource, parts: string[], synthesized: boolean): TableSource => {
-		if (!ctx.nameConfig) return { ...b, name: parts };
+		if (!ctx.nameConfig) return b;
 		const relation = synthesized
 			? synthesizedQualifiedName(parts, ctx.nameConfig)
 			: qualifiedNameOf(parts, ctx.nameConfig);
-		return { ...b, name: parts, relation };
+		return { ...b, relation };
 	};
 
 	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR

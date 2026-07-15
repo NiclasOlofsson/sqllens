@@ -76,6 +76,8 @@ export interface CteRef {
 }
 
 export type ResolvedSource =
+	/** `name` is the relation's FOLDED IDENTITY key parts (source.relation.key) — the catalog
+	 *  lookup currency. Display text lives on source.relation (parts/fqn); never show `name`. */
 	| { kind: "table"; name: string[]; source: TableSource }
 	| { kind: "cte"; ref: CteRef; source: TableSource }
 	| { kind: "subquery"; scope: Scope; source: SubquerySource }
@@ -404,8 +406,11 @@ function resolveSource(scope: Scope, source: Source): ResolvedSource {
 		scope.children.push(child);
 		return { kind: "graphtable", scope: child, source };
 	} else {
-		const cteRef = source.name.length === 1 ? lookupCte(scope, source.name[0]) : undefined;
-		return cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.name, source };
+		// A CTE reference is single-part; relation.fqn is then its RAW delimiter-intact text (the
+		// lookup folds it, and quoting semantics must survive into the fold).
+		const parts = source.relation.parts;
+		const cteRef = parts.length === 1 ? lookupCte(scope, source.relation.fqn) : undefined;
+		return cteRef ? { kind: "cte", ref: cteRef, source } : { kind: "table", name: source.relation.key, source };
 	}
 }
 
@@ -428,7 +433,6 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 		if (!el.variable) continue;
 		const ts: TableSource = {
 			kind: "table",
-			name: [el.variable],
 			// A synthesized single-part name: a graph element variable has no namespace.
 			relation: synthesizedQualifiedName([el.variable], behaviorOf(scope).nameConfig),
 			alias: el.variable,
@@ -436,7 +440,7 @@ function buildGraphScope(parent: Scope, src: GraphTableSource): Scope {
 			cst: el.variableCst ?? el.cst,
 		};
 		const elKey = behaviorOf(scope).fold(el.variable);
-		const elSource: ResolvedSource = { kind: "table", name: [el.variable], source: ts };
+		const elSource: ResolvedSource = { kind: "table", name: ts.relation.key, source: ts };
 		scope.sources.set(elKey, elSource);
 		scope.sourceList.push({ key: elKey, source: elSource });
 	}
@@ -672,7 +676,15 @@ function sourceKey(source: Source, dialect: string, isCte = false): string {
 	}
 	if (source.alias) return b.fold(source.alias);
 	if (source.kind === "table") {
-		return b.fold(source.name[source.name.length - 1] ?? "", isCte ? "other" : "table");
+		// The binding key is the folded OWN name. For real table identifiers relation.key's last
+		// part already IS that fold; a CTE reference re-folds with the column-class ("other") fold
+		// (the one place the two folds differ is BigQuery's case-preserving table identifiers).
+		// A CTE reference is single-part (the lookup guard), so relation.fqn IS its raw
+		// delimiter-intact text — fold that, not the stripped display name, or a quoted reference's
+		// quoting semantics would be lost.
+		return isCte
+			? b.fold(source.relation.fqn, "other")
+			: (source.relation.key[source.relation.key.length - 1] ?? "");
 	}
 	return "";
 }

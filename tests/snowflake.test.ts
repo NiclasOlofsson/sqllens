@@ -744,7 +744,7 @@ describe("Snowflake lower -> IR", () => {
 	it("lowers a basic SELECT to a select body with projections and a table source", () => {
 		const { body } = selectBody("SELECT a, b FROM t");
 		expect(body.projections.map((p) => p.name)).toEqual(["a", "b"]);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("captures column and table aliases, with and without AS", () => {
@@ -752,7 +752,7 @@ describe("Snowflake lower -> IR", () => {
 		expect(body.projections[0].name).toBe("x");
 		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "a"] });
 		expect(body.projections[1].name).toBe("y");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["db", "sch", "tbl"], alias: "t" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["db", "sch", "tbl"] }, alias: "t" });
 	});
 
 	it("models WHERE and tags its column refs with the where clause", () => {
@@ -1415,7 +1415,7 @@ describe("Snowflake keyword-token identifier holes (SHOW-object / option words a
 
 	it.each(RECOVERED)("`%s` is usable as a table name in FROM", (word) => {
 		const { body } = selectBody(`SELECT a FROM ${word}`);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: [word] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: [word] } });
 	});
 
 	it.each(RECOVERED)("`%s` is usable as a projected column name", (word) => {

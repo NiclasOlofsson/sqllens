@@ -260,7 +260,7 @@ describe("jinja corpus gate — R3 templated-source IR + qualify exemption (inc2
 				//     protects the honest literal name Task 1 substituted).
 				for (const t of templated) {
 					if (t.template!.call?.name === "ref" || t.template!.call?.name === "source") {
-						for (const part of t.name) expect(part, `name part ${part}`).not.toMatch(/jjjj/);
+						for (const part of t.relation.parts) expect(part, `name part ${part}`).not.toMatch(/jjjj/);
 					}
 				}
 			});
@@ -270,7 +270,7 @@ describe("jinja corpus gate — R3 templated-source IR + qualify exemption (inc2
 				const templatedNames = new Set(
 					collectTableSources(sql.ast)
 						.filter((t) => t.template !== undefined)
-						.map((t) => t.name.join(".")),
+						.map((t) => t.relation.parts.join(".")),
 				);
 				const q = qualify(sql.ast, new Schema({}));
 				// No unknown-table diagnostic names a templated source's dbt-logical name.

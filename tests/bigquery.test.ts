@@ -393,13 +393,13 @@ describe("BigQuery lowering", () => {
 		const b = q("SELECT a, b AS c FROM t");
 		expect(b.projections.map((p) => p.name)).toEqual(["a", "c"]);
 		expect(b.from).toHaveLength(1);
-		expect(b.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(b.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("dotted/backtick table names → multi-part name", () => {
 		const b = q("SELECT x FROM `proj.ds.t`");
 		expect(b.from[0]).toMatchObject({ kind: "table" });
-		expect((b.from[0] as { name: string[] }).name).toEqual(["proj", "ds", "t"]);
+		expect((b.from[0] as { relation: { parts: string[] } }).relation.parts).toEqual(["proj", "ds", "t"]);
 	});
 
 	it("WHERE / GROUP BY / HAVING / QUALIFY", () => {
@@ -502,11 +502,11 @@ describe("BigQuery lowering", () => {
 
 	it("FROM-query and TABLE-query lower to a select over their sources", () => {
 		const fq = q("FROM t");
-		expect(fq.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(fq.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 		const fqj = q("FROM a JOIN b USING (k)");
-		expect(fqj.from.map((s) => (s as { name?: string[] }).name?.[0])).toEqual(["a", "b"]);
+		expect(fqj.from.map((s) => (s as { relation?: { parts: string[] } }).relation?.parts?.[0])).toEqual(["a", "b"]);
 		const tq = q("TABLE ds.t");
-		expect(tq.from[0]).toMatchObject({ kind: "table", name: ["ds", "t"] });
+		expect(tq.from[0]).toMatchObject({ kind: "table", relation: { parts: ["ds", "t"] } });
 	});
 
 	it("lowers a piped query to a faithful PipeExpr (base input + ordered stages)", () => {
@@ -515,11 +515,11 @@ describe("BigQuery lowering", () => {
 		expect(r.body.kind).toBe("pipe");
 		const body = r.body as {
 			kind: "pipe";
-			input: { kind: string; from?: { name?: string[] }[] };
+			input: { kind: string; from?: { relation?: { parts: string[] } }[] };
 			stages: { op: string }[];
 		};
 		expect(body.input.kind).toBe("select");
-		expect(body.input.from?.[0]?.name).toEqual(["t"]);
+		expect(body.input.from?.[0]?.relation?.parts).toEqual(["t"]);
 		expect(body.stages.map((s) => s.op)).toEqual(["where", "select"]);
 	});
 

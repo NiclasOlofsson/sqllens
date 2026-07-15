@@ -31,7 +31,7 @@ describe("Mysql lower -> IR", () => {
 	it("lowers a basic SELECT to a select body with projections, a source and WHERE", () => {
 		const { body } = selectBody("SELECT a, b FROM t WHERE a > 1");
 		expect(body.projections.map((p) => p.name)).toEqual(["a", "b"]);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 		expect(body.where).toMatchObject({ kind: "binary", op: ">" });
 		expect(body.columns.some((c) => c.clause === "where" && c.parts.join(".") === "a")).toBe(true);
 	});
@@ -42,7 +42,7 @@ describe("Mysql lower -> IR", () => {
 		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "a"] });
 		expect(body.projections[0].aliasCst).toBeDefined();
 		expect(body.projections[1].name).toBe("y");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["db", "tbl"], alias: "t" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["db", "tbl"] }, alias: "t" });
 	});
 
 	it("models a qualified `t.*` projection", () => {
@@ -61,10 +61,10 @@ describe("Mysql lower -> IR", () => {
 	it("keeps backtick/double-quote delimiters on identifier fields (raw, delimiters intact)", () => {
 		const bt = selectBody("SELECT `col` FROM `tbl`").body;
 		expect(bt.projections[0].expr).toMatchObject({ kind: "column", parts: ["`col`"] });
-		expect(bt.from[0]).toMatchObject({ kind: "table", name: ["`tbl`"] });
+		expect(bt.from[0]).toMatchObject({ kind: "table", relation: { parts: ["tbl"] } });
 		const dq = selectBody('SELECT "col" FROM "tbl"').body;
 		expect(dq.projections[0].expr).toMatchObject({ kind: "column", parts: ['"col"'] });
-		expect(dq.from[0]).toMatchObject({ kind: "table", name: ['"tbl"'] });
+		expect(dq.from[0]).toMatchObject({ kind: "table", relation: { parts: ['"tbl"'] } });
 	});
 
 	it("reconstructs a CTE query from the grammar's split WITH/SELECT statements", () => {
@@ -109,7 +109,7 @@ describe("Mysql lower -> IR", () => {
 	it("captures a bare LEFT JOIN as a left join with no alias swallowed", () => {
 		const { body } = selectBody("SELECT a FROM t1 LEFT JOIN t2 ON t1.id = t2.id");
 		expect(body.joins?.[0]).toMatchObject({ kind: "left" });
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t1"] } });
 		expect(body.from[0].alias).toBeUndefined(); // `LEFT` is NOT consumed as t1's alias
 	});
 
@@ -128,7 +128,7 @@ describe("Mysql lower -> IR", () => {
 
 	it("still admits a backtick-quoted `LEFT` as a table alias", () => {
 		const { body } = selectBody("SELECT a FROM t1 `LEFT`");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"], alias: "`LEFT`" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t1"] }, alias: "`LEFT`" });
 	});
 
 	// Reserved-word identifier audit (dev.mysql.com/doc/refman/8.4/en/keywords.html): the
@@ -383,12 +383,12 @@ describe("Mysql 8.0.19+ query expressions", () => {
 	it("lowers TABLE as a query primary and set-operation operand (table.html)", () => {
 		const { q, body } = selectBody("TABLE t1");
 		expect(body.projections[0].isStar).toBe(true);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t1"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t1"] } });
 		expect(q.statement).toBe("query");
 		const un = ir("TABLE t1 UNION TABLE t2 ORDER BY x LIMIT 10").q;
 		if (un.body.kind !== "setop") throw new Error("setop");
-		expect(un.body.left).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["t1"] }] });
-		expect(un.body.right).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["t2"] }] });
+		expect(un.body.left).toMatchObject({ kind: "select", from: [{ kind: "table", relation: { parts: ["t1"] } }] });
+		expect(un.body.right).toMatchObject({ kind: "select", from: [{ kind: "table", relation: { parts: ["t2"] } }] });
 		expect(un.orderBy).toHaveLength(1); // the trailing ORDER BY belongs to the RESULT, not the operand
 		expect(un.limit?.top).toMatchObject({ text: "10" });
 	});

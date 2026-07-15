@@ -689,7 +689,7 @@ function buildFrom(fromClause: ParserRuleContext): {
 		// tableSource: tableSourceItem joinPart* | '(' tableSourceItem joinPart* ')' | jsonTable.
 		const jt = directChildrenOfRule(ts, P.RULE_jsonTable)[0];
 		if (jt) {
-			from.push({ kind: "table", name: [jt.getText()], relation: relationOf([jt.getText()]), cst: jt });
+			from.push({ kind: "table", relation: relationOf([jt.getText()]), cst: jt });
 			continue;
 		}
 		const base = directChildrenOfRule(ts, P.RULE_tableSourceItem)[0];
@@ -765,7 +765,6 @@ function buildSourceItem(item: ParserRuleContext, fromSubqueries: Set<ParserRule
 		return [
 			{
 				kind: "table",
-				name: [seq.getText()],
 				relation: relationOf([seq.getText()]),
 				alias: alias?.getText(),
 				aliasCst: alias,
@@ -773,7 +772,7 @@ function buildSourceItem(item: ParserRuleContext, fromSubqueries: Set<ParserRule
 			},
 		];
 	}
-	return [{ kind: "table", name: [item.getText()], relation: relationOf([item.getText()]), cst: item }];
+	return [{ kind: "table", relation: relationOf([item.getText()]), cst: item }];
 }
 
 function tableSourceFromName(
@@ -785,7 +784,6 @@ function tableSourceFromName(
 	const { parts, spans } = dottedParts(fullId);
 	return {
 		kind: "table",
-		name: parts.length ? parts : [tn.getText()],
 		relation: relationOf(parts.length ? parts : [tn.getText()]),
 		namePartSpans: collapsePartSpans(spans),
 		alias: alias?.getText(),

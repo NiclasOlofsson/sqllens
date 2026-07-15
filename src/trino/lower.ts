@@ -413,7 +413,6 @@ function lowerQueryPrimary(prim: ParserRuleContext, holder: ParserRuleContext, c
 		const name = nameParts(qn);
 		const src: Source = {
 			kind: "table",
-			name,
 			relation: relationOf(name),
 			namePartSpans: namePartSpans(qn),
 			cst: node,
@@ -696,7 +695,7 @@ function lowerRelationPrimary(
 	if (rp instanceof TableNameContext) {
 		const qn = rp.qualifiedName();
 		const name = nameParts(qn);
-		return { kind: "table", name, relation: relationOf(name), namePartSpans: namePartSpans(qn), cst: rp };
+		return { kind: "table", relation: relationOf(name), namePartSpans: namePartSpans(qn), cst: rp };
 	}
 	if (rp instanceof SubqueryRelationContext) {
 		return { kind: "subquery", query: lowerQuery(rp.query(), ctx, rp), cst: rp };
@@ -718,7 +717,6 @@ function lowerRelationPrimary(
 		const name = qn ? nameParts(qn) : ["table_function"];
 		return {
 			kind: "table",
-			name,
 			relation: relationOf(name),
 			namePartSpans: qn ? namePartSpans(qn) : undefined,
 			cst: rp,

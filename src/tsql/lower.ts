@@ -528,7 +528,6 @@ function buildSource(item: ParserRuleContext): Source {
 				: undefined;
 		return {
 			kind: "table",
-			name: [al?.text ?? (isJson ? "openjson" : "openxml")],
 			relation: relationOf([al?.text ?? (isJson ? "openjson" : "openxml")]),
 			alias: al?.text,
 			aliasCst: al?.cst,
@@ -544,7 +543,6 @@ function buildSource(item: ParserRuleContext): Source {
 	if (limited) {
 		return {
 			kind: "table",
-			name: [leftmostToken(limited)?.toLowerCase() ?? "openquery"],
 			relation: relationOf([leftmostToken(limited)?.toLowerCase() ?? "openquery"]),
 			alias: alias?.text,
 			aliasCst: alias?.cst,
@@ -561,7 +559,6 @@ function buildSource(item: ParserRuleContext): Source {
 	if (fn || nodes) {
 		return {
 			kind: "table",
-			name: [fn ? functionName(fn) : "nodes"],
 			relation: relationOf([fn ? functionName(fn) : "nodes"]),
 			alias: alias?.text,
 			aliasCst: alias?.cst,
@@ -575,7 +572,6 @@ function buildSource(item: ParserRuleContext): Source {
 	const namePartSpans = full ? columnPartSpans(full) : undefined;
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans,
 		alias: alias?.text,

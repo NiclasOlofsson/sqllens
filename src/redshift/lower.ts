@@ -628,7 +628,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		const funcTableName = [fname ? lastName(fname) : funcTable.getText()];
 		return {
 			kind: "table",
-			name: funcTableName,
 			relation: relationOf(funcTableName),
 			alias: alias ?? (funcAlias ? funcAliasName(funcAlias) : undefined),
 			aliasCst,
@@ -652,7 +651,7 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	}
 
 	const tableName = [textOrEmpty(tr)];
-	return { kind: "table", name: tableName, relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
+	return { kind: "table", relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
 }
 
 // Parenthesized-join ON conditions surfaced from a nested table_ref, drained by buildSelect's caller.
@@ -693,7 +692,6 @@ function buildTableFromRelation(
 	const namePartSpans = qn ? partSpansOf(nameNodes) : undefined;
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans,
 		alias,

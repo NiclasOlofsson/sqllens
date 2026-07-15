@@ -75,7 +75,9 @@ for (const key of Object.keys(DIALECTS)) {
 			expect(s.joins?.length, "three joins").toBe(3);
 			const joins = s.joins as Join[];
 			// order: b, c, d — the joined (right) source name is the last from entry per step
-			const names = joins.map((j) => (j.source.kind === "table" ? j.source.name.join(".") : j.source.kind));
+			const names = joins.map((j) =>
+				j.source.kind === "table" ? j.source.relation.parts.join(".") : j.source.kind,
+			);
 			expect(names).toEqual(["b", "c", "d"]);
 			for (const j of joins) {
 				// source reference-IDENTICAL to a from entry

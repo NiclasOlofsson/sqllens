@@ -852,7 +852,6 @@ function buildSource(ref: ParserRuleContext): Source {
 		}
 		return {
 			kind: "table",
-			name: [name],
 			relation: relationOf([name]),
 			alias,
 			aliasCst,
@@ -869,7 +868,6 @@ function buildSource(ref: ParserRuleContext): Source {
 	if (stage) {
 		return {
 			kind: "table",
-			name: [stage.getText()],
 			relation: relationOf([stage.getText()]),
 			alias,
 			aliasCst,
@@ -884,7 +882,6 @@ function buildSource(ref: ParserRuleContext): Source {
 	const parts = objectName ? nameParts(objectName) : [ref.getText()];
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans: objectName ? namePartSpans(objectName) : undefined,
 		alias,

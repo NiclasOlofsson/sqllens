@@ -126,9 +126,9 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 
 	it("FROM 'file.parquet' is a table source named by the file (data/overview.md)", () => {
 		const { ast } = parse("SELECT * FROM 'data/my.parquet';", "duckdb");
-		expect(ast.body.kind === "select" && ast.body.from[0]?.kind === "table" && ast.body.from[0].name).toEqual([
-			"data/my.parquet",
-		]);
+		expect(
+			ast.body.kind === "select" && ast.body.from[0]?.kind === "table" && ast.body.from[0].relation.parts,
+		).toEqual(["data/my.parquet"]);
 	});
 
 	it("ASOF / POSITIONAL / SEMI / ANTI joins (query_syntax/from.md)", () => {

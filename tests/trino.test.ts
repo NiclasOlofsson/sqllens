@@ -20,7 +20,7 @@ describe("trino — parse + lower onto the shared IR", () => {
 		expect(ast.body.kind).toBe("select");
 		if (ast.body.kind !== "select") return;
 		expect(ast.body.projections[0]?.name).toBe("ck");
-		expect(ast.body.from.map((s) => (s.kind === "table" ? s.name.join(".") : s.kind))).toEqual([
+		expect(ast.body.from.map((s) => (s.kind === "table" ? s.relation.parts.join(".") : s.kind))).toEqual([
 			"orders",
 			"lineitem",
 		]);
@@ -43,7 +43,9 @@ describe("trino — parse + lower onto the shared IR", () => {
 
 	it("TABLE t and VALUES lower to modelled selects (sql/select.md)", () => {
 		const t = parse("TABLE nation;", "trino").ast;
-		expect(t.body.kind === "select" && t.body.from[0]?.kind === "table" && t.body.from[0].name).toEqual(["nation"]);
+		expect(t.body.kind === "select" && t.body.from[0]?.kind === "table" && t.body.from[0].relation.parts).toEqual([
+			"nation",
+		]);
 		const v = parse("VALUES (1, 'a'), (2, 'b');", "trino").ast;
 		expect(v.statement).toBe("query");
 		expect(v.body.kind === "select" && v.body.projections.length).toBe(2);
@@ -176,9 +178,9 @@ describe("trino — parse + lower onto the shared IR", () => {
 	it("INSERT/CTAS lower their embedded query as the body", () => {
 		const ins = parse("INSERT INTO t SELECT a, b FROM u WHERE a > 0;", "trino").ast;
 		expect(ins.statement).toBe("dml");
-		expect(ins.body.kind === "select" && ins.body.from[0]?.kind === "table" && ins.body.from[0].name).toEqual([
-			"u",
-		]);
+		expect(
+			ins.body.kind === "select" && ins.body.from[0]?.kind === "table" && ins.body.from[0].relation.parts,
+		).toEqual(["u"]);
 		const ctas = parse("CREATE TABLE t AS SELECT a FROM u;", "trino").ast;
 		expect(ctas.statement).toBe("ddl");
 		expect(ctas.body.kind === "select" && ctas.body.projections.length).toBe(1);

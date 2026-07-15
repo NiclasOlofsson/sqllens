@@ -14,18 +14,18 @@ describe("fill fusion boundary", () => {
 	test("from{{ ref }} yields a real FROM + relation (the anvil repro)", () => {
 		const r = parseTemplated("select order_id\nfrom{{ ref('stg_orders') }}\n", "databricks");
 		expect(r.sql.errors).toBe(0);
-		const body = r.sql.ast.body as { from: { name?: string[]; template?: object }[] };
+		const body = r.sql.ast.body as { from: { relation?: { parts: string[] }; template?: object }[] };
 		expect(body.from).toHaveLength(1);
 		// R3 still binds the real dbt-logical name onto the template-tagged source:
-		expect(body.from[0]!.name).toEqual(["stg_orders"]);
+		expect(body.from[0]!.relation?.parts).toEqual(["stg_orders"]);
 		expect(body.from[0]!.template).toBeDefined();
 	});
 
 	test("join{{ ref }} breaks fusion the same way", () => {
 		const r = parseTemplated("select a\nfrom t\njoin{{ ref('u') }} x on t.id = x.id\n", "databricks");
 		expect(r.sql.errors).toBe(0);
-		const body = r.sql.ast.body as { from: { name?: string[] }[] };
-		expect(body.from.map((s) => s.name?.join("."))).toContain("u");
+		const body = r.sql.ast.body as { from: { relation?: { parts: string[] } }[] };
+		expect(body.from.map((s) => s.relation?.parts.join("."))).toContain("u");
 	});
 
 	test("prefix_{{ var }} keeps fusing — the legitimate glued-identifier pattern", () => {

@@ -395,9 +395,9 @@ function checkSourceColumns(
 				diagnosed.add(src.source);
 				const candidates = schema.tableCandidates?.(src.name, dialect);
 				if (candidates && candidates.length > 1) {
-					diagnostics.push(ambiguousTable(src.name, candidates, src.source.cst));
+					diagnostics.push(ambiguousTable(src.source.relation.fqn, candidates, src.source.cst));
 				} else {
-					diagnostics.push(unknownTable(src.name, src.source.cst));
+					diagnostics.push(unknownTable(src.source.relation.fqn, src.source.cst));
 				}
 			}
 			return undefined;
@@ -566,16 +566,17 @@ function columnDiag(kind: Diagnostic["kind"], ref: ColumnRef, message: string): 
 	return Object.freeze({ kind, message, ...spanOf(ref.cst) });
 }
 
-function unknownTable(name: string[], cst: ParserRuleContext): Diagnostic {
-	return Object.freeze({ kind: "unknown-table", message: `Unknown table: ${name.join(".")}`, ...spanOf(cst) });
+/** `fqn` is the DISPLAY form (relation.fqn — as written, quoting kept), never the identity key. */
+function unknownTable(fqn: string, cst: ParserRuleContext): Diagnostic {
+	return Object.freeze({ kind: "unknown-table", message: `Unknown table: ${fqn}`, ...spanOf(cst) });
 }
 
 /** A partial name several declared tables could mean (#38) — named so the fix is obvious. */
-function ambiguousTable(name: string[], candidates: string[][], cst: ParserRuleContext): Diagnostic {
+function ambiguousTable(fqn: string, candidates: string[][], cst: ParserRuleContext): Diagnostic {
 	const list = candidates.map((c) => c.join(".")).join(", ");
 	return Object.freeze({
 		kind: "ambiguous-table",
-		message: `Ambiguous table: ${name.join(".")} matches ${list}`,
+		message: `Ambiguous table: ${fqn} matches ${list}`,
 		...spanOf(cst),
 	});
 }

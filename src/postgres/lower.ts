@@ -621,7 +621,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	if (jsonTable) {
 		return {
 			kind: "table",
-			name: ["json_table"],
 			relation: relationOf(["json_table"]),
 			alias,
 			aliasCst,
@@ -638,7 +637,6 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 		const funcTableName = [fname ? lastName(fname) : funcTable.getText()];
 		return {
 			kind: "table",
-			name: funcTableName,
 			relation: relationOf(funcTableName),
 			alias: alias ?? (funcAlias ? funcAliasName(funcAlias) : undefined),
 			aliasCst,
@@ -660,7 +658,7 @@ function buildPrimarySource(tr: ParserRuleContext, unsupported: UnsupportedFlag[
 	}
 
 	const tableName = [textOrEmpty(tr)];
-	return { kind: "table", name: tableName, relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
+	return { kind: "table", relation: relationOf(tableName), alias, aliasCst, columnAliases, cst: tr };
 }
 
 /** The output column names of a JSON_TABLE: every named column definition, NESTED levels included
@@ -693,7 +691,6 @@ function buildTableFromRelation(
 	const namePartSpans = qn ? columnPartSpans(qn) : undefined;
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans,
 		alias,

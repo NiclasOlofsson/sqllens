@@ -591,18 +591,16 @@ export interface TemplateSourceInfo {
 
 export interface TableSource {
 	kind: "table";
-	/** Multipart name parts as written, e.g. ["catalog","schema","t"]. */
-	name: string[];
-	/** The STRUCTURED name (issue #38): parts with dialect-assigned roles, folded identity key,
-	 *  display-ready fqn. Built by the dialect's lower() (the one layer that knows the namespace
-	 *  shape); consumers read structure here instead of re-deriving it from `name`. `name` is kept
-	 *  during the migration and mirrors `relation.parts`' raw forms; it retires when every
-	 *  consumer reads `relation`. */
+	/** The STRUCTURED name (issue #38): the object's own `name`, `parts` exactly as written, roles
+	 *  right-aligned per the dialect's namespace, the folded identity `key`, and a display-ready
+	 *  `fqn`. Built by the dialect's lower() (the one layer that knows the namespace shape);
+	 *  consumers read structure here and never re-derive it from a parts array. */
 	relation: QualifiedName;
-	/** Per-part spans PARALLEL to `name`, one per multipart segment — same all-or-nothing convention
-	 *  as `ColumnRef.partSpans` (absent when any part lacks a real token). Lets a consumer hit-test a
-	 *  cursor on `catalog` vs `schema` vs `t` in `catalog.schema.t`, and recover each part's raw
-	 *  (delimiter-included) source text via span + document text without re-scanning the token stream. */
+	/** Per-part spans PARALLEL to `relation.parts`, one per multipart segment — same all-or-nothing
+	 *  convention as `ColumnRef.partSpans` (absent when any part lacks a real token). Lets a
+	 *  consumer hit-test a cursor on `catalog` vs `schema` vs `t` in `catalog.schema.t`, and recover
+	 *  each part's raw (delimiter-included) source text via span + document text without re-scanning
+	 *  the token stream. */
 	namePartSpans?: PartSpan[];
 	alias?: string;
 	/** The alias identifier's own CST node (for its precise span), when aliased. */

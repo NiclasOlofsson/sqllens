@@ -30,7 +30,7 @@ describe("Sqlite lower -> IR", () => {
 	it("lowers a basic SELECT to a select body with projections, a source and WHERE", () => {
 		const { body } = selectBody("SELECT a, b FROM t WHERE a > 1");
 		expect(body.projections.map((p) => p.name)).toEqual(["a", "b"]);
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 		expect(body.where).toMatchObject({ kind: "binary", op: ">" });
 		expect(body.columns.some((c) => c.clause === "where" && c.parts.join(".") === "a")).toBe(true);
 	});
@@ -40,7 +40,7 @@ describe("Sqlite lower -> IR", () => {
 		expect(body.projections[0].name).toBe("x");
 		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "a"] });
 		expect(body.projections[1].name).toBe("y");
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ["main", "tbl"], alias: "t" });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["main", "tbl"] }, alias: "t" });
 	});
 
 	it("models a qualified `t.*` projection", () => {
@@ -59,7 +59,7 @@ describe("Sqlite lower -> IR", () => {
 	it("keeps quoting delimiters on identifier fields (raw, delimiters intact)", () => {
 		const { body } = selectBody('SELECT "col" FROM "tbl"');
 		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ['"col"'] });
-		expect(body.from[0]).toMatchObject({ kind: "table", name: ['"tbl"'] });
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["tbl"] } });
 	});
 
 	it("lowers CTEs with declared column aliases", () => {
@@ -184,15 +184,24 @@ describe("Sqlite lower -> IR", () => {
 	it("collects IN / EXISTS / scalar expression subqueries into body.subqueries", () => {
 		const inq = selectBody("SELECT a FROM t WHERE a IN (SELECT b FROM u)").body;
 		expect(inq.subqueries).toHaveLength(1);
-		expect(inq.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+		expect(inq.subqueries?.[0].body).toMatchObject({
+			kind: "select",
+			from: [{ kind: "table", relation: { parts: ["u"] } }],
+		});
 
 		const ex = selectBody("SELECT a FROM t WHERE EXISTS (SELECT 1 FROM u)").body;
 		expect(ex.subqueries).toHaveLength(1);
-		expect(ex.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+		expect(ex.subqueries?.[0].body).toMatchObject({
+			kind: "select",
+			from: [{ kind: "table", relation: { parts: ["u"] } }],
+		});
 
 		const scalar = selectBody("SELECT (SELECT max(b) FROM u) AS m, a FROM t").body;
 		expect(scalar.subqueries).toHaveLength(1);
-		expect(scalar.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+		expect(scalar.subqueries?.[0].body).toMatchObject({
+			kind: "select",
+			from: [{ kind: "table", relation: { parts: ["u"] } }],
+		});
 	});
 
 	it("does not duplicate FROM subqueries into body.subqueries", () => {
@@ -202,7 +211,10 @@ describe("Sqlite lower -> IR", () => {
 		// Mixed: the FROM subquery stays a Source; only the WHERE IN subquery lands in subqueries.
 		const mixed = selectBody("SELECT s.a FROM (SELECT a FROM t) s WHERE s.a IN (SELECT b FROM u)").body;
 		expect(mixed.subqueries).toHaveLength(1);
-		expect(mixed.subqueries?.[0].body).toMatchObject({ kind: "select", from: [{ kind: "table", name: ["u"] }] });
+		expect(mixed.subqueries?.[0].body).toMatchObject({
+			kind: "select",
+			from: [{ kind: "table", relation: { parts: ["u"] } }],
+		});
 	});
 
 	// lower() is TOTAL — never throws, even on the broken/partial input the editor feeds it.

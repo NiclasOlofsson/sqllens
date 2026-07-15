@@ -112,7 +112,7 @@ describe("Snowflake CREATE MATERIALIZED VIEW body routing", () => {
 				{ kind: "column", parts: ["b"], partSpans: expect.anything() },
 			].map((e) => expect.objectContaining(e)),
 		);
-		expect(mv.body.from.map((s) => (s.kind === "table" ? s.name.join(".") : s.kind))).toEqual(["t"]);
+		expect(mv.body.from.map((s) => (s.kind === "table" ? s.relation.parts.join(".") : s.kind))).toEqual(["t"]);
 
 		const tree = resolveScopes(mv, "snowflake");
 		const body = tree.root.body;
@@ -181,7 +181,7 @@ describe("Snowflake lineage", () => {
 		const tree = scopes("WITH c AS (SELECT a FROM t) SELECT a AS out_a FROM c");
 		const cols = lineage(tree, T);
 		const out = cols.find((c) => c.output === "out_a");
-		expect(out?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain("t.a");
+		expect(out?.origins.map((o) => `${o.table.join(".")}.${o.column}`)).toContain("T.a");
 	});
 });
 

@@ -431,7 +431,7 @@ function lowerSparkPipeRhs(rhs: ParserRuleContext): PipeStage {
 	const join = directChildrenOfRule(rhs, P.RULE_joinRelation)[0];
 	if (join) {
 		const rel = directChildrenOfRule(join, P.RULE_relationPrimary)[0];
-		const source: Source = rel ? buildSource(rel) : { kind: "table", name: [], relation: relationOf([]), cst: rhs };
+		const source: Source = rel ? buildSource(rel) : { kind: "table", relation: relationOf([]), cst: rhs };
 		const joinConditions: Expr[] = [];
 		const columns: ColumnRef[] = [];
 		const crit = directChildrenOfRule(join, P.RULE_joinCriteria)[0];
@@ -555,7 +555,7 @@ function buildTableShorthand(queryPrimary: ParserRuleContext): SelectExpr {
 	return {
 		kind: "select",
 		projections: [{ isStar: true, expr: star, cst: queryPrimary }],
-		from: [{ kind: "table", name, relation: relationOf(name), namePartSpans, cst: queryPrimary }],
+		from: [{ kind: "table", relation: relationOf(name), namePartSpans, cst: queryPrimary }],
 		columns: [],
 		aggregated: false,
 		cst: queryPrimary,
@@ -1501,7 +1501,6 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
 	const namePartSpans = partNodes.length ? partSpansOf(partNodes) : multipart ? partSpansOf([multipart]) : undefined;
 	return {
 		kind: "table",
-		name: parts,
 		relation: relationOf(parts),
 		namePartSpans,
 		alias,

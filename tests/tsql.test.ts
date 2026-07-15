@@ -39,7 +39,7 @@ describe("T-SQL lower -> IR", () => {
 		if (q.body.kind !== "select") return;
 		expect(q.body.projections.map((p) => p.name)).toEqual(["a", "b"]);
 		expect(q.body.from).toHaveLength(1);
-		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["t"] });
+		expect(q.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
 	it("captures a column alias and a table alias", () => {
@@ -47,7 +47,7 @@ describe("T-SQL lower -> IR", () => {
 		if (q.body.kind !== "select") throw new Error("select");
 		expect(q.body.projections[0].name).toBe("x");
 		expect(q.body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "a"] });
-		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["tbl"], alias: "t" });
+		expect(q.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["tbl"] }, alias: "t" });
 	});
 
 	it("models a WHERE predicate as a binary comparison", () => {
@@ -62,14 +62,14 @@ describe("T-SQL lower -> IR", () => {
 		// ([a] ≡ a under T-SQL's default-CI fold), display goes through displayName.
 		const { q } = ir("SELECT [a] FROM [dbo].[t]");
 		if (q.body.kind !== "select") throw new Error("select");
-		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["[dbo]", "[t]"] });
+		expect(q.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["dbo", "t"] } });
 		expect(q.body.projections[0].expr).toMatchObject({ kind: "column", parts: ["[a]"] });
 	});
 
 	it("models a JOIN with two sources and an ON condition", () => {
 		const { q } = ir("SELECT a FROM t1 JOIN t2 ON t1.id = t2.id");
 		if (q.body.kind !== "select") throw new Error("select");
-		expect(q.body.from.map((s) => (s.kind === "table" ? s.name.join(".") : "?"))).toEqual(["t1", "t2"]);
+		expect(q.body.from.map((s) => (s.kind === "table" ? s.relation.parts.join(".") : "?"))).toEqual(["t1", "t2"]);
 		expect(q.body.joinConditions?.[0]).toMatchObject({ kind: "binary", op: "=" });
 	});
 
@@ -77,7 +77,7 @@ describe("T-SQL lower -> IR", () => {
 		const { q } = ir("WITH c AS (SELECT a FROM t) SELECT a FROM c");
 		expect(q.ctes.map((c) => c.name)).toEqual(["c"]);
 		if (q.body.kind !== "select") throw new Error("select");
-		expect(q.body.from[0]).toMatchObject({ kind: "table", name: ["c"] });
+		expect(q.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["c"] } });
 	});
 
 	it("models a UNION as a set operation", () => {
