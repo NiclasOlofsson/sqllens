@@ -35,10 +35,14 @@ export function parseAdventureWorks(path: string): AdventureWorks {
 	let tableCount = 0;
 
 	for (const batch of sql.split(/^\s*GO\s*$/im)) {
-		const table = matchCreateTable(batch);
-		if (table) {
-			addTable(schema, table.schema, table.table, table.columns);
-			tableCount++;
+		// A batch may hold SEVERAL `;`-separated CREATE TABLE statements (Person's
+		// BusinessEntityAddress + BusinessEntityContact share one GO) — extract all of them.
+		const tables = matchCreateTables(batch);
+		if (tables.length > 0) {
+			for (const table of tables) {
+				addTable(schema, table.schema, table.table, table.columns);
+				tableCount++;
+			}
 			continue;
 		}
 		const view = matchCreateView(batch);
@@ -53,23 +57,28 @@ interface TableDef {
 	columns: { name: string; type: string }[];
 }
 
-function matchCreateTable(rawBatch: string): TableDef | undefined {
+function matchCreateTables(rawBatch: string): TableDef[] {
 	// Strip `--` line and `/* */` block comments first: AdventureWorks documents columns inline
 	// (`[StoreID] [int] NULL,  -- if the customer is a store…`) and those comments contain commas,
 	// which would otherwise split mid-column and drop the columns after them.
 	const batch = stripComments(rawBatch);
-	// CREATE TABLE [schema].[Table]( <body> ) ON [PRIMARY];  — body is between the first '(' and
-	// the last ')' (greedy, so DEFAULT(...)/IDENTITY(1,1) nesting doesn't truncate it early).
-	const m = /CREATE TABLE \[(\w+)\]\.\[([\w ]+)\]\s*\(([\s\S]*)\)/i.exec(batch);
-	if (!m) return undefined;
-	const columns: { name: string; type: string }[] = [];
-	for (const part of splitTopLevelCommas(m[3])) {
-		const col = /^\s*\[([\w ]+)\]\s+(\[?\w+\]?)/.exec(part);
-		if (!col) continue; // a table constraint (CONSTRAINT/PRIMARY KEY/…) — not a column
-		const type = stripBrackets(col[2]);
-		columns.push({ name: col[1], type: type.toLowerCase() === "as" ? "unknown" : type });
+	// CREATE TABLE [schema].[Table]( <body> ) ON [PRIMARY];  — the body runs LAZILY up to the
+	// `) ON [` filegroup terminator every AW table carries (a nested `DEFAULT (NEWID())` never
+	// precedes `ON [`), so several tables in one batch each match (/g), instead of the old
+	// greedy first-match that swallowed a batch's second table into the first's body.
+	const out: TableDef[] = [];
+	const re = /CREATE TABLE \[(\w+)\]\.\[([\w ]+)\]\s*\(([\s\S]*?)\)\s*ON\s*\[/gi;
+	for (const m of batch.matchAll(re)) {
+		const columns: { name: string; type: string }[] = [];
+		for (const part of splitTopLevelCommas(m[3]!)) {
+			const col = /^\s*\[([\w ]+)\]\s+(\[?\w+\]?)/.exec(part);
+			if (!col) continue; // a table constraint (CONSTRAINT/PRIMARY KEY/…) — not a column
+			const type = stripBrackets(col[2]!);
+			columns.push({ name: col[1]!, type: type.toLowerCase() === "as" ? "unknown" : type });
+		}
+		out.push({ schema: m[1]!, table: m[2]!, columns });
 	}
-	return { schema: m[1], table: m[2], columns };
+	return out;
 }
 
 function matchCreateView(batch: string): ViewDef | undefined {
