@@ -176,13 +176,21 @@ function templateCompletions(slot: JinjaSlot, schema?: SchemaProvider): Completi
 	}));
 }
 
-/** The walk's caret token index: the first default-channel token whose `.start >= offset`; for an
- *  end-of-input caret that is the EOF sentinel's index (last entry). Mirrors Task 10's tests' caret
- *  helper. `toks` is the document's own token stream (doc coordinates) with the EOF sentinel appended. */
+/** The walk's caret token index. Two rules, in order (anvil 2026-07-15; antlr4-c3's own caret
+ *  convention):
+ *   1. the token being TYPED — a word-like token whose span CONTAINS the caret (start < offset <=
+ *      end). A caret at the end of `ifn` completes `ifn`; it does not mean the slot is filled.
+ *      Word-like only: punctuation is never partially typed, so `abs(|` keeps rule 2.
+ *   2. between tokens — the first default-channel token whose `.start >= offset`; for an
+ *      end-of-input caret that is the EOF sentinel's index (last entry).
+ *  `toks` is the document's own token stream (doc coordinates) with the EOF sentinel appended.
+ *  Source order makes one pass sufficient: a containing token starts before any `.start >= offset`
+ *  token, so rule 1 fires first whenever it applies. */
 function caretTokenIndex(toks: readonly WalkTok[], offset: number): number {
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i];
 		if (!t || t.channel !== Token.DEFAULT_CHANNEL) continue;
+		if (/^\w/.test(t.text) && t.start < offset && offset <= t.start + t.text.length) return i;
 		if (t.start >= offset) return i;
 	}
 	return toks.length - 1; // EOF

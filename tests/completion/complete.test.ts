@@ -110,6 +110,34 @@ describe("complete — databricks, scope + schema aware", () => {
 		expect(labels(items, "function")).toContain("coalesce");
 	});
 
+	// anvil (2026-07-15): a caret at the END of a partial identifier means the user is TYPING that
+	// identifier (antlr4-c3's own caret convention); it must complete the identifier's own slot,
+	// not read the slot as filled and describe what comes after. Before the fix these offered only
+	// follow-on keywords, and the consumer had to pre-detect context to pass word-start offsets.
+	describe("caret at the end of a partial identifier completes that identifier's slot", () => {
+		it("projection slot: SELECT ifn| offers functions", () => {
+			const sql = "SELECT ifn FROM sales";
+			const offset = "SELECT ifn".length; // caret at the end of `ifn`
+			const items = complete(SqlDocument.create(sql, "databricks"), offset, schema);
+			expect(labels(items, "function")).toContain("ifnull");
+			expect(labels(items, "column")).toContain("amount");
+		});
+
+		it("WHERE value slot: caret at the end of a partial name offers functions and columns", () => {
+			const sql = "SELECT amount FROM sales WHERE coal";
+			const items = complete(SqlDocument.create(sql, "databricks"), sql.length, schema);
+			expect(labels(items, "function")).toContain("coalesce");
+			expect(labels(items, "column")).toContain("amount");
+		});
+
+		it("a caret in the gap BETWEEN tokens keeps the old next-token rule", () => {
+			const sql = "SELECT amount FROM sales";
+			const offset = "SELECT amount ".length; // between `amount` and FROM
+			const items = complete(SqlDocument.create(sql, "databricks"), offset, schema);
+			expect(labels(items, "keyword").map((l) => l.toLowerCase())).toContain("from");
+		});
+	});
+
 	it("never throws without a schema (no table list, still keywords)", () => {
 		const sql = "SELECT amount FROM ";
 		const items = complete(SqlDocument.create(sql, "databricks"), sql.length);
