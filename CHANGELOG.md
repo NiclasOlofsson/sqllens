@@ -1,3 +1,20 @@
+# [1.5.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.4.0...v1.5.0) (2026-07-16)
+
+
+### Bug Fixes
+
+* **lineage:** origins stay display-facing after the identity/display split ([0398389](https://github.com/NiclasOlofsson/sqllens/commit/0398389a5ccc8c85290bdee6611ed94160403cfd))
+* **tests:** AdventureWorks extractor captures every CREATE TABLE in a batch ([d0dbb6f](https://github.com/NiclasOlofsson/sqllens/commit/d0dbb6fcc3570a1f8563f194a7dffe978624e9e4)), closes [#38](https://github.com/NiclasOlofsson/sqllens/issues/38)
+
+
+### Features
+
+* **completion:** CTE candidates, namespace segment completion, qualifier-filtered columns ([920c862](https://github.com/NiclasOlofsson/sqllens/commit/920c86212ecc625aa7076555ff9b12fb0126ce71)), closes [#38](https://github.com/NiclasOlofsson/sqllens/issues/38)
+* **ir:** every table source carries its structured relation name ([405c5d9](https://github.com/NiclasOlofsson/sqllens/commit/405c5d9fc48925724f91694911183f29f0e0f429))
+* **ir:** QualifiedName - the structured relation name, with per-dialect namespace configs ([f63417e](https://github.com/NiclasOlofsson/sqllens/commit/f63417ef160a1c93e7fb81e52f057eeae662ff42))
+* **ir:** relation is the one truth - TableSource.name retired ([3f94bf1](https://github.com/NiclasOlofsson/sqllens/commit/3f94bf1feab25bf4d9ad6c06a8b9d4b8c47a4fd2)), closes [#38](https://github.com/NiclasOlofsson/sqllens/issues/38)
+* **scope,qualify:** resolution consumes qualified-name keys - suffix matching, validation, ambiguity ([7adacb0](https://github.com/NiclasOlofsson/sqllens/commit/7adacb0a16ec79e3fb7d7eaea92b798f1cac74ba)), closes [#38](https://github.com/NiclasOlofsson/sqllens/issues/38)
+
 # [1.4.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.3.0...v1.4.0) (2026-07-15)
 
 
