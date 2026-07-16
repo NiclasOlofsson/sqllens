@@ -166,7 +166,16 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 		// failure the bare-slot fallback covers. Its member twin: read `FROM/JOIN name [alias]`
 		// pairs off the token stream and answer the matching relation's schema columns.
 		if (scoped.length === 0 && schema) {
-			for (const c of qualifiedFallbackColumns(walkTokens, cfg, path.parts, schema, dialect)) add(c);
+			const fallback = qualifiedFallbackColumns(
+				walkTokens,
+				cfg,
+				path.parts,
+				schema,
+				dialect,
+				doc.templated?.tags,
+				doc.text,
+			);
+			for (const c of fallback) add(c);
 		}
 	} else {
 		if (atTable) {
@@ -355,20 +364,54 @@ function qualifiedSourceColumns(
 /** The member-position twin of `fromRelationColumns` (#38): when the scope is empty (the dangling
  *  dot broke the FROM parse), read `FROM/JOIN name(.name)* [AS] [alias]` off the token stream and
  *  answer the columns of the ONE relation the qualifier matches — the alias when present, else the
- *  name's own trailing parts. No match (or several) answers [] — never a fabricated union. */
+ *  name's own trailing parts. A templated source ({{ ref() }} c) is resolved through the provider
+ *  (relationOf), matching the qualifier to its alias — the same seam `fromRelationColumns` uses. No
+ *  match (or several) answers [] — never a fabricated union. */
 function qualifiedFallbackColumns(
 	walkTokens: readonly WalkTok[],
 	cfg: CompletionConfig,
 	qualParts: string[],
 	schema: SchemaProvider,
 	dialect: string | undefined,
+	tags: readonly TagNode[] | undefined,
+	text: string,
 ): Completion[] {
 	if (cfg.relationKeywordTokens.size === 0) return [];
 	const b = resolveBehavior(dialect);
 	const toks = walkTokens.filter((t) => t.channel === Token.DEFAULT_CHANNEL);
 	const hits: Completion[][] = [];
+	const colHits = (cols: Column[] | undefined): void => {
+		if (cols) hits.push(cols.map((c) => ({ label: c.name, kind: "column" as const, detail: c.type })));
+	};
 	for (let i = 0; i + 1 < toks.length; i++) {
 		if (!cfg.relationKeywordTokens.has(toks[i]!.type)) continue;
+		// A templated source ({{ ref('customers') }} c) blanks to a channel-2 tag the filter drops, so
+		// the next SQL token is the ALIAS, not a relation name. Resolve the relation through the provider
+		// (relationOf) — the same seam fromRelationColumns uses — and match the qualifier to that alias;
+		// without this, the alias got read AS the relation name and columnsFor answered nothing.
+		const kw = toks[i]!;
+		const next = toks[i + 1]!;
+		const tag = tags?.find(
+			(t): t is Extract<TagNode, { kind: "call" }> =>
+				t.kind === "call" && t.tagSpan.start >= kw.start && t.tagSpan.start < next.start,
+		);
+		if (tag) {
+			if (schema instanceof DefaultTemplateProvider) {
+				let a = i + 1;
+				if (toks[a] && b.fold(toks[a]!.text) === "as") a++;
+				const alias = toks[a];
+				if (
+					alias &&
+					cfg.nameTokens.has(alias.type) &&
+					qualParts.length === 1 &&
+					b.fold(qualParts[0]!) === b.fold(alias.text)
+				) {
+					const rel = schema.relationOf(callOf(tag, text));
+					colHits(rel ? (rel.columns ?? schema.columnsFor(rel.nameParts, dialect)) : undefined);
+				}
+			}
+			continue; // templated source handled (or unresolvable) — never treat the alias as a relation name
+		}
 		let j = i + 1;
 		if (!toks[j] || !cfg.nameTokens.has(toks[j]!.type)) continue;
 		const parts = [toks[j]!.text];
@@ -387,8 +430,7 @@ function qualifiedFallbackColumns(
 					(p, k) => b.fold(p, "table") === b.fold(parts[parts.length - qualParts.length + k]!, "table"),
 				);
 		if (!matches) continue;
-		const cols = schema.columnsFor(parts, dialect);
-		if (cols) hits.push(cols.map((c) => ({ label: c.name, kind: "column" as const, detail: c.type })));
+		colHits(schema.columnsFor(parts, dialect));
 	}
 	return hits.length === 1 ? hits[0]! : [];
 }

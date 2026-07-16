@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { completeAt, SqlDocument } from "../../src/api.js";
 import { minijinja } from "../../src/minijinja/index.js";
 import { Schema } from "../../src/qualify/schema.js";
+import { relKey, TestRelationProvider } from "../helpers/providers.js";
 
 // A templated SqlDocument's raw text still holds jinja `{{ }}` tags. completeAt used to run its OWN
 // re-parse over that raw text to drive the ATN candidate walk, so the dialect lexer died on the braces
@@ -47,5 +48,29 @@ describe("completeAt on a templated document (jinja-blindness regression)", () =
 			.map((c) => c.label);
 		expect(cols).toContain("amount");
 		expect(cols).toContain("id");
+	});
+
+	// A dangling qualifier dot (`c.` with nothing typed after) breaks the SELECT-list parse, so completeAt
+	// takes the token-stream fallback. That fallback resolved a plain physical table's columns (columnsFor)
+	// but NOT a templated source's — so `{{ ref('customers') }} c` answered nothing at `c.|`, and every dbt
+	// FROM is a templated ref/source (anvil dangling-dot report). The member-twin now resolves the templated
+	// source through the provider (relationOf), the same seam the non-dangling FROM-relation path uses.
+	it("resolves a templated source's columns at a dangling qualifier dot", () => {
+		const provider = new TestRelationProvider();
+		provider.cache.set(relKey("ref", ["customers"]), {
+			nameParts: ["customers"],
+			columns: [
+				{ name: "cust_id", type: "int" },
+				{ name: "email", type: "string" },
+			],
+		});
+		const sql = "select c. from {{ ref('customers') }} c";
+		const doc = SqlDocument.create(sql, "databricks", { templating: minijinja() });
+		const offset = "select c.".length;
+		const cols = completeAt(doc, offset, provider)
+			.filter((c) => c.kind === "column")
+			.map((c) => c.label);
+		expect(cols).toContain("cust_id");
+		expect(cols).toContain("email");
 	});
 });
