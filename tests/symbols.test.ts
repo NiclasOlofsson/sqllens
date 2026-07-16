@@ -5,6 +5,7 @@ import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
 import { resolveScopes } from "../src/scope/scope.js";
 import { deriveSymbols } from "../src/symbols/symbols.js";
+import { toScopes } from "../src/index.js";
 
 function symbolsOf(sql: string) {
 	return deriveSymbols(resolveScopes(lower(parseDatabricks(sql).tree)));
@@ -39,6 +40,16 @@ describe("deriveSymbols — relations", () => {
 		const t = symbolsOf("SELECT a FROM t").find((s) => s.name === "t");
 		expect(t?.span.line).toBeGreaterThan(0);
 		expect(t?.span.endColumn).toBeGreaterThanOrEqual(t!.span.column);
+	});
+
+	// A table Sym.name is DISPLAY text (it feeds hover / go-to-definition / find-references), so it must
+	// be the as-written spelling, never the dialect-folded identity key. Since #38 ResolvedSource(table)
+	// .name carries the folded key, so relationSymbol regressed to showing "TBL" on a case-folding
+	// dialect (anvil, 1.5.0). The CTE branch always showed display; the table branch must match it.
+	it("shows a table's as-written spelling, not the folded identity key, on a case-folding dialect", () => {
+		const syms = deriveSymbols(toScopes('select 1 as x from tbl "My Alias"', { dialect: "snowflake" }));
+		const table = syms.find((s) => s.kind === "table");
+		expect(table?.name).toBe("tbl"); // was "TBL" — the snowflake fold key leaked through
 	});
 });
 

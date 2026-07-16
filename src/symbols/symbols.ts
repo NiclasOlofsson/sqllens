@@ -517,7 +517,10 @@ function relationSymbol(src: ResolvedSource, frame: string, dialect?: string): S
 		return {
 			kind: "table",
 			modifiers: ref,
-			name: src.name.map(show).join("."),
+			// DISPLAY spelling, from relation.parts — NOT src.name, which is the folded identity key
+			// (#38). displaying the key uppercases the name on a case-folding dialect; matches the CTE
+			// branch's display convention and scope.d.ts's "never show name" contract.
+			name: src.source.relation.parts.map(show).join("."),
 			span: spanOf(src.source.cst),
 			frame,
 			node: src.source,
