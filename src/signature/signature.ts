@@ -23,6 +23,7 @@
 // registry (function-name membership). No antlr, no LSP deps.
 // ---------------------------------------------------------------------------
 
+import { debugRethrow } from "../debug.js";
 import type { SqlDocument } from "../document/document.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import type { Token } from "../token/token.js";
@@ -57,8 +58,9 @@ export interface SignatureHelpInfo {
 export function signatureAt(doc: SqlDocument, offset: number, _schema?: SchemaProvider): SignatureHelpInfo | null {
 	try {
 		return compute(doc, offset);
-	} catch {
+	} catch (e) {
 		// Total by contract: a scan hiccup must never surface to the editor.
+		debugRethrow(e);
 		return null;
 	}
 }

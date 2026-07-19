@@ -1,3 +1,4 @@
+import { debugRethrow } from "../debug.js";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection } from "../ir/ir.js";
@@ -116,7 +117,8 @@ export function lineageAt(scopes: ScopeTree, offset: number, schema?: SchemaProv
 		const alias = projectionAtAlias(scopes.root, offset);
 		if (alias) return lineageOf(alias.projection, alias.scope, schema);
 		return undefined;
-	} catch {
+	} catch (e) {
+		debugRethrow(e);
 		return undefined; // total
 	}
 }

@@ -17,6 +17,7 @@
 // ---------------------------------------------------------------------------
 
 import { Token, type Vocabulary } from "antlr4ng";
+import { debugRethrow } from "../debug.js";
 import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
@@ -61,7 +62,7 @@ export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProv
 		return collect(doc, offset, schema);
 	} catch (e) {
 		// Total by contract: a walk/parse hiccup must not surface to the editor.
-		if (process.env.SQLLENS_DEBUG_COMPLETE) throw e;
+		debugRethrow(e);
 		return [];
 	}
 }

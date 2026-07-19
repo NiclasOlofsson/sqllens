@@ -1,4 +1,5 @@
 import type { ParserRuleContext } from "antlr4ng";
+import { debugRethrow } from "../debug.js";
 import { nodeAt } from "../document/node-at.js";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
@@ -71,7 +72,8 @@ export function referencesAt(
 ): Occurrences | null {
 	try {
 		return compute(scopes, offset, schema ?? OPEN_PROVIDER, ast);
-	} catch {
+	} catch (e) {
+		debugRethrow(e);
 		return null; // total: any internal failure degrades to "no result", never a throw
 	}
 }
