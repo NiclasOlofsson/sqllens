@@ -27,6 +27,7 @@
 // returns the input `ast` unchanged.
 // ---------------------------------------------------------------------------
 
+import { debugRethrow } from "../debug.js";
 import { freezeIR } from "../ir/freeze.js";
 import { qualifiedNameOf, synthesizedQualifiedName, type QualifiedNameConfig } from "../ir/qualified-name.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
@@ -144,7 +145,8 @@ export function applyTemplateTags(
 		// through the provider and qualify never checks the placeholder as a real column.
 		const marked = markTemplateExprs(next, ctx) as QueryExpr;
 		return { ast: marked === ast ? ast : freezeIR(marked), byNode, byTag };
-	} catch {
+	} catch (e) {
+		debugRethrow(e);
 		return { ast, byNode: new WeakMap(), byTag: new Map() };
 	}
 }

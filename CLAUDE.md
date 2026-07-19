@@ -256,6 +256,50 @@ editor-protocol dependency of its own.
   type is argument-value-dependent or unstated, the rule stays absent and the result
   is `unknown` — not a guess.
 
+## Known shortcuts (tracked)
+
+Deliberate, standing reductions that have been ruled acceptable. This list is the registry:
+a shortcut not listed here (or in `.claude/PLAN.md` § Open Gaps, which tracks UNFINISHED work
+rather than accepted reductions) is a defect. Each entry names where the shortcut lives; the
+cited file carries the full rationale.
+
+- Tier-2 (`npm run test:corpus`) is local-by-design and can NEVER run in CI: the corpus is
+  proprietary/closed-license and CI has no access (ruled final 2026-07-19). CI green means
+  tier-1 only; the pre-merge tier-2 run happens on the dev machine.
+- Total-by-contract degrade: the never-throw public entries (completeAt, referencesAt,
+  lineageAt, signatureAt, splitStatements, parseTemplated, templateVariants,
+  applyTemplateTags, SqlDocument variants) swallow internal errors and answer their
+  documented empty result. `SQLLENS_DEBUG=1` rethrows at every such site (`src/debug.ts`).
+- Corpus floors below 100%, each pinned with a dated reason in its gate file: BigQuery
+  analyzer positives 14707/14708 (one enumerated chained-call case), analyzer schema
+  resolution 2700/3000 (harvested-schema coverage, not a resolver defect), mutated-negative
+  rejection floors (mutation cannot guarantee invalidity), per-dialect SLL fallback ratchets
+  (performance, may only fall).
+- Docs-corpus ratchets gate only the `query` bucket; dml/ddl/unparsed counts are printed,
+  never gated (`tests/helpers/docs-ratchet.ts`).
+- Known-bad exclusion lists are self-policing (each asserts its entries still fail):
+  `tests/*-corpus-known-bad.ts`.
+- Recovery-split exemption in `tests/broken-batch.test.ts`: tsql/redshift/postgres/duckdb
+  are exempt from the phantom-batch assertion (a recovery fragment is provably
+  indistinguishable from two real statements in those grammars).
+- MySQL identifier folding assumes the platform-default `lower_case_table_names`; wrong only
+  for a Unix-collation database holding two tables differing only in case (`src/mysql/fold.ts`).
+- `mariadb` is a PARTIAL derived alias of the mysql grammar; MariaDB-only extensions are
+  unmodeled (`src/derived-dialects.ts`).
+- BigQuery `DEFINE MACRO` is detect-only: the body is consumed opaquely and flagged, not
+  parsed (`grammars/bigquery/GoogleSQLParser.g4`).
+- Snowflake `pivot`/`unpivot` are unusable as bare identifiers (held out of `id_`; the
+  language-exact post-source-slot split is deferred, `grammars/snowflake/SnowflakeParser.g4`).
+- `SELECT FROM t` (empty projection list) parses clean in databricks/redshift/postgres/duckdb;
+  tightening risks the positive gates and needs its own pass.
+- Snowflake embedded UDF bodies (`$$...$$`) are one opaque token; revisit on consumer demand.
+- Upstream-inherited grammar TODOs ride the forks as-is (pg-family lexer escape notes,
+  Snowflake constraint-combination leniency, T-SQL `data_type` runtime checks, BigQuery
+  `TODO(zp)` markers); fixed only when one bites a corpus or consumer.
+- SQLite's inference registry is deliberately incomplete: value/modifier-dependent returns
+  stay unregistered and the affinity algorithm is unbuilt (`src/sqlite/infer.ts`).
+- The corpus reclassifier only runs under `ORGANIZE=1` (`tools/organize-corpus.test.ts`).
+
 ## Releasing
 
 Version bumps are automatic. `semantic-release` (`.releaserc.json`) runs `commit-analyzer` with the

@@ -46,6 +46,7 @@
 
 import { CharStream, CommonTokenStream, ListTokenSource, type ParserRuleContext, Token as AntlrToken } from "antlr4ng";
 import { parse } from "../api.js";
+import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import { endPosition } from "../ir/span.js";
@@ -401,9 +402,10 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult {
 	try {
 		return build(text, dialect, opts?.provider ?? OPEN_PROVIDER);
-	} catch {
+	} catch (e) {
 		// Defense-in-depth: degrade to the whole text as plain SQL, jinja empty.
 		// parse() is itself total, so this is the safe floor.
+		debugRethrow(e);
 		const sql = parse(text, dialect);
 		return {
 			tokens: sql.tokens,

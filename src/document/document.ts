@@ -31,6 +31,7 @@
 // ---------------------------------------------------------------------------
 
 import type { ParserRuleContext } from "antlr4ng";
+import { debugRethrow } from "../debug.js";
 import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
 import { lineageAt as lineageAtScopes, type LineageHop } from "../lineage/hops.js";
 import { referencesAt as referencesAtScopes, type Occurrences } from "../references/references.js";
@@ -563,7 +564,8 @@ export class SqlDocument {
 		let raw: TemplateVariant[];
 		try {
 			raw = this._templating.variants(this.text, this.dialect);
-		} catch {
+		} catch (e) {
+			debugRethrow(e);
 			return [];
 		}
 		return raw.map((v) => this.wrapVariant(v));

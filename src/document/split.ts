@@ -16,6 +16,7 @@
 // an imperfect heuristic; it is not a rare-path afterthought.
 // ---------------------------------------------------------------------------
 
+import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { tokenize } from "../token/tokenize.js";
 import type { Token } from "../token/token.js";
@@ -129,7 +130,8 @@ export function splitStatements(text: string, dialect: Dialect): StatementCellSp
 		const splitEnds = findSplitEnds(text, tokens, dialect);
 		const spans = buildCells(splitEnds, text.length);
 		return tiles(spans, text.length) ? spans : wholeDoc(text);
-	} catch {
+	} catch (e) {
+		debugRethrow(e);
 		return wholeDoc(text);
 	}
 }

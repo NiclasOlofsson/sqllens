@@ -52,6 +52,7 @@
 // (all-text-live); variants are a separate additive API.
 // ---------------------------------------------------------------------------
 
+import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { parseTemplated, type TemplatedParseResult } from "./parse.js";
 import { templateRegions, type TemplateRegion } from "./regions.js";
@@ -201,7 +202,8 @@ export function templateVariants(text: string, dialect: Dialect): TemplateVarian
 	let regions: TemplateRegion[];
 	try {
 		regions = templateRegions(parseTemplated(text, dialect).tags, text);
-	} catch {
+	} catch (e) {
+		debugRethrow(e);
 		regions = [];
 	}
 	const flat = flattenRegions(regions);
