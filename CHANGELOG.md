@@ -1,3 +1,11 @@
+## [1.5.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.5.0...v1.5.1) (2026-07-16)
+
+
+### Bug Fixes
+
+* **completion:** dangling-dot fallback resolves a templated source's columns ([d83a063](https://github.com/NiclasOlofsson/sqllens/commit/d83a063807bb58b9b7bc879d0d820ac00240c625))
+* **symbols:** table Sym.name shows display spelling, not the folded key ([0cc6499](https://github.com/NiclasOlofsson/sqllens/commit/0cc6499a1dc54a8b526035369d6ec02bca55b6a0)), closes [#38](https://github.com/NiclasOlofsson/sqllens/issues/38)
+
 # [1.5.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.4.0...v1.5.0) (2026-07-16)
 
 

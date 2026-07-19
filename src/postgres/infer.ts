@@ -137,6 +137,70 @@ const statRule: FnRule = (args) => {
 const arrayAggRule: FnRule = (args) => ({ kind: "array", element: args[0] ?? UNKNOWN });
 /** to_json family: json_agg → json, jsonb_agg → jsonb handled as fixed entries. */
 
+/** bytea/bit-preserving forms of the string functions — pg_proc.dat (REL_18_STABLE): btrim/
+ *  ltrim/rtrim(bytea,bytea)→bytea, reverse(bytea)→bytea, substr/substring(bytea,int4[,int4])→
+ *  bytea, substring/overlay(bit,bit,int4[,int4])→bit, overlay(bytea,bytea,int4[,int4])→bytea.
+ *  The subject is always args[0] (substr/substring/overlay) or the bytea overload's first arg
+ *  (btrim/ltrim/rtrim are (bytea,bytea)); every other overload (text) returns string. */
+const binOrBitPreserving: FnRule = (args) => {
+	const a = args[0];
+	if (a?.kind === "scalar" && (a.name === "binary" || a.name === "bit")) return a;
+	return S;
+};
+
+/** ts_headline() returns the DOCUMENT argument's type — pg_proc.dat: ([regconfig,] document,
+ *  tsquery [, options text]) → document's type: text, json, or jsonb overloads all present
+ *  (regconfig,jsonb,tsquery[,text])→jsonb, (regconfig,json,tsquery[,text])→json, plain
+ *  text overloads → text. The document is whichever of args[0]/args[1] is json/jsonb (the
+ *  regconfig arg, when present, is args[0] and never carries the document type). */
+const tsHeadlineRule: FnRule = (args) => {
+	for (const a of args.slice(0, 2)) {
+		if (a?.kind === "scalar" && (a.name === "json" || a.name === "jsonb")) return a;
+	}
+	return S;
+};
+
+/** random() — pg_proc.dat: random()→float8, and the PG17+ bounded overloads return the bound
+ *  argument's type verbatim: random(int4,int4)→int4, random(int8,int8)→int8,
+ *  random(numeric,numeric)→numeric. */
+const randomRule: FnRule = (args) => (args.length === 0 ? D : (args[0] ?? UNKNOWN));
+
+/** percentile_cont() — pg_proc.dat (prokind 'a', ordered-set aggregate): the catalog signature
+ *  is (fraction, ordered-set-arg) and the return follows the ORDERED-SET argument (args[1]),
+ *  not the fraction: percentile_cont(float8,float8)→float8, percentile_cont(float8,interval)→
+ *  interval, percentile_cont(_float8,float8)→_float8, percentile_cont(_float8,interval)→
+ *  _interval (an array of fractions broadcasts to an array of the ordered-set type). The
+ *  SQL-level WITHIN GROUP form has no ordered-set arg in the call args at all — abstain. */
+const percentileContRule: FnRule = (args) => {
+	const a0 = args[0];
+	if (a0?.kind === "array") return { kind: "array", element: args[1] ?? UNKNOWN };
+	return args.length >= 2 ? (args[1] ?? UNKNOWN) : UNKNOWN;
+};
+
+/** length() — pg_proc.dat: the geometric overloads length(lseg)→float8 and length(path)→
+ *  float8 diverge from every other overload (text/bpchar/bytea[,name]/bit/tsvector → int4). */
+const lengthRule: FnRule = (args) => {
+	const a = args[0];
+	if (a?.kind === "scalar" && (a.name === "lseg" || a.name === "path")) return D;
+	return I;
+};
+
+/** log10() — pg_proc.dat: log10(float8)→float8, log10(numeric)→numeric (unlike log(x), which
+ *  pg_proc only has as the alias base-10 numeric form covered by the firstArg group). */
+const log10Rule: FnRule = (args) => {
+	const a = args[0];
+	if (a?.kind === "scalar" && a.name === "decimal") return DEC;
+	return D;
+};
+
+/** age() — pg_proc.dat: age(xid)→int4 (transaction-id distance) is a different function in
+ *  substance from the datetime overloads age(timestamp[tz][,timestamp[tz]])→interval. */
+const ageRule: FnRule = (args) => {
+	const a = args[0];
+	if (a?.kind === "scalar" && a.name === "xid") return I;
+	return IV;
+};
+
 export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// --- mathematical — functions-math.html (Table 9.5-9.8) --------------------
 	...group(firstArg, [
@@ -154,7 +218,6 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"mod",
 		"gcd",
 		"lcm",
-		"min_scale",
 		"trim_scale",
 	]),
 	...group(fixed(D), [
@@ -162,13 +225,13 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"degrees",
 		"radians",
 		"pi",
-		"random",
 		"random_normal",
 		"atan2",
 		"atan2d",
 		"erf",
 		"erfc",
 	]),
+	random: randomRule, // PG17+ bounded overloads return the bound's own type — pg_proc.dat
 	...group(fixed(D), [
 		"sin",
 		"cos",
@@ -193,17 +256,17 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"gamma",
 		"lgamma",
 	]),
-	log10: fixed(D),
+	log10: log10Rule, // log10(numeric) → numeric, log10(float8) → float8 — pg_proc.dat
 	div: fixed(DEC), // div(y numeric, x numeric) → numeric
 	factorial: fixed(DEC),
 	power: (args) => commonType(args), // numeric^numeric → numeric, dp^dp → dp
 	scale: fixed(I),
 	width_bucket: fixed(I),
 	setseed: fixed(UNKNOWN),
+	min_scale: fixed(I), // min_scale(numeric) → int4 — pg_proc.dat
 
 	// --- strings — functions-string.html (Table 9.10) --------------------------
 	...group(fixed(S), [
-		"btrim",
 		"chr",
 		"concat",
 		"concat_ws",
@@ -212,22 +275,16 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"left",
 		"lower",
 		"lpad",
-		"ltrim",
 		"md5",
 		"normalize",
-		"overlay",
 		"quote_ident",
 		"quote_literal",
 		"quote_nullable",
 		"repeat",
 		"replace",
-		"reverse",
 		"right",
 		"rpad",
-		"rtrim",
 		"split_part",
-		"substr",
-		"substring",
 		"to_ascii",
 		"to_bin",
 		"to_char",
@@ -241,18 +298,21 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"regexp_replace",
 		"regexp_substr",
 	]),
+	// bytea/bit-preserving: btrim/ltrim/rtrim/reverse/substr/substring/overlay keep their
+	// binary or bit subject instead of coercing to string — see binOrBitPreserving above.
+	...group(binOrBitPreserving, ["btrim", "ltrim", "rtrim", "reverse", "substr", "substring", "overlay"]),
 	...group(fixed(I), [
 		"ascii",
 		"bit_length",
 		"char_length",
 		"character_length",
-		"length",
 		"octet_length",
 		"position",
 		"strpos",
 		"regexp_count",
 		"regexp_instr",
 	]),
+	length: lengthRule, // length(lseg)/length(path) → float8; everything else → int4 — pg_proc.dat
 	regexp_like: fixed(B),
 	starts_with: fixed(B),
 	...group(fixed(SARR), [
@@ -278,7 +338,7 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 	convert_to: fixed(BIN),
 
 	// --- date/time — functions-datetime.html (Table 9.33) ----------------------
-	age: fixed(IV),
+	age: ageRule, // age(xid) → int4 vs. age(timestamp[tz]...) → interval — pg_proc.dat
 	...group(fixed(TS), [
 		"clock_timestamp",
 		"now",
@@ -347,7 +407,7 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 	regr_count: fixed(BIG),
 	...group(statRule, ["stddev", "stddev_pop", "stddev_samp", "variance", "var_pop", "var_samp"]),
 	mode: fixed(UNKNOWN), // ordered-set: type of the WITHIN GROUP sort expr (not visible here)
-	percentile_cont: firstArg, // dp in → dp, interval in → interval (fraction is arg0… see note)
+	percentile_cont: percentileContRule, // follows the ordered-set arg (args[1]), not the fraction — pg_proc.dat
 	percentile_disc: fixed(UNKNOWN), // type of the sort expression
 
 	// --- window — functions-window.html (Table 9.66) ---------------------------
@@ -452,7 +512,7 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// --- text search — functions-textsearch.html (Table 9.43) ------------------
 	to_tsvector: fixed(TSV),
 	...group(fixed(TSQ), ["to_tsquery", "plainto_tsquery", "phraseto_tsquery", "websearch_to_tsquery", "ts_rewrite"]),
-	ts_headline: fixed(S),
+	ts_headline: tsHeadlineRule, // returns the document arg's type (text/json/jsonb) — pg_proc.dat
 	ts_rank: fixed(F),
 	ts_rank_cd: fixed(F),
 	tsvector_to_array: fixed(SARR),
@@ -521,7 +581,7 @@ export const POSTGRES_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"pg_tablespace_size",
 		"txid_current",
 	]),
-	pg_typeof: fixed(S),
+	pg_typeof: fixed(scalar("regtype")), // returns regtype, not text — pg_proc.dat
 	...group(fixed(B), [
 		"has_table_privilege",
 		"has_column_privilege",
