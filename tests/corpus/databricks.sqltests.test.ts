@@ -39,13 +39,14 @@ import { parseSqlOut } from "../helpers/spark-sqltests.js";
 //
 // MISMATCH is the debt number: columns where we claim a CONCRETE type and
 // Spark's analyzer says a different concrete type — never-wrong violations.
-// Baseline 430 (2026-07-19 census, ~16 rule classes: 2-arg CEIL/FLOOR decimal,
-// date_add/date_sub(date,int)->date vs 3-arg dateadd->timestamp, array_position
-// bigint, bit_count int, getbit tinyint, date_part double, from_json DDL-string
-// schema mis-parse, date/timestamp/interval arithmetic operators, postgres-style
-// smallint()/float() converters, unary +/- string coercion, decimal div, ...).
-// Tracked in the cheat-eradication issue; the ratchet may only FALL as the
-// registry/operator rules are fixed, and colMatch may only RISE.
+// The 2026-07-19 first census found 430 across ~16 rule classes; the fix wave
+// the same day (registry rules, literal sizing, operator/coercion rules, the
+// from_json DDL-schema parse, and a real nested-cast lowering bug) drove it to
+// FIVE, all ledgered in issue #40: 3x date_part(field, interval) → tinyint
+// (the special hook cannot see the source argument's TYPE), 1x float+decimal
+// promotion (Spark says double; T-SQL's precedence says the opposite, and
+// coerce is shared), 1x multi-row VALUES column union (first row wins today).
+// The ratchet may only FALL, and colMatch may only RISE.
 //
 // Policy skips (whole directories/files, counted nowhere): udf/ udaf/ udtf/
 // (UDF-wrapped rewrites of base files — they test UDF machinery, and every
@@ -84,6 +85,13 @@ const norm = (t: string) =>
 		.replace(/\(\s*[\d,\s]+\)/g, "")
 		.replace(/\s+collate\s+[\w.]+/g, "")
 		.replace(/\s+/g, "");
+
+/** The ntz/ltz fold is a documented ADT alias (src/infer/types.ts BASE_ALIASES), applied to
+ *  the Spark side so nested occurrences compare too. Collapsing a QUALIFIED interval to the
+ *  bare `interval` is the coarse test: equal only after collapsing → coarse, not a match. */
+const foldNtz = (s: string) => s.replace(/timestamp_ntz|timestamp_ltz/g, "timestamp");
+const collapseIntervals = (s: string) =>
+	s.replace(/interval(year|month|week|day|hour|minute|second)+(to(year|month|day|hour|minute|second)+)?/g, "interval");
 
 const stripTicks = (s: string) => s.replace(/^`|`$/g, "");
 
@@ -150,10 +158,9 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 						continue;
 					}
 					const o = norm(ours);
-					const s = norm(spark);
+					const s = foldNtz(norm(spark));
 					if (o === s) bump("colMatch");
-					else if (o === "timestamp" && s === "timestamp_ntz") bump("colCoarse");
-					else if (o === "interval" && s.startsWith("interval")) bump("colCoarse");
+					else if (o === collapseIntervals(s)) bump("colCoarse");
 					else {
 						bump("colMismatch");
 						const key = `${o} -> ${s}`;
@@ -185,11 +192,12 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 		expect(counts.parseFailure).toBeLessThanOrEqual(3);
 
 		// The graded-column ledger. Ratchets: match may only rise; abstain/coarse/
-		// mismatch may only fall. Baselines from the 2026-07-19 census.
-		expect(counts.colMatch, "engine-confirmed types (may only rise)").toBeGreaterThanOrEqual(3655);
-		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1275);
-		expect(counts.colCoarse, "documented coarsenings (may only fall)").toBeLessThanOrEqual(325);
-		expect(counts.colMismatch, `wrong concrete types (may only fall):\n${dump()}`).toBeLessThanOrEqual(430);
+		// mismatch may only fall. Baselines from the 2026-07-19 post-fix-wave census
+		// (the first census read 3655/1275/325/430; the fix wave moved them here).
+		expect(counts.colMatch, "engine-confirmed types (may only rise)").toBeGreaterThanOrEqual(4337);
+		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1021);
+		expect(counts.colCoarse, "single-interval-ADT coarsenings (may only fall)").toBeLessThanOrEqual(322);
+		expect(counts.colMismatch, `wrong concrete types (may only fall):\n${dump()}`).toBeLessThanOrEqual(5);
 
 		// Aliased output names agree everywhere except ONE case: `SELECT 1 AS
 		// IDENTIFIER('col1')` (identifier-clause.sql.out) — Spark resolves the

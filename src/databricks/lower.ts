@@ -94,6 +94,18 @@ function firstOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext | un
 	return undefined;
 }
 
+/** A DIRECT child of `node` with the given rule index — never descends. A nested construct
+ *  would otherwise donate ITS matching child first in walk order: in `x :: long :: int` /
+ *  `cast(cast(x AS double) AS timestamp)` the deep-first search returned the INNER cast's
+ *  dataType as the outer's typeText (caught by the Spark-goldens gate). */
+function directOfRule(node: ParseTree, ruleIndex: number): ParserRuleContext | undefined {
+	for (let i = 0; i < node.getChildCount(); i++) {
+		const child = node.getChild(i);
+		if (child instanceof ParserRuleContext && child.ruleIndex === ruleIndex) return child;
+	}
+	return undefined;
+}
+
 /**
  * Like firstOfRule, but never descends into a nested `query` — so it finds a query's
  * OWN clause, not one belonging to a subquery in its SELECT/WHERE. Without this, a
@@ -1021,8 +1033,11 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	if (node instanceof FunctionCallContext) return lowerFunction(node);
 	if (node instanceof SearchedCaseContext || node instanceof SimpleCaseContext) return lowerCase(node);
 	if (node instanceof CastContext || node instanceof CastByColonContext) {
-		const inner = firstOfRule(node, P.RULE_expression) ?? firstOfRule(node, P.RULE_valueExpression);
-		const dt = firstOfRule(node, P.RULE_dataType);
+		const inner =
+			directOfRule(node, P.RULE_expression) ??
+			directOfRule(node, P.RULE_valueExpression) ??
+			directOfRule(node, P.RULE_primaryExpression);
+		const dt = directOfRule(node, P.RULE_dataType);
 		return {
 			kind: "cast",
 			expr: inner ? lowerExpression(inner) : otherExpr(node),
@@ -1034,8 +1049,8 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	}
 	// `expr ?:: <type>` — the try-cast operator; models like a cast, flagged `try`.
 	if (node instanceof TryCastByColonContext) {
-		const inner = firstOfRule(node, P.RULE_primaryExpression);
-		const dt = firstOfRule(node, P.RULE_dataType);
+		const inner = directOfRule(node, P.RULE_primaryExpression);
+		const dt = directOfRule(node, P.RULE_dataType);
 		return {
 			kind: "cast",
 			expr: inner ? lowerExpression(inner) : otherExpr(node),
@@ -1047,8 +1062,8 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	// `expr : <complex type>` — type ascription (a typed value, e.g. `NULL:MAP<STRING,STRING>`);
 	// models as a plain cast to the ascribed type.
 	if (node instanceof TypeAscriptionContext) {
-		const inner = firstOfRule(node, P.RULE_primaryExpression);
-		const asc = firstOfRule(node, P.RULE_complexTypeArgumented);
+		const inner = directOfRule(node, P.RULE_primaryExpression);
+		const asc = directOfRule(node, P.RULE_complexTypeArgumented);
 		return {
 			kind: "cast",
 			expr: inner ? lowerExpression(inner) : otherExpr(node),

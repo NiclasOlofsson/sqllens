@@ -27,6 +27,10 @@ export interface DialectBehavior {
 	parseType(text: string): Type;
 	functions: Record<string, FnRule>;
 	division: "float" | "integer" | "decimal";
+	/** What `date - date` / `timestamp - timestamp` yields. Spark/Databricks: an ANSI interval
+	 *  (our single `interval` scalar — the qualified subtype is a tracked coarseness). Absent =
+	 *  the plain arithmetic coerce path (a dialect sets this only with an external citation). */
+	dateSubtraction?: "interval";
 	special?(fn: Extract<Expr, { kind: "function" }>): Type | undefined;
 
 	// --- call-signature checking (was check-calls.ts' per-dialect signature tables) ---

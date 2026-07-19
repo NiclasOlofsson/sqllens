@@ -13,7 +13,6 @@ import {
 	arrayOfFirst,
 	common,
 	concatRule,
-	dateArg,
 	elementOf,
 	fixed,
 	firstArg,
@@ -24,7 +23,74 @@ import {
 	type FnRule,
 } from "../infer/functions.js";
 import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import type { Expr } from "../ir/ir.js";
 import { fold } from "./fold.js";
+
+const TINY = scalar("tinyint");
+const SMALL = scalar("smallint");
+const DEC = scalar("decimal");
+
+/** CEIL/CEILING/FLOOR — sql-ref-functions ceil/floor: with a targetScale (2-arg form) the
+ *  result is DECIMAL; a DECIMAL input stays DECIMAL (p-s+1, 0); any other numeric input
+ *  returns BIGINT. Pinned externally by the v4.2.0 sql-tests goldens (ceil-floor-with-scale-param). */
+const ceilFloor: FnRule = (args) => {
+	if (args.length >= 2) return DEC;
+	const a = args[0];
+	if (!a || a.kind === "unknown") return UNKNOWN;
+	return a.kind === "scalar" && a.name === "decimal" ? DEC : BIG;
+};
+
+/** positive()/negative() — the argument must be numeric or interval; a STRING argument is
+ *  implicitly crosscast to DOUBLE, so the result follows the cast, not the string. */
+const numericUnary: FnRule = (args) => {
+	const a = args[0];
+	if (!a) return UNKNOWN;
+	if (a.kind === "scalar" && a.name === "string") return D;
+	return a;
+};
+
+/** try_add/try_subtract/try_multiply — an interval operand keeps the result an interval
+ *  (interval × numeric → interval), EXCEPT date/timestamp ± interval: there the result is
+ *  DATE for a year-month interval and TIMESTAMP for a day-time one, which the single
+ *  `interval` scalar cannot distinguish → unknown, never a guess (the qualified-interval
+ *  model is the tracked coarseness gap). Otherwise the common type. */
+const isIntervalT = (a: Type | undefined) => a?.kind === "scalar" && a.name === "interval";
+const isDatelike = (a: Type | undefined) => a?.kind === "scalar" && (a.name === "date" || a.name === "timestamp");
+const tryArith: FnRule = (args) => {
+	if (args.some(isIntervalT)) {
+		if (args.some(isDatelike)) return UNKNOWN;
+		return INTERVAL;
+	}
+	return commonType(args);
+};
+
+/** date_add/dateadd — TWO documented forms sharing the names: date_add(startDate, numDays)
+ *  returns DATE; dateadd(unit, value, expr) (3-arg) returns TIMESTAMP. Arity decides. */
+const dateAddRule: FnRule = (args) => (args.length >= 3 ? TS : DATE);
+
+/** date_part/datepart return types key on the FIELD argument's VALUE, which the FnRule table
+ *  (types only) cannot see — reached via the behavior `special` hook. Fields per the extract
+ *  doc: the second family returns DECIMAL(8,6), the other documented fields INT; a NULL field
+ *  types DOUBLE (Spark's analyzer, pinned by the v4.2.0 sql-tests goldens); a non-literal
+ *  field is not statically known → unknown, never a guess. */
+const SECOND_FIELDS = new Set(["second", "s", "sec", "seconds", "secs"]);
+const INT_FIELDS = new Set([
+	"year", "y", "years", "yr", "yrs", "yearofweek", "quarter", "qtr", "month", "mon", "mons",
+	"months", "week", "w", "weeks", "day", "d", "days", "dayofweek", "dow", "dayofweek_iso",
+	"dow_iso", "doy", "hour", "h", "hours", "hr", "hrs", "minute", "m", "min", "mins", "minutes",
+]);
+export function databricksSpecial(fn: Extract<Expr, { kind: "function" }>): Type | undefined {
+	const name = fold(fn.name);
+	if (name !== "date_part" && name !== "datepart") return undefined;
+	const f = fn.args[0];
+	if (f?.kind !== "literal") return UNKNOWN;
+	const raw = f.text.trim();
+	if (/^null$/i.test(raw)) return D;
+	const field = raw.replace(/^['"]|['"]$/g, "").toLowerCase();
+	if (SECOND_FIELDS.has(field)) return DEC;
+	if (INT_FIELDS.has(field)) return I;
+	return UNKNOWN;
+}
 
 // Function return-type registry for Databricks/Spark SQL, from the built-in function
 // reference (the language spec — NOT the corpus; the corpus is only a validation gate). A
@@ -102,10 +168,6 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"bit_length",
 		"regexp_count",
 		"regexp_instr",
-		"sign",
-		"signum",
-		"bit_get",
-		"getbit",
 		"day",
 		"dayofmonth",
 		"dayofweek",
@@ -122,24 +184,29 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"size",
 		"array_size",
 		"cardinality",
-		"array_position",
 		"hash",
 		"json_array_length",
-		"datediff",
-		"date_diff",
-		"date_part",
-		"datepart",
 		"int",
 		"integer",
-		"tinyint",
-		"smallint",
 	]),
+	// sign/signum return DOUBLE whatever the input (sql-ref sign). datediff/date_diff have two
+	// forms: datediff(endDate, startDate) → INT, the unit form datediff(unit, start, end) →
+	// BIGINT (timestampdiff likewise). Arity decides.
+	...group(fixed(D), ["sign", "signum"]),
+	...group((args) => (args.length >= 3 ? BIG : I), ["datediff", "date_diff"]),
+	timestampdiff: fixed(BIG),
+	// sql-ref: bit_get/getbit return TINYINT; the type-named cast functions return their type;
+	// bit_count returns INT; array_position returns BIGINT (the 1-based position as a long).
+	// date_part/datepart moved to the `special` hook (field-VALUE-dependent, see databricksSpecial).
+	...group(fixed(TINY), ["bit_get", "getbit", "tinyint"]),
+	smallint: fixed(SMALL),
+	bit_count: fixed(I),
+	array_position: fixed(BIG),
 	...group(fixed(BIG), [
 		"count",
 		"count_if",
 		"approx_count_distinct",
 		"div",
-		"bit_count",
 		"bit_and",
 		"bit_or",
 		"bit_xor",
@@ -154,8 +221,14 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"bigint",
 		"long",
 	]),
+	// avg — sql-ref: DECIMAL input stays DECIMAL, an interval stays its interval, else DOUBLE
+	// (v4.2.0 goldens: AVG over a decimal window column is decimal, not double).
+	...group(
+		(args: Type[]) =>
+			args[0]?.kind === "scalar" && (args[0].name === "decimal" || args[0].name === "interval") ? args[0] : D,
+		["avg", "try_avg", "mean"],
+	),
 	...group(fixed(D), [
-		"avg",
 		"sqrt",
 		"cbrt",
 		"exp",
@@ -269,12 +342,6 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 
 	// same type as input (numeric ops, ordering aggregates, array → array transforms)
 	...group(firstArg, [
-		"abs",
-		"negative",
-		"positive",
-		"ceil",
-		"ceiling",
-		"floor",
 		"round",
 		"bround",
 		"trunc",
@@ -293,10 +360,10 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"min_by",
 		"any_value",
 		"mode",
-		"percentile_disc",
+		// percentile_disc deliberately ABSENT: its result follows the WITHIN GROUP (ORDER BY)
+		// operand, which is not in the arg list the rule sees — unknown, never the fraction's type.
 		"nullif",
 		"nullifzero",
-		"zeroifnull",
 		"reverse",
 		"array_distinct",
 		"array_union",
@@ -317,6 +384,11 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(common, ["coalesce", "ifnull", "nvl", "greatest", "least"]),
 	...group(restCommon, ["if", "iff", "nvl2"]),
 	sum: (args) => widenSum(args[0] ?? UNKNOWN),
+	...group(ceilFloor, ["ceil", "ceiling", "floor"]),
+	...group(numericUnary, ["positive", "negative", "abs"]),
+	// zeroifnull(expr) = coalesce(expr, 0): the 0 is an INT literal, so the result is the
+	// common type of the input and INT (a TINYINT input widens to INT — v4.2.0 goldens).
+	zeroifnull: (args) => commonType([args[0] ?? UNKNOWN, I]),
 
 	...group(arrayOfFirst, ["collect_list", "collect_set", "array_agg", "sequence", "range"]),
 	array: arrayOfCommon,
@@ -326,7 +398,13 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	map_values: mapValues,
 	concat: concatRule,
 
-	...group(dateArg, ["date_add", "dateadd", "date_sub", "timestampadd", "add_months"]),
+	// sql-ref: date_add(startDate, numDays)/date_sub/add_months return DATE whatever the
+	// start's type; the unit-form dateadd(unit, value, expr)/timestampadd return TIMESTAMP.
+	date_add: dateAddRule,
+	dateadd: dateAddRule,
+	date_sub: fixed(DATE),
+	timestampadd: fixed(TS),
+	add_months: fixed(DATE),
 
 	// window/ranking — Spark's ranking functions return int (T-SQL's return bigint); the
 	// value-returning analytics keep their argument's type.
@@ -359,7 +437,6 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	len: fixed(I),
 	charindex: fixed(I), // synonym of position/locate — "An INTEGER"
 	getdate: fixed(TS), // synonym of current_timestamp
-	getbit: fixed(I),
 
 	// VARIANT family
 	...group(fixed(scalar("variant")), ["parse_json", "try_parse_json", "to_variant_object"]),
@@ -401,10 +478,18 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	time_to_seconds: fixed(scalar("decimal")),
 
 	// try_* arithmetic mirrors the base operators (NULL on error)
-	...group(common, ["try_add", "try_subtract", "try_multiply", "try_mod"]),
-	try_divide: (args) => (args[0]?.kind === "scalar" && args[0].name === "interval" ? args[0] : D),
+	...group(tryArith, ["try_add", "try_subtract", "try_multiply"]),
+	try_mod: common,
+	// try_divide mirrors `/`: interval ÷ numeric stays interval; a DECIMAL operand keeps the
+	// result DECIMAL unless a float/double operand is involved; else DOUBLE (v4.2.0 goldens).
+	try_divide: (args) => {
+		if (isIntervalT(args[0])) return args[0] as Type;
+		const approx = (a: Type | undefined) => a?.kind === "scalar" && (a.name === "double" || a.name === "float");
+		const dec = (a: Type | undefined) => a?.kind === "scalar" && a.name === "decimal";
+		if (!approx(args[0]) && !approx(args[1]) && (dec(args[0]) || dec(args[1]))) return DEC;
+		return D;
+	},
 	try_sum: (args) => widenSum(args[0] ?? UNKNOWN),
-	try_avg: fixed(D),
 	try_element_at: elementOf,
 
 	// regression aggregates (regr_avgx/avgy: DECIMAL input stays decimal, else DOUBLE)
@@ -459,7 +544,10 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	]),
 	...group(fixed(B), ["luhn_check", "equal_null", "is_valid_utf8", "is_account_group_member", "is_member", "some"]),
 	flatten: (args) => (args[0]?.kind === "array" && args[0].element.kind === "array" ? args[0].element : UNKNOWN),
-	uniform: (args) => commonType(args.slice(0, 2)),
+	// uniform(min, max [, seed]) → the common type of min and max; a NULL bound makes the
+	// result value-dependent (Spark types it DOUBLE) → unknown rather than a guessed int.
+	uniform: (args) =>
+		args[0]?.kind === "unknown" || args[1]?.kind === "unknown" ? UNKNOWN : commonType(args.slice(0, 2)),
 	// decode(expr, search1, result1, …[, default]) → least common type of the results
 	decode: (args) => {
 		if (args.length === 2) return S; // decode(binary, charset) overload
@@ -665,10 +753,29 @@ export function databricksLiteral(text: string): Type {
 	if (/^(true|false)$/i.test(t)) return BOOLEAN;
 	if (/^null$/i.test(t)) return UNKNOWN;
 	if (/^date\s*'/i.test(t)) return scalar("date");
-	if (/^timestamp\s*'/i.test(t)) return scalar("timestamp");
-	if (/^interval\b/i.test(t)) return scalar("interval");
-	if (/^[+-]?\d+$/.test(t)) return scalar("int");
-	if (/^[+-]?(\d+\.\d*|\.\d+|\d+)([eed][+-]?\d+)?$/i.test(t) && /[.eed]/i.test(t)) return scalar("double");
+	if (/^timestamp(_ntz|_ltz)?\s*'/i.test(t)) return scalar("timestamp");
+	// The CST's getText() concatenates tokens without whitespace, so the unquoted multi-token
+	// form arrives as `interval2year` — no word boundary after the keyword.
+	if (/^interval/i.test(t)) return scalar("interval");
+	// Integral literals size by magnitude: INT when it fits, else BIGINT, else DECIMAL(38,0)
+	// (sql-ref-literals; `9223372036854775808` is DECIMAL — v4.2.0 goldens, literals.sql.out).
+	if (/^[+-]?\d+$/.test(t)) {
+		const v = BigInt(t);
+		if (v >= -2147483648n && v <= 2147483647n) return scalar("int");
+		if (v >= -9223372036854775808n && v <= 9223372036854775807n) return BIG;
+		return DEC;
+	}
+	// Numeric literal forms + suffixes (sql-ref-literals): L → BIGINT, S → SMALLINT,
+	// Y → TINYINT, BD → DECIMAL, F → FLOAT, D → DOUBLE, an exponent → DOUBLE, and a bare
+	// decimal point → DECIMAL (2.5 is DECIMAL(2,1), NOT double — v4.2.0 goldens agree).
+	if (/^[+-]?\d+l$/i.test(t)) return BIG;
+	if (/^[+-]?\d+s$/i.test(t)) return SMALL;
+	if (/^[+-]?\d+y$/i.test(t)) return TINY;
+	if (/^[+-]?(\d+\.?\d*|\.\d+)bd$/i.test(t)) return DEC;
+	if (/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?f$/i.test(t)) return scalar("float");
+	if (/^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?d$/i.test(t)) return D;
+	if (/^[+-]?(\d+\.?\d*|\.\d+)e[+-]?\d+$/i.test(t)) return D;
+	if (/^[+-]?(\d+\.\d*|\.\d+)$/.test(t)) return DEC;
 	return UNKNOWN;
 }
 

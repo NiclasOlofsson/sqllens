@@ -49,6 +49,7 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx:
 				inferType(expr.left, scope, schema, ctx),
 				inferType(expr.right, scope, schema, ctx),
 				d.division,
+				d.dateSubtraction,
 			);
 		case "unary":
 			return unaryType(expr.op, inferType(expr.operand, scope, schema, ctx));
@@ -328,13 +329,56 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaPro
 			})),
 		};
 	}
-	if (name === "from_json") {
+	if (name === "from_json" || name === "from_csv") {
 		const s = args[1];
-		return s?.kind === "literal"
-			? parseType(stringValue(s.text), undefined, (n) => behaviorOf(scope).fold(n))
-			: UNKNOWN;
+		if (s?.kind !== "literal") return UNKNOWN;
+		const fold = (n: string) => behaviorOf(scope).fold(n);
+		const ddl = stringValue(s.text);
+		// Spark accepts a DDL table-schema string ('a INT, b STRING') as an IMPLICIT struct
+		// alongside a bare type string ('array<int>'). Try the field-list reading first;
+		// otherwise fall back to the bare type (from_csv always yields a row, so a non-DDL
+		// schema there stays unknown rather than a fabricated scalar).
+		const struct = parseDdlStruct(ddl, fold);
+		if (struct) return struct;
+		return name === "from_json" ? parseType(ddl, undefined, fold) : UNKNOWN;
 	}
 	return undefined;
+}
+
+/** First words that make a single space-containing segment a BARE type, not a `name type`
+ *  field: only heads that can legally CONTINUE ('interval day', 'decimal (2,1)', 'int not
+ *  null'). Plain scalar heads (time, date, int, ...) stay valid FIELD names — Spark reads
+ *  'time TIME(0)' as a field named time. */
+const BARE_TYPE_HEADS = new Set([
+	"interval", "struct", "array", "map", "decimal", "dec", "numeric", "char", "varchar", "not",
+]);
+
+/** Parse a Spark DDL table-schema string ('d Date, t Timestamp') into a struct type: split at
+ *  top-level commas (angle/paren-depth aware), each segment `name type...`. undefined when any
+ *  segment doesn't read as a field — the caller falls back, never a guessed shape. */
+function parseDdlStruct(ddl: string, fold: (n: string) => string): Type | undefined {
+	const segs: string[] = [];
+	let depth = 0;
+	let start = 0;
+	for (let i = 0; i < ddl.length; i++) {
+		const c = ddl[i];
+		if (c === "<" || c === "(") depth++;
+		else if (c === ">" || c === ")") depth--;
+		else if (c === "," && depth === 0) {
+			segs.push(ddl.slice(start, i));
+			start = i + 1;
+		}
+	}
+	segs.push(ddl.slice(start));
+	const fields: { name: string; type: Type }[] = [];
+	for (const seg of segs) {
+		const m = /^\s*(`[^`]+`|[A-Za-z_]\w*)\s+(\S.*?)\s*$/.exec(seg);
+		if (!m) return undefined;
+		const head = m[1].toLowerCase();
+		if (segs.length === 1 && BARE_TYPE_HEADS.has(head)) return undefined;
+		fields.push({ name: fold(m[1].replace(/^`|`$/g, "")), type: parseType(m[2], undefined, fold) });
+	}
+	return fields.length ? { kind: "struct", fields } : undefined;
 }
 
 // --- subqueries ------------------------------------------------------------
@@ -350,15 +394,32 @@ function subqueryType(query: QueryExpr, schema: SchemaProvider, ctx: Ctx, dialec
 const COMPARISON = new Set(["=", "==", "!=", "<>", "<", "<=", ">", ">=", "<=>"]);
 const ARITHMETIC = new Set(["+", "-", "*", "/", "%", "div"]);
 
-function binaryType(op: string, l: Type, r: Type, division: "float" | "integer" | "decimal"): Type {
+function binaryType(
+	op: string,
+	l: Type,
+	r: Type,
+	division: "float" | "integer" | "decimal",
+	dateSubtraction?: "interval",
+): Type {
 	const o = op.toLowerCase().trim();
 	if (COMPARISON.has(o) || o === "and" || o === "or") return BOOLEAN;
 	if (o === "||") return scalar("string");
+	// Interval arithmetic — checked before the division-mode branches so `interval / 2`
+	// stays an interval: interval ± interval, and interval scaled by a numeric, are
+	// intervals in every interval-typed dialect (the qualified subtype is the tracked
+	// coarseness). A numeric divided BY an interval is not valid — falls through.
+	if (isInterval(l) && isInterval(r) && (o === "+" || o === "-")) return l;
+	if (isInterval(l) && (o === "*" || o === "/") && r.kind === "scalar") return l;
+	if (isInterval(r) && o === "*" && l.kind === "scalar") return r;
 	if (o === "/" && division === "float") {
-		// Spark/Databricks `/` is float division: decimal/decimal stays decimal, otherwise → double.
+		// Spark/Databricks `/` is float division: a DECIMAL operand keeps the result DECIMAL
+		// unless an approximate (float/double) operand is involved; everything else → DOUBLE
+		// (int/int included). Pinned by the v4.2.0 goldens (try_divide(1, 0.5) → decimal).
 		if (l.kind === "unknown" || r.kind === "unknown") return UNKNOWN;
-		const decimal = l.kind === "scalar" && l.name === "decimal" && r.kind === "scalar" && r.name === "decimal";
-		return decimal ? scalar("decimal") : scalar("double");
+		const approx = (t: Type) => t.kind === "scalar" && (t.name === "double" || t.name === "float");
+		const dec = (t: Type) => t.kind === "scalar" && t.name === "decimal";
+		if (!approx(l) && !approx(r) && (dec(l) || dec(r))) return scalar("decimal");
+		return scalar("double");
 	}
 	if (o === "/" && division === "decimal") {
 		// Snowflake `/` is decimal division: a scaled NUMBER (10/3 → 3.333333) unless a
@@ -367,9 +428,24 @@ function binaryType(op: string, l: Type, r: Type, division: "float" | "integer" 
 		const isFloat = (t: Type) => t.kind === "scalar" && (t.name === "double" || t.name === "float");
 		return isFloat(l) || isFloat(r) ? scalar("double") : scalar("decimal");
 	}
+	if (o === "div" && division === "float") {
+		// Spark/Databricks `div` is integral division and always returns BIGINT. Other
+		// div-operator dialects (MySQL DIV) keep the coerce path below.
+		return l.kind === "unknown" || r.kind === "unknown" ? UNKNOWN : scalar("bigint");
+	}
 	if (ARITHMETIC.has(o)) {
-		if (isDate(l) && isInterval(r)) return l; // date/timestamp ± interval keeps the date type
-		if (isDate(r) && isInterval(l)) return r;
+		// timestamp ± interval stays timestamp in every interval-typed dialect. DATE ± interval
+		// is flavor-dependent (Spark: year-month → DATE, day-time → TIMESTAMP; Postgres: always
+		// timestamp) and the single `interval` scalar cannot see the flavor → unknown, never a
+		// guess (qualified-interval modeling is the tracked coarseness gap).
+		if (isTimestamp(l) && isInterval(r)) return l;
+		if (isTimestamp(r) && isInterval(l)) return r;
+		if ((isDate(l) && isInterval(r)) || (isDate(r) && isInterval(l))) return UNKNOWN;
+		if (o === "-" && dateSubtraction === "interval") {
+			// Spark: date - date / timestamp - timestamp → an ANSI interval; time - time likewise.
+			if ((isDate(l) || isTimestamp(l) || isTime(l)) && (isDate(r) || isTimestamp(r) || isTime(r)))
+				return scalar("interval");
+		}
 		return coerce(l, r); // typed division (T-SQL int/int → int) and the other arithmetic ops
 	}
 	return UNKNOWN;
@@ -381,7 +457,15 @@ function unaryType(op: string, operand: Type): Type {
 }
 
 function isDate(t: Type): boolean {
-	return t.kind === "scalar" && (t.name === "date" || t.name === "timestamp");
+	return t.kind === "scalar" && t.name === "date";
+}
+
+function isTimestamp(t: Type): boolean {
+	return t.kind === "scalar" && t.name === "timestamp";
+}
+
+function isTime(t: Type): boolean {
+	return t.kind === "scalar" && t.name === "time";
 }
 
 function isInterval(t: Type): boolean {

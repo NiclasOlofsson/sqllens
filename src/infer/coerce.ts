@@ -5,14 +5,18 @@ import { UNKNOWN, type Type } from "./types.js";
 // don't coerce (→ unknown). `unknown` is contagious for operators but filtered for
 // "common type of a list" (see commonType).
 
+// Approximate types dominate exact ones: DECIMAL widens past the integers but LOSES to
+// FLOAT/DOUBLE (Spark, Postgres, T-SQL, Snowflake all promote decimal-with-approximate to
+// the approximate side). The old order had decimal on top, so `2.35E10 * 1.0` claimed
+// decimal where every engine answers double — caught by the Spark-goldens gate.
 const NUMERIC_RANK: Record<string, number> = {
 	tinyint: 1,
 	smallint: 2,
 	int: 3,
 	bigint: 4,
-	float: 5,
-	double: 6,
-	decimal: 7,
+	decimal: 5,
+	float: 6,
+	double: 7,
 };
 
 /** The wider of two types, or `unknown` when they don't coerce. */

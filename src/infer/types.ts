@@ -97,6 +97,10 @@ export const SCALAR_ALIASES: Record<string, string> = {
 	text: "string",
 	timestamp_ntz: "timestamp",
 	timestamp_ltz: "timestamp",
+	// Both spellings: DDL schema strings keep their spaces; a CAST's typeText arrives
+	// whitespace-stripped (ANTLR getText() concatenates tokens).
+	"time without time zone": "time",
+	timewithouttimezone: "time",
 };
 
 /** T-SQL scalar type names → the shared canonical names. T-SQL has no array/map/struct types, so

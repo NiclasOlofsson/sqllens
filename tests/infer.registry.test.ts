@@ -127,7 +127,10 @@ describe("Databricks registry: specialty families (docs-verified)", () => {
 			kind: "array",
 			element: scalar("string"),
 		});
-		expect(dbxType("SELECT getbit(big, 0) AS r FROM t", D)).toEqual(scalar("int"));
+		// TINYINT, not the int this test used to pin: Spark's own analyzer types getbit
+		// tinyint (v4.2.0 sql-tests goldens, bitwise.sql.out) — the old expectation was our
+		// misreading, caught by the external gate.
+		expect(dbxType("SELECT getbit(big, 0) AS r FROM t", D)).toEqual(scalar("tinyint"));
 		expect(dbxType("SELECT array_join(arr, ',') AS r FROM t", D)).toEqual(scalar("string"));
 		expect(dbxType("SELECT flatten(aa) AS r FROM t", D)).toEqual({ kind: "array", element: scalar("int") });
 		expect(dbxType("SELECT uniform(0, 10) AS r FROM t", D)).toEqual(scalar("int"));

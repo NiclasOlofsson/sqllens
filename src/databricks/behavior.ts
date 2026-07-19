@@ -5,7 +5,7 @@ import { acceptsFor } from "../dialect-behavior/coerce-rules.js";
 import { likePatternToRegExp } from "../scope/like-pattern.js";
 import { SIGNATURES } from "../signature/signatures.js";
 import { displayName, fold, foldTableName, matchesSourceKey, DATABRICKS_NAME_CONFIG } from "./fold.js";
-import { databricksLiteral, databricksParseType, DATABRICKS_FUNCTION_RETURNS } from "./infer.js";
+import { databricksLiteral, databricksParseType, databricksSpecial, DATABRICKS_FUNCTION_RETURNS } from "./infer.js";
 
 export const databricksBehavior: DialectBehavior = {
 	fold,
@@ -18,6 +18,8 @@ export const databricksBehavior: DialectBehavior = {
 	parseType: databricksParseType,
 	functions: DATABRICKS_FUNCTION_RETURNS,
 	division: "float",
+	dateSubtraction: "interval",
+	special: databricksSpecial,
 	signatures: SIGNATURES.databricks,
 	// Databricks implicit coercion: STRING containing a number coerces to numeric (STR_TO_NUM=true), no bool<->num (BOOL_NUM=false).
 	accepts: (argType, paramText) => acceptsFor(databricksParseType, true, false, argType, paramText),
