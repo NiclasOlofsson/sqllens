@@ -552,9 +552,37 @@ function buildInlineTable(inlineTable: ParserRuleContext): SelectExpr {
 		expr: lowerExpression(e),
 		cst: e,
 	}));
+	// Rows after the first, per-column, parallel to `projections` (SelectExpr.moreRows): kept
+	// so a column's type can union across rows instead of echoing row 1.
+	const moreRows: Expr[][] = rows.slice(1).map((row) => {
+		let rctor: ParserRuleContext | undefined;
+		let rcur: ParseTree | null = row;
+		while (rcur instanceof ParserRuleContext) {
+			if (rcur instanceof RowConstructorContext) {
+				rctor = rcur;
+				break;
+			}
+			if (rcur.getChildCount() !== 1) break;
+			rcur = rcur.getChild(0);
+		}
+		const exprs = rctor
+			? directChildrenOfRule(rctor, P.RULE_namedExpression).map(
+					(n) => directChildrenOfRule(n, P.RULE_expression)[0] ?? n,
+				)
+			: [row];
+		return exprs.map((e) => lowerExpression(e));
+	});
 	const columns: ColumnRef[] = [];
 	for (const p of projections) columnsOf(p.expr, columns, "projection");
-	return { kind: "select", projections, from: [], columns, aggregated: false, cst: inlineTable };
+	return {
+		kind: "select",
+		projections,
+		from: [],
+		columns,
+		aggregated: false,
+		...(moreRows.length ? { moreRows } : {}),
+		cst: inlineTable,
+	};
 }
 
 /** `TABLE t` — shorthand for `SELECT * FROM t`. */

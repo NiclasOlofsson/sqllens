@@ -31,7 +31,10 @@ export interface DialectBehavior {
 	 *  (our single `interval` scalar — the qualified subtype is a tracked coarseness). Absent =
 	 *  the plain arithmetic coerce path (a dialect sets this only with an external citation). */
 	dateSubtraction?: "interval";
-	special?(fn: Extract<Expr, { kind: "function" }>): Type | undefined;
+	/** Pre-registry hook for calls no FnRule can type. `typeOf` types an argument Expr in the
+	 *  calling scope, for returns that depend on an argument's TYPE as well as a literal's
+	 *  value (date_part over an interval source). Implementations may ignore it. */
+	special?(fn: Extract<Expr, { kind: "function" }>, typeOf: (e: Expr) => Type): Type | undefined;
 
 	// --- call-signature checking (was check-calls.ts' per-dialect signature tables) ---
 	/** The dialect's merged function-signature table (curated overrides folded over the harvested

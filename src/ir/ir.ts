@@ -136,6 +136,11 @@ export interface SelectExpr {
 	qualify?: Expr;
 	/** True when the query aggregates: a GROUP BY, or an aggregate function in the projections/HAVING. */
 	aggregated: boolean;
+	/** Inline-table (VALUES) rows AFTER the first, each a per-column Expr list parallel to
+	 *  `projections` (which carry row 1). Lossless: without this, rows 2+ were dropped and a
+	 *  column's type could only echo row 1 (VALUES (1,2),(7,77.7) claimed int where the
+	 *  engine says decimal). Absent on single-row and non-VALUES selects. */
+	moreRows?: Expr[][];
 	/** Scalar / IN / EXISTS subqueries appearing in this select's expressions (SELECT list,
 	 *  WHERE, …) — not the FROM sources. Scoped as children so their (possibly correlated)
 	 *  columns resolve. */

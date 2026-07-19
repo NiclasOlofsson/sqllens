@@ -68,18 +68,25 @@ const tryArith: FnRule = (args) => {
  *  returns DATE; dateadd(unit, value, expr) (3-arg) returns TIMESTAMP. Arity decides. */
 const dateAddRule: FnRule = (args) => (args.length >= 3 ? TS : DATE);
 
-/** date_part/datepart return types key on the FIELD argument's VALUE, which the FnRule table
- *  (types only) cannot see — reached via the behavior `special` hook. Fields per the extract
- *  doc: the second family returns DECIMAL(8,6), the other documented fields INT; a NULL field
- *  types DOUBLE (Spark's analyzer, pinned by the v4.2.0 sql-tests goldens); a non-literal
- *  field is not statically known → unknown, never a guess. */
+/** date_part/datepart return types key on the FIELD argument's VALUE and the SOURCE
+ *  argument's TYPE, which the FnRule table (types only) cannot see — reached via the
+ *  behavior `special` hook. Over a date/timestamp source (extract doc): second family →
+ *  DECIMAL(8,6), the other documented fields → INT. Over an INTERVAL source the widths
+ *  differ: month family → TINYINT and second family → DECIMAL (both pinned by the v4.2.0
+ *  sql-tests goldens, extract.sql.out); other interval fields stay unknown until cited.
+ *  A NULL field types DOUBLE (Spark's analyzer, same goldens). A non-literal field, or a
+ *  source whose type we cannot resolve, is not statically known → unknown, never a guess. */
 const SECOND_FIELDS = new Set(["second", "s", "sec", "seconds", "secs"]);
+const MONTH_FIELDS = new Set(["month", "mon", "mons", "months"]);
 const INT_FIELDS = new Set([
 	"year", "y", "years", "yr", "yrs", "yearofweek", "quarter", "qtr", "month", "mon", "mons",
 	"months", "week", "w", "weeks", "day", "d", "days", "dayofweek", "dow", "dayofweek_iso",
 	"dow_iso", "doy", "hour", "h", "hours", "hr", "hrs", "minute", "m", "min", "mins", "minutes",
 ]);
-export function databricksSpecial(fn: Extract<Expr, { kind: "function" }>): Type | undefined {
+export function databricksSpecial(
+	fn: Extract<Expr, { kind: "function" }>,
+	typeOf: (e: Expr) => Type,
+): Type | undefined {
 	const name = fold(fn.name);
 	if (name !== "date_part" && name !== "datepart") return undefined;
 	const f = fn.args[0];
@@ -87,8 +94,16 @@ export function databricksSpecial(fn: Extract<Expr, { kind: "function" }>): Type
 	const raw = f.text.trim();
 	if (/^null$/i.test(raw)) return D;
 	const field = raw.replace(/^['"]|['"]$/g, "").toLowerCase();
-	if (SECOND_FIELDS.has(field)) return DEC;
-	if (INT_FIELDS.has(field)) return I;
+	const src = fn.args[1] ? typeOf(fn.args[1]) : UNKNOWN;
+	if (src.kind === "scalar" && src.name === "interval") {
+		if (SECOND_FIELDS.has(field)) return DEC;
+		if (MONTH_FIELDS.has(field)) return TINY;
+		return UNKNOWN;
+	}
+	if (src.kind === "scalar" && (src.name === "date" || src.name === "timestamp" || src.name === "time")) {
+		if (SECOND_FIELDS.has(field)) return DEC;
+		if (INT_FIELDS.has(field)) return I;
+	}
 	return UNKNOWN;
 }
 

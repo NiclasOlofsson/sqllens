@@ -1,8 +1,9 @@
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 import { analyze } from "../../src/api.js";
-import { formatType } from "../../src/infer/types.js";
+import { commonType } from "../../src/infer/coerce.js";
+import { formatType, UNKNOWN } from "../../src/infer/types.js";
 import { Schema } from "../../src/qualify/schema.js";
 import { corpusPath } from "../helpers/corpus.js";
 import { parseSqlOut } from "../helpers/spark-sqltests.js";
@@ -104,15 +105,28 @@ function* walk(dir: string): Generator<string> {
 	}
 }
 
+// Per-column baseline: every graded column's identity and classification, committed at
+// tests/corpus/databricks.sqltests.baseline.txt and compared by EXACT equality — so a
+// column drifting in EITHER direction (match -> abstain as much as the reverse) is a
+// visible diff that must be intentionally re-baselined. Count floors alone could hide
+// compensating churn. Regenerate deliberately: SQLLENS_UPDATE_BASELINE=1.
+// Line shape: `<file>#<recordIdx>.<colIdx> <class> <ourType>|<sparkType>` — stable because
+// the vendored corpus is immutable.
+const BASELINE = join(import.meta.dirname, "databricks.sqltests.baseline.txt");
+
 describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (sql-tests goldens)", () => {
 	it("grades analyze() output types against the vendored v4.2.0 goldens", () => {
 		const counts: Record<string, number> = {};
 		const bump = (k: string) => (counts[k] = (counts[k] ?? 0) + 1);
 		const mismatchClasses = new Map<string, number>();
+		const lines: string[] = [];
 		let nameMismatches = 0;
 
 		for (const file of walk(ROOT)) {
+			const rel = file.slice(ROOT.length + 1).replace(/\\/g, "/");
+			let ri = -1;
 			for (const rec of parseSqlOut(readFileSync(file, "utf8"))) {
+				ri++;
 				bump("records");
 				if (rec.fields === undefined) {
 					bump("schemaUnparseable");
@@ -151,21 +165,29 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 				bump("graded");
 				for (let i = 0; i < rec.fields.length; i++) {
 					const proj = body.projections[i];
-					const ours = formatType(a.types.typeOf(proj.expr, a.scopes.root));
+					// A multi-row VALUES column is the common type across rows (SelectExpr.moreRows).
+					let ourType = a.types.typeOf(proj.expr, a.scopes.root);
+					if (body.moreRows)
+						ourType = commonType([
+							ourType,
+							...body.moreRows.map((r) => (r[i] ? a.types.typeOf(r[i], a.scopes.root) : UNKNOWN)),
+						]);
+					const ours = formatType(ourType);
 					const spark = rec.fields[i].type;
-					if (ours.includes("unknown")) {
-						bump("colAbstain");
-						continue;
-					}
-					const o = norm(ours);
-					const s = foldNtz(norm(spark));
-					if (o === s) bump("colMatch");
-					else if (o === collapseIntervals(s)) bump("colCoarse");
+					let cls: string;
+					if (ours.includes("unknown")) cls = "abstain";
 					else {
-						bump("colMismatch");
-						const key = `${o} -> ${s}`;
-						mismatchClasses.set(key, (mismatchClasses.get(key) ?? 0) + 1);
+						const o = norm(ours);
+						const s = foldNtz(norm(spark));
+						if (o === s) cls = "match";
+						else if (o === collapseIntervals(s)) cls = "coarse";
+						else {
+							cls = "MISMATCH";
+							mismatchClasses.set(`${o} -> ${s}`, (mismatchClasses.get(`${o} -> ${s}`) ?? 0) + 1);
+						}
 					}
+					bump(cls === "match" ? "colMatch" : cls === "coarse" ? "colCoarse" : cls === "abstain" ? "colAbstain" : "colMismatch");
+					lines.push(`${rel}#${ri}.${i} ${cls} ${ours}|${spark}`);
 					if (proj.aliasCst && proj.name && rec.fields[i].name.toLowerCase() !== stripTicks(proj.name).toLowerCase())
 						nameMismatches++;
 				}
@@ -191,13 +213,26 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 		// just pins the residue): 3 rejects out of 18k as of 2026-07-19.
 		expect(counts.parseFailure).toBeLessThanOrEqual(3);
 
-		// The graded-column ledger. Ratchets: match may only rise; abstain/coarse/
-		// mismatch may only fall. Baselines from the 2026-07-19 post-fix-wave census
-		// (the first census read 3655/1275/325/430; the fix wave moved them here).
+		// The graded-column ledger. Ratchets: match may only rise; abstain/coarse may only
+		// fall. Baselines from the 2026-07-19 fix waves (the first census read
+		// 3655/1275/325 with 430 wrong).
 		expect(counts.colMatch, "engine-confirmed types (may only rise)").toBeGreaterThanOrEqual(4337);
-		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1021);
+		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1026);
 		expect(counts.colCoarse, "single-interval-ADT coarsenings (may only fall)").toBeLessThanOrEqual(322);
-		expect(counts.colMismatch, `wrong concrete types (may only fall):\n${dump()}`).toBeLessThanOrEqual(5);
+
+		// ZERO. A graded column either matches Spark's analyzer, abstains, or is a documented
+		// coarsening — a wrong concrete type is a defect, never a ledger entry (Niclas ruling
+		// 2026-07-19: "either they are bugs, or they are not; there is no in between").
+		expect(counts.colMismatch ?? 0, `wrong concrete types:\n${dump()}`).toBe(0);
+
+		// Per-column EXACT baseline: any column changing classification or type, in either
+		// direction, is a visible diff (count floors alone could hide compensating churn).
+		if (process.env.SQLLENS_UPDATE_BASELINE) {
+			writeFileSync(BASELINE, `${lines.join("\n")}\n`);
+		} else {
+			expect(existsSync(BASELINE), "baseline missing — regenerate with SQLLENS_UPDATE_BASELINE=1").toBe(true);
+			expect(lines).toEqual(readFileSync(BASELINE, "utf8").trimEnd().split("\n"));
+		}
 
 		// Aliased output names agree everywhere except ONE case: `SELECT 1 AS
 		// IDENTIFIER('col1')` (identifier-clause.sql.out) — Spark resolves the

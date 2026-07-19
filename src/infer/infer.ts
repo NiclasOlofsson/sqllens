@@ -155,7 +155,16 @@ function derivedColumnType(
 	}
 	if (!p) return starPassthroughType(child, column, schema, ctx);
 	ctx.seen.add(child);
-	const t = inferType(p.expr, child, schema, { seen: ctx.seen, env: new Map() }); // fresh env across scopes
+	const inner = { seen: ctx.seen, env: new Map<string, Type>() }; // fresh env across scopes
+	let t = inferType(p.expr, child, schema, inner);
+	// A multi-row VALUES column is the COMMON type across all rows (SelectExpr.moreRows
+	// carries rows 2+, parallel to projections) — row 1 alone claimed int for
+	// VALUES (1,2),(7,77.7)'s second column where the engine says decimal.
+	const rows = child.body.moreRows;
+	if (rows) {
+		const i = projs.indexOf(p);
+		t = commonType([t, ...rows.map((r) => (r[i] ? inferType(r[i], child, schema, inner) : UNKNOWN))]);
+	}
 	ctx.seen.delete(child);
 	return t;
 }
@@ -217,7 +226,7 @@ function functionType(fn: Extract<Expr, { kind: "function" }>, scope: Scope, sch
 	}
 	// A dialect pre-registry hook for calls no FnRule can type (e.g. BigQuery EXTRACT — the datepart
 	// keyword, not an argument type, decides the return type).
-	const special = d.special?.(fn);
+	const special = d.special?.(fn, (e) => inferType(e, scope, schema, ctx));
 	if (special !== undefined) return special;
 	// Lookup order: registry[qualifier.name] (a dotted family) → registry[name] (bare) → unknown.
 	const rule = (fn.qualifier ? d.functions[`${fn.qualifier}.${name}`] : undefined) ?? d.functions[name];
@@ -445,6 +454,14 @@ function binaryType(
 			// Spark: date - date / timestamp - timestamp → an ANSI interval; time - time likewise.
 			if ((isDate(l) || isTimestamp(l) || isTime(l)) && (isDate(r) || isTimestamp(r) || isTime(r)))
 				return scalar("interval");
+		}
+		// Spark promotes FLOAT-with-DECIMAL to DOUBLE (v4.2.0 goldens, float4.sql.out); the
+		// shared rank cannot express it because T-SQL's precedence goes the other way, so it
+		// rides the float-division discriminator.
+		if (division === "float") {
+			const isF = (t: Type) => t.kind === "scalar" && t.name === "float";
+			const isDec = (t: Type) => t.kind === "scalar" && t.name === "decimal";
+			if ((isF(l) && isDec(r)) || (isDec(l) && isF(r))) return scalar("double");
 		}
 		return coerce(l, r); // typed division (T-SQL int/int → int) and the other arithmetic ops
 	}
