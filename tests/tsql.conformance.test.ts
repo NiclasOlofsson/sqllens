@@ -207,9 +207,10 @@ describe("T-SQL docs-corpus conformance: hints and clauses", () => {
 
 	// NOT here: ALTER DATABASE ... MODIFY (EDITION ...), ALTER WORKLOAD GROUP, DBCC FREEPROCCACHE
 	// args. Those corpus files (statements_alter-database*/5, alter-workload-group/1,
-	// dbcc-freeproccache/2) are mixed scripts whose payload is platform DDL/admin — cleared Out
-	// of scope — that merely LEAD with a setup SELECT. They are reclassified out of the query
-	// bucket (tests/tsql-corpus-out-of-scope.ts), not grammared in.
+	// dbcc-freeproccache/2) are mixed scripts whose payload is platform DDL/admin (cleared Out
+	// of scope) that merely LEAD with a setup SELECT. The corpus path-bucketing reorg moved them
+	// out of the query bucket (tools/organize-corpus.test.ts + tests/helpers/statement-bucket.ts);
+	// they are not grammared in.
 });
 
 describe("T-SQL docs-corpus conformance: graph and lexical", () => {
