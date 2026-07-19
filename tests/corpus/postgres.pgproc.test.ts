@@ -25,11 +25,12 @@ import { parsePgDat } from "../helpers/pg-catalog.js";
 //
 // KNOWN_MISMATCHES is the debt ledger, exact and self-policing: fixing a rule
 // must REMOVE its lines here, and any new contradiction fails the set
-// equality. 33 entries as of 2026-07-19 (census; the rule classes: bytea/bit-
-// preserving string functions answering string, geometric length overloads,
-// PG17+ random(min,max) following the arg type, percentile_cont typing the
-// fraction instead of the ordered-set argument, log10(numeric), min_scale ->
-// int, age(xid), pg_typeof -> regtype, ts_headline json/jsonb variants).
+// equality. Emptied 2026-07-19: all 33 census entries fixed at the rule level
+// (bytea/bit-preserving string functions, geometric length overloads, PG17+
+// random(min,max) following the arg type, percentile_cont typing the
+// ordered-set argument instead of the fraction, log10(numeric), min_scale ->
+// int, age(xid), pg_typeof -> regtype, ts_headline json/jsonb variants) — see
+// src/postgres/infer.ts for the pg_proc.dat-cited rules.
 // ---------------------------------------------------------------------------
 
 const DIR = corpusPath("vendor/postgres-catalog");
@@ -42,41 +43,7 @@ const PSEUDO = new Set([
 	"table_am_handler", "void", "unknown", "pg_ddl_command", "_cstring",
 ]);
 
-const KNOWN_MISMATCHES = [
-	"age(xid) ours=interval pg=int",
-	"btrim(bytea,bytea) ours=string pg=binary",
-	"length(lseg) ours=int pg=double",
-	"length(path) ours=int pg=double",
-	"log10(numeric) ours=double pg=decimal",
-	"ltrim(bytea,bytea) ours=string pg=binary",
-	"min_scale(numeric) ours=decimal pg=int",
-	"overlay(bit,bit,int4) ours=string pg=bit",
-	"overlay(bit,bit,int4,int4) ours=string pg=bit",
-	"overlay(bytea,bytea,int4) ours=string pg=binary",
-	"overlay(bytea,bytea,int4,int4) ours=string pg=binary",
-	"percentile_cont(_float8,interval) ours=array<double> pg=array<interval>",
-	"percentile_cont(float8,interval) ours=double pg=interval",
-	"pg_typeof(any) ours=string pg=regtype",
-	"random(int4,int4) ours=double pg=int",
-	"random(int8,int8) ours=double pg=bigint",
-	"random(numeric,numeric) ours=double pg=decimal",
-	"reverse(bytea) ours=string pg=binary",
-	"rtrim(bytea,bytea) ours=string pg=binary",
-	"substr(bytea,int4) ours=string pg=binary",
-	"substr(bytea,int4,int4) ours=string pg=binary",
-	"substring(bit,int4) ours=string pg=bit",
-	"substring(bit,int4,int4) ours=string pg=bit",
-	"substring(bytea,int4) ours=string pg=binary",
-	"substring(bytea,int4,int4) ours=string pg=binary",
-	"ts_headline(json,tsquery) ours=string pg=json",
-	"ts_headline(json,tsquery,text) ours=string pg=json",
-	"ts_headline(jsonb,tsquery) ours=string pg=jsonb",
-	"ts_headline(jsonb,tsquery,text) ours=string pg=jsonb",
-	"ts_headline(regconfig,json,tsquery) ours=string pg=json",
-	"ts_headline(regconfig,json,tsquery,text) ours=string pg=json",
-	"ts_headline(regconfig,jsonb,tsquery) ours=string pg=jsonb",
-	"ts_headline(regconfig,jsonb,tsquery,text) ours=string pg=jsonb",
-];
+const KNOWN_MISMATCHES: string[] = [];
 
 describe.skipIf(!existsSync(join(DIR, "pg_proc.dat")))("postgres registry vs pg_proc.dat (REL_18_STABLE)", () => {
 	it("every registry rule matches the catalog's return type, abstains, or is ledgered", () => {
@@ -118,7 +85,7 @@ describe.skipIf(!existsSync(join(DIR, "pg_proc.dat")))("postgres registry vs pg_
 		// Catalog and registry are both pinned artifacts, so the totals are exact.
 		expect(counts.overloads).toBe(768);
 		expect(counts.pseudoReturn).toBe(46);
-		expect(counts.match, "catalog-confirmed overloads (may only rise)").toBeGreaterThanOrEqual(689);
+		expect(counts.match, "catalog-confirmed overloads (may only rise)").toBeGreaterThanOrEqual(722);
 
 		// Self-policing debt ledger: a fixed rule must remove its lines; any NEW
 		// contradiction against the vendor catalog fails here.
