@@ -47,6 +47,8 @@ export {
 	type Occurrences,
 	dialectSymbols,
 	type DialectSymbols,
+	dialectVocabulary,
+	type DialectVocabulary,
 	CallbackSchema,
 	type SchemaProvider,
 	type TableResolver,

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dialectSymbols } from "../src/dialect-symbols.js";
+import { dialectSymbols, dialectVocabulary } from "../src/dialect-symbols.js";
 import type { Dialect } from "../src/api.js";
 import { resolveBehavior } from "../src/dialect-behavior/registry.js";
 
@@ -78,5 +78,40 @@ describe.each(DIALECTS)("dialectSymbols(%s)", (dialect) => {
 		expect(second.functions).toBe(first.functions);
 		expect(second.keywords).toBe(first.keywords);
 		expect(second.types).toBe(first.types);
+	});
+});
+
+// dialectVocabulary — the token catalog anvil's token-mapper reads instead of hand tables
+// (channel ask 2026-07-19). Names are the dialect's lexer RULE names, verbatim: deliberately
+// NOT a cross-dialect standard (postgres calls `::` TYPECAST, databricks DOUBLE_COLON).
+
+describe.each(DIALECTS)("dialectVocabulary(%s)", (dialect) => {
+	it("derives non-empty keyword and operator catalogs from the generated lexer", () => {
+		const v = dialectVocabulary(dialect);
+		expect(v.keywords.size).toBeGreaterThan(100);
+		expect(v.operators.size).toBeGreaterThan(5);
+		// The NAME is the dialect's own lexer rule name — bigquery says SELECT_SYMBOL,
+		// sqlite SELECT_, most others SELECT. Dialect-true, not standardized.
+		expect(v.keywords.get("SELECT")).toMatch(/^SELECT/);
+	});
+
+	it("keyword keys are canonical UPPERCASE; operator keys never match the bare-word shape", () => {
+		const v = dialectVocabulary(dialect);
+		for (const k of v.keywords.keys()) expect(k).toBe(k.toUpperCase());
+		for (const o of v.operators.keys()) expect(/^[A-Z_][A-Z_0-9]*$/i.test(o)).toBe(false);
+	});
+
+	it("caches: repeat calls return the identical Map instances", () => {
+		expect(dialectVocabulary(dialect).keywords).toBe(dialectVocabulary(dialect).keywords);
+	});
+});
+
+describe("dialectVocabulary is dialect-TRUE, not a shared table", () => {
+	it("pins per-dialect names and per-dialect absences (probe-verified 2026-07-19)", () => {
+		expect(dialectVocabulary("databricks").operators.get("::")).toBe("DOUBLE_COLON");
+		expect(dialectVocabulary("databricks").operators.get("<=>")).toBe("NSEQ");
+		expect(dialectVocabulary("postgres").operators.get("::")).toBe("TYPECAST");
+		// Pattern-lexed or absent forms are honestly absent, never invented.
+		expect(dialectVocabulary("postgres").operators.get("<=>")).toBeUndefined();
 	});
 });

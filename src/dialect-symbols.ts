@@ -165,6 +165,64 @@ function typesFor(dialect: Dialect): Set<string> {
 	return out;
 }
 
+// ---------------------------------------------------------------------------
+// dialectVocabulary(dialect) — the dialect's full token catalog as data, so a
+// consumer's token classifier reads OUR lexer's vocabulary instead of hand-
+// maintaining a parallel table (the anvil token-mapper ask, 2026-07-19).
+// Dialect-safe by construction: the source is the dialect's GENERATED lexer
+// (every `AS: 'AS';` rule), so a keyword added to a .g4 appears here after
+// regen with zero sync anywhere. Names are the lexer RULE names — stable as
+// long as the grammar's rule names are (renaming a lexer rule is a visible,
+// reviewable grammar change).
+//
+// Split: `keywords` carries bare-word literals (text canonical UPPERCASE);
+// `operators` carries the punctuation/operator literals (exact spelling,
+// `'::'`, `'<=>'`). Tokens recognized by pattern rather than exact string
+// (identifiers, numbers) have no literal spelling and are absent by
+// construction — they aren't vocabulary. Compound units (GROUP BY) are parser-
+// level sequences, not lexer tokens, and are deliberately NOT invented here.
+// ---------------------------------------------------------------------------
+
+/** A dialect's token catalog: literal spelling → the lexer rule's symbolic name. */
+export interface DialectVocabulary {
+	/** Keyword literal text (canonical UPPERCASE) → symbolic token name (e.g. "SELECT" → "SELECT"). */
+	keywords: ReadonlyMap<string, string>;
+	/** Operator/punctuation literal text (exact spelling) → symbolic token name (e.g. "::" → its rule name). */
+	operators: ReadonlyMap<string, string>;
+}
+
+function vocabularyFor(dialect: Dialect): DialectVocabulary {
+	const vocab = LEXERS[dialect]().vocabulary;
+	const keywords = new Map<string, string>();
+	const operators = new Map<string, string>();
+	for (let type = 1; type <= vocab.maxTokenType; type++) {
+		const literal = vocab.getLiteralName(type);
+		if (!literal) continue;
+		const text = literal.replace(/^'/, "").replace(/'$/, "");
+		if (text.includes("'")) continue; // quoted-string literal tokens are not vocabulary
+		const name = vocab.getSymbolicName(type) ?? text.toUpperCase();
+		if (BARE_WORD.test(text)) keywords.set(text.toUpperCase(), name);
+		else operators.set(text, name);
+	}
+	return { keywords, operators };
+}
+
+const VOCAB_CACHE = new Map<Dialect, DialectVocabulary>();
+
+/**
+ * The dialect's token catalog (keywords + operators, spelling → symbolic name), derived from
+ * the generated lexer, computed once and cached. See the module block comment for the
+ * derivation, stability guarantees, and what is deliberately absent (pattern tokens,
+ * parser-level compounds).
+ */
+export function dialectVocabulary(dialect: Dialect): DialectVocabulary {
+	const cached = VOCAB_CACHE.get(dialect);
+	if (cached) return cached;
+	const vocabulary = vocabularyFor(dialect);
+	VOCAB_CACHE.set(dialect, vocabulary);
+	return vocabulary;
+}
+
 const CACHE = new Map<Dialect, DialectSymbols>();
 
 /**

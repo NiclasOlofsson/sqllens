@@ -336,7 +336,7 @@ export { referencesAt, type Occurrence, type Occurrences } from "./references/re
 
 // Per-dialect function/keyword/type-name membership sets — for lint-style "is this identifier a
 // known X for this dialect?" checks. Computed once per dialect and cached.
-export { dialectSymbols, type DialectSymbols } from "./dialect-symbols.js";
+export { dialectSymbols, dialectVocabulary, type DialectSymbols, type DialectVocabulary } from "./dialect-symbols.js";
 
 // The catalog interface the whole pipeline resolves against, plus its resolve-on-demand
 // implementation. `Schema` (a full upfront mapping) and `CallbackSchema` (a host-driven
