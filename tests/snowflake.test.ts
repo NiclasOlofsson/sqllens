@@ -1270,6 +1270,39 @@ describe("Snowflake lower -> IR", () => {
 		expect(q.body.unsupported).toContain("non-query");
 	});
 
+	// A standalone Snowflake Scripting block (docs.snowflake.com/en/developer-guide/snowflake-scripting/
+	// blocks) is a statement *sequence*, not a query. lower() used to search for the first inner
+	// query_statement without regard for the scripting-block boundary, so it silently claimed the
+	// block's FIRST inner SELECT as if it were the file's whole query (real projections/scopes) and
+	// dropped every statement after it with no signal. Mirrors databricks' BEGIN...END handling.
+	it("flags a two-statement scripting block instead of claiming its first SELECT", () => {
+		const { q, errors } = ir("BEGIN SELECT a1 FROM t1; SELECT a2 FROM t2; END");
+		expect(errors).toBe(0);
+		expect(q.statement).toBe("compound");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.unsupported).toContain("compound");
+		// No silent partial modelling: the flagged stub carries none of t1's real projections/columns.
+		expect(q.body.projections).toEqual([]);
+		expect(q.body.from).toEqual([]);
+		expect(q.body.columns).toEqual([]);
+	});
+
+	it("flags a DECLARE + single-SELECT scripting block the same way", () => {
+		const { q, errors } = ir("DECLARE x INT; BEGIN SELECT a FROM t; END");
+		expect(errors).toBe(0);
+		expect(q.statement).toBe("compound");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.unsupported).toContain("compound");
+		expect(q.body.projections).toEqual([]);
+	});
+
+	it("still lowers a plain single SELECT fully (scripting-block fix leaves it untouched)", () => {
+		const { body } = selectBody("SELECT a FROM t");
+		expect(body.unsupported ?? []).toEqual([]);
+		expect(body.projections).toHaveLength(1);
+		expect(body.from).toHaveLength(1);
+	});
+
 	// --- reference-manual conformance review (2026-06-13) ---
 
 	it("lowers the REGEXP operator like RLIKE, not to an opaque node", () => {

@@ -41,7 +41,11 @@ function relationOf(rawParts: string[]): QualifiedName {
 //
 // Navigation is by rule index against the generated parser. Nested
 // `subquery`/`select_statement` nodes belong to their own scope, so shallow
-// walks never descend into them.
+// walks never descend into them. A `scripting_block` (a Snowflake Scripting
+// `BEGIN...END` compound, optionally `DECLARE`-prefixed) is a statement
+// *sequence*, not a nested scope, but gets the same shallow-walk boundary:
+// otherwise a search for a query/select statement would happily descend into
+// it and claim its first inner SELECT as the whole file's query.
 // ---------------------------------------------------------------------------
 
 // docs.snowflake.com/en/sql-reference/functions-aggregation
@@ -150,9 +154,22 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		q.statement = statement;
 		return q;
 	}
-	const q = nonQuery(commands[0], "non-query");
+	// A standalone Snowflake Scripting BEGIN...END block (isScriptingBlock) is a statement
+	// *sequence*, not a query — flag the whole thing as "compound" (mirrors databricks'
+	// isCompound/"compound" convention) rather than the generic "non-query".
+	const q = nonQuery(commands[0], isScriptingBlock(commands[0]) ? "compound" : "non-query");
 	q.statement = statement;
 	return q;
+}
+
+/** other_command's `scripting_block` alternative: a standalone Snowflake Scripting anonymous
+ *  block (`BEGIN...END`, optionally `DECLARE`-prefixed) — docs.snowflake.com/en/developer-guide/
+ *  snowflake-scripting/blocks. A statement *sequence*, not a query; mirrors databricks'
+ *  isCompound: the whole block gets flagged rather than modelling whichever SELECT happens to
+ *  come first inside it. */
+function isScriptingBlock(cmd: ParserRuleContext): boolean {
+	const oc = directChildrenOfRule(cmd, P.RULE_other_command)[0];
+	return !!oc && directChildrenOfRule(oc, P.RULE_scripting_block).length > 0;
 }
 
 /** A bare select_statement (no WITH, no set ops — e.g. create_materialized_view's `AS select_statement`)
@@ -200,6 +217,9 @@ function commandCategory(cmd: ParserRuleContext): StatementCategory {
 	) {
 		return "utility";
 	}
+	// A BEGIN...END scripting block is a compound statement sequence, not a transaction-control
+	// statement — check before the keyword fallback below would misread its leading BEGIN as TCL.
+	if (isScriptingBlock(cmd)) return "compound";
 	// A FLOW pipe or other_command — categorise by its leading keyword.
 	return keywordCategory(cmd.start?.text ?? "");
 }
@@ -1639,7 +1659,13 @@ function shallowFirstOfRule(node: ParseTree, ruleIndex: number): ParserRuleConte
 		const child = node.getChild(i);
 		if (!(child instanceof ParserRuleContext)) continue;
 		if (child.ruleIndex === ruleIndex) return child;
-		if (child.ruleIndex === P.RULE_subquery || child.ruleIndex === P.RULE_select_statement) continue;
+		if (
+			child.ruleIndex === P.RULE_subquery ||
+			child.ruleIndex === P.RULE_select_statement ||
+			child.ruleIndex === P.RULE_scripting_block
+		) {
+			continue;
+		}
 		const found = shallowFirstOfRule(child, ruleIndex);
 		if (found) return found;
 	}

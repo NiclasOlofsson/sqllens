@@ -1738,7 +1738,12 @@ function topRelationPrimaries(node: ParseTree): ParserRuleContext[] {
 }
 
 function buildSource(relationPrimary: ParserRuleContext): Source {
-	const tableAlias = directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0];
+	// `VALUES (...), (...) AS alias(cols)` as a relationPrimary (#inlineTableDefault2) nests its own
+	// tableAlias INSIDE the inlineTable node, one level below relationPrimary's direct children.
+	const inlineTable = firstOfRule(relationPrimary, P.RULE_inlineTable);
+	const tableAlias =
+		directChildrenOfRule(relationPrimary, P.RULE_tableAlias)[0] ??
+		(inlineTable ? directChildrenOfRule(inlineTable, P.RULE_tableAlias)[0] : undefined);
 	const aliasCst = tableAlias ? firstOfRule(tableAlias, P.RULE_strictIdentifier) : undefined;
 	const alias = aliasCst?.getText();
 	const columnAliases = tableAlias ? columnAliasList(tableAlias) : undefined;
@@ -1752,6 +1757,22 @@ function buildSource(relationPrimary: ParserRuleContext): Source {
 			alias,
 			aliasCst,
 			columnAliases,
+			cst: relationPrimary,
+		};
+	}
+
+	// An inline table constructor used as a FROM-clause relation: lower its rows the same way as a
+	// top-level VALUES query body (buildInlineTable already names each projection from the alias's
+	// own column list) and expose the result as a subquery source, so `SELECT *` expands against ITS
+	// OWN named projections (schema-free) instead of falling into the generic multipartIdentifier
+	// branch below — which has nothing to read here and previously produced an anonymous EMPTY-named
+	// "table" source that any real schema misses as unknown-table (Spark-goldens gate, 2026-07-21).
+	if (inlineTable) {
+		return {
+			kind: "subquery",
+			query: { kind: "query", ctes: [], body: buildInlineTable(inlineTable), cst: inlineTable },
+			alias,
+			aliasCst,
 			cst: relationPrimary,
 		};
 	}

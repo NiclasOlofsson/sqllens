@@ -199,12 +199,17 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"date_format",
 		"dayname",
 		"monthname",
-		"string_agg",
-		"listagg",
 		"to_json",
 		"get_json_object",
 		"string",
 	]),
+	// string_agg/listagg (sql-ref-functions listagg: "the datatype of the return is the same as the
+	// datatype of expr if expr is BINARY type, otherwise STRING" — v4.2.0 goldens: listagg(CAST(col
+	// AS BINARY)) -> binary, not string).
+	...group(
+		(args: Type[]) => (args[0]?.kind === "scalar" && args[0].name === "binary" ? BIN : S),
+		["string_agg", "listagg"],
+	),
 	...group(fixed(I), [
 		"ascii",
 		"instr",
@@ -272,11 +277,19 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"bigint",
 		"long",
 	]),
-	// avg — sql-ref: DECIMAL input stays DECIMAL, an interval stays its interval, else DOUBLE
-	// (v4.2.0 goldens: AVG over a decimal window column is decimal, not double).
+	// avg — sql-ref: DECIMAL input stays DECIMAL, an interval WIDENS to its family's full range
+	// (year-to-month / day-to-second — same fullInterval() promotion Multiply/DivideInterval already
+	// use; v4.2.0 goldens: avg(interval month) -> interval year to month, avg(interval day/second) ->
+	// interval day to second), else DOUBLE (v4.2.0 goldens: AVG over a decimal window column is
+	// decimal, not double).
 	...group(
-		(args: Type[]) =>
-			args[0]?.kind === "scalar" && (args[0].name === "decimal" || isIntervalName(args[0].name)) ? args[0] : D,
+		(args: Type[]) => {
+			const a0 = args[0];
+			if (a0?.kind !== "scalar") return D;
+			if (a0.name === "decimal") return a0;
+			if (isIntervalName(a0.name)) return fullInterval(a0);
+			return D;
+		},
 		["avg", "try_avg", "mean"],
 	),
 	...group(fixed(D), [
@@ -366,6 +379,11 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"make_date",
 		"next_day",
 		"last_day",
+		// trunc(expr, unit) is DATE-truncation only (sql-ref-functions/trunc: "Returns date with the
+		// time portion of the day truncated..."; Databricks has no separate numeric-trunc overload,
+		// unlike Oracle/Postgres) — always DATE regardless of expr's own type (v4.2.0 goldens:
+		// trunc('2018-01-01', a) -> date, not the string argument's own type).
+		"trunc",
 	]),
 	...group(fixed(TS), [
 		"current_timestamp",
@@ -400,7 +418,6 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	...group(firstArg, [
 		"round",
 		"bround",
-		"trunc",
 		"mod",
 		"pmod",
 		"shiftleft",
