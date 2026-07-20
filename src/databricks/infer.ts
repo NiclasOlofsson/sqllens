@@ -1,4 +1,4 @@
-import { commonType, widenSum } from "../infer/coerce.js";
+import { commonType, fullInterval, widenSum } from "../infer/coerce.js";
 import {
 	B,
 	BIG,
@@ -22,7 +22,7 @@ import {
 	restCommon,
 	type FnRule,
 } from "../infer/functions.js";
-import { parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
+import { intervalTypeOf, isIntervalName, parseType, scalar, UNKNOWN, type Type } from "../infer/types.js";
 import type { Expr } from "../ir/ir.js";
 import { fold } from "./fold.js";
 
@@ -49,19 +49,25 @@ const numericUnary: FnRule = (args) => {
 	return a;
 };
 
-/** try_add/try_subtract/try_multiply — an interval operand keeps the result an interval
- *  (interval × numeric → interval), EXCEPT date/timestamp ± interval: there the result is
- *  DATE for a year-month interval and TIMESTAMP for a day-time one, which the single
- *  `interval` scalar cannot distinguish → unknown, never a guess (the qualified-interval
- *  model is the tracked coarseness gap). Otherwise the common type. */
-const isIntervalT = (a: Type | undefined) => a?.kind === "scalar" && a.name === "interval";
+/** try_add/try_subtract mirror the `+`/`-` operators: interval ± interval keeps the family,
+ *  widening to the UNION of the two operands' unit ranges (commonType). date/timestamp ± interval
+ *  produces a DATE/TIMESTAMP whose flavor depends on the interval family — out of the interval-
+ *  typing scope here and value/schema-shaped, so it stays unknown rather than a guess. Otherwise
+ *  the common type. (spark IntervalAdd/Subtract; sql-ref-datatypes interval.) */
+const isIntervalT = (a: Type | undefined) => a?.kind === "scalar" && isIntervalName(a.name);
 const isDatelike = (a: Type | undefined) => a?.kind === "scalar" && (a.name === "date" || a.name === "timestamp");
-const tryArith: FnRule = (args) => {
+const tryAddSub: FnRule = (args) => {
 	if (args.some(isIntervalT)) {
 		if (args.some(isDatelike)) return UNKNOWN;
-		return INTERVAL;
+		return commonType(args);
 	}
 	return commonType(args);
+};
+/** try_multiply mirrors `*`: interval × numeric returns the family's DEFAULT full range (Spark
+ *  MultiplyYM/DTInterval always yield year-to-month / day-to-second). Otherwise the common type. */
+const tryMul: FnRule = (args) => {
+	const iv = args.find(isIntervalT);
+	return iv ? fullInterval(iv) : commonType(args);
 };
 
 /** date_add/dateadd — TWO documented forms sharing the names: date_add(startDate, numDays)
@@ -79,9 +85,39 @@ const dateAddRule: FnRule = (args) => (args.length >= 3 ? TS : DATE);
 const SECOND_FIELDS = new Set(["second", "s", "sec", "seconds", "secs"]);
 const MONTH_FIELDS = new Set(["month", "mon", "mons", "months"]);
 const INT_FIELDS = new Set([
-	"year", "y", "years", "yr", "yrs", "yearofweek", "quarter", "qtr", "month", "mon", "mons",
-	"months", "week", "w", "weeks", "day", "d", "days", "dayofweek", "dow", "dayofweek_iso",
-	"dow_iso", "doy", "hour", "h", "hours", "hr", "hrs", "minute", "m", "min", "mins", "minutes",
+	"year",
+	"y",
+	"years",
+	"yr",
+	"yrs",
+	"yearofweek",
+	"quarter",
+	"qtr",
+	"month",
+	"mon",
+	"mons",
+	"months",
+	"week",
+	"w",
+	"weeks",
+	"day",
+	"d",
+	"days",
+	"dayofweek",
+	"dow",
+	"dayofweek_iso",
+	"dow_iso",
+	"doy",
+	"hour",
+	"h",
+	"hours",
+	"hr",
+	"hrs",
+	"minute",
+	"m",
+	"min",
+	"mins",
+	"minutes",
 ]);
 export function databricksSpecial(
 	fn: Extract<Expr, { kind: "function" }>,
@@ -95,7 +131,7 @@ export function databricksSpecial(
 	if (/^null$/i.test(raw)) return D;
 	const field = raw.replace(/^['"]|['"]$/g, "").toLowerCase();
 	const src = fn.args[1] ? typeOf(fn.args[1]) : UNKNOWN;
-	if (src.kind === "scalar" && src.name === "interval") {
+	if (src.kind === "scalar" && isIntervalName(src.name)) {
 		if (SECOND_FIELDS.has(field)) return DEC;
 		if (MONTH_FIELDS.has(field)) return TINY;
 		return UNKNOWN;
@@ -240,7 +276,7 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	// (v4.2.0 goldens: AVG over a decimal window column is decimal, not double).
 	...group(
 		(args: Type[]) =>
-			args[0]?.kind === "scalar" && (args[0].name === "decimal" || args[0].name === "interval") ? args[0] : D,
+			args[0]?.kind === "scalar" && (args[0].name === "decimal" || isIntervalName(args[0].name)) ? args[0] : D,
 		["avg", "try_avg", "mean"],
 	),
 	...group(fixed(D), [
@@ -351,7 +387,12 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 		"timestamp",
 	]),
 	...group(fixed(BIN), ["unhex", "unbase64", "encode", "to_binary", "binary"]),
-	...group(fixed(INTERVAL), ["make_interval", "make_ym_interval", "make_dt_interval"]),
+	// make_interval(...) is the legacy CalendarIntervalType — Spark renders it bare `interval`.
+	// make_ym_interval/make_dt_interval build a QUALIFIED ANSI interval of the family's full range
+	// (sql-ref-functions: year-to-month / day-to-second). Pinned by the v4.2.0 goldens (interval.sql).
+	make_interval: fixed(INTERVAL),
+	make_ym_interval: fixed(scalar("interval year to month")),
+	make_dt_interval: fixed(scalar("interval day to second")),
 	float: fixed(scalar("float")),
 	decimal: fixed(scalar("decimal")),
 
@@ -493,12 +534,14 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 	time_to_seconds: fixed(scalar("decimal")),
 
 	// try_* arithmetic mirrors the base operators (NULL on error)
-	...group(tryArith, ["try_add", "try_subtract", "try_multiply"]),
+	...group(tryAddSub, ["try_add", "try_subtract"]),
+	try_multiply: tryMul,
 	try_mod: common,
-	// try_divide mirrors `/`: interval ÷ numeric stays interval; a DECIMAL operand keeps the
-	// result DECIMAL unless a float/double operand is involved; else DOUBLE (v4.2.0 goldens).
+	// try_divide mirrors `/`: interval ÷ numeric returns the family's DEFAULT full range (Spark
+	// DivideInterval); a DECIMAL operand keeps the result DECIMAL unless a float/double operand is
+	// involved; else DOUBLE (v4.2.0 goldens).
 	try_divide: (args) => {
-		if (isIntervalT(args[0])) return args[0] as Type;
+		if (isIntervalT(args[0])) return fullInterval(args[0] as Type);
 		const approx = (a: Type | undefined) => a?.kind === "scalar" && (a.name === "double" || a.name === "float");
 		const dec = (a: Type | undefined) => a?.kind === "scalar" && a.name === "decimal";
 		if (!approx(args[0]) && !approx(args[1]) && (dec(args[0]) || dec(args[1]))) return DEC;
@@ -761,6 +804,50 @@ export const DATABRICKS_FUNCTION_RETURNS: Record<string, FnRule> = {
 
 const BOOLEAN = scalar("boolean");
 
+// Interval-literal unit words → [family, field]. family 0 = year-month (year<month), 1 = day-time
+// (day<hour<minute<second). WEEK folds into DAY; MILLI/MICRO/NANOSECOND into SECOND (Databricks
+// INTERVAL literal syntax; spark.apache.org/docs/latest/sql-ref-datatypes.html). Longest
+// alternatives first so a whole word (microsecond) wins over its suffix (second).
+const IV_UNIT_RE = /nanoseconds?|microseconds?|milliseconds?|seconds?|minutes?|hours?|days?|weeks?|months?|years?/gi;
+const IV_UNIT_FIELD: Record<string, [number, number]> = {
+	year: [0, 0],
+	month: [0, 1],
+	week: [1, 0],
+	day: [1, 0],
+	hour: [1, 1],
+	minute: [1, 2],
+	second: [1, 3],
+	millisecond: [1, 3],
+	microsecond: [1, 3],
+	nanosecond: [1, 3],
+};
+const IV_FIELD_NAMES: readonly (readonly string[])[] = [
+	["year", "month"],
+	["day", "hour", "minute", "second"],
+];
+
+/** A Spark/Databricks INTERVAL literal → its qualified ANSI type, derived from the unit words the
+ *  literal carries. Covers all three spellings — ANSI qualifier (`interval '2-1' year to month`),
+ *  multi-unit (`interval 2 day 3 hour`), and string-form (`interval '1 day'`, units inside the
+ *  quotes) — because in every one the unit words are letters and the numeric values carry none.
+ *  from = the lowest-order field present, to = the highest. Mixed families or no unit word → bare
+ *  `interval` (the honest coarse fallback, never a guess). */
+function intervalLiteralType(text: string): Type {
+	let family: number | undefined;
+	let lo = Number.POSITIVE_INFINITY;
+	let hi = Number.NEGATIVE_INFINITY;
+	for (const m of text.matchAll(IV_UNIT_RE)) {
+		const spec = IV_UNIT_FIELD[m[0].toLowerCase().replace(/s$/, "")];
+		if (!spec) continue;
+		const [fam, field] = spec;
+		if (family === undefined) family = fam;
+		else if (family !== fam) return scalar("interval"); // mixed families (invalid) → bare
+		lo = Math.min(lo, field);
+		hi = Math.max(hi, field);
+	}
+	return family === undefined ? scalar("interval") : intervalTypeOf(IV_FIELD_NAMES[family], lo, hi);
+}
+
 /** Databricks/Spark literal forms. */
 export function databricksLiteral(text: string): Type {
 	const t = text.trim();
@@ -770,8 +857,9 @@ export function databricksLiteral(text: string): Type {
 	if (/^date\s*'/i.test(t)) return scalar("date");
 	if (/^timestamp(_ntz|_ltz)?\s*'/i.test(t)) return scalar("timestamp");
 	// The CST's getText() concatenates tokens without whitespace, so the unquoted multi-token
-	// form arrives as `interval2year` — no word boundary after the keyword.
-	if (/^interval/i.test(t)) return scalar("interval");
+	// form arrives as `interval2year` — no word boundary after the keyword. Derive the qualified
+	// ANSI interval type (interval year to month / interval day to second / …) from the unit words.
+	if (/^interval/i.test(t)) return intervalLiteralType(t);
 	// Integral literals size by magnitude: INT when it fits, else BIGINT, else DECIMAL(38,0)
 	// (sql-ref-literals; `9223372036854775808` is DECIMAL — v4.2.0 goldens, literals.sql.out).
 	if (/^[+-]?\d+$/.test(t)) {

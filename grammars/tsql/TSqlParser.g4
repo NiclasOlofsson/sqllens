@@ -3174,7 +3174,8 @@ execute_body
     | '(' execute_var_string (',' execute_var_string)* ')' (AS (LOGIN | USER) '=' STRING)? (
         AT_KEYWORD linkedServer = id_
     )?
-    | AS ( (LOGIN | USER) '=' STRING | CALLER)
+    // WITH NO REVERT | WITH COOKIE INTO @varbinary_variable: statements/execute-as-transact-sql
+    | AS ( (LOGIN | USER) '=' STRING (WITH (NO REVERT | COOKIE INTO cookie_var = LOCAL_ID))? | CALLER)
     ;
 
 execute_statement_arg
@@ -3924,6 +3925,15 @@ constant_LOCAL_ID
 expression
     : primitive_expression
     | function_call
+    // ODBC escape sequence for a GUID literal: {GUID '92C4279F-1207-48A3-8448-4636514EB7E2'}.
+    // learn.microsoft.com/en-us/sql/odbc/reference/appendixes/guid-escape-sequences
+    | LCB GUID guid = STRING RCB
+    // CLR/spatial bare property read off a @variable, no parens: @g.Lat, @g.STSrid, @p.X. Anchored
+    // to LOCAL_ID (not left-recursive on `expression`) so it can never compete with full_column_name
+    // over a plain dotted identifier chain (s.t.a stays a 3-part column, never `t.a` off a bare `s`).
+    // learn.microsoft.com/en-us/sql/t-sql/spatial-geography/lat-geography-data-type (+ sibling
+    // Long/Z/M/HasZ/HasM/STSrid/STX/STY pages) and set-local-variable-transact-sql Example F.
+    | receiver = LOCAL_ID '.' member = clr_method_name
     | expression '.' (value_call | query_call | exist_call | modify_call)
     | expression '.' hierarchyid_call
     // CLR/spatial instance methods: @g.STAsText(), point.STDistance(other), col.STBuffer(1)
@@ -3980,8 +3990,10 @@ with_expression
     : WITH ctes += common_table_expression (',' ctes += common_table_expression)*
     ;
 
+// A nested WITH is supported inside a CTE's own AS (...) body (but not inside a general subquery,
+// see derived_table): learn.microsoft.com/en-us/sql/t-sql/queries/nested-common-table-expression
 common_table_expression
-    : expression_name = id_ ('(' columns = column_name_list ')')? AS '(' cte_query = select_statement ')'
+    : expression_name = id_ ('(' columns = column_name_list ')')? AS '(' with_expression? cte_query = select_statement ')'
     ;
 
 update_elem
@@ -4081,7 +4093,8 @@ sql_union
 query_specification
     : SELECT allOrDistinct = (ALL | DISTINCT)? top = top_clause? columns = select_list
     // https://msdn.microsoft.com/en-us/library/ms188029.aspx
-    (INTO into = table_name)? (FROM from = table_sources)? (WHERE where = search_condition)?
+    // ON filegroup: queries/select-into-clause-transact-sql (SQL Server 2016 SP2+)
+    (INTO into = table_name (ON filegroup = id_)?)? (FROM from = table_sources)? (WHERE where = search_condition)?
     // https://msdn.microsoft.com/en-us/library/ms177673.aspx
     (
         GROUP BY (
@@ -4275,7 +4288,8 @@ table_source_item
     )?
     | rowset_function as_table_alias?
     | rowset_function_limited as_table_alias? // OPENQUERY / OPENDATASOURCE in FROM (openquery-transact-sql)
-    | vector_search_function as_table_alias?  // functions/vector-search-transact-sql (preview)
+    // WITH (FORCE_ANN_ONLY): functions/vector-search-transact-sql (preview)
+    | vector_search_function as_table_alias? with_table_hints?
     | predict_function as_table_alias?        // queries/predict-transact-sql
     | ai_generate_chunks_function as_table_alias? // CROSS APPLY target: functions/ai-generate-chunks-transact-sql
     | '(' derived_table ')' (as_table_alias column_alias_list?)?
@@ -4474,10 +4488,17 @@ function_call
     // CLR/spatial static methods: geography::STGeomFromText(...), geometry::Point(...), UDT::Method(...)
     // learn.microsoft.com/sql/t-sql/spatial-geography/spatial-types-geography
     | static_method_call                             # STATIC_METHOD
+    // ODBC escape sequence for a scalar function call: {fn UCASE(str)}, {fn CURRENT_DATE()}. A few
+    // ODBC names (TRUNCATE, CURRENT_DATE, CURRENT_TIME) are reserved T-SQL keywords elsewhere, so
+    // aren't reachable through scalar_function_name (id_-based); accepted directly here instead.
+    // learn.microsoft.com/en-us/sql/t-sql/functions/odbc-scalar-functions-transact-sql
+    | LCB FN (scalar_function_name | TRUNCATE | CURRENT_DATE | CURRENT_TIME) '(' expression_list_? ')' RCB # ODBC_SCALAR_FUNC
     ;
 
+// Parens optional: a static property read, e.g. geography::[Null] / geometry::[Null]
+// (spatial-geography_null-geography-data-type, spatial-geometry_null-geometry-data-type).
 static_method_call
-    : type_name = id_ DOUBLE_COLON method = clr_method_name '(' expression_list_? ')'
+    : type_name = id_ DOUBLE_COLON method = clr_method_name ('(' expression_list_? ')')?
     ;
 
 // CLR/spatial method names overlap built-in-function keywords (geography::Parse, …) that
@@ -5188,6 +5209,9 @@ table_hint
     | KEEPDEFAULTS
     | IGNORE_CONSTRAINTS
     | IGNORE_TRIGGERS
+    // Forces the ANN (Approximate Nearest Neighbor) index strategy for a VECTOR_SEARCH source:
+    // learn.microsoft.com/en-us/sql/t-sql/functions/vector-search-transact-sql
+    | FORCE_ANN_ONLY
     ;
 
 index_value
@@ -5225,12 +5249,18 @@ aggregate_windowed_function
     | CHECKSUM_AGG '(' all_distinct_expression ')'
     | GROUPING '(' expression ')'
     | GROUPING_ID '(' expression_list_ ')'
+    // Ordered-set aggregate, no OVER (unlike PERCENTILE_CONT/DISC, which are window-only):
+    // learn.microsoft.com/en-us/sql/t-sql/functions/approx-percentile-cont-transact-sql
+    // (+ approx-percentile-disc-transact-sql), SQL 2022+.
+    | (APPROX_PERCENTILE_CONT | APPROX_PERCENTILE_DISC) '(' expression ')' WITHIN GROUP '(' order_by_clause ')'
     ;
 
 // https://docs.microsoft.com/en-us/sql/t-sql/functions/analytic-functions-transact-sql
 analytic_windowed_function
     : (FIRST_VALUE | LAST_VALUE) '(' expression ')' over_clause
-    | (LAG | LEAD) '(' expression (',' expression (',' expression)?)? ')' over_clause
+    // IGNORE NULLS | RESPECT NULLS (SQL 2022+): learn.microsoft.com/en-us/sql/t-sql/functions/lag-transact-sql
+    // (+ lead-transact-sql)
+    | (LAG | LEAD) '(' expression (',' expression (',' expression)?)? ')' (IGNORE NULLS | RESPECT NULLS)? over_clause
     | (CUME_DIST | PERCENT_RANK) '(' ')' OVER '(' (PARTITION BY expression_list_)? order_by_clause ')'
     | (PERCENTILE_CONT | PERCENTILE_DISC) '(' expression ')' WITHIN GROUP '(' order_by_clause ')' OVER '(' (
         PARTITION BY expression_list_
@@ -5511,6 +5541,9 @@ send_conversation
 
 data_type
     : scaled = (VARCHAR | NVARCHAR | BINARY_KEYWORD | VARBINARY_KEYWORD | SQUARE_BRACKET_ID) '(' MAX ')'
+    // VECTOR(n, float16|float32) — the storage-precision base type, e.g. VECTOR(3, float16).
+    // https://learn.microsoft.com/en-us/sql/t-sql/data-types/vector-data-type
+    | ext_type = id_ '(' scale = DECIMAL ',' base_type = id_ ')'
     | ext_type = id_ '(' scale = DECIMAL ',' prec = DECIMAL ')'
     | ext_type = id_ '(' scale = DECIMAL ')'
     | ext_type = id_ IDENTITY ('(' seed = DECIMAL ',' inc = DECIMAL ')')?
@@ -5542,6 +5575,8 @@ keyword
     | AI_GENERATE_CHUNKS
     | AI_GENERATE_EMBEDDINGS
     | APPROXIMATE
+    | APPROX_PERCENTILE_CONT
+    | APPROX_PERCENTILE_DISC
     | ARRAY
     | BOTH
     | CHUNK_SIZE
@@ -5549,7 +5584,11 @@ keyword
     | ENABLE_CHUNK_SET_ID
     | EXTERNALPUSHDOWN
     | FIXED
+    | FN
+    | FORCE_ANN_ONLY
     | GRAPH
+    | GUID
+    | IGNORE
     | JSON_ARRAYAGG
     | JSON_OBJECTAGG
     | LABEL
@@ -5558,6 +5597,7 @@ keyword
     | MATCH
     | METRIC
     | MODEL
+    | NULLS
     | ONNX
     | OVERLAP
     | PARAMETERS
@@ -5566,6 +5606,7 @@ keyword
     | REDISTRIBUTE
     | REDUCE
     | REGEXP_LIKE
+    | RESPECT
     | RETURNING
     | ROLLUP
     | RUNTIME
@@ -6598,6 +6639,9 @@ assignment_operator
     | '&='
     | '^='
     | '|='
+    // ||= concatenation compound assignment (SQL 2025):
+    // learn.microsoft.com/en-us/sql/t-sql/language-elements/compound-assignment-pipes-transact-sql
+    | '||='
     ;
 
 file_size

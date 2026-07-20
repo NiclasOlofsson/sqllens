@@ -84,8 +84,8 @@ const PROBES: Record<string, Probe[]> = {
 		["string-agg-within", "SELECT STRING_AGG(a, ',') WITHIN GROUP (ORDER BY a) FROM t", "select"],
 		["next-value-for", "SELECT NEXT VALUE FOR dbo.seq", "select"],
 		["dollar-identity", "SELECT $IDENTITY FROM t", "select"],
-		// ODBC {fn …} escape sequences — legacy, unsupported upstream
-		["odbc-escape", "SELECT {fn CONCAT('a', 'b')}", "noparse"],
+		// ODBC {fn …} escape sequences: functions/odbc-scalar-functions-transact-sql
+		["odbc-escape", "SELECT {fn CONCAT('a', 'b')}", "select"],
 	],
 	DML: [
 		["insert-values", "INSERT INTO t (a, b) VALUES (1, 'x'), (2, 'y')", "script"],

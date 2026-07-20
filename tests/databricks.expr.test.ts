@@ -44,6 +44,17 @@ describe("lowerExpression", () => {
 		expect(e.args[0]).toMatchObject({ kind: "column", parts: ["a"] });
 	});
 
+	it("keeps a qualified named-argument key intact (databricks.connection => ...)", () => {
+		// docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document: read_files
+		// options accept a dotted key like `databricks.connection => 'conn'`. namedArgumentExpression's
+		// key widened from a single identifier to a multipartIdentifier (GAP 1); pin that the lowered
+		// argName carries the full dotted text, not just its first part.
+		const e = exprOf("SELECT read_files(a, databricks.connection => 'x') FROM t");
+		expect(e).toMatchObject({ kind: "function", name: "read_files" });
+		if (e.kind !== "function") throw new Error("fn");
+		expect(e.argNames).toEqual([undefined, "databricks.connection"]);
+	});
+
 	it("marks an aggregate function", () => {
 		expect(exprOf("SELECT sum(x) FROM t")).toMatchObject({ kind: "function", name: "sum", aggregate: true });
 	});
@@ -174,6 +185,56 @@ describe("lowerExpression — special forms", () => {
 	it("reaches the base column of a subscript for resolution (split(s,'-')[1])", () => {
 		const sel = selectOf("SELECT split(s, '-')[1] AS first FROM t");
 		expect(sel.columns.map((c) => c.parts.join("."))).toContain("s");
+	});
+});
+
+describe("IDENTIFIER() clause — constant-string case (sql-ref-names-identifier-clause)", () => {
+	it("resolves a bare IDENTIFIER('c1') to a real column reference", () => {
+		expect(exprOf("SELECT IDENTIFIER('c1') FROM t")).toMatchObject({ kind: "column", parts: ["c1"] });
+	});
+
+	it("derives the projection name from the resolved column, same as a plain column ref", () => {
+		expect(selectOf("SELECT IDENTIFIER('c1') FROM t").projections[0].name).toBe("c1");
+	});
+
+	it("feeds the resolved column into scope resolution (SelectExpr.columns), same as a plain ref", () => {
+		const sel = selectOf("SELECT IDENTIFIER('c1') FROM t");
+		expect(sel.columns.map((c) => c.parts.join("."))).toEqual(["c1"]);
+	});
+
+	it("resolves AS IDENTIFIER('col1') to the alias it names, not the raw constructor text", () => {
+		// The pinned Spark-goldens case (identifier-clause.sql.out): Spark names this column
+		// `col1`; before this fix, lower() kept the raw "IDENTIFIER('col1')" constructor text.
+		expect(selectOf("SELECT 1 AS IDENTIFIER('col1')").projections[0].name).toBe("col1");
+	});
+
+	it("keeps a backtick-quoted resolved name delimited (identifier delimiter contract: kept)", () => {
+		expect(exprOf("SELECT IDENTIFIER('`c 1`') FROM t")).toMatchObject({ kind: "column", parts: ["`c 1`"] });
+	});
+
+	it("never-wrong: a bind-parameter argument stays an unresolved function call", () => {
+		expect(exprOf("SELECT IDENTIFIER(:param) FROM t")).toMatchObject({ kind: "function", name: "IDENTIFIER" });
+	});
+
+	it("never-wrong: a column argument stays an unresolved function call", () => {
+		expect(exprOf("SELECT IDENTIFIER(c) FROM t")).toMatchObject({ kind: "function", name: "IDENTIFIER" });
+	});
+
+	it("never-wrong: a bind-parameter alias argument keeps the raw constructor text", () => {
+		expect(selectOf("SELECT 1 AS IDENTIFIER(:param)").projections[0].name).toBe("IDENTIFIER(:param)");
+	});
+
+	it("declines a dotted constant (multi-part name) rather than mis-splitting it into one part", () => {
+		// IDENTIFIER('t.c1') names table t, column c1, not a column literally called "t.c1" —
+		// splitting that correctly needs Databricks' own multi-part parse (docs/identifier-
+		// delimiter-contract.md); out of scope here, so it stays an unresolved function call.
+		expect(exprOf("SELECT IDENTIFIER('t.c1') FROM t")).toMatchObject({ kind: "function", name: "IDENTIFIER" });
+	});
+
+	it("leaves the IDENTIFIER-as-function-name form (a trailing call) untouched", () => {
+		// IDENTIFIER('COAL' || 'ESCE')(NULL, 1) resolves the FUNCTION NAME, not a column — a
+		// different grammar shape (functionName's own literal alt); not this fix's scope.
+		expect(exprOf("SELECT IDENTIFIER('COAL' || 'ESCE')(NULL, 1) FROM t")).toMatchObject({ kind: "function" });
 	});
 });
 

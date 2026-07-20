@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { parse, qualify, resolveScopes, Schema } from "../src/index.js";
 import { lower } from "../src/duckdb/lower.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
+import { inferType } from "../src/infer/infer.js";
 
 // The DuckDB surface built onto the Postgres-derived fork, each addition doc-cited at its
 // grammar rule (duckdb.org/docs/current) and asserted here — parse AND, where the IR models it,
@@ -86,9 +87,21 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
 		const e = strip(expr);
 		expect(e.kind).toBe("subscript");
-		// The absent begin/end are NOT fabricated into a 0/-1 — the whole slice is the opaque index
-		// (same shape as the existing `[2:4:2]` lowering; no new bound literals invented).
-		expect(e.index).toEqual({ kind: "literal", text: "[::2]" });
+		// The absent begin/end are NOT fabricated into a 0/-1, and NOT fused into an opaque whole-bracket
+		// literal either — each written bound is modelled on its own field; an omitted one is simply
+		// absent (functions/list.md#slicing).
+		expect(e).toEqual({
+			kind: "subscript",
+			base: {
+				kind: "function",
+				name: "list_value",
+				args: [1, 2, 3, 4].map((n) => ({ kind: "literal", text: String(n) })),
+				aggregate: false,
+				distinct: false,
+			},
+			slice: true,
+			step: { kind: "literal", text: "2" },
+		});
 	});
 
 	it("string-literal method receiver 'abc'.upper() lowers to upper('abc') (#13)", () => {
@@ -308,6 +321,153 @@ describe("duckdb grammar — fork additions (doc-cited)", () => {
 	});
 });
 
+// Position-aware slice lowering (#lossless): applySubscriptBracket used to fuse an entire slice
+// bracket into one opaque literal (`e.index = {kind:"literal", text:"[2:4]"}`), dropping every bound
+// but the whole-bracket text — a column referenced in a hi/step bound vanished from
+// SelectExpr.columns, and an empty-lo slice's END bound was swallowed into the same blob. Fixed by
+// walking indirection_el's children in order, splitting on COLON (+1 slot) / TYPECAST (+2 slots, the
+// adjacent-colon `::` case) so each written bound lands on its own field; an omitted bound (incl. the
+// bare `-` default-bound placeholder) stays absent, never fabricated (functions/list.md#slicing).
+describe("duckdb subscript slicing — position-aware begin/end/step (#lossless)", () => {
+	const strip = (o: unknown) =>
+		JSON.parse(JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" || k === "partSpans" ? undefined : v)));
+	const shapeOf = (sql: string) => {
+		const { ast } = parse(sql, "duckdb");
+		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
+		return strip(expr);
+	};
+	const num = (n: number) => ({ kind: "literal", text: String(n) });
+	const arr = { kind: "column", parts: ["arr"] };
+
+	it("x[2] — plain element access, unchanged shape (no slice flag)", () => {
+		expect(shapeOf("SELECT arr[2] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2) });
+	});
+
+	it("x[2:4] — begin + end, slice flag, no step", () => {
+		expect(shapeOf("SELECT arr[2:4] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(2),
+			end: num(4),
+			slice: true,
+		});
+	});
+
+	it("x[2:4:2] — begin + end + step", () => {
+		expect(shapeOf("SELECT arr[2:4:2] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(2),
+			end: num(4),
+			step: num(2),
+			slice: true,
+		});
+	});
+
+	it("x[:4] — empty begin stays absent, does NOT get misattributed as index", () => {
+		expect(shapeOf("SELECT arr[:4] FROM t;")).toEqual({ kind: "subscript", base: arr, end: num(4), slice: true });
+	});
+
+	it("x[2:] — empty end stays absent", () => {
+		expect(shapeOf("SELECT arr[2:] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2), slice: true });
+	});
+
+	it("x[:] — both bounds absent, still a slice", () => {
+		expect(shapeOf("SELECT arr[:] FROM t;")).toEqual({ kind: "subscript", base: arr, slice: true });
+	});
+
+	it("x[::2] — the adjacent-colon TYPECAST alt: begin/end absent, step only", () => {
+		expect(shapeOf("SELECT arr[::2] FROM t;")).toEqual({ kind: "subscript", base: arr, step: num(2), slice: true });
+	});
+
+	// A bare colid immediately after a slice COLON used to not parse at all — a genuine LEXER
+	// collision, not a parser ambiguity: `:hi` (no gap) maximal-munches as ONE PLSQLVARIABLENAME
+	// token (psql/pgbench `:variable` interpolation, docs.postgresql.org/current/app-psql.html
+	// #APP-PSQL-INTERPOLATION — real corpus use: postgres/docs/parser/positive/dml/pgbench/1.sql,
+	// shared pg-family lexer), so the parser never sees a standalone COLON before "hi". Fixed for a
+	// non-empty begin (`arr[1:hi]`) by a new indirection_el alt that accepts the fused token and
+	// un-fuses it in lower() (functions/list.md#slicing — array slicing takes any expression as a
+	// bound). Parenthesizing still sidesteps the (unrelated) step-slot case below.
+	it("a column used in a slice's end bound is not dropped from SelectExpr.columns", () => {
+		const { ast } = parse("SELECT arr[1:(hi)] FROM t;", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		const cols = ast.body.columns.map((c) => c.parts.join("."));
+		expect(cols).toContain("arr");
+		expect(cols).toContain("hi"); // the defect's observable: previously dropped
+	});
+
+	it("a column used in a slice's step bound is not dropped from SelectExpr.columns", () => {
+		const { ast } = parse("SELECT arr[1:2:(step_col)] FROM t;", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toContain("step_col");
+	});
+
+	// arr[1:hi] / arr[lo:hi]: the bare-identifier end bound now parses without parens, and the bound
+	// column shows up in SelectExpr.columns — the PLSQLVARIABLENAME token is un-fused back into a
+	// plain column end bound in applySubscriptBracket.
+	it("x[1:hi] — numeric begin, bare-identifier end (no parens needed)", () => {
+		expect(shapeOf("SELECT arr[1:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(1),
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[1:hi] FROM t;", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "hi"]));
+	});
+
+	it("x[lo:hi] — both bounds bare identifiers", () => {
+		expect(shapeOf("SELECT arr[lo:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: ["lo"] },
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[lo:hi] FROM t;", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "lo", "hi"]));
+	});
+
+	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed — deliberately. The fused token here
+	// is indistinguishable at the parser level from a bind-variable used as a plain index (the
+	// pgbench reading), since there's no preceding bound to disambiguate on. Flipping this reading
+	// would change what an ALREADY-PARSING construct means, not just widen acceptance — a semantic
+	// priority call between two independently-real features, left to a human decision rather than
+	// resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is the
+	// bind-variable-shaped column ":hi" (colon retained) — NOT a slice.
+	it("x[:hi] — still the pre-existing plsqlvariablename-index reading, not fixed (see task report)", () => {
+		expect(shapeOf("SELECT arr[:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: [":hi"] },
+		});
+	});
+
+	it("a slice's type is the base's own type (array/string), never the element type", () => {
+		const typeOf = (sql: string, schema: Schema) => {
+			const tree = resolveScopes(lower(parseDuckdb(sql).tree));
+			const body = tree.root.body;
+			if (body.kind !== "select") throw new Error("expected select");
+			return inferType(body.projections[0].expr, tree.root, schema);
+		};
+		// A slice of array<string> is still array<string> — not the element type "string".
+		expect(typeOf("SELECT arr[2:4] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "array",
+			element: { kind: "scalar", name: "string" },
+		});
+		// A slice of a string is still a string (duckdb.org/docs list.md#slicing — string slicing).
+		expect(typeOf("SELECT 'hello'[2:4]", new Schema({}))).toEqual({ kind: "scalar", name: "string" });
+		// Plain (non-slice) element access is unaffected by the slice-type rule: array<string>[2] → string.
+		expect(typeOf("SELECT arr[2] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "scalar",
+			name: "string",
+		});
+	});
+});
+
 // SLL→LL fallback surgery — each probe pins a construct that now predicts under SLL (no LL
 // fallback) after a grammar edit, plus the IR/rejection invariants that guard the edit.
 describe("duckdb SLL-surgery — no LL fallback on the cured shapes", () => {
@@ -466,5 +626,177 @@ describe("duckdb VARIADIC — the marked arg keeps its expr in args", () => {
 			expect.objectContaining({ kind: "column", parts: ["a"] }),
 			expect.objectContaining({ kind: "column", parts: ["my_list"] }),
 		]);
+	});
+});
+
+// applyIndirection's method-call arg path (the CHAINED `x.f(a)` / `'lit'.f(a)` form, distinct from the
+// direct call above) used to read only func_arg_list, dropping a VARIADIC arg and degrading a lambda arg
+// to `other`. It now shares collectFuncArgs/lowerFuncArgExpr with the direct-call path (lowerFuncExpr),
+// so both extract args identically. Two receiver shapes matter here: an identifier-led receiver
+// (`x.f(...)`) is a GENUINE grammar ambiguity against a qualified direct call, and DuckDB's ANTLR parser
+// resolves a VARIADIC-bearing call to the direct-call reading (dotted_func_expr), since indirection_el's
+// own `.attr(args)` parens carry no VARIADIC alternative, so that shape never actually reaches
+// applyIndirection. A receiver that CANNOT be a dotted_func_expr qualifier (a string literal, an array
+// literal, or the result of a prior call) has no such rescue and is the only way to exercise
+// applyIndirection's own arg extraction directly.
+describe("duckdb chained method-call args, same fidelity as the direct-call path", () => {
+	const projExpr = (sql: string) => {
+		const { ast } = parse(sql, "duckdb");
+		return (ast.body as { projections?: Array<{ expr: unknown }> }).projections?.[0]?.expr as {
+			kind: string;
+			name?: string;
+			args?: Array<Record<string, unknown>>;
+		};
+	};
+
+	it("lambda arg on a literal receiver lowers to a real lambda node, not other (functions/overview.md#function-chaining-via-the-dot-operator)", () => {
+		expect(parseDuckdb("SELECT 'lit'.my_func(a, lambda x: x + 1) FROM t").errors).toBe(0);
+		const e = projExpr("SELECT 'lit'.my_func(a, lambda x: x + 1) FROM t");
+		expect(e.name).toBe("my_func");
+		expect(e.args?.[0]).toMatchObject({ kind: "literal", text: "'lit'" });
+		expect(e.args?.[1]).toMatchObject({ kind: "column", parts: ["a"] });
+		expect(e.args?.[2]).toMatchObject({ kind: "lambda", params: ["x"] });
+	});
+
+	it("lambda arg on a call-result receiver (double chain) lowers to a real lambda node", () => {
+		expect(parseDuckdb("SELECT f(a).g(lambda x: x + 1) FROM t").errors).toBe(0);
+		const e = projExpr("SELECT f(a).g(lambda x: x + 1) FROM t");
+		expect(e.name).toBe("g");
+		expect(e.args?.[0]).toMatchObject({ kind: "function", name: "f" });
+		expect(e.args?.[1]).toMatchObject({ kind: "lambda", params: ["x"] });
+	});
+
+	it("lambda arg on an array-literal receiver lowers to a real lambda node", () => {
+		expect(parseDuckdb("SELECT [1, 2, 3].list_transform(lambda x: x + 1) FROM t").errors).toBe(0);
+		const e = projExpr("SELECT [1, 2, 3].list_transform(lambda x: x + 1) FROM t");
+		expect(e.name).toBe("list_transform");
+		expect(e.args?.[0]).toMatchObject({ kind: "function", name: "list_value" });
+		expect(e.args?.[1]).toMatchObject({ kind: "lambda", params: ["x"] });
+	});
+
+	// Pins the CURRENT ambiguity resolution, not a claim it's the ideal reading: a VARIADIC arg forces
+	// ANTLR off the method-chain alt (columnref+indirection) onto the qualified-call alt
+	// (dotted_func_expr), so "x" here is a name qualifier (like schema.func(args)), not a method-chain
+	// receiver folded into args the way plain `x.f(a)` folds "x" in (see the c_expr guard test above).
+	// That qualifier-vs-receiver split is pre-existing dotted_func_expr/lastName behavior, unrelated to
+	// applyIndirection; it just explains why this parses at all instead of hitting the grammar boundary
+	// below.
+	it("VARIADIC on an identifier-led chained receiver still round-trips (resolved to the direct-call reading)", () => {
+		expect(parseDuckdb("SELECT x.f(VARIADIC [1, 2]) FROM t").errors).toBe(0);
+		const e = projExpr("SELECT x.f(VARIADIC [1, 2]) FROM t");
+		expect(e.name).toBe("f");
+		expect(e.args).toEqual([expect.objectContaining({ kind: "function", name: "list_value" })]);
+	});
+
+	// GRAMMAR BOUNDARY, not a lowering bug: indirection_el's own `.attr(args)` parens
+	// (grammars/duckdb/DuckDBParser.g4) have no VARIADIC alternative, unlike func_application /
+	// dotted_func_application / plain_func_application. When the receiver cannot rescue to a
+	// dotted_func_expr qualifier, VARIADIC has no CST shape to bind to and the parse is rejected
+	// outright (no silent arg loss: there is no successful parse to lose information from). This pins
+	// the current boundary so a future grammar change that adds the alternative is caught here, right
+	// alongside the lowering fix (collectFuncArgs's second pass) it would need. Verified against real
+	// DuckDB (2026-07-20, node bindings): `'lit'.f(VARIADIC [1, 2])` is a Parser Error on the engine
+	// too, so this rejection is language-correct, not a gap in our grammar to close.
+	it("VARIADIC on a non-rescuable chained receiver is a parse rejection, not a silent drop", () => {
+		expect(parseDuckdb("SELECT 'lit'.f(VARIADIC [1, 2]) FROM t").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT f(a).g(VARIADIC b) FROM t").errors).toBeGreaterThan(0);
+	});
+});
+
+// DuckDB time travel (Delta/Iceberg extensions) — AT (VERSION => …) / AT (TIMESTAMP => …) after a
+// table ref, mirroring how databricks.entry.test.ts pins its VERSION AS OF / @-shorthand time
+// travel: the clause parses and lowers to the ORDINARY table source, no new IR field (see the
+// at_clause grammar comment, grammars/duckdb/DuckdbParser.g4, for the doc citations and the engine
+// verification, 2026-07-20 real DuckDB via node bindings, that established the clause's position
+// and value-expression shape).
+describe("duckdb time travel — AT (VERSION => …) / AT (TIMESTAMP => …)", () => {
+	it("VERSION form parses and lowers to the plain table t (core_extensions/delta)", () => {
+		expect(parseDuckdb("SELECT * FROM t AT (VERSION => 1)").errors).toBe(0);
+		const { ast } = parse("SELECT * FROM t AT (VERSION => 1)", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("select");
+		expect(ast.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
+	});
+
+	it("TIMESTAMP form parses; the value is a general expression, not just a literal (core_extensions/iceberg/overview)", () => {
+		expect(parseDuckdb("SELECT * FROM t AT (TIMESTAMP => TIMESTAMP '2025-09-22 12:32:43.217')").errors).toBe(0);
+		expect(parseDuckdb("SELECT * FROM t AT (VERSION => version())").errors).toBe(0);
+		expect(parseDuckdb("SELECT * FROM t AT (VERSION => 1 + 1)").errors).toBe(0);
+	});
+
+	it("composes with an alias (AS and bare), alias before the AT clause", () => {
+		expect(parseDuckdb("SELECT * FROM t AS x AT (VERSION => 1)").errors).toBe(0);
+		expect(parseDuckdb("SELECT * FROM t x AT (VERSION => 1)").errors).toBe(0);
+		const { ast } = parse("SELECT * FROM t AS x AT (VERSION => 1)", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("select");
+		expect(ast.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] }, alias: "x" });
+	});
+
+	// Grammar boundary, verified against real DuckDB (2026-07-20, node bindings): AT only follows a
+	// plain relation_expr, a function table or a derived subquery both give a Parser Error, and an
+	// alias written AFTER the AT clause (instead of before) is rejected too.
+	it("is rejected on a function table, a derived subquery, and alias-after-AT ordering", () => {
+		expect(parseDuckdb("SELECT * FROM range(3) AT (VERSION => 1)").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT * FROM (SELECT * FROM t) x AT (VERSION => 1)").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT * FROM t AT (VERSION => 1) AS x").errors).toBeGreaterThan(0);
+	});
+});
+
+// FROM-first (from.md#from-first-syntax) already synthesizes a star projection (see "FROM-first
+// queries synthesize a star projection" above); these pin the remaining composition points: a
+// trailing SELECT's output columns resolve through resolveScopes, and FROM-first works as a CTE
+// body, inside a subquery, and as a set-op branch.
+describe("duckdb FROM-first — composition and output columns", () => {
+	it("FROM t SELECT a, b resolves the named columns through resolveScopes", () => {
+		const { ast } = parse("FROM t SELECT a, b", "duckdb");
+		const scopes = resolveScopes(ast, "duckdb");
+		expect(scopes.root.outputs).toEqual(["a", "b"]);
+	});
+
+	it("bare FROM t is 'unknown' outputs, same as SELECT * FROM t (the star needs a schema)", () => {
+		const bare = resolveScopes(parse("FROM t", "duckdb").ast, "duckdb");
+		const star = resolveScopes(parse("SELECT * FROM t", "duckdb").ast, "duckdb");
+		expect(bare.root.outputs).toBe("unknown");
+		expect(bare.root.outputs).toBe(star.root.outputs);
+	});
+
+	it("FROM-first as a CTE body, the VALUES + row-alias corpus shape (query_syntax/values.md)", () => {
+		const sql = "WITH cities AS (FROM (VALUES ('se','sto'), ('no','osl')) _(country, city)) SELECT * FROM cities";
+		expect(parseDuckdb(sql).errors).toBe(0);
+		const { ast } = parse(sql, "duckdb");
+		if (ast.body.kind !== "select") throw new Error("select");
+		expect(ast.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["cities"] } });
+	});
+
+	it("FROM-first inside a subquery and as a set-op branch", () => {
+		expect(parseDuckdb("SELECT * FROM (FROM t) x").errors).toBe(0);
+		expect(parseDuckdb("FROM t UNION SELECT a FROM t").errors).toBe(0);
+		expect(parseDuckdb("FROM t UNION FROM t").errors).toBe(0);
+	});
+});
+
+// Tightening: an empty selection list is a real DuckDB Parser Error ("SELECT clause without
+// selection list"), verified against real DuckDB (2026-07-20, node bindings). Our grammar used to
+// accept `SELECT FROM t` (ledgered leniency, CLAUDE.md § Known shortcuts); simple_select_pramary's
+// SELECT alternatives now require target_list, matching the engine. FROM-first composition must
+// still hold: `FROM t` with no SELECT at all stays legal, only an EMPTY trailing SELECT is rejected.
+describe("duckdb — empty selection list is rejected, matching the engine", () => {
+	it("SELECT FROM t and bare SELECT are now parse errors", () => {
+		expect(parseDuckdb("SELECT FROM t").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT").errors).toBeGreaterThan(0);
+	});
+
+	it("SELECT DISTINCT FROM t is a parse error (distinct_clause already required target_list)", () => {
+		expect(parseDuckdb("SELECT DISTINCT FROM t").errors).toBeGreaterThan(0);
+	});
+
+	it("a real projection is unaffected", () => {
+		expect(parseDuckdb("SELECT a FROM t").errors).toBe(0);
+		expect(parseDuckdb("SELECT a FROM t WHERE a > 1").errors).toBe(0);
+	});
+
+	it("composes with FROM-first: bare FROM t still parses, but an EMPTY trailing SELECT does not", () => {
+		expect(parseDuckdb("FROM t").errors).toBe(0);
+		expect(parseDuckdb("FROM t SELECT a, b").errors).toBe(0);
+		expect(parseDuckdb("FROM t SELECT").errors).toBeGreaterThan(0);
 	});
 });

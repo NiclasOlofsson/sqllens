@@ -4100,8 +4100,21 @@ columnref
 
 indirection_el
    : DOT (attr_name | STAR)
-   | OPEN_BRACKET (a_expr | opt_slice_bound? COLON opt_slice_bound?) CLOSE_BRACKET
+   | OPEN_BRACKET (a_expr | opt_slice_bound? COLON opt_slice_bound? | opt_slice_bound plsqlvariablename) CLOSE_BRACKET
    ;
+// The 3rd slice alt: a bare-identifier end bound with a non-empty begin — `arr[1:hi]`, `arr[lo:hi]`
+// — has no whitespace before the identifier, so the lexer's PLSQLVARIABLENAME rule (`:` + word
+// chars, meant for psql/pgbench `:variable` interpolation, docs.postgresql.org/current/app-psql.html
+// #APP-PSQL-INTERPOLATION — real corpus use: postgres/docs/parser/positive/dml/pgbench/1.sql)
+// maximal-munches the slice's COLON together with the identifier into one token before the parser
+// ever sees a standalone COLON. Real PostgreSQL array slicing accepts any expression as a bound
+// (postgresql.org/docs/current/arrays.html#ARRAYS-ACCESSING); this alt un-fuses that token by
+// requiring a MANDATORY begin bound, so it only ever matches this previously-unparseable shape and
+// never overlaps the pgbench reading (which has no preceding bound) or the plain `a_expr` alt
+// (which already fails on "begin PLSQLVARIABLENAME" — confirmed no viable alternative pre-fix). The
+// symmetric empty-begin case `arr[:hi]` stays as-is (still reads as a plain index via the
+// plsqlvariablename c_expr, not a slice) — genuinely entangled with the pgbench reading and out of
+// scope here; narrowing it risks the corpus-verified bind-variable feature.
 
 opt_slice_bound
    : a_expr

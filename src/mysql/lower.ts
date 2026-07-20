@@ -1390,7 +1390,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);

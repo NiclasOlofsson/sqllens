@@ -114,3 +114,36 @@ describe("databricks parse-tree extraction", () => {
 		expect(real.tables).toEqual(["t"]);
 	});
 });
+
+describe("databricks — qualified named-argument key (GAP 1)", () => {
+	it("accepts a dotted key in a table function's named argument", () => {
+		// docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document: the corpus
+		// repro (functions/ai_parse_document/6.sql) calls read_files with `databricks.connection => ...`.
+		const { errors } = parse("SELECT * FROM read_files('u', databricks.connection => 'x')");
+		expect(errors).toBe(0);
+	});
+
+	it("still accepts a plain unqualified named-argument key", () => {
+		const { errors } = parse("SELECT * FROM read_files('u', format => 'csv')");
+		expect(errors).toBe(0);
+	});
+});
+
+describe("databricks — USE CATALOG (GAP 2)", () => {
+	// docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-use-catalog:
+	// `{ USE | SET } CATALOG [ catalog_name | 'catalog_name' ]`
+	it.each([
+		["bare identifier", "USE CATALOG hive_metastore"],
+		["string literal", "USE CATALOG 'hive_metastore'"],
+		["IDENTIFIER(expr)", "USE CATALOG IDENTIFIER(mycat)"],
+		["backtick-quoted identifier", "USE CATALOG `some_catalog`"],
+	])("parses USE CATALOG with a %s", (_name, sql) => {
+		const { errors } = parse(sql);
+		expect(errors).toBe(0);
+	});
+
+	it("still parses the sibling USE DATABASE/SCHEMA/NAMESPACE forms", () => {
+		expect(parse("USE DATABASE main.my_db").errors).toBe(0);
+		expect(parse("USE SCHEMA s").errors).toBe(0);
+	});
+});

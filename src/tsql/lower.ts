@@ -206,17 +206,24 @@ function lowerStandalone(tree: ParserRuleContext): QueryExpr {
 }
 
 function lowerCte(cte: ParserRuleContext): CteDef {
-	// common_table_expression: id_ ('(' column_name_list ')')? AS '(' select_statement ')'
+	// common_table_expression: id_ ('(' column_name_list ')')? AS '(' with_expression? select_statement ')'
 	const nameNode = directChildrenOfRule(cte, P.RULE_id_)[0];
 	const name = nameNode?.getText() ?? "";
 	const inner = directChildrenOfRule(cte, P.RULE_select_statement)[0];
 	const colList = directChildrenOfRule(cte, P.RULE_column_name_list)[0];
 	const columnAliases = colList ? directChildrenOfRule(colList, P.RULE_id_).map((i) => i.getText()) : undefined;
+	const body = inner ? lowerSelect(inner) : emptyQuery(cte);
+	// A nested WITH inside this CTE's own body (nested-common-table-expression): its CTEs scope to
+	// this CTE's inner query alone, so they ride that query's own `ctes` — not the outer WITH list.
+	const nestedWith = directChildrenOfRule(cte, P.RULE_with_expression)[0];
+	const nestedCtes = nestedWith
+		? directChildrenOfRule(nestedWith, P.RULE_common_table_expression).map(lowerCte)
+		: [];
 	return {
 		name,
 		nameCst: nameNode,
 		columnAliases: columnAliases?.length ? columnAliases : undefined,
-		body: inner ? lowerSelect(inner) : emptyQuery(cte),
+		body: nestedCtes.length ? { ...body, ctes: nestedCtes } : body,
 		cst: cte,
 	};
 }
@@ -855,6 +862,46 @@ function lowerExpression(node: ParserRuleContext): Expr {
 			return inner ? { kind: "unary", op, operand: lowerExpression(inner), cst: node } : otherExpr(node);
 		}
 		case P.RULE_expression: {
+			// ODBC GUID literal escape: `{ GUID 'nnnnnnnn-...' }`. Modelled as a cast of the string
+			// literal to uniqueidentifier, matching what the escape sequence means.
+			if (hasDirectToken(node, P.GUID)) {
+				const str = directTerminal(node, P.STRING);
+				return {
+					kind: "cast",
+					expr: str ? { kind: "literal", text: str.getText(), cst: node } : otherExpr(node),
+					typeText: "uniqueidentifier",
+					cst: node,
+				};
+			}
+			const clrMethod = directChildrenOfRule(node, P.RULE_clr_method_name)[0];
+			if (clrMethod) {
+				const receiverExpr = directChildrenOfRule(node, P.RULE_expression)[0];
+				if (receiverExpr) {
+					// Instance method call: `expression '.' clr_method_name '(' args ')'`
+					// (@g.STAsText(), point.STDistance(other), col.STBuffer(1)). Receiver conserved
+					// as arg 0, matching lowerUdtElem's shape for the XML data type methods.
+					const argsList = directChildrenOfRule(node, P.RULE_expression_list_)[0];
+					const args = argsList ? directChildrenOfRule(argsList, P.RULE_expression).map(lowerExpression) : [];
+					return {
+						kind: "function",
+						name: displayName(clrMethod.getText()).toLowerCase(),
+						args: [lowerExpression(receiverExpr), ...args],
+						aggregate: false,
+						distinct: false,
+						cst: node,
+					};
+				}
+				// Bare property off a @variable, no parens: `LOCAL_ID '.' clr_method_name` (@g.Lat, @p.X).
+				const receiverTok = directTerminal(node, P.LOCAL_ID);
+				return {
+					kind: "function",
+					name: displayName(clrMethod.getText()).toLowerCase(),
+					args: [receiverTok ? { kind: "literal", text: receiverTok.getText(), cst: node } : otherExpr(node)],
+					aggregate: false,
+					distinct: false,
+					cst: node,
+				};
+			}
 			const exprs = directChildrenOfRule(node, P.RULE_expression);
 			if (exprs.length === 2) {
 				return {
@@ -955,7 +1002,27 @@ function functionArgs(call: ParserRuleContext): ParserRuleContext[] {
 function functionName(node: ParserRuleContext): string {
 	const scalar = directChildrenOfRule(node, P.RULE_scalar_function_name)[0];
 	if (scalar) return lastNamePart(scalar.getText());
+	// static_method_call (geography::STGeomFromText(...), geometry::[Null]): the callable name is
+	// the member after `::`, not the leading type name (leftmostToken would return "geography").
+	const staticCall = directChildrenOfRule(node, P.RULE_static_method_call)[0];
+	const staticMethod = staticCall && directChildrenOfRule(staticCall, P.RULE_clr_method_name)[0];
+	if (staticMethod) return displayName(staticMethod.getText()).toLowerCase();
+	// ODBC scalar function escape `{fn NAME(...)}` where NAME is a reserved keyword (TRUNCATE,
+	// CURRENT_DATE, CURRENT_TIME) rather than a scalar_function_name — the terminal right after FN.
+	const afterFn = directTerminalAfter(node, P.FN);
+	if (afterFn) return displayName(afterFn.getText()).toLowerCase();
 	return leftmostToken(node) ?? "";
+}
+
+/** The first direct-child terminal appearing after a direct child token of type `tokenType`. */
+function directTerminalAfter(node: ParseTree, tokenType: number): TerminalNode | undefined {
+	let seen = false;
+	for (let i = 0; i < node.getChildCount(); i++) {
+		const child = node.getChild(i);
+		if (seen && child instanceof TerminalNode) return child;
+		if (child instanceof TerminalNode && child.symbol.type === tokenType) seen = true;
+	}
+	return undefined;
 }
 
 function lowerOver(over: ParserRuleContext): { partitionBy: Expr[]; orderBy: Expr[]; cst: ParserRuleContext } {
@@ -1093,7 +1160,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);
@@ -1261,6 +1330,15 @@ function hasDirectToken(node: ParseTree, type: number): boolean {
 		if (child instanceof TerminalNode && child.symbol.type === type) return true;
 	}
 	return false;
+}
+
+/** The first direct-child terminal of the given token type, if any. */
+function directTerminal(node: ParseTree, type: number): TerminalNode | undefined {
+	for (let i = 0; i < node.getChildCount(); i++) {
+		const child = node.getChild(i);
+		if (child instanceof TerminalNode && child.symbol.type === type) return child;
+	}
+	return undefined;
 }
 
 function hasToken(node: ParseTree, type: number): boolean {

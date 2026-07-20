@@ -146,8 +146,8 @@ cast.sql.out#24.0 match bigint|bigint
 cast.sql.out#26.0 match bigint|bigint
 cast.sql.out#28.0 match string|string
 cast.sql.out#39.0 match interval|interval
-cast.sql.out#40.0 match intervalyeartomonth|interval year to month
-cast.sql.out#41.0 match intervaldaytosecond|interval day to second
+cast.sql.out#40.0 match interval year to month|interval year to month
+cast.sql.out#41.0 match interval day to second|interval day to second
 cast.sql.out#43.0 match string|string
 cast.sql.out#44.0 match string|string
 cast.sql.out#45.0 match tinyint|tinyint
@@ -170,13 +170,13 @@ cast.sql.out#74.0 match int|int
 cast.sql.out#75.0 match tinyint|tinyint
 cast.sql.out#77.0 match int|int
 cast.sql.out#78.0 match bigint|bigint
-cast.sql.out#81.0 match intervalyear|interval year
-cast.sql.out#82.0 match intervalyeartomonth|interval year to month
-cast.sql.out#84.0 match intervalmonth|interval month
-cast.sql.out#85.0 match intervalsecond|interval second
-cast.sql.out#86.0 match intervalhourtosecond|interval hour to second
-cast.sql.out#88.0 match intervaldaytosecond|interval day to second
-cast.sql.out#89.0 match intervalday|interval day
+cast.sql.out#81.0 match interval year|interval year
+cast.sql.out#82.0 match interval year to month|interval year to month
+cast.sql.out#84.0 match interval month|interval month
+cast.sql.out#85.0 match interval second|interval second
+cast.sql.out#86.0 match interval hour to second|interval hour to second
+cast.sql.out#88.0 match interval day to second|interval day to second
+cast.sql.out#89.0 match interval day|interval day
 cast.sql.out#92.0 match decimal|decimal(10,0)
 cast.sql.out#93.0 match decimal|decimal(10,6)
 cast.sql.out#94.0 match decimal|decimal(10,4)
@@ -184,10 +184,10 @@ cast.sql.out#95.0 match decimal|decimal(8,1)
 cast.sql.out#96.0 match decimal|decimal(4,2)
 cast.sql.out#97.0 match decimal|decimal(4,2)
 cast.sql.out#98.0 match decimal|decimal(5,2)
-cast.sql.out#100.0 match intervaldaytosecond|interval day to second
-cast.sql.out#101.0 match intervalhourtominute|interval hour to minute
-cast.sql.out#102.0 match intervalyeartomonth|interval year to month
-cast.sql.out#103.0 match intervalmonth|interval month
+cast.sql.out#100.0 match interval day to second|interval day to second
+cast.sql.out#101.0 match interval hour to minute|interval hour to minute
+cast.sql.out#102.0 match interval year to month|interval year to month
+cast.sql.out#103.0 match interval month|interval month
 cast.sql.out#104.0 match tinyint|tinyint
 cast.sql.out#105.0 match smallint|smallint
 cast.sql.out#106.0 match int|int
@@ -209,9 +209,9 @@ cast.sql.out#129.0 match decimal|decimal(10,0)
 cast.sql.out#130.0 match boolean|boolean
 cast.sql.out#131.0 match timestamp|timestamp
 cast.sql.out#132.0 match smallint|smallint
-cast.sql.out#133.0 match intervalsecond|interval second
+cast.sql.out#133.0 match interval second|interval second
 cast.sql.out#134.0 match decimal|decimal(10,4)
-cast.sql.out#135.0 match intervaldaytosecond|interval day to second
+cast.sql.out#135.0 match interval day to second|interval day to second
 cast.sql.out#136.0 match tinyint|tinyint
 cast.sql.out#137.0 match int|int
 cast.sql.out#139.0 match int|int
@@ -485,7 +485,7 @@ date.sql.out#54.0 match date|date
 date.sql.out#60.0 abstain unknown|date
 date.sql.out#61.0 abstain unknown|date
 date.sql.out#62.0 abstain unknown|date
-date.sql.out#63.0 coarse interval|interval day
+date.sql.out#63.0 match interval day|interval day
 date.sql.out#64.0 abstain unknown|interval day
 date.sql.out#65.0 abstain unknown|interval day
 date.sql.out#66.0 abstain unknown|interval day
@@ -604,7 +604,7 @@ datetime-legacy.sql.out#54.0 match date|date
 datetime-legacy.sql.out#60.0 abstain unknown|date
 datetime-legacy.sql.out#61.0 abstain unknown|date
 datetime-legacy.sql.out#62.0 abstain unknown|date
-datetime-legacy.sql.out#63.0 coarse interval|interval day
+datetime-legacy.sql.out#63.0 match interval day|interval day
 datetime-legacy.sql.out#64.0 abstain unknown|interval day
 datetime-legacy.sql.out#65.0 abstain unknown|interval day
 datetime-legacy.sql.out#66.0 abstain unknown|interval day
@@ -710,9 +710,9 @@ datetime-legacy.sql.out#198.0 match timestamp|timestamp
 datetime-legacy.sql.out#199.0 match timestamp|timestamp
 datetime-legacy.sql.out#201.0 match timestamp|timestamp
 datetime-legacy.sql.out#202.0 match timestamp|timestamp
-datetime-legacy.sql.out#203.0 coarse interval|interval day to second
-datetime-legacy.sql.out#204.0 coarse interval|interval day to second
-datetime-legacy.sql.out#205.0 coarse interval|interval day to second
+datetime-legacy.sql.out#203.0 match interval day to second|interval day to second
+datetime-legacy.sql.out#204.0 match interval day to second|interval day to second
+datetime-legacy.sql.out#205.0 match interval day to second|interval day to second
 datetime-legacy.sql.out#206.0 abstain unknown|interval day to second
 datetime-legacy.sql.out#207.0 abstain unknown|interval day to second
 datetime-legacy.sql.out#208.0 abstain unknown|interval day to second
@@ -830,11 +830,11 @@ decimalArithmeticOperations.sql.out#50.0 abstain unknown|decimal(38,5)
 decimalArithmeticOperations.sql.out#51.0 abstain unknown|decimal(38,6)
 decimalArithmeticOperations.sql.out#53.0 abstain unknown|decimal(38,7)
 double-quoted-identifiers-enabled.sql.out#21.0 match string|string
-double-quoted-identifiers-enabled.sql.out#24.0 coarse interval|interval year
+double-quoted-identifiers-enabled.sql.out#24.0 match interval year|interval year
 double-quoted-identifiers.sql.out#17.0 match string|string
-double-quoted-identifiers.sql.out#20.0 coarse interval|interval year
+double-quoted-identifiers.sql.out#20.0 match interval year|interval year
 double-quoted-identifiers.sql.out#21.0 match string|string
-double-quoted-identifiers.sql.out#24.0 coarse interval|interval year
+double-quoted-identifiers.sql.out#24.0 match interval year|interval year
 execute-immediate.sql.out#29.0 abstain unknown|string
 execute-immediate.sql.out#32.0 abstain unknown|int
 execute-immediate.sql.out#34.0 abstain unknown|int
@@ -1188,48 +1188,48 @@ ilike.sql.out#23.0 match boolean|boolean
 ilike.sql.out#24.0 match boolean|boolean
 ilike.sql.out#25.0 match boolean|boolean
 inline-table.sql.out#24.0 match int|int
-interval.sql.out#0.0 coarse interval|interval day to second
-interval.sql.out#2.0 coarse interval|interval year to month
-interval.sql.out#3.0 coarse interval|interval day to second
-interval.sql.out#4.0 coarse interval|interval day to second
-interval.sql.out#9.0 coarse interval|interval day to second
-interval.sql.out#10.0 coarse interval|interval day to second
-interval.sql.out#11.0 coarse interval|interval year to month
-interval.sql.out#12.0 coarse interval|interval year to month
-interval.sql.out#17.0 coarse interval|interval day to second
-interval.sql.out#18.0 coarse interval|interval year to month
-interval.sql.out#24.0 abstain unknown|interval day to second
-interval.sql.out#25.0 abstain unknown|interval day to second
-interval.sql.out#26.0 abstain unknown|interval day to second
-interval.sql.out#28.0 abstain unknown|interval year to month
-interval.sql.out#29.0 abstain unknown|interval year to month
-interval.sql.out#30.0 abstain unknown|interval year to month
-interval.sql.out#36.0 coarse interval|interval year to month
-interval.sql.out#37.0 coarse interval|interval day to second
-interval.sql.out#39.0 coarse interval|interval year to month
-interval.sql.out#40.0 coarse interval|interval day to second
-interval.sql.out#42.0 coarse interval|interval year to month
-interval.sql.out#43.0 coarse interval|interval day to second
-interval.sql.out#45.0 coarse interval|interval year to month
-interval.sql.out#46.0 coarse interval|interval day to second
-interval.sql.out#47.0 coarse interval|interval year to month
-interval.sql.out#48.0 coarse interval|interval year to month
-interval.sql.out#49.0 coarse interval|interval year to month
-interval.sql.out#50.0 coarse interval|interval day to second
-interval.sql.out#51.0 coarse interval|interval day to second
-interval.sql.out#52.0 coarse interval|interval day to second
-interval.sql.out#53.0 coarse interval|interval year
-interval.sql.out#54.0 coarse interval|interval year
-interval.sql.out#55.0 coarse interval|interval month
-interval.sql.out#56.0 coarse interval|interval month
-interval.sql.out#57.0 coarse interval|interval day
-interval.sql.out#58.0 coarse interval|interval day
-interval.sql.out#59.0 coarse interval|interval hour
-interval.sql.out#60.0 coarse interval|interval hour
-interval.sql.out#61.0 coarse interval|interval minute
-interval.sql.out#62.0 coarse interval|interval minute
-interval.sql.out#63.0 coarse interval|interval second
-interval.sql.out#64.0 coarse interval|interval second
+interval.sql.out#0.0 match interval day to second|interval day to second
+interval.sql.out#2.0 match interval year to month|interval year to month
+interval.sql.out#3.0 match interval day to second|interval day to second
+interval.sql.out#4.0 match interval day to second|interval day to second
+interval.sql.out#9.0 match interval day to second|interval day to second
+interval.sql.out#10.0 match interval day to second|interval day to second
+interval.sql.out#11.0 match interval year to month|interval year to month
+interval.sql.out#12.0 match interval year to month|interval year to month
+interval.sql.out#17.0 match interval day to second|interval day to second
+interval.sql.out#18.0 match interval year to month|interval year to month
+interval.sql.out#24.0 match interval day to second|interval day to second
+interval.sql.out#25.0 match interval day to second|interval day to second
+interval.sql.out#26.0 match interval day to second|interval day to second
+interval.sql.out#28.0 match interval year to month|interval year to month
+interval.sql.out#29.0 match interval year to month|interval year to month
+interval.sql.out#30.0 match interval year to month|interval year to month
+interval.sql.out#36.0 match interval year to month|interval year to month
+interval.sql.out#37.0 match interval day to second|interval day to second
+interval.sql.out#39.0 match interval year to month|interval year to month
+interval.sql.out#40.0 match interval day to second|interval day to second
+interval.sql.out#42.0 match interval year to month|interval year to month
+interval.sql.out#43.0 match interval day to second|interval day to second
+interval.sql.out#45.0 match interval year to month|interval year to month
+interval.sql.out#46.0 match interval day to second|interval day to second
+interval.sql.out#47.0 match interval year to month|interval year to month
+interval.sql.out#48.0 match interval year to month|interval year to month
+interval.sql.out#49.0 match interval year to month|interval year to month
+interval.sql.out#50.0 match interval day to second|interval day to second
+interval.sql.out#51.0 match interval day to second|interval day to second
+interval.sql.out#52.0 match interval day to second|interval day to second
+interval.sql.out#53.0 match interval year|interval year
+interval.sql.out#54.0 match interval year|interval year
+interval.sql.out#55.0 match interval month|interval month
+interval.sql.out#56.0 match interval month|interval month
+interval.sql.out#57.0 match interval day|interval day
+interval.sql.out#58.0 match interval day|interval day
+interval.sql.out#59.0 match interval hour|interval hour
+interval.sql.out#60.0 match interval hour|interval hour
+interval.sql.out#61.0 match interval minute|interval minute
+interval.sql.out#62.0 match interval minute|interval minute
+interval.sql.out#63.0 match interval second|interval second
+interval.sql.out#64.0 match interval second|interval second
 interval.sql.out#65.0 match interval|interval
 interval.sql.out#66.0 match interval|interval
 interval.sql.out#67.0 match interval|interval
@@ -1238,16 +1238,16 @@ interval.sql.out#69.0 match interval|interval
 interval.sql.out#70.0 match interval|interval
 interval.sql.out#71.0 match interval|interval
 interval.sql.out#72.0 match interval|interval
-interval.sql.out#74.0 coarse interval|interval day to second
-interval.sql.out#75.0 coarse interval|interval day to second
-interval.sql.out#76.0 coarse interval|interval day to second
-interval.sql.out#77.0 coarse interval|interval day to second
-interval.sql.out#78.0 coarse interval|interval day to second
-interval.sql.out#80.0 coarse interval|interval year to month
-interval.sql.out#81.0 coarse interval|interval year to month
-interval.sql.out#82.0 coarse interval|interval year to month
-interval.sql.out#83.0 coarse interval|interval year to month
-interval.sql.out#85.0 coarse interval|interval year to month
+interval.sql.out#74.0 match interval day to second|interval day to second
+interval.sql.out#75.0 match interval day to second|interval day to second
+interval.sql.out#76.0 match interval day to second|interval day to second
+interval.sql.out#77.0 match interval day to second|interval day to second
+interval.sql.out#78.0 match interval day to second|interval day to second
+interval.sql.out#80.0 match interval year to month|interval year to month
+interval.sql.out#81.0 match interval year to month|interval year to month
+interval.sql.out#82.0 match interval year to month|interval year to month
+interval.sql.out#83.0 match interval year to month|interval year to month
+interval.sql.out#85.0 match interval year to month|interval year to month
 interval.sql.out#87.0 match interval|interval
 interval.sql.out#88.0 match interval|interval
 interval.sql.out#89.0 match interval|interval
@@ -1255,43 +1255,43 @@ interval.sql.out#90.0 match interval|interval
 interval.sql.out#91.0 match interval|interval
 interval.sql.out#92.0 match interval|interval
 interval.sql.out#93.0 match interval|interval
-interval.sql.out#94.0 coarse interval|interval second
-interval.sql.out#94.1 coarse interval|interval second
-interval.sql.out#96.0 coarse interval|interval year to month
-interval.sql.out#97.0 coarse interval|interval day to second
-interval.sql.out#98.0 coarse interval|interval day to second
-interval.sql.out#100.0 coarse interval|interval year to month
-interval.sql.out#101.0 coarse interval|interval day to second
-interval.sql.out#102.0 coarse interval|interval year to month
-interval.sql.out#103.0 coarse interval|interval day to second
-interval.sql.out#104.0 coarse interval|interval day to second
-interval.sql.out#105.0 coarse interval|interval year to month
-interval.sql.out#106.0 coarse interval|interval day to hour
-interval.sql.out#107.0 coarse interval|interval day to minute
-interval.sql.out#108.0 coarse interval|interval day to second
-interval.sql.out#109.0 coarse interval|interval hour to minute
-interval.sql.out#110.0 coarse interval|interval hour to second
-interval.sql.out#111.0 coarse interval|interval minute to second
-interval.sql.out#112.0 coarse interval|interval minute to second
-interval.sql.out#113.0 coarse interval|interval day
-interval.sql.out#114.0 coarse interval|interval day
-interval.sql.out#122.0 coarse map<int,interval>|map<int,interval day>
-interval.sql.out#123.0 coarse map<int,interval>|map<int,interval day>
-interval.sql.out#124.0 coarse map<int,interval>|map<int,interval year to month>
-interval.sql.out#125.0 coarse map<int,interval>|map<int,interval month>
-interval.sql.out#126.0 coarse map<int,interval>|map<int,interval day>
-interval.sql.out#127.0 coarse map<int,interval>|map<int,interval second>
-interval.sql.out#128.0 coarse interval|interval year to month
-interval.sql.out#129.0 coarse interval|interval year to month
-interval.sql.out#130.0 coarse interval|interval day to second
-interval.sql.out#131.0 coarse interval|interval day to second
-interval.sql.out#148.0 coarse interval|interval year to month
-interval.sql.out#150.0 coarse interval|interval year to month
-interval.sql.out#151.0 coarse interval|interval year to month
-interval.sql.out#152.0 coarse interval|interval year to month
-interval.sql.out#152.1 coarse interval|interval year to month
-interval.sql.out#152.2 coarse interval|interval day to second
-interval.sql.out#152.3 coarse interval|interval day to second
+interval.sql.out#94.0 match interval second|interval second
+interval.sql.out#94.1 match interval second|interval second
+interval.sql.out#96.0 match interval year to month|interval year to month
+interval.sql.out#97.0 match interval day to second|interval day to second
+interval.sql.out#98.0 match interval day to second|interval day to second
+interval.sql.out#100.0 match interval year to month|interval year to month
+interval.sql.out#101.0 match interval day to second|interval day to second
+interval.sql.out#102.0 match interval year to month|interval year to month
+interval.sql.out#103.0 match interval day to second|interval day to second
+interval.sql.out#104.0 match interval day to second|interval day to second
+interval.sql.out#105.0 match interval year to month|interval year to month
+interval.sql.out#106.0 match interval day to hour|interval day to hour
+interval.sql.out#107.0 match interval day to minute|interval day to minute
+interval.sql.out#108.0 match interval day to second|interval day to second
+interval.sql.out#109.0 match interval hour to minute|interval hour to minute
+interval.sql.out#110.0 match interval hour to second|interval hour to second
+interval.sql.out#111.0 match interval minute to second|interval minute to second
+interval.sql.out#112.0 match interval minute to second|interval minute to second
+interval.sql.out#113.0 match interval day|interval day
+interval.sql.out#114.0 match interval day|interval day
+interval.sql.out#122.0 match map<int,interval day>|map<int,interval day>
+interval.sql.out#123.0 match map<int,interval day>|map<int,interval day>
+interval.sql.out#124.0 match map<int,interval year to month>|map<int,interval year to month>
+interval.sql.out#125.0 match map<int,interval month>|map<int,interval month>
+interval.sql.out#126.0 match map<int,interval day>|map<int,interval day>
+interval.sql.out#127.0 match map<int,interval second>|map<int,interval second>
+interval.sql.out#128.0 match interval year to month|interval year to month
+interval.sql.out#129.0 match interval year to month|interval year to month
+interval.sql.out#130.0 match interval day to second|interval day to second
+interval.sql.out#131.0 match interval day to second|interval day to second
+interval.sql.out#148.0 match interval year to month|interval year to month
+interval.sql.out#150.0 match interval year to month|interval year to month
+interval.sql.out#151.0 match interval year to month|interval year to month
+interval.sql.out#152.0 match interval year to month|interval year to month
+interval.sql.out#152.1 match interval year to month|interval year to month
+interval.sql.out#152.2 match interval day to second|interval day to second
+interval.sql.out#152.3 match interval day to second|interval day to second
 interval.sql.out#154.0 abstain unknown|interval year
 interval.sql.out#154.1 abstain unknown|interval year
 interval.sql.out#154.2 abstain unknown|interval hour
@@ -1300,13 +1300,13 @@ interval.sql.out#154.4 abstain unknown|interval year
 interval.sql.out#154.5 abstain unknown|interval year
 interval.sql.out#154.6 abstain unknown|interval hour
 interval.sql.out#154.7 abstain unknown|interval hour
-interval.sql.out#172.0 coarse interval|interval day
-interval.sql.out#173.0 coarse interval|interval day
-interval.sql.out#174.0 coarse interval|interval day
-interval.sql.out#175.0 coarse interval|interval day
-interval.sql.out#176.0 coarse interval|interval day
-interval.sql.out#177.0 coarse interval|interval year to month
-interval.sql.out#179.0 coarse interval|interval day to second
+interval.sql.out#172.0 match interval day|interval day
+interval.sql.out#173.0 match interval day|interval day
+interval.sql.out#174.0 match interval day|interval day
+interval.sql.out#175.0 match interval day|interval day
+interval.sql.out#176.0 match interval day|interval day
+interval.sql.out#177.0 match interval year to month|interval year to month
+interval.sql.out#179.0 match interval day to second|interval day to second
 interval.sql.out#189.0 match struct<a:int,b:interval>|struct<a:int,b:interval>
 interval.sql.out#189.1 match struct<a:int,b:interval day>|struct<a:int,b:interval day>
 interval.sql.out#189.2 match string|string
@@ -1327,45 +1327,45 @@ interval.sql.out#192.0 match struct<a:interval year>|struct<a:interval year>
 interval.sql.out#192.1 match string|string
 interval.sql.out#192.2 match string|string
 interval.sql.out#192.3 match struct<a:interval year to month>|struct<a:interval year to month>
-interval.sql.out#202.0 coarse interval|interval day
-interval.sql.out#203.0 coarse interval|interval year to month
-interval.sql.out#204.0 coarse interval|interval year to month
-interval.sql.out#209.0 coarse interval|interval day to second
-interval.sql.out#210.0 coarse interval|interval day to second
-interval.sql.out#215.0 coarse interval|interval day to hour
-interval.sql.out#216.0 coarse interval|interval day to minute
-interval.sql.out#217.0 coarse interval|interval day to second
-interval.sql.out#218.0 coarse interval|interval hour to minute
-interval.sql.out#219.0 coarse interval|interval hour to second
-interval.sql.out#220.0 coarse interval|interval minute to second
-interval.sql.out#221.0 coarse interval|interval day to hour
-interval.sql.out#222.0 coarse interval|interval day to minute
-interval.sql.out#223.0 coarse interval|interval day to second
-interval.sql.out#224.0 coarse interval|interval hour to minute
-interval.sql.out#225.0 coarse interval|interval hour to second
-interval.sql.out#226.0 coarse interval|interval minute to second
-interval.sql.out#233.0 coarse interval|interval year
-interval.sql.out#234.0 coarse interval|interval year
-interval.sql.out#235.0 coarse interval|interval month
-interval.sql.out#236.0 coarse interval|interval month
-interval.sql.out#237.0 coarse interval|interval day
-interval.sql.out#238.0 coarse interval|interval day
-interval.sql.out#239.0 coarse interval|interval hour
-interval.sql.out#240.0 coarse interval|interval hour
-interval.sql.out#241.0 coarse interval|interval minute
-interval.sql.out#242.0 coarse interval|interval minute
-interval.sql.out#243.0 coarse interval|interval second
-interval.sql.out#244.0 coarse interval|interval second
+interval.sql.out#202.0 match interval day|interval day
+interval.sql.out#203.0 match interval year to month|interval year to month
+interval.sql.out#204.0 match interval year to month|interval year to month
+interval.sql.out#209.0 match interval day to second|interval day to second
+interval.sql.out#210.0 match interval day to second|interval day to second
+interval.sql.out#215.0 match interval day to hour|interval day to hour
+interval.sql.out#216.0 match interval day to minute|interval day to minute
+interval.sql.out#217.0 match interval day to second|interval day to second
+interval.sql.out#218.0 match interval hour to minute|interval hour to minute
+interval.sql.out#219.0 match interval hour to second|interval hour to second
+interval.sql.out#220.0 match interval minute to second|interval minute to second
+interval.sql.out#221.0 match interval day to hour|interval day to hour
+interval.sql.out#222.0 match interval day to minute|interval day to minute
+interval.sql.out#223.0 match interval day to second|interval day to second
+interval.sql.out#224.0 match interval hour to minute|interval hour to minute
+interval.sql.out#225.0 match interval hour to second|interval hour to second
+interval.sql.out#226.0 match interval minute to second|interval minute to second
+interval.sql.out#233.0 match interval year|interval year
+interval.sql.out#234.0 match interval year|interval year
+interval.sql.out#235.0 match interval month|interval month
+interval.sql.out#236.0 match interval month|interval month
+interval.sql.out#237.0 match interval day|interval day
+interval.sql.out#238.0 match interval day|interval day
+interval.sql.out#239.0 match interval hour|interval hour
+interval.sql.out#240.0 match interval hour|interval hour
+interval.sql.out#241.0 match interval minute|interval minute
+interval.sql.out#242.0 match interval minute|interval minute
+interval.sql.out#243.0 match interval second|interval second
+interval.sql.out#244.0 match interval second|interval second
 interval.sql.out#245.0 match boolean|boolean
 interval.sql.out#246.0 match boolean|boolean
 interval.sql.out#247.0 match boolean|boolean
 interval.sql.out#248.0 match boolean|boolean
-interval.sql.out#262.0 coarse array<interval>|array<interval year to month>
-interval.sql.out#263.0 coarse array<interval>|array<interval day to minute>
-interval.sql.out#265.0 coarse interval|interval year to month
-interval.sql.out#266.0 coarse interval|interval day to minute
-interval.sql.out#268.0 coarse interval|interval year
-interval.sql.out#269.0 coarse interval|interval day to second
+interval.sql.out#262.0 match array<interval year to month>|array<interval year to month>
+interval.sql.out#263.0 match array<interval day to minute>|array<interval day to minute>
+interval.sql.out#265.0 match interval year to month|interval year to month
+interval.sql.out#266.0 match interval day to minute|interval day to minute
+interval.sql.out#268.0 match interval year|interval year
+interval.sql.out#269.0 match interval day to second|interval day to second
 interval.sql.out#270.0 match bigint|bigint
 interval.sql.out#271.0 match bigint|bigint
 interval.sql.out#272.0 match bigint|bigint
@@ -1593,7 +1593,7 @@ literals.sql.out#43.5 match double|double
 literals.sql.out#43.6 match double|double
 literals.sql.out#43.7 match double|double
 literals.sql.out#43.8 match double|double
-literals.sql.out#46.0 coarse interval|interval day
+literals.sql.out#46.0 match interval day|interval day
 literals.sql.out#54.0 match int|int
 literals.sql.out#54.1 match decimal|decimal(1,1)
 literals.sql.out#55.0 match string|string
@@ -1838,8 +1838,8 @@ nonansi/cast.sql.out#34.0 match string|string
 nonansi/cast.sql.out#35.0 match string|string
 nonansi/cast.sql.out#36.0 match string|string
 nonansi/cast.sql.out#39.0 match interval|interval
-nonansi/cast.sql.out#40.0 match intervalyeartomonth|interval year to month
-nonansi/cast.sql.out#41.0 match intervaldaytosecond|interval day to second
+nonansi/cast.sql.out#40.0 match interval year to month|interval year to month
+nonansi/cast.sql.out#41.0 match interval day to second|interval day to second
 nonansi/cast.sql.out#43.0 match string|string
 nonansi/cast.sql.out#44.0 match string|string
 nonansi/cast.sql.out#45.0 match tinyint|tinyint
@@ -1875,13 +1875,13 @@ nonansi/cast.sql.out#74.0 match int|int
 nonansi/cast.sql.out#75.0 match tinyint|tinyint
 nonansi/cast.sql.out#77.0 match int|int
 nonansi/cast.sql.out#78.0 match bigint|bigint
-nonansi/cast.sql.out#81.0 match intervalyear|interval year
-nonansi/cast.sql.out#82.0 match intervalyeartomonth|interval year to month
-nonansi/cast.sql.out#84.0 match intervalmonth|interval month
-nonansi/cast.sql.out#85.0 match intervalsecond|interval second
-nonansi/cast.sql.out#86.0 match intervalhourtosecond|interval hour to second
-nonansi/cast.sql.out#88.0 match intervaldaytosecond|interval day to second
-nonansi/cast.sql.out#89.0 match intervalday|interval day
+nonansi/cast.sql.out#81.0 match interval year|interval year
+nonansi/cast.sql.out#82.0 match interval year to month|interval year to month
+nonansi/cast.sql.out#84.0 match interval month|interval month
+nonansi/cast.sql.out#85.0 match interval second|interval second
+nonansi/cast.sql.out#86.0 match interval hour to second|interval hour to second
+nonansi/cast.sql.out#88.0 match interval day to second|interval day to second
+nonansi/cast.sql.out#89.0 match interval day|interval day
 nonansi/cast.sql.out#92.0 match decimal|decimal(10,0)
 nonansi/cast.sql.out#93.0 match decimal|decimal(10,6)
 nonansi/cast.sql.out#94.0 match decimal|decimal(10,4)
@@ -1889,10 +1889,10 @@ nonansi/cast.sql.out#95.0 match decimal|decimal(8,1)
 nonansi/cast.sql.out#96.0 match decimal|decimal(4,2)
 nonansi/cast.sql.out#97.0 match decimal|decimal(4,2)
 nonansi/cast.sql.out#98.0 match decimal|decimal(5,2)
-nonansi/cast.sql.out#100.0 match intervaldaytosecond|interval day to second
-nonansi/cast.sql.out#101.0 match intervalhourtominute|interval hour to minute
-nonansi/cast.sql.out#102.0 match intervalyeartomonth|interval year to month
-nonansi/cast.sql.out#103.0 match intervalmonth|interval month
+nonansi/cast.sql.out#100.0 match interval day to second|interval day to second
+nonansi/cast.sql.out#101.0 match interval hour to minute|interval hour to minute
+nonansi/cast.sql.out#102.0 match interval year to month|interval year to month
+nonansi/cast.sql.out#103.0 match interval month|interval month
 nonansi/cast.sql.out#104.0 match tinyint|tinyint
 nonansi/cast.sql.out#105.0 match smallint|smallint
 nonansi/cast.sql.out#106.0 match int|int
@@ -1922,9 +1922,9 @@ nonansi/cast.sql.out#129.0 match decimal|decimal(10,0)
 nonansi/cast.sql.out#130.0 match boolean|boolean
 nonansi/cast.sql.out#131.0 match timestamp|timestamp
 nonansi/cast.sql.out#132.0 match smallint|smallint
-nonansi/cast.sql.out#133.0 match intervalsecond|interval second
+nonansi/cast.sql.out#133.0 match interval second|interval second
 nonansi/cast.sql.out#134.0 match decimal|decimal(10,4)
-nonansi/cast.sql.out#135.0 match intervaldaytosecond|interval day to second
+nonansi/cast.sql.out#135.0 match interval day to second|interval day to second
 nonansi/cast.sql.out#136.0 match tinyint|tinyint
 nonansi/cast.sql.out#137.0 match int|int
 nonansi/cast.sql.out#138.0 match tinyint|tinyint
@@ -2042,7 +2042,7 @@ nonansi/date.sql.out#54.0 match date|date
 nonansi/date.sql.out#60.0 abstain unknown|date
 nonansi/date.sql.out#61.0 abstain unknown|date
 nonansi/date.sql.out#62.0 abstain unknown|date
-nonansi/date.sql.out#63.0 coarse interval|interval day
+nonansi/date.sql.out#63.0 match interval day|interval day
 nonansi/date.sql.out#65.0 abstain unknown|interval day
 nonansi/date.sql.out#66.0 abstain unknown|interval day
 nonansi/date.sql.out#67.0 abstain unknown|interval day
@@ -2150,9 +2150,9 @@ nonansi/decimalArithmeticOperations.sql.out#51.0 abstain unknown|decimal(38,6)
 nonansi/decimalArithmeticOperations.sql.out#52.0 abstain unknown|decimal(38,6)
 nonansi/decimalArithmeticOperations.sql.out#53.0 abstain unknown|decimal(38,7)
 nonansi/double-quoted-identifiers.sql.out#17.0 match string|string
-nonansi/double-quoted-identifiers.sql.out#20.0 coarse interval|interval year
+nonansi/double-quoted-identifiers.sql.out#20.0 match interval year|interval year
 nonansi/double-quoted-identifiers.sql.out#21.0 match string|string
-nonansi/double-quoted-identifiers.sql.out#24.0 coarse interval|interval year
+nonansi/double-quoted-identifiers.sql.out#24.0 match interval year|interval year
 nonansi/higher-order-functions.sql.out#8.0 match array<int>|array<int>
 nonansi/higher-order-functions.sql.out#10.0 match array<int>|array<int>
 nonansi/higher-order-functions.sql.out#15.0 match int|int
@@ -2182,54 +2182,54 @@ nonansi/higher-order-functions.sql.out#79.0 abstain unknown|array<int>
 nonansi/higher-order-functions.sql.out#80.0 abstain unknown|array<map<string,boolean>>
 nonansi/higher-order-functions.sql.out#81.0 abstain unknown|array<struct<col1:string,col2:int,col3:string,col4:int>>
 nonansi/higher-order-functions.sql.out#82.0 abstain unknown|array<array<string>>
-nonansi/interval.sql.out#0.0 coarse interval|interval day to second
-nonansi/interval.sql.out#2.0 coarse interval|interval year to month
-nonansi/interval.sql.out#3.0 coarse interval|interval day to second
-nonansi/interval.sql.out#4.0 coarse interval|interval day to second
-nonansi/interval.sql.out#9.0 coarse interval|interval day to second
-nonansi/interval.sql.out#10.0 coarse interval|interval day to second
-nonansi/interval.sql.out#11.0 coarse interval|interval year to month
-nonansi/interval.sql.out#12.0 coarse interval|interval year to month
-nonansi/interval.sql.out#13.0 coarse interval|interval day to second
-nonansi/interval.sql.out#14.0 coarse interval|interval day to second
-nonansi/interval.sql.out#15.0 coarse interval|interval year to month
-nonansi/interval.sql.out#16.0 coarse interval|interval year to month
-nonansi/interval.sql.out#17.0 coarse interval|interval day to second
-nonansi/interval.sql.out#18.0 coarse interval|interval year to month
-nonansi/interval.sql.out#19.0 coarse interval|interval day to second
-nonansi/interval.sql.out#20.0 coarse interval|interval year to month
-nonansi/interval.sql.out#24.0 abstain unknown|interval day to second
-nonansi/interval.sql.out#25.0 abstain unknown|interval day to second
-nonansi/interval.sql.out#26.0 abstain unknown|interval day to second
-nonansi/interval.sql.out#28.0 abstain unknown|interval year to month
-nonansi/interval.sql.out#29.0 abstain unknown|interval year to month
-nonansi/interval.sql.out#30.0 abstain unknown|interval year to month
-nonansi/interval.sql.out#36.0 coarse interval|interval year to month
-nonansi/interval.sql.out#37.0 coarse interval|interval day to second
-nonansi/interval.sql.out#39.0 coarse interval|interval year to month
-nonansi/interval.sql.out#40.0 coarse interval|interval day to second
-nonansi/interval.sql.out#42.0 coarse interval|interval year to month
-nonansi/interval.sql.out#43.0 coarse interval|interval day to second
-nonansi/interval.sql.out#45.0 coarse interval|interval year to month
-nonansi/interval.sql.out#46.0 coarse interval|interval day to second
-nonansi/interval.sql.out#47.0 coarse interval|interval year to month
-nonansi/interval.sql.out#48.0 coarse interval|interval year to month
-nonansi/interval.sql.out#49.0 coarse interval|interval year to month
-nonansi/interval.sql.out#50.0 coarse interval|interval day to second
-nonansi/interval.sql.out#51.0 coarse interval|interval day to second
-nonansi/interval.sql.out#52.0 coarse interval|interval day to second
-nonansi/interval.sql.out#53.0 coarse interval|interval year
-nonansi/interval.sql.out#54.0 coarse interval|interval year
-nonansi/interval.sql.out#55.0 coarse interval|interval month
-nonansi/interval.sql.out#56.0 coarse interval|interval month
-nonansi/interval.sql.out#57.0 coarse interval|interval day
-nonansi/interval.sql.out#58.0 coarse interval|interval day
-nonansi/interval.sql.out#59.0 coarse interval|interval hour
-nonansi/interval.sql.out#60.0 coarse interval|interval hour
-nonansi/interval.sql.out#61.0 coarse interval|interval minute
-nonansi/interval.sql.out#62.0 coarse interval|interval minute
-nonansi/interval.sql.out#63.0 coarse interval|interval second
-nonansi/interval.sql.out#64.0 coarse interval|interval second
+nonansi/interval.sql.out#0.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#2.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#3.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#4.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#9.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#10.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#11.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#12.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#13.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#14.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#15.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#16.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#17.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#18.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#19.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#20.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#24.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#25.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#26.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#28.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#29.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#30.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#36.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#37.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#39.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#40.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#42.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#43.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#45.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#46.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#47.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#48.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#49.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#50.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#51.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#52.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#53.0 match interval year|interval year
+nonansi/interval.sql.out#54.0 match interval year|interval year
+nonansi/interval.sql.out#55.0 match interval month|interval month
+nonansi/interval.sql.out#56.0 match interval month|interval month
+nonansi/interval.sql.out#57.0 match interval day|interval day
+nonansi/interval.sql.out#58.0 match interval day|interval day
+nonansi/interval.sql.out#59.0 match interval hour|interval hour
+nonansi/interval.sql.out#60.0 match interval hour|interval hour
+nonansi/interval.sql.out#61.0 match interval minute|interval minute
+nonansi/interval.sql.out#62.0 match interval minute|interval minute
+nonansi/interval.sql.out#63.0 match interval second|interval second
+nonansi/interval.sql.out#64.0 match interval second|interval second
 nonansi/interval.sql.out#65.0 match interval|interval
 nonansi/interval.sql.out#66.0 match interval|interval
 nonansi/interval.sql.out#67.0 match interval|interval
@@ -2239,16 +2239,16 @@ nonansi/interval.sql.out#70.0 match interval|interval
 nonansi/interval.sql.out#71.0 match interval|interval
 nonansi/interval.sql.out#72.0 match interval|interval
 nonansi/interval.sql.out#73.0 match interval|interval
-nonansi/interval.sql.out#74.0 coarse interval|interval day to second
-nonansi/interval.sql.out#75.0 coarse interval|interval day to second
-nonansi/interval.sql.out#76.0 coarse interval|interval day to second
-nonansi/interval.sql.out#77.0 coarse interval|interval day to second
-nonansi/interval.sql.out#78.0 coarse interval|interval day to second
-nonansi/interval.sql.out#80.0 coarse interval|interval year to month
-nonansi/interval.sql.out#81.0 coarse interval|interval year to month
-nonansi/interval.sql.out#82.0 coarse interval|interval year to month
-nonansi/interval.sql.out#83.0 coarse interval|interval year to month
-nonansi/interval.sql.out#85.0 coarse interval|interval year to month
+nonansi/interval.sql.out#74.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#75.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#76.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#77.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#78.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#80.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#81.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#82.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#83.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#85.0 match interval year to month|interval year to month
 nonansi/interval.sql.out#87.0 match interval|interval
 nonansi/interval.sql.out#88.0 match interval|interval
 nonansi/interval.sql.out#89.0 match interval|interval
@@ -2256,43 +2256,43 @@ nonansi/interval.sql.out#90.0 match interval|interval
 nonansi/interval.sql.out#91.0 match interval|interval
 nonansi/interval.sql.out#92.0 match interval|interval
 nonansi/interval.sql.out#93.0 match interval|interval
-nonansi/interval.sql.out#94.0 coarse interval|interval second
-nonansi/interval.sql.out#94.1 coarse interval|interval second
-nonansi/interval.sql.out#96.0 coarse interval|interval year to month
-nonansi/interval.sql.out#97.0 coarse interval|interval day to second
-nonansi/interval.sql.out#98.0 coarse interval|interval day to second
-nonansi/interval.sql.out#100.0 coarse interval|interval year to month
-nonansi/interval.sql.out#101.0 coarse interval|interval day to second
-nonansi/interval.sql.out#102.0 coarse interval|interval year to month
-nonansi/interval.sql.out#103.0 coarse interval|interval day to second
-nonansi/interval.sql.out#104.0 coarse interval|interval day to second
-nonansi/interval.sql.out#105.0 coarse interval|interval year to month
-nonansi/interval.sql.out#106.0 coarse interval|interval day to hour
-nonansi/interval.sql.out#107.0 coarse interval|interval day to minute
-nonansi/interval.sql.out#108.0 coarse interval|interval day to second
-nonansi/interval.sql.out#109.0 coarse interval|interval hour to minute
-nonansi/interval.sql.out#110.0 coarse interval|interval hour to second
-nonansi/interval.sql.out#111.0 coarse interval|interval minute to second
-nonansi/interval.sql.out#112.0 coarse interval|interval minute to second
-nonansi/interval.sql.out#113.0 coarse interval|interval day
-nonansi/interval.sql.out#114.0 coarse interval|interval day
-nonansi/interval.sql.out#122.0 coarse map<int,interval>|map<int,interval day>
-nonansi/interval.sql.out#123.0 coarse map<int,interval>|map<int,interval day>
-nonansi/interval.sql.out#124.0 coarse map<int,interval>|map<int,interval year to month>
-nonansi/interval.sql.out#125.0 coarse map<int,interval>|map<int,interval month>
-nonansi/interval.sql.out#126.0 coarse map<int,interval>|map<int,interval day>
-nonansi/interval.sql.out#127.0 coarse map<int,interval>|map<int,interval second>
-nonansi/interval.sql.out#128.0 coarse interval|interval year to month
-nonansi/interval.sql.out#129.0 coarse interval|interval year to month
-nonansi/interval.sql.out#130.0 coarse interval|interval day to second
-nonansi/interval.sql.out#131.0 coarse interval|interval day to second
-nonansi/interval.sql.out#148.0 coarse interval|interval year to month
-nonansi/interval.sql.out#150.0 coarse interval|interval year to month
-nonansi/interval.sql.out#151.0 coarse interval|interval year to month
-nonansi/interval.sql.out#152.0 coarse interval|interval year to month
-nonansi/interval.sql.out#152.1 coarse interval|interval year to month
-nonansi/interval.sql.out#152.2 coarse interval|interval day to second
-nonansi/interval.sql.out#152.3 coarse interval|interval day to second
+nonansi/interval.sql.out#94.0 match interval second|interval second
+nonansi/interval.sql.out#94.1 match interval second|interval second
+nonansi/interval.sql.out#96.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#97.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#98.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#100.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#101.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#102.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#103.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#104.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#105.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#106.0 match interval day to hour|interval day to hour
+nonansi/interval.sql.out#107.0 match interval day to minute|interval day to minute
+nonansi/interval.sql.out#108.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#109.0 match interval hour to minute|interval hour to minute
+nonansi/interval.sql.out#110.0 match interval hour to second|interval hour to second
+nonansi/interval.sql.out#111.0 match interval minute to second|interval minute to second
+nonansi/interval.sql.out#112.0 match interval minute to second|interval minute to second
+nonansi/interval.sql.out#113.0 match interval day|interval day
+nonansi/interval.sql.out#114.0 match interval day|interval day
+nonansi/interval.sql.out#122.0 match map<int,interval day>|map<int,interval day>
+nonansi/interval.sql.out#123.0 match map<int,interval day>|map<int,interval day>
+nonansi/interval.sql.out#124.0 match map<int,interval year to month>|map<int,interval year to month>
+nonansi/interval.sql.out#125.0 match map<int,interval month>|map<int,interval month>
+nonansi/interval.sql.out#126.0 match map<int,interval day>|map<int,interval day>
+nonansi/interval.sql.out#127.0 match map<int,interval second>|map<int,interval second>
+nonansi/interval.sql.out#128.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#129.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#130.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#131.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#148.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#150.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#151.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#152.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#152.1 match interval year to month|interval year to month
+nonansi/interval.sql.out#152.2 match interval day to second|interval day to second
+nonansi/interval.sql.out#152.3 match interval day to second|interval day to second
 nonansi/interval.sql.out#154.0 abstain unknown|interval year
 nonansi/interval.sql.out#154.1 abstain unknown|interval year
 nonansi/interval.sql.out#154.2 abstain unknown|interval hour
@@ -2303,13 +2303,13 @@ nonansi/interval.sql.out#154.6 abstain unknown|interval hour
 nonansi/interval.sql.out#154.7 abstain unknown|interval hour
 nonansi/interval.sql.out#157.0 abstain unknown|string
 nonansi/interval.sql.out#158.0 abstain unknown|string
-nonansi/interval.sql.out#172.0 coarse interval|interval day
-nonansi/interval.sql.out#173.0 coarse interval|interval day
-nonansi/interval.sql.out#174.0 coarse interval|interval day
-nonansi/interval.sql.out#175.0 coarse interval|interval day
-nonansi/interval.sql.out#176.0 coarse interval|interval day
-nonansi/interval.sql.out#177.0 coarse interval|interval year to month
-nonansi/interval.sql.out#179.0 coarse interval|interval day to second
+nonansi/interval.sql.out#172.0 match interval day|interval day
+nonansi/interval.sql.out#173.0 match interval day|interval day
+nonansi/interval.sql.out#174.0 match interval day|interval day
+nonansi/interval.sql.out#175.0 match interval day|interval day
+nonansi/interval.sql.out#176.0 match interval day|interval day
+nonansi/interval.sql.out#177.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#179.0 match interval day to second|interval day to second
 nonansi/interval.sql.out#189.0 match struct<a:int,b:interval>|struct<a:int,b:interval>
 nonansi/interval.sql.out#189.1 match struct<a:int,b:interval day>|struct<a:int,b:interval day>
 nonansi/interval.sql.out#189.2 match string|string
@@ -2330,45 +2330,45 @@ nonansi/interval.sql.out#192.0 match struct<a:interval year>|struct<a:interval y
 nonansi/interval.sql.out#192.1 match string|string
 nonansi/interval.sql.out#192.2 match string|string
 nonansi/interval.sql.out#192.3 match struct<a:interval year to month>|struct<a:interval year to month>
-nonansi/interval.sql.out#202.0 coarse interval|interval day
-nonansi/interval.sql.out#203.0 coarse interval|interval year to month
-nonansi/interval.sql.out#204.0 coarse interval|interval year to month
-nonansi/interval.sql.out#209.0 coarse interval|interval day to second
-nonansi/interval.sql.out#210.0 coarse interval|interval day to second
-nonansi/interval.sql.out#215.0 coarse interval|interval day to hour
-nonansi/interval.sql.out#216.0 coarse interval|interval day to minute
-nonansi/interval.sql.out#217.0 coarse interval|interval day to second
-nonansi/interval.sql.out#218.0 coarse interval|interval hour to minute
-nonansi/interval.sql.out#219.0 coarse interval|interval hour to second
-nonansi/interval.sql.out#220.0 coarse interval|interval minute to second
-nonansi/interval.sql.out#221.0 coarse interval|interval day to hour
-nonansi/interval.sql.out#222.0 coarse interval|interval day to minute
-nonansi/interval.sql.out#223.0 coarse interval|interval day to second
-nonansi/interval.sql.out#224.0 coarse interval|interval hour to minute
-nonansi/interval.sql.out#225.0 coarse interval|interval hour to second
-nonansi/interval.sql.out#226.0 coarse interval|interval minute to second
-nonansi/interval.sql.out#233.0 coarse interval|interval year
-nonansi/interval.sql.out#234.0 coarse interval|interval year
-nonansi/interval.sql.out#235.0 coarse interval|interval month
-nonansi/interval.sql.out#236.0 coarse interval|interval month
-nonansi/interval.sql.out#237.0 coarse interval|interval day
-nonansi/interval.sql.out#238.0 coarse interval|interval day
-nonansi/interval.sql.out#239.0 coarse interval|interval hour
-nonansi/interval.sql.out#240.0 coarse interval|interval hour
-nonansi/interval.sql.out#241.0 coarse interval|interval minute
-nonansi/interval.sql.out#242.0 coarse interval|interval minute
-nonansi/interval.sql.out#243.0 coarse interval|interval second
-nonansi/interval.sql.out#244.0 coarse interval|interval second
+nonansi/interval.sql.out#202.0 match interval day|interval day
+nonansi/interval.sql.out#203.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#204.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#209.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#210.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#215.0 match interval day to hour|interval day to hour
+nonansi/interval.sql.out#216.0 match interval day to minute|interval day to minute
+nonansi/interval.sql.out#217.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#218.0 match interval hour to minute|interval hour to minute
+nonansi/interval.sql.out#219.0 match interval hour to second|interval hour to second
+nonansi/interval.sql.out#220.0 match interval minute to second|interval minute to second
+nonansi/interval.sql.out#221.0 match interval day to hour|interval day to hour
+nonansi/interval.sql.out#222.0 match interval day to minute|interval day to minute
+nonansi/interval.sql.out#223.0 match interval day to second|interval day to second
+nonansi/interval.sql.out#224.0 match interval hour to minute|interval hour to minute
+nonansi/interval.sql.out#225.0 match interval hour to second|interval hour to second
+nonansi/interval.sql.out#226.0 match interval minute to second|interval minute to second
+nonansi/interval.sql.out#233.0 match interval year|interval year
+nonansi/interval.sql.out#234.0 match interval year|interval year
+nonansi/interval.sql.out#235.0 match interval month|interval month
+nonansi/interval.sql.out#236.0 match interval month|interval month
+nonansi/interval.sql.out#237.0 match interval day|interval day
+nonansi/interval.sql.out#238.0 match interval day|interval day
+nonansi/interval.sql.out#239.0 match interval hour|interval hour
+nonansi/interval.sql.out#240.0 match interval hour|interval hour
+nonansi/interval.sql.out#241.0 match interval minute|interval minute
+nonansi/interval.sql.out#242.0 match interval minute|interval minute
+nonansi/interval.sql.out#243.0 match interval second|interval second
+nonansi/interval.sql.out#244.0 match interval second|interval second
 nonansi/interval.sql.out#245.0 match boolean|boolean
 nonansi/interval.sql.out#246.0 match boolean|boolean
 nonansi/interval.sql.out#247.0 match boolean|boolean
 nonansi/interval.sql.out#248.0 match boolean|boolean
-nonansi/interval.sql.out#262.0 coarse array<interval>|array<interval year to month>
-nonansi/interval.sql.out#263.0 coarse array<interval>|array<interval day to minute>
-nonansi/interval.sql.out#265.0 coarse interval|interval year to month
-nonansi/interval.sql.out#266.0 coarse interval|interval day to minute
-nonansi/interval.sql.out#268.0 coarse interval|interval year
-nonansi/interval.sql.out#269.0 coarse interval|interval day to second
+nonansi/interval.sql.out#262.0 match array<interval year to month>|array<interval year to month>
+nonansi/interval.sql.out#263.0 match array<interval day to minute>|array<interval day to minute>
+nonansi/interval.sql.out#265.0 match interval year to month|interval year to month
+nonansi/interval.sql.out#266.0 match interval day to minute|interval day to minute
+nonansi/interval.sql.out#268.0 match interval year|interval year
+nonansi/interval.sql.out#269.0 match interval day to second|interval day to second
 nonansi/interval.sql.out#270.0 match bigint|bigint
 nonansi/interval.sql.out#271.0 match bigint|bigint
 nonansi/interval.sql.out#272.0 match bigint|bigint
@@ -2470,7 +2470,7 @@ nonansi/literals.sql.out#43.5 match double|double
 nonansi/literals.sql.out#43.6 match double|double
 nonansi/literals.sql.out#43.7 match double|double
 nonansi/literals.sql.out#43.8 match double|double
-nonansi/literals.sql.out#46.0 coarse interval|interval day
+nonansi/literals.sql.out#46.0 match interval day|interval day
 nonansi/literals.sql.out#54.0 match int|int
 nonansi/literals.sql.out#54.1 match decimal|decimal(1,1)
 nonansi/literals.sql.out#55.0 match string|string
@@ -2900,9 +2900,9 @@ nonansi/timestamp.sql.out#97.0 match timestamp|timestamp
 nonansi/timestamp.sql.out#98.0 match timestamp|timestamp
 nonansi/timestamp.sql.out#99.0 match timestamp|timestamp
 nonansi/timestamp.sql.out#100.0 match timestamp|timestamp
-nonansi/timestamp.sql.out#101.0 coarse interval|interval day to second
-nonansi/timestamp.sql.out#102.0 coarse interval|interval day to second
-nonansi/timestamp.sql.out#103.0 coarse interval|interval day to second
+nonansi/timestamp.sql.out#101.0 match interval day to second|interval day to second
+nonansi/timestamp.sql.out#102.0 match interval day to second|interval day to second
+nonansi/timestamp.sql.out#103.0 match interval day to second|interval day to second
 nonansi/timestamp.sql.out#106.0 abstain unknown|interval day to second
 nonansi/timestamp.sql.out#107.0 abstain unknown|interval day to second
 nonansi/timestamp.sql.out#113.0 abstain unknown|timestamp
@@ -2949,10 +2949,10 @@ nonansi/try_arithmetic.sql.out#17.0 abstain unknown|timestamp
 nonansi/try_arithmetic.sql.out#18.0 abstain unknown|timestamp_ntz
 nonansi/try_arithmetic.sql.out#19.0 abstain unknown|timestamp
 nonansi/try_arithmetic.sql.out#20.0 abstain unknown|timestamp_ntz
-nonansi/try_arithmetic.sql.out#21.0 coarse interval|interval year
-nonansi/try_arithmetic.sql.out#22.0 coarse interval|interval second
-nonansi/try_arithmetic.sql.out#24.0 coarse interval|interval month
-nonansi/try_arithmetic.sql.out#25.0 coarse interval|interval day
+nonansi/try_arithmetic.sql.out#21.0 match interval year|interval year
+nonansi/try_arithmetic.sql.out#22.0 match interval second|interval second
+nonansi/try_arithmetic.sql.out#24.0 match interval month|interval month
+nonansi/try_arithmetic.sql.out#25.0 match interval day|interval day
 nonansi/try_arithmetic.sql.out#26.0 match decimal|decimal(8,6)
 nonansi/try_arithmetic.sql.out#27.0 match double|double
 nonansi/try_arithmetic.sql.out#28.0 match double|double
@@ -2962,12 +2962,12 @@ nonansi/try_arithmetic.sql.out#31.0 match decimal|decimal(16,9)
 nonansi/try_arithmetic.sql.out#32.0 match decimal|decimal(12,11)
 nonansi/try_arithmetic.sql.out#33.0 match double|double
 nonansi/try_arithmetic.sql.out#34.0 match double|double
-nonansi/try_arithmetic.sql.out#35.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#36.0 coarse interval|interval day to second
-nonansi/try_arithmetic.sql.out#37.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#38.0 coarse interval|interval day to second
-nonansi/try_arithmetic.sql.out#39.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#40.0 coarse interval|interval day to second
+nonansi/try_arithmetic.sql.out#35.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#36.0 match interval day to second|interval day to second
+nonansi/try_arithmetic.sql.out#37.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#38.0 match interval day to second|interval day to second
+nonansi/try_arithmetic.sql.out#39.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#40.0 match interval day to second|interval day to second
 nonansi/try_arithmetic.sql.out#41.0 match int|int
 nonansi/try_arithmetic.sql.out#42.0 match int|int
 nonansi/try_arithmetic.sql.out#43.0 match decimal|decimal(11,0)
@@ -2979,10 +2979,10 @@ nonansi/try_arithmetic.sql.out#48.0 match int|int
 nonansi/try_arithmetic.sql.out#49.0 match bigint|bigint
 nonansi/try_arithmetic.sql.out#50.0 match decimal|decimal(9,6)
 nonansi/try_arithmetic.sql.out#51.0 match bigint|bigint
-nonansi/try_arithmetic.sql.out#52.0 coarse interval|interval year
-nonansi/try_arithmetic.sql.out#53.0 coarse interval|interval second
-nonansi/try_arithmetic.sql.out#54.0 coarse interval|interval month
-nonansi/try_arithmetic.sql.out#55.0 coarse interval|interval day
+nonansi/try_arithmetic.sql.out#52.0 match interval year|interval year
+nonansi/try_arithmetic.sql.out#53.0 match interval second|interval second
+nonansi/try_arithmetic.sql.out#54.0 match interval month|interval month
+nonansi/try_arithmetic.sql.out#55.0 match interval day|interval day
 nonansi/try_arithmetic.sql.out#56.0 match int|int
 nonansi/try_arithmetic.sql.out#57.0 match int|int
 nonansi/try_arithmetic.sql.out#58.0 match decimal|decimal(21,0)
@@ -2994,12 +2994,12 @@ nonansi/try_arithmetic.sql.out#63.0 match int|int
 nonansi/try_arithmetic.sql.out#64.0 match bigint|bigint
 nonansi/try_arithmetic.sql.out#65.0 match decimal|decimal(10,6)
 nonansi/try_arithmetic.sql.out#66.0 match bigint|bigint
-nonansi/try_arithmetic.sql.out#67.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#68.0 coarse interval|interval day to second
-nonansi/try_arithmetic.sql.out#69.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#70.0 coarse interval|interval day to second
-nonansi/try_arithmetic.sql.out#71.0 coarse interval|interval year to month
-nonansi/try_arithmetic.sql.out#72.0 coarse interval|interval day to second
+nonansi/try_arithmetic.sql.out#67.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#68.0 match interval day to second|interval day to second
+nonansi/try_arithmetic.sql.out#69.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#70.0 match interval day to second|interval day to second
+nonansi/try_arithmetic.sql.out#71.0 match interval year to month|interval year to month
+nonansi/try_arithmetic.sql.out#72.0 match interval day to second|interval day to second
 nonansi/try_datetime_functions.sql.out#0.0 abstain unknown|timestamp
 nonansi/try_datetime_functions.sql.out#0.1 abstain unknown|timestamp
 nonansi/try_datetime_functions.sql.out#0.2 abstain unknown|timestamp
@@ -3311,12 +3311,12 @@ postgreSQL/date.sql.out#42.0 match date|date
 postgreSQL/date.sql.out#43.0 match date|date
 postgreSQL/date.sql.out#44.0 match date|date
 postgreSQL/date.sql.out#45.0 match date|date
-postgreSQL/date.sql.out#48.0 match interval|interval
-postgreSQL/date.sql.out#49.0 match interval|interval
-postgreSQL/date.sql.out#50.0 match interval|interval
-postgreSQL/date.sql.out#51.0 match interval|interval
-postgreSQL/date.sql.out#52.0 match interval|interval
-postgreSQL/date.sql.out#53.0 match interval|interval
+postgreSQL/date.sql.out#48.0 match interval day|interval
+postgreSQL/date.sql.out#49.0 match interval day|interval
+postgreSQL/date.sql.out#50.0 match interval day|interval
+postgreSQL/date.sql.out#51.0 match interval day|interval
+postgreSQL/date.sql.out#52.0 match interval day|interval
+postgreSQL/date.sql.out#53.0 match interval day|interval
 postgreSQL/date.sql.out#54.0 match date|date
 postgreSQL/date.sql.out#55.0 match date|date
 postgreSQL/float4.sql.out#6.0 match float|float
@@ -3449,20 +3449,20 @@ postgreSQL/int8.sql.out#88.0 match double|double
 postgreSQL/int8.sql.out#88.1 match bigint|bigint
 postgreSQL/int8.sql.out#89.0 match decimal|decimal(38,18)
 postgreSQL/int8.sql.out#89.1 match bigint|bigint
-postgreSQL/interval.sql.out#0.0 match interval|interval
-postgreSQL/interval.sql.out#1.0 match interval|interval
-postgreSQL/interval.sql.out#2.0 match interval|interval
-postgreSQL/interval.sql.out#3.0 match interval|interval
-postgreSQL/interval.sql.out#4.0 match interval|interval
-postgreSQL/interval.sql.out#5.0 match interval|interval
-postgreSQL/interval.sql.out#6.0 match interval|interval
-postgreSQL/interval.sql.out#7.0 match interval|interval
-postgreSQL/interval.sql.out#8.0 match interval|interval
-postgreSQL/interval.sql.out#9.0 match interval|interval
-postgreSQL/interval.sql.out#10.0 match interval|interval
-postgreSQL/interval.sql.out#11.0 match interval|interval
-postgreSQL/interval.sql.out#14.0 match interval|interval
-postgreSQL/interval.sql.out#17.0 match interval|interval
+postgreSQL/interval.sql.out#0.0 match interval second|interval
+postgreSQL/interval.sql.out#1.0 match interval minute|interval
+postgreSQL/interval.sql.out#2.0 match interval hour|interval
+postgreSQL/interval.sql.out#3.0 match interval day|interval
+postgreSQL/interval.sql.out#4.0 match interval month|interval
+postgreSQL/interval.sql.out#5.0 match interval year|interval
+postgreSQL/interval.sql.out#6.0 match interval month|interval
+postgreSQL/interval.sql.out#7.0 match interval day|interval
+postgreSQL/interval.sql.out#8.0 match interval hour|interval
+postgreSQL/interval.sql.out#9.0 match interval minute|interval
+postgreSQL/interval.sql.out#10.0 match interval second|interval
+postgreSQL/interval.sql.out#11.0 match interval year to month|interval
+postgreSQL/interval.sql.out#14.0 match interval day to minute|interval
+postgreSQL/interval.sql.out#17.0 match interval day to second|interval
 postgreSQL/join.sql.out#36.0 match string|string
 postgreSQL/join.sql.out#36.1 abstain unknown|int
 postgreSQL/join.sql.out#36.2 abstain unknown|string
@@ -4848,7 +4848,7 @@ time.sql.out#229.0 abstain unknown|interval hour to second
 time.sql.out#230.0 abstain unknown|interval hour to second
 time.sql.out#231.0 abstain unknown|interval hour to second
 time.sql.out#233.0 abstain unknown|interval hour to second
-time.sql.out#234.0 coarse interval|interval hour to second
+time.sql.out#234.0 match interval hour to second|interval hour to second
 time.sql.out#235.0 abstain unknown|interval hour to second
 time.sql.out#236.0 match time|time(6)
 time.sql.out#237.0 match time|time(6)
@@ -5027,9 +5027,9 @@ timestamp.sql.out#96.0 match timestamp|timestamp
 timestamp.sql.out#97.0 match timestamp|timestamp
 timestamp.sql.out#99.0 match timestamp|timestamp
 timestamp.sql.out#100.0 match timestamp|timestamp
-timestamp.sql.out#101.0 coarse interval|interval day to second
-timestamp.sql.out#102.0 coarse interval|interval day to second
-timestamp.sql.out#103.0 coarse interval|interval day to second
+timestamp.sql.out#101.0 match interval day to second|interval day to second
+timestamp.sql.out#102.0 match interval day to second|interval day to second
+timestamp.sql.out#103.0 match interval day to second|interval day to second
 timestamp.sql.out#104.0 abstain unknown|interval day to second
 timestamp.sql.out#105.0 abstain unknown|interval day to second
 timestamp.sql.out#106.0 abstain unknown|interval day to second
@@ -5166,9 +5166,9 @@ timestampNTZ/timestamp-ansi.sql.out#96.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp-ansi.sql.out#97.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp-ansi.sql.out#99.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp-ansi.sql.out#100.0 match timestamp|timestamp_ntz
-timestampNTZ/timestamp-ansi.sql.out#101.0 coarse interval|interval day to second
-timestampNTZ/timestamp-ansi.sql.out#102.0 coarse interval|interval day to second
-timestampNTZ/timestamp-ansi.sql.out#103.0 coarse interval|interval day to second
+timestampNTZ/timestamp-ansi.sql.out#101.0 match interval day to second|interval day to second
+timestampNTZ/timestamp-ansi.sql.out#102.0 match interval day to second|interval day to second
+timestampNTZ/timestamp-ansi.sql.out#103.0 match interval day to second|interval day to second
 timestampNTZ/timestamp-ansi.sql.out#104.0 abstain unknown|interval day to second
 timestampNTZ/timestamp-ansi.sql.out#105.0 abstain unknown|interval day to second
 timestampNTZ/timestamp-ansi.sql.out#106.0 abstain unknown|interval day to second
@@ -5294,9 +5294,9 @@ timestampNTZ/timestamp.sql.out#97.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp.sql.out#98.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp.sql.out#99.0 match timestamp|timestamp_ntz
 timestampNTZ/timestamp.sql.out#100.0 match timestamp|timestamp_ntz
-timestampNTZ/timestamp.sql.out#101.0 coarse interval|interval day to second
-timestampNTZ/timestamp.sql.out#102.0 coarse interval|interval day to second
-timestampNTZ/timestamp.sql.out#103.0 coarse interval|interval day to second
+timestampNTZ/timestamp.sql.out#101.0 match interval day to second|interval day to second
+timestampNTZ/timestamp.sql.out#102.0 match interval day to second|interval day to second
+timestampNTZ/timestamp.sql.out#103.0 match interval day to second|interval day to second
 timestampNTZ/timestamp.sql.out#106.0 abstain unknown|interval day to second
 timestampNTZ/timestamp.sql.out#107.0 abstain unknown|interval day to second
 timestampNTZ/timestamp.sql.out#113.0 abstain unknown|timestamp_ntz
@@ -5377,22 +5377,22 @@ try_arithmetic.sql.out#17.0 abstain unknown|timestamp
 try_arithmetic.sql.out#18.0 abstain unknown|timestamp_ntz
 try_arithmetic.sql.out#19.0 abstain unknown|timestamp
 try_arithmetic.sql.out#20.0 abstain unknown|timestamp_ntz
-try_arithmetic.sql.out#21.0 coarse interval|interval year
-try_arithmetic.sql.out#22.0 coarse interval|interval second
-try_arithmetic.sql.out#24.0 coarse interval|interval month
-try_arithmetic.sql.out#25.0 coarse interval|interval day
+try_arithmetic.sql.out#21.0 match interval year|interval year
+try_arithmetic.sql.out#22.0 match interval second|interval second
+try_arithmetic.sql.out#24.0 match interval month|interval month
+try_arithmetic.sql.out#25.0 match interval day|interval day
 try_arithmetic.sql.out#26.0 match decimal|decimal(8,6)
 try_arithmetic.sql.out#27.0 match double|double
 try_arithmetic.sql.out#28.0 match double|double
 try_arithmetic.sql.out#32.0 match decimal|decimal(12,11)
 try_arithmetic.sql.out#33.0 match double|double
 try_arithmetic.sql.out#34.0 match double|double
-try_arithmetic.sql.out#35.0 coarse interval|interval year to month
-try_arithmetic.sql.out#36.0 coarse interval|interval day to second
-try_arithmetic.sql.out#37.0 coarse interval|interval year to month
-try_arithmetic.sql.out#38.0 coarse interval|interval day to second
-try_arithmetic.sql.out#39.0 coarse interval|interval year to month
-try_arithmetic.sql.out#40.0 coarse interval|interval day to second
+try_arithmetic.sql.out#35.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#36.0 match interval day to second|interval day to second
+try_arithmetic.sql.out#37.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#38.0 match interval day to second|interval day to second
+try_arithmetic.sql.out#39.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#40.0 match interval day to second|interval day to second
 try_arithmetic.sql.out#41.0 match int|int
 try_arithmetic.sql.out#42.0 match int|int
 try_arithmetic.sql.out#43.0 match decimal|decimal(11,0)
@@ -5401,10 +5401,10 @@ try_arithmetic.sql.out#45.0 match int|int
 try_arithmetic.sql.out#46.0 match bigint|bigint
 try_arithmetic.sql.out#47.0 match bigint|bigint
 try_arithmetic.sql.out#51.0 match bigint|bigint
-try_arithmetic.sql.out#52.0 coarse interval|interval year
-try_arithmetic.sql.out#53.0 coarse interval|interval second
-try_arithmetic.sql.out#54.0 coarse interval|interval month
-try_arithmetic.sql.out#55.0 coarse interval|interval day
+try_arithmetic.sql.out#52.0 match interval year|interval year
+try_arithmetic.sql.out#53.0 match interval second|interval second
+try_arithmetic.sql.out#54.0 match interval month|interval month
+try_arithmetic.sql.out#55.0 match interval day|interval day
 try_arithmetic.sql.out#56.0 match int|int
 try_arithmetic.sql.out#57.0 match int|int
 try_arithmetic.sql.out#58.0 match decimal|decimal(21,0)
@@ -5413,12 +5413,12 @@ try_arithmetic.sql.out#60.0 match int|int
 try_arithmetic.sql.out#61.0 match bigint|bigint
 try_arithmetic.sql.out#62.0 match bigint|bigint
 try_arithmetic.sql.out#66.0 match bigint|bigint
-try_arithmetic.sql.out#67.0 coarse interval|interval year to month
-try_arithmetic.sql.out#68.0 coarse interval|interval day to second
-try_arithmetic.sql.out#69.0 coarse interval|interval year to month
-try_arithmetic.sql.out#70.0 coarse interval|interval day to second
-try_arithmetic.sql.out#71.0 coarse interval|interval year to month
-try_arithmetic.sql.out#72.0 coarse interval|interval day to second
+try_arithmetic.sql.out#67.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#68.0 match interval day to second|interval day to second
+try_arithmetic.sql.out#69.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#70.0 match interval day to second|interval day to second
+try_arithmetic.sql.out#71.0 match interval year to month|interval year to month
+try_arithmetic.sql.out#72.0 match interval day to second|interval day to second
 try_cast.sql.out#0.0 match int|int
 try_cast.sql.out#1.0 match bigint|bigint
 try_cast.sql.out#2.0 match int|int

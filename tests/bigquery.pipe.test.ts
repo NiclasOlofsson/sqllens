@@ -47,8 +47,8 @@ describe("BigQuery pipe queries — faithful model + column flow", () => {
 		expect(outputs("FROM `proj.ds.t` |> RENAME name AS nm")).toEqual(["id", "nm", "events"]);
 	});
 
-	it("AGGREGATE outputs the aggregates then the grouping keys", () => {
-		expect(outputs("FROM `proj.ds.t` |> AGGREGATE COUNT(*) AS n GROUP BY name")).toEqual(["n", "name"]);
+	it("AGGREGATE outputs the grouping keys then the aggregates (GoogleSQL pipe syntax reference: 'output columns... include all grouping columns first, followed by all aggregate columns')", () => {
+		expect(outputs("FROM `proj.ds.t` |> AGGREGATE COUNT(*) AS n GROUP BY name")).toEqual(["name", "n"]);
 	});
 
 	it("resolves column references against the relation entering each stage", () => {

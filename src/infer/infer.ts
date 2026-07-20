@@ -5,7 +5,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
 import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
-import { coerce, commonType } from "./coerce.js";
+import { coerce, commonType, fullInterval, isIntervalType } from "./coerce.js";
 import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { parseType, scalar, UNKNOWN, type Type } from "./types.js";
 
@@ -62,6 +62,14 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx:
 		}
 		case "subscript": {
 			const base = inferType(expr.base, scope, schema, ctx);
+			if (expr.slice) {
+				// A slice (`l[lo:hi]`, functions/list.md#slicing) narrows the base's own extent, not its
+				// element: a slice of a list is still a list, a slice of a string still a string. Never
+				// the element type (that would be a wrong-type claim, not just an imprecise one).
+				if (base.kind === "array") return base;
+				if (base.kind === "scalar" && base.name === "string") return base;
+				return UNKNOWN;
+			}
 			if (base.kind === "array") return base.element;
 			if (base.kind === "map") return base.value;
 			// Semi-structured access stays semi-structured: variant:path / variant[i] → variant,
@@ -359,7 +367,16 @@ function constructor(name: string, args: Expr[], scope: Scope, schema: SchemaPro
  *  null'). Plain scalar heads (time, date, int, ...) stay valid FIELD names — Spark reads
  *  'time TIME(0)' as a field named time. */
 const BARE_TYPE_HEADS = new Set([
-	"interval", "struct", "array", "map", "decimal", "dec", "numeric", "char", "varchar", "not",
+	"interval",
+	"struct",
+	"array",
+	"map",
+	"decimal",
+	"dec",
+	"numeric",
+	"char",
+	"varchar",
+	"not",
 ]);
 
 /** Parse a Spark DDL table-schema string ('d Date, t Timestamp') into a struct type: split at
@@ -413,13 +430,27 @@ function binaryType(
 	const o = op.toLowerCase().trim();
 	if (COMPARISON.has(o) || o === "and" || o === "or") return BOOLEAN;
 	if (o === "||") return scalar("string");
-	// Interval arithmetic — checked before the division-mode branches so `interval / 2`
-	// stays an interval: interval ± interval, and interval scaled by a numeric, are
-	// intervals in every interval-typed dialect (the qualified subtype is the tracked
-	// coarseness). A numeric divided BY an interval is not valid — falls through.
-	if (isInterval(l) && isInterval(r) && (o === "+" || o === "-")) return l;
-	if (isInterval(l) && (o === "*" || o === "/") && r.kind === "scalar") return l;
-	if (isInterval(r) && o === "*" && l.kind === "scalar") return r;
+	// Interval arithmetic — checked before the division-mode branches so `interval / 2` never
+	// falls into numeric division. Spark's ANSI intervals carry a qualified unit range
+	// (`interval day to second`); the operator sets how it propagates (spark
+	// IntervalExpressions, sql-ref-datatypes interval):
+	//   interval ± interval  → the UNION of the two operands' ranges (same family; different
+	//                          families do not combine → unknown; a bare operand → bare interval).
+	//   interval × / numeric → the family's DEFAULT full range (Multiply/DivideYM|DTInterval
+	//                          always return year-to-month / day-to-second, even for a NULL scale).
+	// `scalable` is a valid multiplier/divisor: a number, a string (Spark casts it), or an untyped
+	// NULL — never another interval or a date/time (those would be a different type or invalid).
+	const li = isInterval(l);
+	const ri = isInterval(r);
+	if (li && ri && (o === "+" || o === "-")) return coerce(l, r);
+	const scalable = (t: Type) =>
+		t.kind === "unknown" ||
+		(t.kind === "scalar" && !isInterval(t) && t.name !== "date" && t.name !== "timestamp" && t.name !== "time");
+	if (li && scalable(r) && (o === "*" || o === "/")) return fullInterval(l);
+	if (ri && scalable(l) && o === "*") return fullInterval(r);
+	// Any remaining interval operand in a × or ÷ (interval÷interval, numeric÷interval, …) is not
+	// valid numeric arithmetic — never let it reach the float-division branch and claim a number.
+	if ((li || ri) && (o === "*" || o === "/")) return UNKNOWN;
 	if (o === "/" && division === "float") {
 		// Spark/Databricks `/` is float division: a DECIMAL operand keeps the result DECIMAL
 		// unless an approximate (float/double) operand is involved; everything else → DOUBLE
@@ -451,9 +482,13 @@ function binaryType(
 		if (isTimestamp(r) && isInterval(l)) return r;
 		if ((isDate(l) && isInterval(r)) || (isDate(r) && isInterval(l))) return UNKNOWN;
 		if (o === "-" && dateSubtraction === "interval") {
-			// Spark: date - date / timestamp - timestamp → an ANSI interval; time - time likewise.
-			if ((isDate(l) || isTimestamp(l) || isTime(l)) && (isDate(r) || isTimestamp(r) || isTime(r)))
-				return scalar("interval");
+			// Spark ANSI-interval difference types (spark SubtractDates/SubtractTimestamps/
+			// SubtractTimes): date - date → interval day; any timestamp on either side widens to
+			// interval day to second (date is promoted to timestamp); time - time → interval hour
+			// to second. Mixed date/time (invalid) falls through, never a guessed type.
+			if (isTime(l) && isTime(r)) return scalar("interval hour to second");
+			if ((isDate(l) || isTimestamp(l)) && (isDate(r) || isTimestamp(r)))
+				return isTimestamp(l) || isTimestamp(r) ? scalar("interval day to second") : scalar("interval day");
 		}
 		// Spark promotes FLOAT-with-DECIMAL to DOUBLE (v4.2.0 goldens, float4.sql.out); the
 		// shared rank cannot express it because T-SQL's precedence goes the other way, so it
@@ -486,7 +521,7 @@ function isTime(t: Type): boolean {
 }
 
 function isInterval(t: Type): boolean {
-	return t.kind === "scalar" && t.name === "interval";
+	return isIntervalType(t);
 }
 
 function stringValue(text: string): string {

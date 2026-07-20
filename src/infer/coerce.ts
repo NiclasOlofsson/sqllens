@@ -1,4 +1,4 @@
-import { UNKNOWN, type Type } from "./types.js";
+import { intervalSpan, intervalTypeOf, isIntervalName, UNKNOWN, type Type } from "./types.js";
 
 // Type coercion — the algebra for combining types (operator operands, CASE branches,
 // coalesce/greatest args). Numeric types widen along a precedence chain; unlike types
@@ -27,8 +27,39 @@ export function coerce(a: Type, b: Type): Type {
 		const ra = NUMERIC_RANK[a.name];
 		const rb = NUMERIC_RANK[b.name];
 		if (ra && rb) return ra >= rb ? a : b;
+		// Two ANSI intervals combine to the UNION of their unit ranges (interval ± interval);
+		// see coerceIntervals. Only reached when the names differ (typeEq handled equals).
+		if (isIntervalName(a.name) && isIntervalName(b.name)) return coerceIntervals(a.name, b.name);
 	}
 	return UNKNOWN;
+}
+
+// --- ANSI interval combination (Spark/Databricks) --------------------------------------------
+// The interval-family vocabulary (isIntervalName / intervalSpan / intervalTypeOf / fullInterval)
+// lives in types.ts; here are only the two combining rules the coercion algebra needs.
+
+/** Whether a Type is any interval-family scalar (bare or qualified). */
+export function isIntervalType(t: Type): boolean {
+	return t.kind === "scalar" && isIntervalName(t.name);
+}
+
+/** The family's DEFAULT full-range interval type (Spark Multiply/DivideInterval always return
+ *  year-to-month / day-to-second). Bare "interval" and non-intervals are returned unchanged. */
+export function fullInterval(t: Type): Type {
+	if (t.kind !== "scalar") return t;
+	const s = intervalSpan(t.name);
+	return s ? intervalTypeOf(s.fields, 0, s.fields.length - 1) : t;
+}
+
+/** Combine two interval-family names (interval ± interval): the UNION of their unit ranges within
+ *  one family. Different families do not combine (Spark errors) → unknown; a bare operand has no
+ *  family → bare interval (honest coarse). */
+function coerceIntervals(a: string, b: string): Type {
+	const sa = intervalSpan(a);
+	const sb = intervalSpan(b);
+	if (!sa || !sb) return { kind: "scalar", name: "interval" };
+	if (sa.fields[0] !== sb.fields[0]) return UNKNOWN; // different families (year-month vs day-time)
+	return intervalTypeOf(sa.fields, Math.min(sa.lo, sb.lo), Math.max(sa.hi, sb.hi));
 }
 
 /** The common type of a list (coalesce/greatest/CASE branches). Unknowns are ignored;

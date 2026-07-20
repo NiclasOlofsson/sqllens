@@ -47,7 +47,7 @@ describe("Databricks pipe queries (Spark 4.0 |>) — same faithful IR", () => {
 		expect(qualify(bad.tree, T).diagnostics.some((d) => d.kind === "unknown-column")).toBe(true);
 	});
 
-	it("AGGREGATE outputs the aggregates then the grouping keys", () => {
-		expect(outputs("SELECT * FROM t |> AGGREGATE COUNT(*) AS n GROUP BY name")).toEqual(["n", "name"]);
+	it("AGGREGATE outputs the grouping keys then the aggregates (Spark pipe syntax reference: 'the evaluated grouping expressions followed by the evaluated aggregate functions')", () => {
+		expect(outputs("SELECT * FROM t |> AGGREGATE COUNT(*) AS n GROUP BY name")).toEqual(["name", "n"]);
 	});
 });

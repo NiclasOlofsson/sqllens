@@ -1424,13 +1424,12 @@ describe("Snowflake keyword-token identifier holes (SHOW-object / option words a
 
 	// --- reject-controls ---
 
-	// Seven non-reserved tokens stay OUT of id_ because reaching them re-reads existing SQL:
+	// Five non-reserved tokens stay OUT of id_ because reaching them re-reads existing SQL:
 	// asc/desc = sort direction (ORDER BY x DESC); nextval = object_name DOT NEXTVAL; listagg = its
-	// WITHIN GROUP aggregate; default = the USE SECONDARY ROLES / column DEFAULT sentinel; pivot/unpivot
-	// = the post-source pivot clause a trailing PIVOT must resolve to (not reserved — an over-exclusion
-	// tracked as an open gap, kept out until the post-source-slot split lands). Not a
-	// bare table name.
-	it.each(["asc", "desc", "nextval", "listagg", "default", "pivot", "unpivot"])(
+	// WITHIN GROUP aggregate; default = the USE SECONDARY ROLES / column DEFAULT sentinel. Not a
+	// bare table name. (PIVOT/UNPIVOT moved OUT of this list — the post-source-slot split landed, so
+	// they ARE usable as identifiers now; see the dedicated describe block below.)
+	it.each(["asc", "desc", "nextval", "listagg", "default"])(
 		"dedicated-role word `%s` is NOT usable as a bare table name",
 		(word) => {
 			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
@@ -1444,4 +1443,172 @@ describe("Snowflake keyword-token identifier holes (SHOW-object / option words a
 			expect(errorsOf(`SELECT a FROM ${word}`)).toBeGreaterThan(0);
 		},
 	);
+});
+
+// PIVOT/UNPIVOT are NOT reserved (docs.snowflake.com/en/sql-reference/reserved-keywords), so they are
+// legal identifiers — table, column, and (AS-prefixed) alias names. They were previously held out of id_
+// entirely: a trailing PIVOT after a FROM source is the `pivot_unpivot` clause, so putting PIVOT into the
+// bare (AS-less) FROM-alias slot made that slot compete with the pivot clause (raising the SLL fallback
+// ratchet on the two-PIVOTs-after-a-subquery case). The post-source-slot split cures it: id_ reaches the
+// two words via `pivot_unpivot_word`, but the bare-alias slot (`bare_from_alias`) does NOT — exactly the
+// LEFT/RIGHT bare-alias exclusion pattern. So they parse as ordinary identifiers everywhere except the
+// bare post-source alias position, where a trailing PIVOT/UNPIVOT stays reserved for the pivot clause.
+describe("Snowflake PIVOT/UNPIVOT as ordinary identifiers (not reserved)", () => {
+	it("parses `pivot` as a projected bare column", () => {
+		const { body } = selectBody("SELECT pivot FROM t");
+		expect(body.projections[0]).toMatchObject({ name: "pivot", expr: { kind: "column", parts: ["pivot"] } });
+	});
+
+	it("parses `unpivot` as a projected bare column", () => {
+		const { body } = selectBody("SELECT unpivot FROM t");
+		expect(body.projections[0]).toMatchObject({ name: "unpivot", expr: { kind: "column", parts: ["unpivot"] } });
+	});
+
+	it("parses `t.pivot` as a dotted column reference", () => {
+		const { body } = selectBody("SELECT t.pivot FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "column", parts: ["t", "pivot"] });
+	});
+
+	it("parses `unpivot` as a bare table name in FROM", () => {
+		const { body } = selectBody("SELECT a FROM unpivot");
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["unpivot"] } });
+	});
+
+	it("parses `pivot` as a bare table name in FROM", () => {
+		const { body } = selectBody("SELECT a FROM pivot");
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["pivot"] } });
+	});
+
+	it("allows PIVOT/UNPIVOT after an explicit AS as a FROM alias", () => {
+		const { body } = selectBody("SELECT * FROM t AS pivot");
+		expect(body.from[0].alias).toBe("pivot");
+		expect(body.joins?.length ?? 0).toBe(0);
+	});
+
+	// --- guard direction: the post-source pivot clause reading must be preserved ---
+
+	it("GUARD: a real post-source PIVOT clause still lowers to PivotInfo, not an alias", () => {
+		const { body } = selectBody("SELECT * FROM monthly_sales PIVOT (SUM(amount) FOR month IN ('JAN', 'FEB'))");
+		expect(body.pivot).toBeDefined();
+		expect(body.pivot?.values).toEqual(["JAN", "FEB"]);
+		expect(body.pivot?.forColumns).toEqual(["month"]);
+		expect(body.from[0].alias).toBeUndefined();
+	});
+
+	it("GUARD: a real post-source UNPIVOT clause still lowers to UnpivotInfo", () => {
+		const { body } = selectBody("SELECT * FROM p UNPIVOT (sales FOR month IN (jan, feb, mar))");
+		expect(body.unpivot).toMatchObject({ valueColumn: "sales", nameColumn: "month" });
+		expect(body.from[0].alias).toBeUndefined();
+	});
+
+	it("GUARD: chained PIVOTs after a subquery still read as two pivot clauses (sentinel constructs/pivot/19)", () => {
+		expect(
+			errorsOf(
+				"SELECT * FROM (SELECT amount, q FROM s) PIVOT(SUM(amount) FOR q IN ('a','b')) PIVOT(MAX(d) FOR q2 IN ('a','b'))",
+			),
+		).toBe(0);
+	});
+
+	// A BARE trailing PIVOT/UNPIVOT with no parenthesized clause stays NOPARSE. The `pivot_unpivot` rule
+	// REQUIRES `PIVOT (` / `UNPIVOT (`, so a bare `t pivot` cannot be a pivot clause; and the bare
+	// FROM-alias slot deliberately excludes PIVOT/UNPIVOT (the post-source-slot split), so it is not an
+	// alias either. This mirrors the bare LEFT/RIGHT exclusion: use `AS pivot` to alias with the word.
+	// Rejecting here is the language-exactness choice — it preserves the pivot-clause reading of every
+	// existing corpus file and only ADDS the identifier readings elsewhere.
+	it.each(["pivot", "unpivot"])("bare trailing `%s` (no parens) after a source is NOT a FROM alias", (word) => {
+		expect(errorsOf(`SELECT * FROM t ${word}`)).toBeGreaterThan(0);
+	});
+});
+
+// IDENTIFIER(...) takes a `?` bind variable (JDBC/ODBC/Python client style) alongside a string or a
+// $session_variable: docs.snowflake.com/en/sql-reference/identifier-literal. Wired into the three
+// grammar sites that already had the (string | id_) form: object_name, schema_name, use_schema.
+describe("Snowflake IDENTIFIER(?) bind-variable argument", () => {
+	it("parses IDENTIFIER(?) as a FROM source", () => {
+		expect(errorsOf("SELECT * FROM IDENTIFIER(?) AS t1")).toBe(0);
+	});
+
+	it("parses IDENTIFIER(?) in USE SCHEMA", () => {
+		expect(errorsOf("USE SCHEMA IDENTIFIER(?)")).toBe(0);
+	});
+
+	it("parses IDENTIFIER(?) as a CREATE TABLE target", () => {
+		expect(errorsOf("CREATE OR REPLACE TABLE IDENTIFIER(?) (c1 NUMBER)")).toBe(0);
+	});
+
+	it("parses IDENTIFIER(?) as a DROP TABLE target", () => {
+		expect(errorsOf("DROP TABLE IDENTIFIER(?)")).toBe(0);
+	});
+
+	it("parses IDENTIFIER(?) as an INSERT INTO target", () => {
+		// The IDENTIFIER(?) target itself is fixed; a `?` bind variable used as a VALUES literal is a
+		// separate, broader gap (`?` as a general expr) — not part of this fix, so this probe uses a
+		// plain literal in VALUES to isolate the target-position fix.
+		expect(errorsOf("INSERT INTO IDENTIFIER(?) (c1) VALUES (1)")).toBe(0);
+	});
+
+	// GUARD: the existing string/$session_variable forms still work unchanged.
+	it("GUARD: IDENTIFIER('...') string form still parses", () => {
+		expect(errorsOf("SELECT * FROM IDENTIFIER('mydb.myschema.mytable')")).toBe(0);
+	});
+
+	it("GUARD: IDENTIFIER($var) session-variable form still parses", () => {
+		expect(errorsOf("SELECT * FROM IDENTIFIER($mytable_name)")).toBe(0);
+	});
+});
+
+// RESULTSET is a Snowflake Scripting variable type (DECLARE res RESULTSET;), not a general SQL data
+// type — CAST etc. don't take it: docs.snowflake.com/en/developer-guide/snowflake-scripting/variables.
+// Wired into task_scripting_declaration only (shared by the standalone scripting_block and CREATE
+// TASK's scripting body), not into the general data_type rule.
+describe("Snowflake Scripting RESULTSET variable declaration", () => {
+	it("parses a DECLARE ... RESULTSET ... BEGIN ... END block", () => {
+		expect(
+			errorsOf(
+				`DECLARE
+  name STRING;
+  temperature FLOAT;
+  res RESULTSET;
+BEGIN
+  name := 'Snowman';
+  temperature := -20.14;
+  res := (SELECT 1 AS a);
+  RETURN LAST_QUERY_ID();
+END;`,
+			),
+		).toBe(0);
+	});
+
+	it("parses RESULTSET as the sole declared variable", () => {
+		expect(
+			errorsOf(
+				`DECLARE
+  res RESULTSET;
+BEGIN
+  res := (SELECT 1 AS a);
+  RETURN res;
+END;`,
+			),
+		).toBe(0);
+	});
+
+	// RESULTSET is not a reserved keyword (docs.snowflake.com/en/sql-reference/reserved-keywords), so
+	// adding the lexer token must not create an identifier hole.
+	it("GUARD: `resultset` is still usable as a bare column name", () => {
+		const { body } = selectBody("SELECT resultset FROM t");
+		expect(body.projections[0]).toMatchObject({ name: "resultset", expr: { kind: "column", parts: ["resultset"] } });
+	});
+
+	it("GUARD: `resultset` is still usable as a bare table name", () => {
+		const { body } = selectBody("SELECT a FROM resultset");
+		expect(body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["resultset"] } });
+	});
+
+	// GUARD: RESULTSET stays out of the general data_type rule (scripting-only, per the docs) — a
+	// table column can't be declared RESULTSET. (CAST(x AS RESULTSET) does parse: cast_expr's
+	// AS-type slot already falls back to `object_name` for user-defined type names, the same escape
+	// hatch every other non-reserved identifier has — not a data_type-specific hole.)
+	it("GUARD: a table column cannot be declared RESULTSET (not a general data type)", () => {
+		expect(errorsOf("CREATE TABLE t (c1 RESULTSET)")).toBeGreaterThan(0);
+	});
 });

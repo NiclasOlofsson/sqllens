@@ -133,7 +133,73 @@ export const TSQL_ALIASES: Record<string, string> = {
 
 function normalizeScalar(name: string, aliases: Record<string, string> = SCALAR_ALIASES): string {
 	const n = name.toLowerCase();
+	// Databricks/Spark qualified ANSI intervals: a CAST's typeText arrives whitespace-stripped
+	// (`intervaldaytosecond`), a DDL/schema string keeps its spaces (`interval day to second`).
+	// Canonicalize both to the one spelling `interval <from>[ to <to>]`, matching the literal path,
+	// so the same interval type has one name everywhere. Only for the databricks/default table —
+	// other dialects keep their own interval handling untouched.
+	if (aliases === SCALAR_ALIASES && (n === "interval" || n.startsWith("interval"))) {
+		const iv = canonicalIntervalName(n);
+		if (iv) return iv;
+	}
 	return aliases[n] ?? n;
+}
+
+// --- ANSI interval families (Spark/Databricks) -----------------------------------------------
+// Spark models two qualified interval types (sql-ref-datatypes.html): YEAR-MONTH (fields
+// year < month) and DAY-TIME (day < hour < minute < second). A qualified scalar name is
+// "interval <field>" or "interval <from> to <to>"; bare "interval" is the family-less fallback.
+const IV_FAMILIES: readonly (readonly string[])[] = [
+	["year", "month"],
+	["day", "hour", "minute", "second"],
+];
+
+/** Whether a scalar name is any interval-family name (bare or qualified). */
+export function isIntervalName(name: string): boolean {
+	return name === "interval" || name.startsWith("interval ");
+}
+
+/** The (family fields, lo, hi) span of a QUALIFIED interval name; undefined for bare "interval"
+ *  and non-interval names. */
+export function intervalSpan(name: string): { fields: readonly string[]; lo: number; hi: number } | undefined {
+	if (!name.startsWith("interval ")) return undefined;
+	const [from, to] = name.slice("interval ".length).split(" to ");
+	for (const fields of IV_FAMILIES) {
+		const lo = fields.indexOf(from);
+		const hi = fields.indexOf(to ?? from);
+		if (lo >= 0 && hi >= 0) return { fields, lo, hi };
+	}
+	return undefined;
+}
+
+/** Build a qualified-interval scalar Type from a family's field list and a lo..hi field range. */
+export function intervalTypeOf(fields: readonly string[], lo: number, hi: number): Type {
+	return { kind: "scalar", name: lo === hi ? `interval ${fields[lo]}` : `interval ${fields[lo]} to ${fields[hi]}` };
+}
+
+/** Canonicalize an interval TYPE-qualifier spelling (from a CAST typeText or DDL string) to
+ *  `interval <from>[ to <to>]`. Type qualifiers use only the six field words (no week/millisecond,
+ *  no plural), so scanning for them and taking the field range is exact. `interval` with no field
+ *  word stays bare. undefined when the base is not an interval spelling at all. */
+function canonicalIntervalName(base: string): string | undefined {
+	if (base !== "interval" && !base.startsWith("interval")) return undefined;
+	let family: number | undefined;
+	let lo = Number.POSITIVE_INFINITY;
+	let hi = Number.NEGATIVE_INFINITY;
+	for (const m of base.matchAll(/year|month|day|hour|minute|second/g)) {
+		for (let f = 0; f < IV_FAMILIES.length; f++) {
+			const idx = IV_FAMILIES[f].indexOf(m[0]);
+			if (idx < 0) continue;
+			if (family === undefined) family = f;
+			else if (family !== f) return "interval"; // mixed families — not a valid qualifier
+			lo = Math.min(lo, idx);
+			hi = Math.max(hi, idx);
+		}
+	}
+	if (family === undefined) return "interval";
+	return lo === hi
+		? `interval ${IV_FAMILIES[family][lo]}`
+		: `interval ${IV_FAMILIES[family][lo]} to ${IV_FAMILIES[family][hi]}`;
 }
 
 /** Split on commas not nested inside `<…>` or `(…)`. */

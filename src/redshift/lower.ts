@@ -424,12 +424,17 @@ function buildSelect(node: ParserRuleContext): SelectExpr {
 	const joinConditions: Expr[] = [];
 	const joins: Join[] = [];
 	if (fromClause) {
-		for (const tr of directChildrenOfRule(
-			directChildrenOfRule(fromClause, P.RULE_from_list)[0] ?? fromClause,
-			P.RULE_table_ref,
-		)) {
+		const fromList = directChildrenOfRule(fromClause, P.RULE_from_list)[0];
+		for (const tr of directChildrenOfRule(fromList ?? fromClause, P.RULE_table_ref)) {
 			collectTableRef(tr, from, joinConditions, joins, unsupported);
 		}
+		// Redshift PartiQL nested-data unnest join: `FROM t1, t1.arr a, t2 ON a.x = t2.y` is a comma
+		// FROM list that may end with a bare ON predicate, no JOIN keyword
+		// (docs.aws.amazon.com/redshift/latest/dg/nested-data-use-cases.html). Conserved into
+		// joinConditions; comma sources stay plain `from` entries, so no Join node is synthesized here
+		// (SelectExpr.joins models only explicit JOIN operations).
+		const trailingOn = fromList ? directChildrenOfRule(fromList, P.RULE_a_expr)[0] : undefined;
+		if (trailingOn) joinConditions.push(lowerExpr(trailingOn));
 	}
 
 	const where = directChildrenOfRule(node, P.RULE_where_clause)[0];
@@ -1384,13 +1389,54 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 						: { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
 			}
 		} else {
-			// '[' a_expr ']' or '[' lo? : hi? ']' subscript
-			const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
-			const index: Expr = idxNode ? lowerExpr(idxNode) : { kind: "literal", text: el.getText(), cst: el };
-			expr = { kind: "subscript", base: expr, index, cst };
+			expr = applySubscriptBracket(el, expr, cst);
 		}
 	}
 	return expr;
+}
+
+/** Lower one bracket `indirection_el`: plain `[idx]`, or a slice `[lo? : hi?]`. Position-aware: a
+ *  plain index is a direct `a_expr` child of `el` (grammar's first alt); the slice alt wraps each
+ *  bound in its own `opt_slice_bound`, walked in child order so the bound before the COLON becomes
+ *  `index` (the begin bound) and the bound after becomes `end` — an omitted bound stays absent,
+ *  never fabricated. A `plsqlvariablename` child (`arr[1:hi]`) is the lexer's PLSQLVARIABLENAME
+ *  token standing in for a fused `COLON identifier` end bound, and a bare NamespaceUser token
+ *  (`arr[lo:hi]`) fuses BOTH sides of the colon into one token — see the grammar comment on
+ *  `indirection_el`'s slice alts — so both are un-fused into plain column bounds. */
+function applySubscriptBracket(el: ParserRuleContext, base: Expr, cst: ParserRuleContext): Expr {
+	const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
+	if (idxNode) return { kind: "subscript", base, index: lowerExpr(idxNode), cst };
+
+	let slot: 0 | 1 = 0;
+	let index: Expr | undefined;
+	let end: Expr | undefined;
+	for (let i = 0; i < el.getChildCount(); i++) {
+		const child = el.getChild(i);
+		if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_opt_slice_bound) {
+			const boundNode = directChildrenOfRule(child, P.RULE_a_expr)[0];
+			const bound = boundNode ? lowerExpr(boundNode) : undefined;
+			if (slot === 0) index = bound;
+			else end = bound;
+		} else if (child instanceof TerminalNode && child.symbol.type === P.COLON) {
+			slot = 1;
+		} else if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_plsqlvariablename) {
+			end = fusedBoundColumn(child.getText(), child);
+			slot = 1;
+		} else if (child instanceof TerminalNode && child.symbol.type === P.NamespaceUser) {
+			const text = child.getText();
+			const colonAt = text.indexOf(":");
+			index = { kind: "column", parts: [text.slice(0, colonAt)], cst: el };
+			end = fusedBoundColumn(text.slice(colonAt), el);
+			slot = 1;
+		}
+	}
+	return { kind: "subscript", base, index, end, slice: true, cst };
+}
+
+/** Un-fuse a `:identifier` (PLSQLVARIABLENAME text, or the tail of a NamespaceUser split) into a
+ *  plain column reference, stripping the leading `:`. */
+function fusedBoundColumn(text: string, cst: ParserRuleContext): Expr {
+	return { kind: "column", parts: [text.replace(/^:/, "")], cst };
 }
 
 /** case_expr: CASE case_arg? when_clause+ (ELSE a_expr)? END */
@@ -1459,6 +1505,18 @@ function lowerCommonFunc(node: ParserRuleContext): Expr {
 		return { kind: "cast", expr: a ? lowerExpr(a) : otherExpr(node), typeText: tn ? tn.getText() : "", cst: node };
 	}
 	const name = (leftmostToken(node) ?? "").toLowerCase();
+	// OBJECT_TRANSFORM(input [KEEP path, ...] [SET path, value, ...]): KEEP/SET each wrap their own
+	// expr_list (object_transform_keep/object_transform_set), so the generic direct-expr_list loop
+	// below can't see them; collect input then KEEP paths then SET path/value pairs, in source order.
+	if (hasDirectToken(node, P.OBJECT_TRANSFORM)) {
+		const args: Expr[] = directChildrenOfRule(node, P.RULE_a_expr).map(lowerExpr);
+		for (const wrapRule of [P.RULE_object_transform_keep, P.RULE_object_transform_set]) {
+			const wrap = directChildrenOfRule(node, wrapRule)[0];
+			const list = wrap ? directChildrenOfRule(wrap, P.RULE_expr_list)[0] : undefined;
+			if (list) for (const a of directChildrenOfRule(list, P.RULE_a_expr)) args.push(lowerExpr(a));
+		}
+		return { kind: "function", name, args, aggregate: false, distinct: false, cst: node };
+	}
 	// Collect every a_expr / b_expr / expr_list argument the form carries (EXTRACT, SUBSTRING,
 	// COALESCE, NULLIF, TRIM, POSITION, OVERLAY, GREATEST, LEAST, NORMALIZE, XML*, CURRENT_*).
 	const args: Expr[] = [];
@@ -1567,7 +1625,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);

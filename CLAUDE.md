@@ -279,6 +279,10 @@ cited file carries the full rationale.
   never gated (`tests/helpers/docs-ratchet.ts`).
 - Known-bad exclusion lists are self-policing (each asserts its entries still fail):
   `tests/*-corpus-known-bad.ts`.
+- T-SQL `SET QUOTED_IDENTIFIER OFF` double-quoted string literals are noparse: a session option
+  flipping string-literal lexing for the rest of the session is context-sensitive lexing, out of
+  reach for an ANTLR lexer without a mode hack tied to statement execution order (entry in
+  `tests/tsql-corpus-known-bad.ts`).
 - Recovery-split exemption in `tests/broken-batch.test.ts`: tsql/redshift/postgres/duckdb
   are exempt from the phantom-batch assertion (a recovery fragment is provably
   indistinguishable from two real statements in those grammars).
@@ -288,10 +292,15 @@ cited file carries the full rationale.
   unmodeled (`src/derived-dialects.ts`).
 - BigQuery `DEFINE MACRO` is detect-only: the body is consumed opaquely and flagged, not
   parsed (`grammars/bigquery/GoogleSQLParser.g4`).
-- Snowflake `pivot`/`unpivot` are unusable as bare identifiers (held out of `id_`; the
-  language-exact post-source-slot split is deferred, `grammars/snowflake/SnowflakeParser.g4`).
-- `SELECT FROM t` (empty projection list) parses clean in databricks/redshift/postgres/duckdb;
-  tightening risks the positive gates and needs its own pass.
+- Snowflake `pivot`/`unpivot` are usable as ordinary identifiers (table/column/`AS`-alias) via the
+  `pivot_unpivot_word` post-source-slot split, EXCEPT in the bare (AS-less) post-source alias slots
+  (`bare_from_alias` and the pivot result alias), where a trailing `PIVOT`/`UNPIVOT` stays reserved for
+  the pivot clause — a bare `t pivot` is noparse, use `AS pivot` (mirrors the LEFT/RIGHT bare-alias
+  exclusion, `grammars/snowflake/SnowflakeParser.g4`).
+- `SELECT FROM t` (empty projection list) parses clean in postgres by documented design ("The list
+  of output expressions after SELECT can be empty", postgresql.org/docs/current/sql-select.html);
+  tightening risks the positive gates and needs its own pass. Redshift tightened this 2026-07-20
+  (`r_SELECT_list.html` mandates a list; SELECT INTO's list stays optional per `r_SELECT_INTO.html`).
 - Snowflake embedded UDF bodies (`$$...$$`) are one opaque token; revisit on consumer demand.
 - Upstream-inherited grammar TODOs ride the forks as-is (pg-family lexer escape notes,
   Snowflake constraint-combination leniency, T-SQL `data_type` runtime checks, BigQuery

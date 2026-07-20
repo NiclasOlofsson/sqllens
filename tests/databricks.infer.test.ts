@@ -28,52 +28,91 @@ describe("databricks literals", () => {
 	});
 	it("types decimal-point literals DECIMAL, exponents DOUBLE, suffixes by suffix", () => {
 		expect(types("select 2.5, 6.8e0, 2.5D, 2.5F, 10L, 5S, 5Y, 1.5BD")).toEqual([
-			"decimal", "double", "double", "float", "bigint", "smallint", "tinyint", "decimal",
+			"decimal",
+			"double",
+			"double",
+			"float",
+			"bigint",
+			"smallint",
+			"tinyint",
+			"decimal",
 		]);
 	});
-	it("types unquoted-form and ntz/ltz timestamp literals", () => {
-		expect(types("select interval 2 year, timestamp_ntz'2021-01-01 00:00:00'")).toEqual(["interval", "timestamp"]);
+	it("types unquoted-form interval (qualified) and ntz/ltz timestamp literals", () => {
+		expect(types("select interval 2 year, timestamp_ntz'2021-01-01 00:00:00'")).toEqual([
+			"interval year",
+			"timestamp",
+		]);
+	});
+	it("derives the qualified interval family and unit range from the literal", () => {
+		expect(
+			types(
+				"select interval '2-1' year to month, interval 2 years 4 months, interval '20 15:40' day to minute, interval 3 week 8 millisecond 9 microsecond, interval '1 day'",
+			),
+		).toEqual([
+			"interval year to month",
+			"interval year to month",
+			"interval day to minute",
+			"interval day to second",
+			"interval day",
+		]);
 	});
 });
 
 describe("databricks arithmetic operators", () => {
 	it("div is integral division returning BIGINT", () => {
 		expect(types("select 5 div 2, cast(51 as decimal(10,0)) div cast(2 as decimal(2,0))")).toEqual([
-			"bigint", "bigint",
+			"bigint",
+			"bigint",
 		]);
 	});
 	it("float division: decimal-with-exact stays decimal, approximate wins, int/int is double", () => {
 		expect(types("select 1/2, 1/0.5, 2.5/0.5, cast(1 as double)/0.5")).toEqual([
-			"double", "decimal", "decimal", "double",
+			"double",
+			"decimal",
+			"decimal",
+			"double",
 		]);
 	});
 	it("float-with-decimal promotes to DOUBLE (approximate dominates)", () => {
 		expect(types("select f + 100.0, 2.35E10 * 1.0 from t")).toEqual(["double", "double"]);
 	});
-	it("interval arithmetic stays interval; date/timestamp/time subtraction yields interval", () => {
+	it("interval arithmetic carries the qualified type; ×/÷ widen to the full family range", () => {
+		// × / ÷ numeric → the family's default full range (Spark Multiply/DivideInterval); + / - →
+		// the union of the operands' unit ranges; date-date → interval day, timestamp-timestamp →
+		// interval day to second.
 		expect(
 			types(
 				"select interval 2 year * 2, interval '2' second / 2, interval '1' day + interval '1' hour, date '2001-10-01' - date '2001-09-28', timestamp'2011-11-11 11:11:11' - timestamp'2011-11-11 11:11:10'",
 			),
-		).toEqual(["interval", "interval", "interval", "interval", "interval"]);
+		).toEqual([
+			"interval year to month",
+			"interval day to second",
+			"interval day to hour",
+			"interval day",
+			"interval day to second",
+		]);
 	});
 	it("timestamp ± interval keeps timestamp; date ± interval is flavor-dependent → unknown", () => {
-		expect(types("select timestamp'2011-11-11' + interval '1' hour, date'2011-11-11' + interval '1' hour")).toEqual([
-			"timestamp", "unknown",
-		]);
+		expect(types("select timestamp'2011-11-11' + interval '1' hour, date'2011-11-11' + interval '1' hour")).toEqual(
+			["timestamp", "unknown"],
+		);
 	});
 	it("unary functions crosscast a string argument to DOUBLE", () => {
 		expect(types("select positive('25.5'), abs('-2.19'), abs(a), negative(a) from t")).toEqual([
-			"double", "double", "int", "int",
+			"double",
+			"double",
+			"int",
+			"int",
 		]);
 	});
 });
 
 describe("databricks function registry (Spark-goldens fix wave)", () => {
 	it("ceil/floor: scale-arg form and DECIMAL input are DECIMAL, else BIGINT", () => {
-		expect(types("select ceil(2.5), ceil(2.5, 0), ceil(cast(1.5 as double)), floor(a), floor(a, -1) from t")).toEqual([
-			"decimal", "decimal", "bigint", "bigint", "decimal",
-		]);
+		expect(
+			types("select ceil(2.5), ceil(2.5, 0), ceil(cast(1.5 as double)), floor(a), floor(a, -1) from t"),
+		).toEqual(["decimal", "decimal", "bigint", "bigint", "decimal"]);
 	});
 	it("date_add family: 2-arg forms return DATE, unit forms return TIMESTAMP", () => {
 		expect(
@@ -90,9 +129,9 @@ describe("databricks function registry (Spark-goldens fix wave)", () => {
 		).toEqual(["int", "bigint"]);
 	});
 	it("bit functions: getbit/bit_get TINYINT, bit_count INT; array_position BIGINT", () => {
-		expect(types("select getbit(11L, 3), bit_get(11L, 3), bit_count(big), array_position(array(1,2), 2) from t")).toEqual([
-			"tinyint", "tinyint", "int", "bigint",
-		]);
+		expect(
+			types("select getbit(11L, 3), bit_get(11L, 3), bit_count(big), array_position(array(1,2), 2) from t"),
+		).toEqual(["tinyint", "tinyint", "int", "bigint"]);
 	});
 	it("type-named converters return their type", () => {
 		expect(types("select smallint(a), tinyint(a), float(s) from t")).toEqual(["smallint", "tinyint", "float"]);
@@ -108,18 +147,27 @@ describe("databricks function registry (Spark-goldens fix wave)", () => {
 	});
 	it("uniform follows min/max; a NULL bound abstains", () => {
 		expect(types("select uniform(10, 20), uniform(10, 20.0F, 0), uniform(NULL, 1, 0)")).toEqual([
-			"int", "float", "unknown",
+			"int",
+			"float",
+			"unknown",
 		]);
 	});
 	it("percentile_disc abstains (its result follows the WITHIN GROUP operand)", () => {
 		expect(types("select percentile_disc(0.5) within group (order by a) from t")).toEqual(["unknown"]);
 	});
-	it("try_* arithmetic: interval-aware, date±interval abstains, try_divide mirrors /", () => {
+	it("try_* arithmetic: interval-aware (×/÷ widen), date±interval abstains, try_divide mirrors /", () => {
 		expect(
 			types(
 				"select try_add(a, 1), try_multiply(interval 2 year, 2), try_add(date'2021-01-01', interval 2 second), try_divide(1, 0.5), try_divide(interval 2 second, 2) from t",
 			),
-		).toEqual(["int", "interval", "unknown", "decimal", "interval"]);
+		).toEqual(["int", "interval year to month", "unknown", "decimal", "interval day to second"]);
+	});
+	it("try_add/try_subtract of two intervals is the union of their unit ranges", () => {
+		expect(
+			types(
+				"select try_add(interval 2 year, interval 2 year), try_subtract(interval 2 year, interval 3 year), make_ym_interval(1, 2), make_dt_interval(1, 2, 3), make_interval(1, 2, 3)",
+			),
+		).toEqual(["interval year", "interval year", "interval year to month", "interval day to second", "interval"]);
 	});
 });
 
@@ -140,7 +188,8 @@ describe("databricks date_part / datepart (field-value + source-type keyed)", ()
 	});
 	it("a non-literal field or a non-datetime source abstains", () => {
 		expect(types("select date_part(s, date'2011-11-11'), date_part('YEAR', a) from t")).toEqual([
-			"unknown", "unknown",
+			"unknown",
+			"unknown",
 		]);
 	});
 });
@@ -148,13 +197,21 @@ describe("databricks date_part / datepart (field-value + source-type keyed)", ()
 describe("databricks cast chains and type texts", () => {
 	it("a chained/nested cast types by ITS OWN target, not the inner one", () => {
 		expect(types("select '2147483648' :: long :: int, cast(cast('inf' as double) as timestamp)")).toEqual([
-			"int", "timestamp",
+			"int",
+			"timestamp",
 		]);
 	});
-	it("time without time zone folds to time; time subtraction yields interval", () => {
+	it("time without time zone folds to time; time subtraction yields interval hour to second", () => {
 		expect(
 			types("select cast('12:34:56' as time without time zone), cast('23:59' as time) - cast('00:00' as time)"),
-		).toEqual(["time", "interval"]);
+		).toEqual(["time", "interval hour to second"]);
+	});
+	it("a cast to a qualified interval canonicalizes the whitespace-stripped type text", () => {
+		expect(
+			types(
+				"select cast(1Y as interval year), cast(-122S as interval year to month), -10L :: interval second, cast('x' as interval day to second)",
+			),
+		).toEqual(["interval year", "interval year to month", "interval second", "interval day to second"]);
 	});
 });
 
@@ -164,12 +221,7 @@ describe("databricks from_json / from_csv schema strings", () => {
 			types(
 				"select from_json(s, 'd date, t timestamp'), from_json(s, 'time TIME(0)'), from_json(s, 'array<int>'), from_csv(s, 'a INT, b string') from t",
 			),
-		).toEqual([
-			"struct<d:date,t:timestamp>",
-			"struct<time:time>",
-			"array<int>",
-			"struct<a:int,b:string>",
-		]);
+		).toEqual(["struct<d:date,t:timestamp>", "struct<time:time>", "array<int>", "struct<a:int,b:string>"]);
 	});
 });
 
@@ -179,8 +231,38 @@ describe("databricks type vocabulary is CLOSED", () => {
 	// else is a defect — the class the Spark-goldens gate caught as `timetime`/
 	// `timewithouttimezone` mushed scalars.
 	const VOCAB = new Set([
-		"string", "int", "bigint", "smallint", "tinyint", "double", "float", "decimal", "boolean",
-		"date", "timestamp", "time", "interval", "binary", "variant", "geometry", "geography",
+		"string",
+		"int",
+		"bigint",
+		"smallint",
+		"tinyint",
+		"double",
+		"float",
+		"decimal",
+		"boolean",
+		"date",
+		"timestamp",
+		"time",
+		"interval",
+		"binary",
+		"variant",
+		"geometry",
+		"geography",
+		// Qualified ANSI intervals (year-month + day-time families); the registry emits the
+		// full-range names, the literal/cast/coerce paths any of the rest.
+		"interval year",
+		"interval month",
+		"interval year to month",
+		"interval day",
+		"interval hour",
+		"interval minute",
+		"interval second",
+		"interval day to hour",
+		"interval day to minute",
+		"interval day to second",
+		"interval hour to minute",
+		"interval hour to second",
+		"interval minute to second",
 	]);
 	const scalarNames = (t: ReturnType<typeof inferType>): string[] => {
 		if (t.kind === "scalar") return [t.name];
@@ -206,10 +288,19 @@ describe("databricks type vocabulary is CLOSED", () => {
 		for (const [name, rule] of Object.entries(DATABRICKS_FUNCTION_RETURNS)) {
 			for (const args of probes) {
 				for (const n of scalarNames(rule(args))) {
-					expect(VOCAB.has(n), `${name}(${args.map((a) => formatType(a)).join(",")}) emitted '${n}'`).toBe(true);
+					expect(VOCAB.has(n), `${name}(${args.map((a) => formatType(a)).join(",")}) emitted '${n}'`).toBe(
+						true,
+					);
 				}
 			}
 		}
+	});
+});
+
+describe("IDENTIFIER('literal') resolves like a plain column end-to-end", () => {
+	it("qualifies and types IDENTIFIER('a') against the schema, same as a plain `a`", () => {
+		expect(types("select IDENTIFIER('a') from t")).toEqual(types("select a from t"));
+		expect(types("select IDENTIFIER('a') from t")).toEqual(["int"]);
 	});
 });
 

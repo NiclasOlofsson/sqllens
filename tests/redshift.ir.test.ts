@@ -6,6 +6,8 @@ import { resolveScopes } from "../src/scope/scope.js";
 import { resolveColumnRef } from "../src/sema/resolve.js";
 import { qualify } from "../src/qualify/qualify.js";
 import { Schema } from "../src/qualify/schema.js";
+import { inferType } from "../src/infer/infer.js";
+import { parse } from "../src/index.js";
 
 // IR lowering for Redshift (CST -> the shared dialect-neutral IR). Tests encode the SEMANTIC
 // shape each query should lower to, so a regression in lower() — or a wrong CST assumption —
@@ -161,6 +163,32 @@ describe("Redshift lower — clauses", () => {
 		expect(b.from).toHaveLength(2);
 	});
 
+	// PartiQL nested-data unnest join: a comma FROM list may end with a bare ON predicate, no JOIN
+	// keyword (docs.aws.amazon.com/redshift/latest/dg/nested-data-use-cases.html, "Joining Amazon
+	// Redshift and nested data"). Per the Join-node contract, comma-separated sources stay plain
+	// `from` entries; the trailing ON is conserved into joinConditions WITHOUT a synthesized Join.
+	it("comma FROM list with a trailing bare ON: conserved into joinConditions, no Join node", () => {
+		const b = selectBody(
+			"SELECT c.name.given, COUNT(o.date) AS n FROM spectrum.customers2 c, c.orders o, prices p ON o.item = p.id GROUP BY c.id, c.name.given",
+		);
+		expect(b.from).toHaveLength(3);
+		expect(b.from.every((s) => s.kind === "table")).toBe(true);
+		expect(b.joinConditions).toHaveLength(1);
+		expect(b.joinConditions?.[0]).toMatchObject({
+			kind: "binary",
+			op: "=",
+			left: { kind: "column", parts: ["o", "item"] },
+			right: { kind: "column", parts: ["p", "id"] },
+		});
+		expect(b.joins).toBeUndefined();
+	});
+
+	it("ordinary explicit JOIN...ON is unaffected, still produces a Join node", () => {
+		const b = selectBody("SELECT a FROM t JOIN u ON t.id = u.id");
+		expect(b.joins).toHaveLength(1);
+		expect(b.joins?.[0]).toMatchObject({ kind: "inner", on: { kind: "binary", op: "=" } });
+	});
+
 	it("subquery source", () => {
 		const b = selectBody("SELECT s.a FROM (SELECT a FROM t) s");
 		expect(b.from[0]).toMatchObject({ kind: "subquery", alias: "s" });
@@ -253,6 +281,56 @@ describe("Redshift lower — Redshift-specific sources", () => {
 		const b = selectBody("SELECT attr FROM customer_orders_lineitem c, UNPIVOT c.c_orders[0] AS val AT attr");
 		expect(b.unsupported).toBeUndefined();
 		expect(b.unpivot).toEqual({ valueColumn: "val", nameColumn: "attr", removed: [], alias: undefined });
+	});
+});
+
+// SUPER object transform's KEEP/SET mini-grammar (docs.aws.amazon.com/redshift/latest/dg/
+// r_object_transform_function.html). Lowers to an ordinary "function" node named object_transform;
+// args conserve input, then KEEP paths, then SET path/value pairs, in source order (each KEEP/SET
+// wraps its own expr_list, so the generic direct-a_expr/expr_list collection can't see them; a
+// dedicated branch in lowerCommonFunc handles the ordering).
+describe("Redshift lower: OBJECT_TRANSFORM (SUPER KEEP/SET)", () => {
+	it("plain call (no KEEP/SET): a single-arg function", () => {
+		const b = selectBody("SELECT OBJECT_TRANSFORM(col_person) FROM employees");
+		expect(b.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "object_transform",
+			args: [{ kind: "column", parts: ["col_person"] }],
+		});
+	});
+
+	it("KEEP only: paths conserved after input, in order", () => {
+		const b = selectBody(`SELECT OBJECT_TRANSFORM(col_person KEEP '"a"', '"b"') FROM employees`);
+		const expr = b.projections[0].expr;
+		expect(expr).toMatchObject({ kind: "function", name: "object_transform" });
+		if (expr.kind !== "function") throw new Error("expected function");
+		expect(expr.args).toHaveLength(3);
+		expect(expr.args[0]).toMatchObject({ kind: "column", parts: ["col_person"] });
+		expect(expr.args[1]).toMatchObject({ kind: "literal", text: `'"a"'` });
+		expect(expr.args[2]).toMatchObject({ kind: "literal", text: `'"b"'` });
+	});
+
+	it("KEEP + SET: the docs example, full arg order preserved (input, keep paths, set pairs)", () => {
+		const b = selectBody(
+			`SELECT OBJECT_TRANSFORM(col_person KEEP '"name"."first"', '"age"' SET '"age"', col_person.age + 5) AS x FROM employees`,
+		);
+		const expr = b.projections[0].expr;
+		if (expr.kind !== "function") throw new Error("expected function");
+		expect(expr.name).toBe("object_transform");
+		expect(expr.args.map((a) => a.kind)).toEqual(["column", "literal", "literal", "literal", "binary"]);
+		expect(expr.args[0]).toMatchObject({ parts: ["col_person"] });
+		expect(expr.args[1]).toMatchObject({ text: `'"name"."first"'` });
+		expect(expr.args[2]).toMatchObject({ text: `'"age"'` });
+		expect(expr.args[3]).toMatchObject({ text: `'"age"'` });
+		expect(expr.args[4]).toMatchObject({ kind: "binary", op: "+" });
+	});
+
+	it("OBJECT_TRANSFORM and KEEP stay usable as ordinary identifiers outside the call", () => {
+		const b = selectBody("SELECT object_transform, keep FROM t");
+		expect(b.projections.map((p) => p.expr)).toMatchObject([
+			{ kind: "column", parts: ["object_transform"] },
+			{ kind: "column", parts: ["keep"] },
+		]);
 	});
 });
 
@@ -356,5 +434,134 @@ describe("Redshift lower — the `(+)` outer-join marker", () => {
 			expect((side.left as { outerJoinMarker?: true }).outerJoinMarker).toBeUndefined();
 			expect(side.right).toMatchObject({ kind: "column", outerJoinMarker: true });
 		}
+	});
+});
+
+// Position-aware slice lowering (#lossless), ported from the postgres fix: applyIndirection's
+// bracket branch used to read only a DIRECT a_expr child of indirection_el, which exists for a
+// plain `[idx]` but never for the slice alt (`opt_slice_bound? COLON opt_slice_bound?` wraps each
+// bound one level deeper) — so every slice fell to the whole-bracket-text literal fallback, fusing
+// lo/hi into one opaque string and dropping any column referenced in either bound. Fixed by walking
+// indirection_el's children in order so the bound before COLON becomes `index` (begin) and the
+// bound after becomes `end`; an omitted bound stays absent, never fabricated.
+describe("Redshift subscript slicing — position-aware begin/end (#lossless)", () => {
+	const strip = (o: unknown) =>
+		JSON.parse(JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" || k === "partSpans" ? undefined : v)));
+	const shapeOf = (sql: string) => {
+		const { ast } = parse(sql, "redshift");
+		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
+		return strip(expr);
+	};
+	const num = (n: number) => ({ kind: "literal", text: String(n) });
+	const arr = { kind: "column", parts: ["arr"] };
+
+	it("x[2] — plain element access, unchanged shape (no slice flag)", () => {
+		expect(shapeOf("SELECT arr[2] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2) });
+	});
+
+	it("x[2:4] — begin + end, slice flag", () => {
+		expect(shapeOf("SELECT arr[2:4] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(2),
+			end: num(4),
+			slice: true,
+		});
+	});
+
+	it("x[:4] — empty begin stays absent, does NOT get misattributed as index", () => {
+		expect(shapeOf("SELECT arr[:4] FROM t;")).toEqual({ kind: "subscript", base: arr, end: num(4), slice: true });
+	});
+
+	it("x[2:] — empty end stays absent", () => {
+		expect(shapeOf("SELECT arr[2:] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2), slice: true });
+	});
+
+	it("x[:] — both bounds absent, still a slice", () => {
+		expect(shapeOf("SELECT arr[:] FROM t;")).toEqual({ kind: "subscript", base: arr, slice: true });
+	});
+
+	// A bare colid immediately after the slice COLON used to not parse at all — a genuine LEXER
+	// collision, not a parser ambiguity: `:hi` (no gap) maximal-munches as ONE PLSQLVARIABLENAME
+	// token (psql/pgbench `:variable` interpolation, docs.postgresql.org/current/app-psql.html
+	// #APP-PSQL-INTERPOLATION — real corpus use: postgres/docs/parser/positive/dml/pgbench/1.sql,
+	// shared pg-family lexer), so the parser never sees a standalone COLON before "hi". Fixed for a
+	// non-empty NUMERIC begin (`arr[1:hi]`) by a new indirection_el alt that accepts the fused token
+	// and un-fuses it in lower() (postgresql.org/docs/current/arrays.html#ARRAYS-ACCESSING — a bound
+	// is any expression). Parenthesizing still works too.
+	it("a column used in a slice's end bound is not dropped from SelectExpr.columns", () => {
+		const { ast } = parse("SELECT arr[1:(hi)] FROM t;", "redshift");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		const cols = ast.body.columns.map((c) => c.parts.join("."));
+		expect(cols).toContain("arr");
+		expect(cols).toContain("hi"); // the defect's observable: previously dropped
+	});
+
+	// arr[1:hi]: numeric begin + bare identifier end now parses without parens via the
+	// plsqlvariablename alt (un-fused in applySubscriptBracket).
+	it("x[1:hi] — numeric begin, bare-identifier end (no parens needed)", () => {
+		expect(shapeOf("SELECT arr[1:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(1),
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[1:hi] FROM t;", "redshift");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "hi"]));
+	});
+
+	// arr[lo:hi]: BOTH bounds bare identifiers fuse even more aggressively in Redshift specifically —
+	// its own `NamespaceUser: Identifier ':' Identifier` lexer rule (datashare-consumer role refs,
+	// `GRANT ... TO IAM:Bob` — real corpus use:
+	// redshift/docs/parser/positive/ddl/lake-formation-getting-started-consumer/1.sql) out-munches
+	// PLSQLVARIABLENAME and swallows the WHOLE "lo:hi" into one token. A dedicated indirection_el alt
+	// accepts that token too; lower() splits its text on the colon to recover both identifiers.
+	it("x[lo:hi] — both bounds bare identifiers (the Redshift NamespaceUser fusion)", () => {
+		expect(shapeOf("SELECT arr[lo:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: ["lo"] },
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[lo:hi] FROM t;", "redshift");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "lo", "hi"]));
+	});
+
+	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed — deliberately. The fused token here
+	// is indistinguishable at the parser level from a bind-variable used as a plain index (the
+	// pgbench reading), since there's no preceding bound to disambiguate on. Flipping this reading
+	// would change what an ALREADY-PARSING construct means, not just widen acceptance — a semantic
+	// priority call between two independently-real features, left to a human decision rather than
+	// resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is the
+	// bind-variable-shaped column ":hi" (colon retained) — NOT a slice.
+	it("x[:hi] — still the pre-existing plsqlvariablename-index reading, not fixed (see task report)", () => {
+		expect(shapeOf("SELECT arr[:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: [":hi"] },
+		});
+	});
+
+	it("a slice's type is the base's own type (array/string), never the element type", () => {
+		const typeOf = (sql: string, schema: Schema) => {
+			const tree = resolveScopes(lower(parseRedshift(sql).tree));
+			const body = tree.root.body;
+			if (body.kind !== "select") throw new Error("expected select");
+			return inferType(body.projections[0].expr, tree.root, schema);
+		};
+		// A slice of array<string> is still array<string> — not the element type "string".
+		expect(typeOf("SELECT arr[2:4] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "array",
+			element: { kind: "scalar", name: "string" },
+		});
+		// Plain (non-slice) element access is unaffected by the slice-type rule: array<string>[2] → string.
+		expect(typeOf("SELECT arr[2] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "scalar",
+			name: "string",
+		});
 	});
 });

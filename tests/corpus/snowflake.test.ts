@@ -9,6 +9,7 @@ import { lower } from "../../src/snowflake/lower.js";
 import { parseSnowflake } from "../../src/snowflake/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
@@ -136,6 +137,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
@@ -149,6 +151,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "snowflake");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -180,6 +183,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Snowflake grammar vs the scraped docs
 				fallbacks,
 				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(FALLBACK_RATCHET);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

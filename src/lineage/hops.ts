@@ -508,7 +508,12 @@ function childExprs(expr: Expr): Expr[] {
 		case "lambda":
 			return [expr.body];
 		case "subscript":
-			return [expr.base, expr.index];
+			return [
+				expr.base,
+				...(expr.index ? [expr.index] : []),
+				...(expr.end ? [expr.end] : []),
+				...(expr.step ? [expr.step] : []),
+			];
 		case "with":
 			return [...expr.bindings.map((b) => b.value), expr.result];
 		case "star":

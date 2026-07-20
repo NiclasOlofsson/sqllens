@@ -6,6 +6,7 @@ import { lower } from "../../src/tsql/lower.js";
 import { parseTSql } from "../../src/tsql/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
@@ -26,7 +27,13 @@ const EXAMPLES = corpusPath("tsql/grammars-v4");
 const DOCS_CORPUS = corpusPath("tsql/docs");
 // The negative side (issue #5): mutated (rejection-rate ratchet) + curated (100%-reject).
 const NEGATIVES = corpusPath("tsql/docs/parser/negative/unparsed");
-const MUTATED_FLOOR = 315; // 315/400 mutants rejected (2026-07-02)
+// 315/400 mutants rejected (2026-07-02); lowered to 312 (2026-07-20 doc-compliance wave): the CLR/
+// spatial bare-property grammar widening (@g.Lat, geography::[Null], no parens required) legitimately
+// makes 3 truncation mutants (a dangling `@g.B`, `@g.CurveToLineWithToleran`, `geography::STGeomFromTe`)
+// valid syntax — real T-SQL can't distinguish a truncated-to-a-real-prefix property name from a
+// deliberate one at parse time either. Mutation cannot guarantee invalidity (see the shared runner's
+// own doc comment); this is the standing mutated-floor shortcut (CLAUDE.md § Known shortcuts).
+const MUTATED_FLOOR = 312;
 
 // The SQL examples scraped from the Microsoft T-SQL reference (MicrosoftDocs/sql-docs
 // docs/t-sql via tools/extract-tsql-docs.mjs; gitignored, ~3,400 files). Bucketing is FROM THE PATH
@@ -97,6 +104,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 	it("lowers + scopes every example the parser accepts, without throwing", () => {
 		let accepted = 0;
 		let modelled = 0;
+		const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 		for (const rel of files) {
 			const sql = readFileSync(join(EXAMPLES, rel), "utf8");
 			const r = parseTSql(sql);
@@ -106,6 +114,7 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 				// carrying their category. Either way the semantic layer must run without throwing.
 				const q = lower(r.tree);
 				if (q.statement === "query" && q.body.kind === "select" && !q.body.unsupported?.length) modelled++;
+				probeBody(q, rel, bodyEmpty);
 				expect(() => resolveScopes(q, "tsql"), rel).not.toThrow();
 			}
 		}
@@ -113,6 +122,10 @@ describe.skipIf(!existsSync(EXAMPLES))("T-SQL grammar vs the grammars-v4 example
 		// At least some examples must take the real modelling path — guards against a
 		// statement-classification regression silently routing everything to emptyQuery.
 		expect(modelled).toBeGreaterThan(0);
+		expect(
+			bodyEmpty,
+			`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+		).toEqual([]);
 	}, 300000);
 });
 
@@ -128,6 +141,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseErrors, QUERY_BASELINE, {
@@ -141,6 +155,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "tsql");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -172,6 +187,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("T-SQL grammar vs the scraped MS docs 
 				fallbacks,
 				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(FALLBACK_RATCHET);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

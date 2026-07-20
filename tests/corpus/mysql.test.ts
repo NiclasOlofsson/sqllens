@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { corpusPath } from "../helpers/corpus.js";
 import { lower } from "../../src/mysql/lower.js";
 import { parseMysql } from "../../src/mysql/parse.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { KNOWN_BAD, KNOWN_BAD_DOCS } from "../mysql-corpus-known-bad.js";
 
 // Two MySQL conformance corpora (both gitignored, each skipped when absent):
@@ -56,6 +57,7 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("MySQL grammar vs the grammars-v4 
 	it("parses every example with zero syntax errors, lowers totally; SLL-fallback floor", { timeout: 120_000 }, () => {
 		const fails: string[] = [];
 		const throwers: string[] = [];
+		const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 		let n = 0;
 		let fallbacks = 0;
 		for (const f of sqlFiles(VENDOR_EXAMPLES)) {
@@ -78,7 +80,8 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("MySQL grammar vs the grammars-v4 
 			}
 			// lower() is total: it must never throw on grammar-legal input.
 			try {
-				lower(r.tree);
+				const ir = lower(r.tree);
+				probeBody(ir, rel, bodyEmpty);
 			} catch (e) {
 				throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
 			}
@@ -90,6 +93,10 @@ describe.skipIf(!existsSync(VENDOR_EXAMPLES))("MySQL grammar vs the grammars-v4 
 			fallbacks,
 			`SLL fallback count rose above the ${FALLBACK_FLOOR} floor — a grammar edit made prediction sicker`,
 		).toBeLessThanOrEqual(FALLBACK_FLOOR);
+		expect(
+			bodyEmpty,
+			`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+		).toEqual([]);
 	});
 });
 
@@ -112,6 +119,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("MySQL grammar vs the scraped official
 		() => {
 			const fails: string[] = [];
 			const throwers: string[] = [];
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let n = 0;
 			let fallbacks = 0;
 			for (const f of sqlFiles(DOCS_CORPUS)) {
@@ -134,7 +142,8 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("MySQL grammar vs the scraped official
 				}
 				// lower() is total: it must never throw on grammar-legal input.
 				try {
-					lower(r.tree);
+					const ir = lower(r.tree);
+					probeBody(ir, rel, bodyEmpty);
 				} catch (e) {
 					throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
 				}
@@ -146,6 +155,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("MySQL grammar vs the scraped official
 				fallbacks,
 				`SLL fallback count rose above the ${DOCS_FALLBACK_FLOOR} floor — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(DOCS_FALLBACK_FLOOR);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

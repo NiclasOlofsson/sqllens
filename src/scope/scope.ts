@@ -525,7 +525,11 @@ function projectionOutputsFree(
 	return names;
 }
 
-/** Pipe AGGREGATE output: the aggregate columns plus the grouping-key columns (GoogleSQL order). */
+/** Pipe AGGREGATE output: the grouping-key columns plus the aggregate columns, in that order. "The
+ *  output columns from the AGGREGATE operator include all grouping columns first, followed by all
+ *  aggregate columns" (GoogleSQL pipe syntax reference, AGGREGATE operator section; every worked
+ *  example there orders the GROUP BY key(s) before the aggregate aliases, e.g. `item | num_items |
+ *  total_sales`). */
 function aggregateOutputsFree(
 	stage: Extract<PipeStage, { op: "aggregate" }>,
 	incoming: string[] | "unknown",
@@ -537,7 +541,7 @@ function aggregateOutputsFree(
 		if (g.kind === "column") keys.push(g.parts[g.parts.length - 1]);
 		else return "unknown"; // a non-column grouping key has no determinable name
 	}
-	return [...aggs, ...keys];
+	return [...keys, ...aggs];
 }
 
 /** Names of a non-star projection list, or "unknown" if any item is a star/anonymous. */

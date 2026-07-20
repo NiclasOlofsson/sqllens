@@ -45,3 +45,19 @@ export const KNOWN_BAD: Record<string, string> = {
 // http_request example, a reversed named-arg pair). The list is intentionally empty; the docs gate
 // still merges it, and the self-policing residency assertion keeps it that way.
 export const DEFERRED_GRAMMAR: Record<string, string> = {};
+
+// (3) Valid Databricks SQL that wraps a construct this repo has ruled permanently out of scope
+// (CLAUDE.md § Scope: object DDL, including catalog object DDL, column masks/row filters, and UDF
+// bodies; separately, Delta Live Tables/Lakeflow declarative-pipeline DDL such as STREAMING TABLE).
+// Unlike DEFERRED_GRAMMAR, these are not tracked toward a future grammar fix: the wrapper stays
+// unparsed by design. Triaged 2026-07-20.
+export const OUT_OF_SCOPE_WRAPPER: Record<string, string> = {
+	"sql-ref-syntax-ddl-create-materialized-view/8.sql":
+		"a MATERIALIZED VIEW column with MASK ... WITH ROW FILTER: column masks/row filters are out-of-scope object DDL",
+	"sql-ref-syntax-ddl-drop-procedure/1.sql":
+		"a CREATE PROCEDURE body (truncated in the docs, no closing END): UDF/procedure bodies are out-of-scope object DDL",
+	"functions/read_kafka/2.sql":
+		"CREATE OR REFRESH STREAMING TABLE ... FROM STREAM read_kafka(...): the Lakeflow declarative-pipeline STREAMING TABLE statement is unmodeled, out-of-scope object DDL",
+	"functions/read_files/10.sql":
+		"CREATE OR REFRESH STREAMING TABLE ... FROM STREAM read_files(...): the same unmodeled STREAMING TABLE wrapper as read_kafka/2.sql",
+};

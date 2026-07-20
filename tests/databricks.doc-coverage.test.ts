@@ -186,7 +186,7 @@ const PROBES: Record<string, Probe[]> = {
 		["describe-extended", "DESCRIBE TABLE EXTENDED t", "nonquery"],
 		["cache-table", "CACHE TABLE t", "nonquery"],
 		["set-conf", "SET spark.sql.shuffle.partitions = 10", "nonquery"],
-		["use-catalog", "USE CATALOG main", "noparse"],
+		["use-catalog", "USE CATALOG main", "nonquery"], // GAP 2: catalogIdentifierReference wired to USE CATALOG
 		["use-schema", "USE sch", "nonquery"],
 		["declare-variable", "DECLARE VARIABLE v INT DEFAULT 1", "nonquery"],
 		["set-var", "SET VAR v = 5", "nonquery"],

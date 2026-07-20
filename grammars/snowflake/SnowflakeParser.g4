@@ -3007,7 +3007,9 @@ task_scripting_declaration_list
     ;
 
 task_scripting_declaration
-    : id_ data_type
+    // RESULTSET is a Snowflake Scripting variable type, not a general SQL data type (CAST etc. don't
+    // take it): docs.snowflake.com/en/developer-guide/snowflake-scripting/variables
+    : id_ (data_type | RESULTSET)
     ;
 
 task_scripting_statement_list
@@ -3384,7 +3386,9 @@ use_role
     ;
 
 use_schema
-    : USE SCHEMA? ((id_ DOT)? id_ | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET)
+    // IDENTIFIER(...) also takes a `?` bind variable (JDBC/ODBC/Python client style), alongside a
+    // string or a $session_variable: docs.snowflake.com/en/sql-reference/identifier-literal
+    : USE SCHEMA? ((id_ DOT)? id_ | IDENTIFIER LR_BRACKET (string | id_ | QMARK) RR_BRACKET)
     ;
 
 // ALL | NONE | an explicit role list:
@@ -4035,8 +4039,9 @@ account_identifier
 schema_name
     : d = id_ DOT s = id_
     | s = id_
-    // IDENTIFIER(...) substitutes for any object name: docs.snowflake.com/en/sql-reference/identifier-literal
-    | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET
+    // IDENTIFIER(...) substitutes for any object name; arg is a string, a $session_variable, or a
+    // `?` bind variable: docs.snowflake.com/en/sql-reference/identifier-literal
+    | IDENTIFIER LR_BRACKET (string | id_ | QMARK) RR_BRACKET
     ;
 
 object_type
@@ -4141,6 +4146,20 @@ id_
     | binary_builtin_function
     | binary_or_ternary_builtin_function
     | ternary_builtin_function
+    | pivot_unpivot_word
+    ;
+
+// PIVOT/UNPIVOT are NOT reserved (docs.snowflake.com/en/sql-reference/reserved-keywords), so they are
+// legal identifiers (table, column, and AS-prefixed alias names). This class is the post-source-slot
+// split: `id_` reaches it, but the bare (AS-less) FROM-alias slot `bare_from_alias` does NOT. A trailing
+// PIVOT/UNPIVOT after a FROM source is the `pivot_unpivot` clause (which requires `PIVOT (` / `UNPIVOT (`),
+// so the bare-alias slot must not grab it — otherwise it competes with the pivot clause and the SLL
+// prediction goes sick (the two-PIVOTs-after-a-subquery case, constructs/pivot/19.sql). Reaching the words
+// only from id_ keeps them out of the bare-alias slot the same way LEFT/RIGHT are held out of it, so a
+// bare `t pivot` stays noparse (use `AS pivot`) while `SELECT pivot FROM t` / `FROM unpivot` parse.
+pivot_unpivot_word
+    : PIVOT
+    | UNPIVOT
     ;
 
 keyword
@@ -4331,6 +4350,7 @@ non_reserved_words
     | RESPECT
     | RESTRICT
     | RESULT
+    | RESULTSET
     | ROLE
     | ROUNDING_MODE
     | ROW_NUMBER
@@ -4403,9 +4423,10 @@ non_reserved_words
     // non-reserved tokens ALSO stay out because reaching them from id_ re-reads existing SQL —
     // ASC/DESC (asc_desc sort direction), NEXTVAL (object_name DOT NEXTVAL), LISTAGG (its WITHIN
     // GROUP aggregate rule), and DEFAULT (the USE SECONDARY ROLES / column DEFAULT sentinel).
-    // PIVOT/UNPIVOT are also held out here — not reserved, but the post-source `pivot_unpivot*` slot
-    // makes a trailing PIVOT ambiguous with an id_ alias; the language-exact cure is a post-source-slot
-    // split, deferred (a tracked open gap), so `SELECT pivot FROM t` is noparse for now.
+    // PIVOT/UNPIVOT are NOT in this shared list — they reach id_ directly via `pivot_unpivot_word` (the
+    // post-source-slot split), so `SELECT pivot FROM t` / `FROM unpivot` parse while the bare FROM-alias
+    // slot (which shares non_reserved_words) still does not grab a trailing PIVOT away from the pivot
+    // clause. Keeping them out of THIS list is what holds them out of `bare_from_alias`.
     // EXCEPT is held out for the same reason: the bare FROM-alias slot would grab the EXCEPT of
     // `SELECT * FROM t EXCEPT SELECT * FROM u` as an alias (t AS except), so the set-op reading loses
     // and the second select folds in as a bare, operator-less branch. The other three set-op words
@@ -5088,9 +5109,9 @@ object_name
     : d = id_ DOT s = id_ DOT o = id_
     | s = id_ DOT o = id_
     | o = id_
-    // IDENTIFIER(...) substitutes for any object name; arg is a string or a $session_variable:
-    // docs.snowflake.com/en/sql-reference/identifier-literal
-    | IDENTIFIER LR_BRACKET (string | id_) RR_BRACKET
+    // IDENTIFIER(...) substitutes for any object name; arg is a string, a $session_variable, or a
+    // `?` bind variable (JDBC/ODBC/Python client style): docs.snowflake.com/en/sql-reference/identifier-literal
+    | IDENTIFIER LR_BRACKET (string | id_ | QMARK) RR_BRACKET
     ;
 
 object_name_or_identifier
@@ -5887,8 +5908,13 @@ match_recognize
     ;
 
 pivot_unpivot
+    // The pivot RESULT alias (the trailing `[AS] name [(cols)]`) is a post-source alias slot, so it uses
+    // `from_alias` (not the shared `as_alias`): its bare branch is `bare_from_alias`, which — like the
+    // FROM-source slot — does NOT reach PIVOT/UNPIVOT (nor the reserved LEFT/RIGHT). That keeps a second
+    // `PIVOT (…)` after a first from being misread as the first pivot's bare alias (constructs/pivot/19.sql,
+    // two PIVOTs on a subquery); an explicit `AS pivot` still names the result with the word.
     : PIVOT LR_BRACKET id_ LR_BRACKET id_ RR_BRACKET (AS? alias)? FOR id_ IN LR_BRACKET pivot_in_clause RR_BRACKET default_on_null? RR_BRACKET (
-        as_alias column_alias_list_in_brackets?
+        from_alias column_alias_list_in_brackets?
     )?
     | UNPIVOT (include_exclude NULLS)? LR_BRACKET id_ FOR column_name IN LR_BRACKET aliased_column_list RR_BRACKET RR_BRACKET
     ;

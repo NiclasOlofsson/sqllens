@@ -1349,7 +1349,9 @@ function collectColumns(e: Expr, clause: Clause, out: ColumnRef[]): void {
 			return;
 		case "subscript":
 			collectColumns(e.base, clause, out);
-			collectColumns(e.index, clause, out);
+			if (e.index) collectColumns(e.index, clause, out);
+			if (e.end) collectColumns(e.end, clause, out);
+			if (e.step) collectColumns(e.step, clause, out);
 			return;
 		case "subquery":
 		case "exists":
@@ -1383,7 +1385,12 @@ function hasAggregate(e: Expr): boolean {
 		case "predicate":
 			return hasAggregate(e.operand) || e.args.some(hasAggregate);
 		case "subscript":
-			return hasAggregate(e.base) || hasAggregate(e.index);
+			return (
+				hasAggregate(e.base) ||
+				(e.index !== undefined && hasAggregate(e.index)) ||
+				(e.end !== undefined && hasAggregate(e.end)) ||
+				(e.step !== undefined && hasAggregate(e.step))
+			);
 		case "lambda":
 			return hasAggregate(e.body);
 		default:
@@ -1431,7 +1438,9 @@ function collectSubqueries(select: SelectExpr, out: QueryExpr[]): void {
 				return;
 			case "subscript":
 				visit(e.base);
-				visit(e.index);
+				if (e.index) visit(e.index);
+				if (e.end) visit(e.end);
+				if (e.step) visit(e.step);
 				return;
 			default:
 				return;

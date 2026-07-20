@@ -210,4 +210,71 @@ describe("union views — unionSymbols / unionDiagnostics / unionCtes / unionOut
 		expect(cols.map((c) => c.name)).toEqual(["MyCol"]); // display form, not dropped
 		expect(cols[0].span.start).toBe(SQL.indexOf('"MyCol"')); // the LEFT branch's own token
 	});
+
+	// Gap 1 (ledgered above unionCtes/unionOutputColumns): a multi-statement, no-variant document used
+	// to answer [] here, since the compound facade's root carries no CTEs/projections. The real fix
+	// merges each statement CELL's own answer, shifted to document coordinates (the same shift
+	// `analyze()` already applies to symbols/diagnostics for a multi-cell document).
+	describe("union views over a MULTI-STATEMENT document (no variants, the real per-cell merge)", () => {
+		it("unionOutputColumns merges every statement's own output columns, shifted to doc coordinates", () => {
+			const text = "SELECT amount AS a FROM sales;\nSELECT id AS b FROM sales";
+			const doc = SqlDocument.create(text, "databricks");
+			expect(doc.statements.length).toBe(2); // sanity: this is really the multi-cell path
+			const cols = doc.unionOutputColumns();
+			expect(cols.map((c) => c.name)).toEqual(["a", "b"]);
+			const b = cols.find((c) => c.name === "b")!;
+			expect(b.span.line).toBe(2); // statement 2 lives on doc line 2 (1-based), proves the shift
+			expect(text.slice(b.span.start, b.span.end)).toBe("b");
+		});
+
+		it("unionCtes merges every statement's CTEs (+ their columns), shifted to doc coordinates", () => {
+			const text = "SELECT 1;\nWITH data AS (SELECT a, b FROM t) SELECT * FROM data";
+			const doc = SqlDocument.create(text, "databricks");
+			expect(doc.statements.length).toBe(2);
+			const ctes = doc.unionCtes();
+			expect(ctes.length).toBe(1);
+			expect(ctes[0].name).toBe("data");
+			expect(ctes[0].columns.map((c) => c.name)).toEqual(["a", "b"]);
+			expect(ctes[0].declarationSpan.line).toBe(2); // statement 2 → doc line 2
+			expect(text.slice(ctes[0].declarationSpan.start, ctes[0].declarationSpan.end)).toBe("data");
+		});
+	});
+
+	// Gap 2 (ledgered on `scopeOutputColumns`): a PIPE-syntax root used to answer `[]` unconditionally.
+	// The real fix derives output columns for the structurally derivable subset of pipe operators
+	// (verified against the GoogleSQL pipe-syntax reference), abstaining (never guessing) elsewhere.
+	describe("union views over a BigQuery PIPE-syntax root (the derivable subset)", () => {
+		it("a terminal |> SELECT stage enumerates its own projections, with real spans", () => {
+			const SQL = "FROM t |> SELECT a, b";
+			const cols = SqlDocument.create(SQL, "bigquery").unionOutputColumns();
+			expect(cols.map((c) => c.name)).toEqual(["a", "b"]);
+			expect(cols[0].span.start).toBe(SQL.indexOf("a", SQL.indexOf("SELECT")));
+		});
+
+		it("a pass-through stage (WHERE) after a real base SELECT defers to the base's own columns", () => {
+			const SQL = "SELECT a, b FROM t |> WHERE a > 1";
+			const cols = SqlDocument.create(SQL, "bigquery").unionOutputColumns();
+			expect(cols.map((c) => c.name)).toEqual(["a", "b"]);
+			expect(cols[0].span.start).toBe(SQL.indexOf("a")); // the base SELECT's own token, not fabricated
+		});
+
+		it("a terminal |> AGGREGATE stage names the GROUP BY keys first, then the aggregates (GoogleSQL pipe-syntax reference order)", () => {
+			const SQL = "SELECT a, b FROM t |> AGGREGATE COUNT(*) AS n GROUP BY a";
+			const cols = SqlDocument.create(SQL, "bigquery").unionOutputColumns();
+			expect(cols.map((c) => c.name)).toEqual(["a", "n"]);
+			expect(cols[0].span.start).toBe(SQL.lastIndexOf("a")); // the GROUP BY key's own token
+			expect(cols[1].span.start).toBe(SQL.indexOf("n"));
+		});
+
+		it("abstains (never guesses) on a pipe operator whose output shape isn't modelled here", () => {
+			// EXTEND adds a column while keeping the incoming ones: a real shape, but not one this pass
+			// enumerates spans for (see scopeOutputColumns' pipe doc comment); JOIN needs a catalog.
+			expect(SqlDocument.create("SELECT a FROM t |> EXTEND a + 1 AS c", "bigquery").unionOutputColumns()).toEqual(
+				[],
+			);
+			expect(
+				SqlDocument.create("SELECT a FROM t |> JOIN u ON t.a = u.a", "bigquery").unionOutputColumns(),
+			).toEqual([]);
+		});
+	});
 });

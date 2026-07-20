@@ -33,10 +33,12 @@ import { parseSqlOut } from "../helpers/spark-sqltests.js";
 //                       expansion, projection-count disagreement)
 //   - graded columns:   match / coarse / abstain / MISMATCH
 //
-// coarse = our type is a documented coarsening of Spark's exact type: the ADT
-// has ONE `interval` scalar (Spark: qualified ANSI intervals, `interval day to
-// second`), and timestamp_ntz/ltz deliberately fold to `timestamp`
-// (src/infer/types.ts BASE_ALIASES). Modeling those distinctly is an Open Gap.
+// coarse = our type is a documented coarsening of Spark's exact type. As of the
+// 2026-07-20 qualified-interval wave the ADT models Spark's ANSI intervals
+// (`interval year to month`, `interval day to second`, single-unit `interval day`),
+// so the interval coarsenings became exact matches and this bucket is empty; the
+// only remaining fold is timestamp_ntz/ltz → `timestamp` (src/infer/types.ts
+// BASE_ALIASES), applied on the Spark side by foldNtz, which never coarsens.
 //
 // MISMATCH is the debt number: columns where we claim a CONCRETE type and
 // Spark's analyzer says a different concrete type — never-wrong violations.
@@ -87,12 +89,19 @@ const norm = (t: string) =>
 		.replace(/\s+collate\s+[\w.]+/g, "")
 		.replace(/\s+/g, "");
 
-/** The ntz/ltz fold is a documented ADT alias (src/infer/types.ts BASE_ALIASES), applied to
- *  the Spark side so nested occurrences compare too. Collapsing a QUALIFIED interval to the
- *  bare `interval` is the coarse test: equal only after collapsing → coarse, not a match. */
+/** The ntz/ltz fold is a documented ADT alias (src/infer/types.ts BASE_ALIASES), applied to the
+ *  Spark side so nested occurrences compare too. */
 const foldNtz = (s: string) => s.replace(/timestamp_ntz|timestamp_ltz/g, "timestamp");
+/** Collapse every QUALIFIED interval name (`intervaldaytosecond`, nested included) to bare
+ *  `interval`. Used on EITHER side to reconcile a bare-vs-qualified interval pair — Spark's legacy
+ *  CalendarInterval (bare) vs our ANSI type, or our bare abstention vs Spark's qualified type. Two
+ *  DIFFERENT qualified names never reconcile (each collapses to bare but the un-collapsed other
+ *  side stays qualified), so a real qualification disagreement is still a MISMATCH. */
 const collapseIntervals = (s: string) =>
-	s.replace(/interval(year|month|week|day|hour|minute|second)+(to(year|month|day|hour|minute|second)+)?/g, "interval");
+	s.replace(
+		/interval(year|month|week|day|hour|minute|second)+(to(year|month|day|hour|minute|second)+)?/g,
+		"interval",
+	);
 
 const stripTicks = (s: string) => s.replace(/^`|`$/g, "");
 
@@ -180,15 +189,36 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 						const o = norm(ours);
 						const s = foldNtz(norm(spark));
 						if (o === s) cls = "match";
+						// A BARE `interval` on one side vs a QUALIFIED interval on the other is the same type
+						// modulo the interval MODEL, not a disagreement. Spark's postgreSQL/ goldens run under
+						// legacy CalendarInterval (spark.sql.legacy.interval.enabled), so Spark emits bare
+						// `interval` where our default-Databricks analysis emits the correct, more precise
+						// ANSI-qualified type (legacy compat → match). The reverse — we abstained to bare where
+						// Spark is qualified — is our documented coarsening. Requiring one side to collapse to
+						// EXACTLY the other keeps two DIFFERENT qualified names a real MISMATCH (interval year
+						// vs interval day to second).
+						else if (collapseIntervals(o) === s) cls = "match";
 						else if (o === collapseIntervals(s)) cls = "coarse";
 						else {
 							cls = "MISMATCH";
 							mismatchClasses.set(`${o} -> ${s}`, (mismatchClasses.get(`${o} -> ${s}`) ?? 0) + 1);
 						}
 					}
-					bump(cls === "match" ? "colMatch" : cls === "coarse" ? "colCoarse" : cls === "abstain" ? "colAbstain" : "colMismatch");
+					bump(
+						cls === "match"
+							? "colMatch"
+							: cls === "coarse"
+								? "colCoarse"
+								: cls === "abstain"
+									? "colAbstain"
+									: "colMismatch",
+					);
 					lines.push(`${rel}#${ri}.${i} ${cls} ${ours}|${spark}`);
-					if (proj.aliasCst && proj.name && rec.fields[i].name.toLowerCase() !== stripTicks(proj.name).toLowerCase())
+					if (
+						proj.aliasCst &&
+						proj.name &&
+						rec.fields[i].name.toLowerCase() !== stripTicks(proj.name).toLowerCase()
+					)
 						nameMismatches++;
 				}
 			}
@@ -214,11 +244,13 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 		expect(counts.parseFailure).toBeLessThanOrEqual(3);
 
 		// The graded-column ledger. Ratchets: match may only rise; abstain/coarse may only
-		// fall. Baselines from the 2026-07-19 fix waves (the first census read
-		// 3655/1275/325 with 430 wrong).
-		expect(counts.colMatch, "engine-confirmed types (may only rise)").toBeGreaterThanOrEqual(4337);
-		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1026);
-		expect(counts.colCoarse, "single-interval-ADT coarsenings (may only fall)").toBeLessThanOrEqual(322);
+		// fall. Baselines from the 2026-07-19 fix waves (the first census read 3655/1275/325 with
+		// 430 wrong); the 2026-07-20 qualified-interval wave modeled Spark's ANSI intervals
+		// (interval year to month / day to second …) so the 322 interval coarsenings became exact
+		// matches and the coarse bucket emptied.
+		expect(counts.colMatch, "engine-confirmed types (may only rise)").toBeGreaterThanOrEqual(4671);
+		expect(counts.colAbstain, "unknown where Spark knows (may only fall)").toBeLessThanOrEqual(1014);
+		expect(counts.colCoarse ?? 0, "documented type-model coarsenings (may only fall)").toBeLessThanOrEqual(0);
 
 		// ZERO. A graded column either matches Spark's analyzer, abstains, or is a documented
 		// coarsening — a wrong concrete type is a defect, never a ledger entry (Niclas ruling
@@ -234,11 +266,10 @@ describe.skipIf(!existsSync(ROOT))("databricks vs Spark's own analyzer schemas (
 			expect(lines).toEqual(readFileSync(BASELINE, "utf8").trimEnd().split("\n"));
 		}
 
-		// Aliased output names agree everywhere except ONE case: `SELECT 1 AS
-		// IDENTIFIER('col1')` (identifier-clause.sql.out) — Spark resolves the
-		// IDENTIFIER() clause to `col1`; our lower() keeps the raw constructor text as
-		// the name. IDENTIFIER-clause resolution is part of the same debt issue as the
-		// type mismatches. May only fall.
-		expect(nameMismatches).toBeLessThanOrEqual(1);
+		// ZERO. The one carve-out case, `SELECT 1 AS IDENTIFIER('col1')` (identifier-clause.sql.out),
+		// is fixed: lower() now resolves the IDENTIFIER() clause's constant-string argument to the
+		// identifier it names (src/databricks/lower.ts, identifierClauseText/identifierLiteralText/
+		// identifierClauseParts) instead of keeping the raw constructor text. May only fall.
+		expect(nameMismatches).toBe(0);
 	});
 });

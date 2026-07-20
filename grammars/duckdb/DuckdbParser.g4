@@ -3028,7 +3028,11 @@ simple_select_intersect
     ;
 
 simple_select_pramary
-   : ( SELECT (opt_all_clause? into_clause? opt_target_list? | distinct_clause target_list)
+   // An empty selection list is a real DuckDB Parser Error ("SELECT clause without selection
+   // list"), verified against real DuckDB (2026-07-20, node bindings): both `SELECT FROM t` and
+   // bare `SELECT` are rejected. `target_list` below is required (not `opt_target_list?`)
+   // whenever the SELECT keyword is written, in both alternatives, matching the engine.
+   : ( SELECT (opt_all_clause? into_clause? target_list | distinct_clause target_list)
            into_clause?
            from_clause?
            where_clause?
@@ -3040,8 +3044,9 @@ simple_select_pramary
     )
    // DuckDB FROM-first syntax (added to this fork) — SELECT is optional and follows FROM:
    //   FROM tbl;   FROM tbl SELECT c1, c2 WHERE …;
-   // duckdb.org/docs/current/sql/query_syntax/from.md#from-first-syntax
-   | ( from_clause (SELECT (opt_all_clause? opt_target_list? | distinct_clause target_list))?
+   // duckdb.org/docs/current/sql/query_syntax/from.md#from-first-syntax. When SELECT IS written
+   // its target list is still required, per the empty-selection-list note above.
+   | ( from_clause (SELECT (opt_all_clause? target_list | distinct_clause target_list))?
            where_clause?
            group_clause?
            having_clause?
@@ -3281,7 +3286,7 @@ table_ref
     // data/overview.md), a table-level `USING SAMPLE` suffix (sql/samples.md), and PIVOT/UNPIVOT
     // in FROM (SQL-standard forms, sql/statements/pivot.md#sql-standard-pivot-syntax).
     : (colid COLON)? (
-        relation_expr opt_alias_clause? tablesample_clause?
+        relation_expr opt_alias_clause? at_clause? tablesample_clause?
         | sconst opt_alias_clause?
         | func_table func_alias_clause?
         | xmltable opt_alias_clause?
@@ -3428,6 +3433,21 @@ tablesample_clause
    // duckdb.org/docs/current/sql/samples.md.
    : TABLESAMPLE sample_spec
    | TABLESAMPLE func_name OPEN_PAREN expr_list CLOSE_PAREN opt_repeatable_clause?
+   ;
+
+// DuckDB time travel (Delta/Iceberg extensions, added to this fork): pin a base-table reference
+// to a historical version or timestamp snapshot.
+//   FROM t AT (VERSION => 5)
+//   FROM t AT (TIMESTAMP => TIMESTAMP '2025-09-22 12:32:43.217')
+// duckdb.org/docs/stable/core_extensions/delta, duckdb.org/docs/stable/core_extensions/iceberg/overview
+// Verified against real DuckDB (2026-07-20, node bindings): the AT clause sits after the alias
+// and before TABLESAMPLE, and only on a plain relation_expr (a function table or a derived
+// subquery both give a Parser Error on AT, so it is not offered on those table_ref alternatives).
+// The version/timestamp value parses as a general expression, not just a literal (`version()`
+// and `1 + 1` both parse; the engine only rejects them at bind time on a non-time-travel table).
+at_clause
+   : AT OPEN_PAREN VERSION_P EQUALS_GREATER a_expr CLOSE_PAREN
+   | AT OPEN_PAREN TIMESTAMP EQUALS_GREATER a_expr CLOSE_PAREN
    ;
 
 // One sample specification, shared by USING SAMPLE / TABLESAMPLE (sql/samples.md):
@@ -4496,7 +4516,21 @@ indirection_el
    // to one TYPECAST token and never reaches the COLON alt above. begin?::step? recovers those.
    // It stays BELOW the plain `a_expr` index, so a genuine cast-index `l[x::INT]` (a valid typename
    // step-less) still reads as the index — pure acceptance widening (#13, functions/list.md#slicing).
-   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)?) CLOSE_BRACKET
+   // The plsqlvariablename alt: a bare-identifier END bound with a non-empty begin — `arr[1:hi]`,
+   // `arr[lo:hi]` — has no whitespace before the identifier, so the lexer's PLSQLVARIABLENAME rule
+   // (`:` + word chars, meant for psql/pgbench `:variable` interpolation,
+   // docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION — real corpus use:
+   // postgres/docs/parser/positive/dml/pgbench/1.sql, shared pg-family lexer) maximal-munches that
+   // COLON together with the identifier into one token before the parser ever sees a standalone
+   // COLON, the same way `::`/TYPECAST does above. Real array slicing accepts any expression as a
+   // bound (duckdb.org/docs/current/sql/functions/list.md#slicing); this alt un-fuses the token by
+   // requiring a MANDATORY begin bound, so it only ever matches this previously-unparseable shape —
+   // never the empty-begin `arr[:hi]` (still reads as a plain plsqlvariablename index, entangled
+   // with the pgbench reading, out of scope) — and an optional trailing `COLON opt_slice_bound?`
+   // still recovers a numeric STEP after the fused end (`arr[1:hi:2]`). The symmetric STEP-slot
+   // fusion (`arr[1:2:hi]`, a bare-identifier STEP) is NOT covered — steps are conventionally
+   // numeric strides, out of this fix's scope.
+   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)? | opt_slice_bound plsqlvariablename (COLON opt_slice_bound?)?) CLOSE_BRACKET
    ;
 
 opt_slice_bound

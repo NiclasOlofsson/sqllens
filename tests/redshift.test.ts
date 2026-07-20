@@ -124,6 +124,13 @@ describe("Redshift-specific constructs", () => {
 	it("DISTKEY/SORTKEY usable as column identifiers", () => {
 		expect(errorsOf(`SELECT "column", type, encoding, distkey, sortkey FROM pg_table_def`)).toBe(0);
 	});
+
+	// ITEMS is borrowed for COLLECTION ITEMS TERMINATED BY (external-table ROW FORMAT DELIMITED), but
+	// isn't in r_pg_keywords.html, so it must stay usable as an ordinary identifier/attribute name.
+	it("ITEMS usable as a column identifier and as a SUPER dotted-path attribute name", () => {
+		expect(errorsOf("SELECT items FROM t")).toBe(0);
+		expect(errorsOf("SELECT a.items FROM t")).toBe(0);
+	});
 });
 
 // Round 2: every remaining in-scope query-corpus construct that the grammar rejected, each
@@ -204,6 +211,90 @@ describe("Redshift constructs (round 2, doc-verified)", () => {
 	it("GROUP BY ALL (the corrected r_GROUP_BY_clause example)", () => {
 		// r_GROUP_BY_clause.html — GROUP BY ALL; the doc's own example has a typo (missing comma).
 		expect(errorsOf("SELECT col1, col2, sum(col3) FROM testtable GROUP BY ALL")).toBe(0);
+	});
+
+	// GAP 2, deep dotted column references over SUPER. The repro boundary (verified with
+	// temp_auto/redshift-probe.mjs before the fix) is NOT depth: arbitrary-depth dotted refs already
+	// parsed (a.b.c.d.e, 5 parts). The real cause was ITEMS being a lexer token used only inside
+	// COLLECTION ITEMS TERMINATED BY and never folded into any nonreserved-word class, so it couldn't
+	// be used as an identifier or attr_name anywhere, even at depth 1 (SELECT a.items FROM t alone
+	// failed). Fixed by classifying ITEMS into unreserved_keyword (see the "ITEMS usable as a column
+	// identifier" test above); this is the exact corpus repro.
+	it("SUPER dotted path through a mixed-case, keyword-colliding attribute name (super-configurations/2.sql)", () => {
+		// super-configurations.html#upper-mixed-case
+		expect(
+			errorsOf(
+				`SELECT json_table.data.ITEMS.Name, json_table.data.price
+				 FROM (SELECT json_parse('{"ITEMS":{"Name":"TV"}, "price": 345}') AS data) AS json_table`,
+			),
+		).toBe(0);
+	});
+
+	it("arbitrary-depth dotted column references (unaffected by the ITEMS fix, already worked)", () => {
+		expect(errorsOf("SELECT a.b.c.d.e FROM t")).toBe(0);
+		expect(errorsOf("SELECT 1 FROM t WHERE a.b.c.d = 1")).toBe(0);
+	});
+
+	// GAP 1, OBJECT_TRANSFORM's KEEP/SET argument mini-grammar (r_object_transform_function.html).
+	it("OBJECT_TRANSFORM with KEEP and SET clauses (the docs example)", () => {
+		expect(
+			errorsOf(
+				`SELECT OBJECT_TRANSFORM(
+					col_person
+					KEEP
+						'"name"."first"',
+						'"age"',
+						'"company"',
+						'"country"'
+					SET
+						'"name"."first"', UPPER(col_person.name.first::TEXT),
+						'"age"', col_person.age + 5,
+						'"company"', 'Amazon'
+				) AS col_person_transformed
+				FROM employees`,
+			),
+		).toBe(0);
+		// Each clause is independently optional.
+		expect(errorsOf(`SELECT OBJECT_TRANSFORM(col_person) FROM employees`)).toBe(0);
+		expect(errorsOf(`SELECT OBJECT_TRANSFORM(col_person KEEP '"a"') FROM employees`)).toBe(0);
+		expect(errorsOf(`SELECT OBJECT_TRANSFORM(col_person SET '"a"', 1) FROM employees`)).toBe(0);
+	});
+
+	// GAP 3, Spectrum nested-data unnest join: a comma-joined FROM list where a LATER comma item
+	// carries a bare ON (no JOIN keyword), per nested-data-use-cases.html, "Joining Amazon Redshift and
+	// nested data" (the exact corpus repro, nested-data-use-cases/7.sql).
+	it("comma-joined FROM list with a trailing bare ON (nested-data-use-cases/7.sql)", () => {
+		expect(
+			errorsOf(
+				`SELECT c.name.given, c.name.family, COUNT(o.date) AS ordercount, SUM(p.price) AS ordersum
+				 FROM spectrum.customers2 c, c.orders o, prices p ON o.item = p.id
+				 GROUP BY c.id, c.name.given, c.name.family`,
+			),
+		).toBe(0);
+	});
+});
+
+// TIGHTEN: the SELECT list is mandatory (docs.aws.amazon.com/redshift/latest/dg/r_SELECT_list.html:
+// `* | expression [, ...]`, not bracketed as optional). A bare SELECT / SELECT ALL / SELECT FROM t
+// with no list was a ledgered leniency (CLAUDE.md Known shortcuts); removed for Redshift. SELECT INTO
+// is the one documented exception (r_SELECT_INTO.html: its list is optional) and must keep parsing.
+describe("Redshift TIGHTEN: the SELECT list is mandatory outside SELECT INTO", () => {
+	it("rejects a SELECT with no list", () => {
+		expect(errorsOf("SELECT")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT ALL")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT FROM t")).toBeGreaterThan(0);
+		expect(errorsOf("SELECT ALL FROM t")).toBeGreaterThan(0);
+	});
+
+	it("SELECT INTO with no list still parses (the documented exception)", () => {
+		expect(errorsOf("SELECT INTO foo FROM t")).toBe(0);
+		expect(errorsOf("SELECT ALL INTO foo FROM t")).toBe(0);
+	});
+
+	it("an ordinary SELECT with a list is unaffected", () => {
+		expect(errorsOf("SELECT a FROM t")).toBe(0);
+		expect(errorsOf("SELECT * FROM t")).toBe(0);
+		expect(errorsOf("SELECT a INTO foo FROM t")).toBe(0);
 	});
 });
 

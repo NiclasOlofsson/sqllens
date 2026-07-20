@@ -6,10 +6,12 @@ import { lower } from "../../src/trino/lower.js";
 import { parseTrino } from "../../src/trino/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
+import { KNOWN_BAD } from "../trino-corpus-known-bad.js";
 
 // Two Trino conformance corpora, both in the corpus repo and skipped when absent:
 //
@@ -37,28 +39,8 @@ const OTHER_BASELINE = 0;
 
 // Documented-broken query examples — each verified against its trinodb docs source page as
 // deliberately-invalid, fragmentary, or FOREIGN-dialect SQL (connector passthrough examples show
-// the remote system's syntax). They fail to parse, so the organizer files them under unparsed/;
-// the gate asserts they STAY there.
-const KNOWN_BAD: Record<string, string> = {
-	"connector_hive/14.sql":
-		"hive.md CSV-format illustration: CREATE TABLE with a WITH(properties) clause but no column list and no AS — a config fragment, not a statement.",
-	"connector_lakehouse/1.sql":
-		"lakehouse.md doc typo — missing comma after type = 'ICEBERG' in the WITH properties list.",
-	"connector_oracle/7.sql":
-		"oracle.md query-passthrough example embeds an Oracle MODEL query whose inner quotes ('Bounce') are not doubled — the varchar literal terminates early; invalid as written.",
-	"connector_pinot/5.sql":
-		"pinot.md dynamic-table example is PINOT dialect (trailing TOP 30000) — the raw query passed through to Pinot, not Trino syntax.",
-	"connector_sqlserver/8.sql":
-		"sqlserver.md CREATE STATISTICS is a SQL SERVER command (documented to run on the remote database).",
-	"connector_sqlserver/9.sql":
-		"sqlserver.md UPDATE STATISTICS is a SQL SERVER command (documented to run on the remote database).",
-	"functions_table/5.sql":
-		"table.md shows two alternative TVF invocation forms as consecutive unterminated SELECTs — an either/or illustration, not a batch.",
-	"sql_execute-immediate/3.sql":
-		"execute-immediate.md shows the PREPARE/EXECUTE/DEALLOCATE sequence as three unterminated statements — an illustration of the flow, not a batch.",
-	"sql_explain/6.sql":
-		"explain.md (TYPE VALIDATE) example is DELIBERATELY invalid ('SELET') — it demonstrates the validation error output.",
-};
+// the remote system's syntax). See tests/trino-corpus-known-bad.ts for the full breakdown. They
+// fail to parse, so the organizer files them under unparsed/; the gate asserts they STAY there.
 
 describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Trino grammar vs the bytebase example corpus", () => {
 	let files: string[];
@@ -100,6 +82,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			runDocsRatchet(DOCS_CORPUS, (sql) => parseTrino(sql).errors, QUERY_BASELINE, {
 				knownBad: KNOWN_BAD,
@@ -111,6 +94,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "trino");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -138,6 +122,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Trino grammar vs the trinodb docs cor
 			expect(total, `\`other\` count rose above the ${OTHER_BASELINE} baseline:\n${top}`).toBeLessThanOrEqual(
 				OTHER_BASELINE,
 			);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

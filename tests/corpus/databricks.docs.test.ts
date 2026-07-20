@@ -4,7 +4,8 @@ import { describe, expect, it } from "vitest";
 import { lower } from "../../src/databricks/lower.js";
 import { parseDatabricks } from "../../src/databricks/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
-import { KNOWN_BAD, DEFERRED_GRAMMAR } from "../databricks-corpus-known-bad.js";
+import { KNOWN_BAD, DEFERRED_GRAMMAR, OUT_OF_SCOPE_WRAPPER } from "../databricks-corpus-known-bad.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
@@ -45,15 +46,18 @@ describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL lang
 		() => {
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			runDocsRatchet(CORPUS, (sql) => parseDatabricks(sql).errors, QUERY_BASELINE, {
-				knownBad: { ...KNOWN_BAD, ...DEFERRED_GRAMMAR },
+				knownBad: { ...KNOWN_BAD, ...DEFERRED_GRAMMAR, ...OUT_OF_SCOPE_WRAPPER },
 				parse: (sql) => {
 					const r = parseDatabricks(sql);
 					return { errors: r.errors, tree: r.tree };
 				},
 				onCleanQuery: (rel, tree) => {
 					try {
-						sweepCallDiagnostics(resolveScopes(lower(tree), "databricks"), rel, callHits);
+						const ir = lower(tree);
+						probeBody(ir, rel, bodyEmpty);
+						sweepCallDiagnostics(resolveScopes(ir, "databricks"), rel, callHits);
 					} catch (e) {
 						throwers.push(`${rel}: ${String(e).slice(0, 140)}`);
 					}
@@ -63,6 +67,10 @@ describe.skipIf(!existsSync(CORPUS))("Databricks grammar vs the scraped SQL lang
 			expect(
 				callHits,
 				`call-signature checker fired on valid SQL (fix the signature table / checker, never exclude):\n${callHits.slice(0, 20).join("\n")}`,
+			).toEqual([]);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
 			).toEqual([]);
 		},
 	);

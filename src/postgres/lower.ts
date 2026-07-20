@@ -1246,13 +1246,47 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 						: { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
 			}
 		} else {
-			// '[' a_expr ']' or '[' lo? : hi? ']' subscript
-			const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
-			const index: Expr = idxNode ? lowerExpr(idxNode) : { kind: "literal", text: el.getText(), cst: el };
-			expr = { kind: "subscript", base: expr, index, cst };
+			expr = applySubscriptBracket(el, expr, cst);
 		}
 	}
 	return expr;
+}
+
+/** Lower one bracket `indirection_el`: plain `[idx]`, or a slice `[lo? : hi?]`. Position-aware: a
+ *  plain index is a direct `a_expr` child of `el` (grammar's first alt); the slice alt wraps each
+ *  bound in its own `opt_slice_bound`, walked in child order so the bound before the COLON becomes
+ *  `index` (the begin bound) and the bound after becomes `end` — an omitted bound stays absent,
+ *  never fabricated. A `plsqlvariablename` child (`arr[1:hi]`, `arr[lo:hi]`) is the lexer's
+ *  PLSQLVARIABLENAME token standing in for a fused `COLON identifier` end bound — see the grammar
+ *  comment on `indirection_el`'s 3rd slice alt — so it's un-fused into a plain column end bound. */
+function applySubscriptBracket(el: ParserRuleContext, base: Expr, cst: ParserRuleContext): Expr {
+	const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
+	if (idxNode) return { kind: "subscript", base, index: lowerExpr(idxNode), cst };
+
+	let slot: 0 | 1 = 0;
+	let index: Expr | undefined;
+	let end: Expr | undefined;
+	for (let i = 0; i < el.getChildCount(); i++) {
+		const child = el.getChild(i);
+		if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_opt_slice_bound) {
+			const boundNode = directChildrenOfRule(child, P.RULE_a_expr)[0];
+			const bound = boundNode ? lowerExpr(boundNode) : undefined;
+			if (slot === 0) index = bound;
+			else end = bound;
+		} else if (child instanceof TerminalNode && child.symbol.type === P.COLON) {
+			slot = 1;
+		} else if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_plsqlvariablename) {
+			end = fusedBoundColumn(child);
+			slot = 1;
+		}
+	}
+	return { kind: "subscript", base, index, end, slice: true, cst };
+}
+
+/** Un-fuse a `plsqlvariablename` (`PLSQLVARIABLENAME`, `:identifier` with no gap) standing in for a
+ *  slice's `COLON identifier` end bound into a plain column reference, stripping the leading `:`. */
+function fusedBoundColumn(node: ParserRuleContext): Expr {
+	return { kind: "column", parts: [node.getText().replace(/^:/, "")], cst: node };
 }
 
 /** case_expr: CASE case_arg? when_clause+ (ELSE a_expr)? END */
@@ -1436,7 +1470,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);

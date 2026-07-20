@@ -246,7 +246,9 @@ function resolvePipeStage(
 				if (g.kind === "column") keys.push(g.parts[g.parts.length - 1]);
 				else return "unknown";
 			}
-			return [...aggs, ...keys];
+			// Grouping columns first, then aggregate columns: GoogleSQL pipe syntax reference, AGGREGATE
+			// operator section (see scope.ts's aggregateOutputsFree, this pass's schema-free twin).
+			return [...keys, ...aggs];
 		}
 		case "drop": {
 			const fold = (n: string) => behaviorOf(scope).fold(n);

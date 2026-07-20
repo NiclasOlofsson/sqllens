@@ -255,7 +255,9 @@ function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaPr
 				break;
 			case "subscript":
 				visit(e.base);
-				visit(e.index);
+				if (e.index) visit(e.index);
+				if (e.end) visit(e.end);
+				if (e.step) visit(e.step);
 				break;
 			// column/literal/star → not functions; subquery/exists → their own frames
 		}
@@ -416,7 +418,9 @@ function columnExprsByCst(body: QueryBody): Map<ParserRuleContext, Extract<Expr,
 				break;
 			case "subscript":
 				visit(e.base);
-				visit(e.index);
+				if (e.index) visit(e.index);
+				if (e.end) visit(e.end);
+				if (e.step) visit(e.step);
 				break;
 			// literal/star/subquery/exists/with/other → no further column refs modelled here
 		}

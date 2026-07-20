@@ -13,6 +13,7 @@ import { Schema } from "../../src/qualify/schema.js";
 import { resolveScopes, type Scope, type ScopeTree } from "../../src/scope/scope.js";
 import { resolveColumnRef } from "../../src/sema/resolve.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { walkIr as walkIrOther } from "../helpers/ir-walk.js";
 import { allPipeStages, stageExprs, stageSubIr } from "../helpers/pipe-walk.js";
@@ -200,7 +201,9 @@ function walkExpr(e: Expr, acc: Stats): void {
 			break;
 		case "subscript":
 			walkExpr(e.base, acc);
-			walkExpr(e.index, acc);
+			if (e.index) walkExpr(e.index, acc);
+			if (e.end) walkExpr(e.end, acc);
+			if (e.step) walkExpr(e.step, acc);
 			break;
 	}
 }
@@ -520,6 +523,20 @@ describe.skipIf(!existsSync(CORPUS))("Databricks Oatly corpus — one pass, all 
 		}
 		expect(probed).toBeGreaterThan(0);
 		console.log(`\nper-hop lineage: probed ${probed}/${files.length} models`);
+	}, 120000);
+
+	// ---- 8. body-non-emptiness conservation probe -------------------------------------------
+	// The totality gate (4, above) and the `other`-ratchet (2) prove no-throw and no-undermodelled
+	// expression, but neither asserts a lowered SelectExpr actually carries a body. See
+	// tests/helpers/body-probe.ts and .claude/PLAN.md "Corpus gates can't see an empty lowered body".
+	it("no SelectExpr body is empty and unflagged (body-non-emptiness probe)", () => {
+		const files = corpusFiles();
+		const bodyEmpty: string[] = [];
+		for (const rel of files) probeBody(analyze(rel).ir, rel, bodyEmpty);
+		expect(
+			bodyEmpty,
+			`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+		).toEqual([]);
 	}, 120000);
 });
 

@@ -13,6 +13,7 @@ import {
 	DereferenceContext,
 	ExistsContext,
 	FunctionCallContext,
+	IdentifierLiteralContext,
 	LambdaContext,
 	LogicalBinaryContext,
 	LogicalNotContext,
@@ -24,6 +25,8 @@ import {
 	ShiftExpressionContext,
 	SimpleCaseContext,
 	StarContext,
+	StringLitContext,
+	StringLiteralContext,
 	SubqueryExpressionContext,
 	SubscriptContext,
 	TimestampaddContext,
@@ -474,14 +477,31 @@ function lowerSparkPipeRhs(rhs: ParserRuleContext): PipeStage {
 	return { op: "other", name: rhs.getText().slice(0, 24), cst: rhs };
 }
 
-/** A pipe set-op operand: queryPrimary → a QueryExpr. */
+/** A pipe set-op operand: queryPrimary → a QueryExpr. Mirrors lowerQueryTerm's queryPrimary handling
+ *  (inline VALUES table, TABLE t shorthand, flagged fallback) so a pipe `|> UNION ALL VALUES (...)`
+ *  operand lowers the same way a top-level VALUES body does, instead of silently landing on a bare
+ *  empty, unflagged SelectExpr (body-non-emptiness probe finding, tests/helpers/body-probe.ts). */
 function queryPrimaryAsQuery(qp: ParserRuleContext): QueryExpr {
 	const inner = directChildrenOfRule(qp, P.RULE_query)[0];
 	if (inner) return lowerQuery(inner);
 	const spec = directChildrenOfRule(qp, P.RULE_querySpecification)[0];
-	const body: QueryBody = spec
-		? buildSelect(spec)
-		: { kind: "select", projections: [], from: [], columns: [], aggregated: false, cst: qp };
+	if (spec) return { kind: "query", ctes: [], body: buildSelect(spec), cst: qp };
+	// VALUES (1,'a'),(2,'b') [AS v(x,y)] — an inline table, same as lowerQueryTerm's handling.
+	const inlineTable = directChildrenOfRule(qp, P.RULE_inlineTable)[0];
+	if (inlineTable) return { kind: "query", ctes: [], body: buildInlineTable(inlineTable), cst: qp };
+	// TABLE t — shorthand for SELECT * FROM t.
+	if (directTokenType(qp, [P.TABLE]) !== undefined)
+		return { kind: "query", ctes: [], body: buildTableShorthand(qp), cst: qp };
+	// Any other body shape: flag it — a valid parse must never throw (mirrors lowerQueryTerm's fallback).
+	const body: QueryBody = {
+		kind: "select",
+		projections: [],
+		from: [],
+		columns: [],
+		aggregated: false,
+		unsupported: ["query-body"],
+		cst: qp,
+	};
 	return { kind: "query", ctes: [], body, cst: qp };
 }
 
@@ -848,7 +868,12 @@ function hasAggregate(expr: Expr): boolean {
 		case "lambda":
 			return hasAggregate(expr.body);
 		case "subscript":
-			return hasAggregate(expr.base) || hasAggregate(expr.index);
+			return (
+				hasAggregate(expr.base) ||
+				(expr.index !== undefined && hasAggregate(expr.index)) ||
+				(expr.end !== undefined && hasAggregate(expr.end)) ||
+				(expr.step !== undefined && hasAggregate(expr.step))
+			);
 		default:
 			return false;
 	}
@@ -953,7 +978,10 @@ function buildProjection(named: ParserRuleContext): Projection {
 
 	let name: string | undefined;
 	if (alias) {
-		name = alias.getText(); // explicit alias wins
+		// `AS IDENTIFIER('col1')` — the alias identifier itself can be the identifier clause;
+		// resolve it to the name it constantly names (identifierLiteralText), else keep the
+		// raw constructor text as today (a non-constant argument, e.g. a session variable).
+		name = identifierLiteralText(alias) ?? alias.getText(); // explicit alias wins
 	} else if (expr.kind === "column") {
 		name = expr.parts[expr.parts.length - 1]; // output name is the column's last part
 	}
@@ -1058,7 +1086,13 @@ function lowerExpression(node: ParserRuleContext): Expr {
 		return { kind: "star", qualifier: starQualifier(node), exclude: starExclude(node), cst: node };
 	}
 	if (node instanceof ConstantDefaultContext) return { kind: "literal", text: node.getText(), cst: node };
-	if (node instanceof FunctionCallContext) return lowerFunction(node);
+	if (node instanceof FunctionCallContext) {
+		// A bare `IDENTIFIER('c1')` parses ambiguously as a call to a function literally named
+		// IDENTIFIER (see identifierClauseParts) — resolve it to the column it names before
+		// falling back to an ordinary function call.
+		const idParts = identifierClauseParts(node);
+		return idParts ? { kind: "column", parts: idParts, cst: node } : lowerFunction(node);
+	}
 	if (node instanceof SearchedCaseContext || node instanceof SimpleCaseContext) return lowerCase(node);
 	if (node instanceof CastContext || node instanceof CastByColonContext) {
 		const inner =
@@ -1317,10 +1351,12 @@ function lowerFunction(node: FunctionCallContext): Expr {
 		return e ? lowerExpression(e) : otherExpr(a);
 	});
 	// Named-argument invocation `fn(name => value)`: capture the parameter name per arg so the
-	// `name =>` is conservation-visible. Only set when at least one arg is named.
+	// `name =>` is conservation-visible. Only set when at least one arg is named. The key is a
+	// multipartIdentifier (Databricks allows a dotted key, e.g. `databricks.connection => …` in
+	// read_files/ai_parse_document options); read its full text so a qualifier is never dropped.
 	const argNames = argCtxs.map((a) => {
 		const named = shallowFirstOfRule(a, P.RULE_namedArgumentExpression);
-		return named ? firstOfRule(named, P.RULE_identifier)?.getText() : undefined;
+		return named ? firstOfRule(named, P.RULE_multipartIdentifier)?.getText() : undefined;
 	});
 	const windowCtx = firstOfRule(node, P.RULE_windowSpec);
 	return {
@@ -1374,6 +1410,21 @@ function lowerCase(node: ParserRuleContext): Expr {
 
 type ClassifiedExpr = { kind: "column"; parts: string[] } | { kind: "star" } | { kind: "expr" };
 
+/** Descend through single-child expression wrappers (expression -> booleanExpression ->
+ *  valueExpression -> ...) down to the primaryExpression node; undefined once any level
+ *  branches (an operator, a call, a predicate means it is not a bare primary). Shared by
+ *  classifyExpression and the IDENTIFIER-clause constant-argument check below. */
+function singleChildPrimary(expr: ParserRuleContext): PrimaryExpressionContext | undefined {
+	let node: ParserRuleContext = expr;
+	while (!(node instanceof PrimaryExpressionContext)) {
+		if (node.getChildCount() !== 1) return undefined;
+		const only = node.getChild(0);
+		if (!(only instanceof ParserRuleContext)) return undefined;
+		node = only;
+	}
+	return node;
+}
+
 /**
  * Decide, from the tree, whether a select expression is a plain column reference
  * (`a`, `t.a`, `a.b.c`), a star (`*`, `t.*`), or a compound expression. Descends
@@ -1381,14 +1432,15 @@ type ClassifiedExpr = { kind: "column"; parts: string[] } | { kind: "star" } | {
  * call, a predicate) means it is not a bare column/star.
  */
 function classifyExpression(expr: ParserRuleContext): ClassifiedExpr {
-	let node: ParserRuleContext = expr;
-	while (!(node instanceof PrimaryExpressionContext)) {
-		if (node.getChildCount() !== 1) return { kind: "expr" };
-		const only = node.getChild(0);
-		if (!(only instanceof ParserRuleContext)) return { kind: "expr" };
-		node = only;
-	}
+	const node = singleChildPrimary(expr);
+	if (!node) return { kind: "expr" };
 	if (node instanceof StarContext) return { kind: "star" };
+	// A bare IDENTIFIER('c1') parses as a call to a function literally named IDENTIFIER
+	// (see identifierClauseParts) — a constant-string argument makes it a column, not a call.
+	if (node instanceof FunctionCallContext) {
+		const idParts = identifierClauseParts(node);
+		if (idParts) return { kind: "column", parts: idParts };
+	}
 	const parts = columnParts(node);
 	return parts ? { kind: "column", parts } : { kind: "expr" };
 }
@@ -1440,7 +1492,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 		}
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);
@@ -1496,6 +1550,99 @@ function columnParts(primary: PrimaryExpressionContext): string[] | undefined {
 		return [...base, primary.identifier().getText()];
 	}
 	return undefined;
+}
+
+// ---------------------------------------------------------------------------
+// The IDENTIFIER(expr) clause, constant-string case only.
+// https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-names-identifier-clause :
+// "identifierExpr: A constant STRING expression... When strLiteral is a constant, ... it is
+// exactly equivalent to specifying the identifier represented by str directly." Never-wrong: a
+// non-constant argument (a column, a bind parameter, `||` concatenation) is left exactly as
+// today — an unresolved function call / the raw constructor text — never a guess.
+//
+// Two call sites need this, because the grammar routes the SAME clause through two different
+// CST shapes (grammars/databricks/DatabricksParser.g4, not touched here):
+//   - wherever a plain `identifier` is expected (a column alias, `errorCapturingIdentifier`),
+//     `strictIdentifier` has a dedicated `#identifierLiteral` alt for it;
+//   - a BARE `IDENTIFIER('c1')` value (no surrounding alias/dot) instead parses as a call to a
+//     function literally named IDENTIFIER (`functionName`'s `identFunc=IDENTIFIER_KW` alt) —
+//     Databricks has no such function, so with a constant-string argument this is always the
+//     clause, never a real call.
+// A `FROM IDENTIFIER('t')` table reference uses a THIRD, still different shape
+// (`identifierReference`'s own `IDENTIFIER_KW LEFT_PAREN expression RIGHT_PAREN` alt) — out of
+// scope here; see buildSource.
+// ---------------------------------------------------------------------------
+
+/** Resolve `IDENTIFIER('literal')` wherever it parses as `strictIdentifier`'s `#identifierLiteral`
+ *  alt somewhere under `node` (an errorCapturingIdentifier, typically) to the identifier it
+ *  constantly names; undefined when `node` isn't that shape at all, or the argument isn't constant. */
+function identifierLiteralText(node: ParseTree): string | undefined {
+	const ident = firstOfRule(node, P.RULE_identifier);
+	const strict = ident && firstOfRule(ident, P.RULE_strictIdentifier);
+	return strict instanceof IdentifierLiteralContext ? identifierClauseText(strict.stringLit()) : undefined;
+}
+
+/** `IDENTIFIER('c1')` used as a bare value parses as a call to a function literally named
+ *  IDENTIFIER — the SAME token sequence `#identifierLiteral` also matches. Returns the resolved
+ *  single-part identifier when the lone argument is a constant string; undefined for anything
+ *  else (a different function name, more than one argument, DISTINCT/OVER/FILTER/WITHIN GROUP,
+ *  or a non-constant argument), so the caller falls back to an ordinary function-call lowering. */
+function identifierClauseParts(node: FunctionCallContext): string[] | undefined {
+	const fn = node.functionName();
+	if (!fn.IDENTIFIER_KW() || fn.expression() || fn.qualifiedName()) return undefined;
+	if (node.setQuantifier() || node.windowSpec() || node.FILTER() || node.WITHIN()) return undefined;
+	const args = node.functionArgument();
+	if (args.length !== 1) return undefined;
+	const argExpr = args[0].expression();
+	const text = argExpr ? constantStringExprText(argExpr) : undefined;
+	return text ? [text] : undefined;
+}
+
+/** The constant string an `expression` node reduces to, or undefined if it is anything else
+ *  (a column, a bind parameter, `||` concatenation, ...) — see identifierClauseText for what
+ *  "constant" means. */
+function constantStringExprText(exprCtx: ParserRuleContext): string | undefined {
+	const primary = singleChildPrimary(exprCtx);
+	if (!(primary instanceof ConstantDefaultContext)) return undefined;
+	const constant = primary.constant();
+	return constant instanceof StringLiteralContext ? identifierClauseText(constant.stringLit()) : undefined;
+}
+
+/**
+ * A `stringLit` (`singleStringLit+` — one or more literal/parameter-marker segments coalesced)
+ * resolved to its constant text, or undefined when it isn't constant or isn't safely a single
+ * identifier segment:
+ *   - ANY segment is a parameter marker (`:name`/`?`) — resolved at execution time, not constant.
+ *   - the text contains a `.` — Databricks reads a dotted string as a MULTI-part name
+ *     (`IDENTIFIER('t.c1')` names table `t`, column `c1`); splitting that correctly means
+ *     re-deriving Databricks' own multi-part-identifier parse (backtick-quoted segments can
+ *     embed a literal dot) from a string's raw characters, not from real tokens. That's not
+ *     exercised by any pinned case here, so it stays unresolved rather than mis-splitting.
+ */
+function identifierClauseText(stringLitCtx: StringLitContext): string | undefined {
+	let text = "";
+	for (const single of stringLitCtx.singleStringLit()) {
+		const lit = single.singleStringLitWithoutMarker();
+		if (!lit) return undefined; // a parameter-marker segment -> not constant
+		const body = unquoteSimpleStringLiteral(lit.getText());
+		if (body === undefined) return undefined;
+		text += body;
+	}
+	return text && !text.includes(".") ? text : undefined;
+}
+
+/** Strip one STRING_LITERAL/DOUBLEQUOTED_STRING token's delimiters (grammars/databricks/
+ *  DatabricksLexer.g4's STRING_LITERAL/DOUBLEQUOTED_STRING). `R'...'`/`R"..."` raw strings have no
+ *  escaping by definition. Otherwise declines — rather than guesses — whenever the body carries a
+ *  backslash or doubled-quote escape: decoding Spark's full string-literal escape table is out of
+ *  scope for identifier resolution; an escaped literal just stays unresolved, as today. */
+function unquoteSimpleStringLiteral(raw: string): string | undefined {
+	if (raw.startsWith("R'") && raw.endsWith("'")) return raw.slice(2, -1);
+	if (raw.startsWith('R"') && raw.endsWith('"')) return raw.slice(2, -1);
+	const quote = raw[0];
+	if ((quote !== "'" && quote !== '"') || !raw.endsWith(quote) || raw.length < 2) return undefined;
+	const body = raw.slice(1, -1);
+	return body.includes("\\") || body.includes(quote + quote) ? undefined : body;
 }
 
 /**

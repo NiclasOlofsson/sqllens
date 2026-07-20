@@ -6,10 +6,12 @@ import { lower } from "../../src/postgres/lower.js";
 import { parsePostgres } from "../../src/postgres/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
+import { KNOWN_BAD } from "../postgres-corpus-known-bad.js";
 
 // Two PostgreSQL conformance corpora, both in the corpus repo and skipped when absent:
 //
@@ -45,17 +47,9 @@ const OTHER_BASELINE = 0;
 // dress rehearsal for duckdb/redshift's identical TVL-lineage decisions; may only fall.
 const FALLBACK_RATCHET = 7;
 
-// Documented-broken query examples — each verified against its postgresql.org/docs/18 source page
-// as deliberately-invalid or template SQL (not a grammar gap, not scraper noise). By construction
-// they fail to parse, so the organizer files them under unparsed/; the gate asserts they STAY there.
-const KNOWN_BAD: Record<string, string> = {
-	"citext/1.sql":
-		"citext page shows a client-side query TEMPLATE — `lower(col) = LOWER(?)` with a bare `?` bind placeholder; not executable SQL.",
-	"sql-createaggregate/2.sql":
-		"CREATE AGGREGATE page: `ORDER BY col USING sortop` — `sortop` is a metasyntax stand-in for an operator name (a real statement needs an operator like `~<~`).",
-	"sql-syntax-lexical/8.sql":
-		"§4.1.2.1 shows `SELECT 'foo' 'bar';` as an explicitly INVALID example (adjacent string constants need a newline between them to concatenate).",
-};
+// Documented-broken query examples (docs bugs) and out-of-scope UDF-body wrappers — see
+// tests/postgres-corpus-known-bad.ts for the full breakdown. By construction they fail to parse,
+// so the organizer files them under unparsed/; the gate asserts they STAY there.
 
 describe.skipIf(!existsSync(VENDOR_EXAMPLES))("Postgres grammar vs the bytebase example corpus", () => {
 	let files: string[];
@@ -97,6 +91,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, (sql) => parsePostgres(sql).errors, QUERY_BASELINE, {
@@ -110,6 +105,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "postgres");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -141,6 +137,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Postgres grammar vs the scraped Postg
 				fallbacks,
 				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(FALLBACK_RATCHET);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

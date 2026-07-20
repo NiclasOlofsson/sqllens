@@ -1449,13 +1449,11 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 			} else if (hasDirectToken(el, P.OPEN_PAREN)) {
 				const attr = firstShallow(el, P.RULE_attr_name);
 				const name = (attr ? textOf(attr) : el.getText().replace(/^\./, "")).toLowerCase();
-				const list = directChildrenOfRule(el, P.RULE_func_arg_list)[0];
-				const args = list
-					? directChildrenOfRule(list, P.RULE_func_arg_expr).map((fa) => {
-							const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
-							return a ? lowerExpr(a) : otherExpr(fa);
-						})
-					: [];
+				// Same extraction as the direct-call path (collectFuncArgs, below): func_arg_list's args plus
+				// any func_arg_expr riding as a DIRECT child of `el` outside the list. indirection_el's own
+				// grammar carries no VARIADIC alt today, so that second loop is a no-op here, kept so this
+				// stays the same fidelity as the direct-call path if the grammar ever grows one (#13 follow-up).
+				const args = collectFuncArgs(el);
 				expr = { kind: "function", name, args: [expr, ...args], aggregate: false, distinct: false, cst };
 			} else {
 				const attr = firstShallow(el, P.RULE_attr_name);
@@ -1466,12 +1464,51 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
 						: { kind: "subscript", base: expr, index: { kind: "literal", text: part, cst: el }, cst };
 			}
 		} else {
-			const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
-			const index: Expr = idxNode ? lowerExpr(idxNode) : { kind: "literal", text: el.getText(), cst: el };
-			expr = { kind: "subscript", base: expr, index, cst };
+			expr = applySubscriptBracket(el, expr, cst);
 		}
 	}
 	return expr;
+}
+
+/** Lower one bracket `indirection_el`: plain `[idx]`, or a slice — `[lo?:hi?]`, `[lo?:hi?:step?]`,
+ *  and `[lo?::step?]` where DuckDB's lexer maximal-munches adjacent colons into one TYPECAST token
+ *  when `hi` is omitted (functions/list.md#slicing). Position-aware: a plain index is a direct
+ *  `a_expr` child of `el` (grammar's first alt); anything else is the slice alt, walked in child
+ *  order so each `opt_slice_bound` lands in whichever of begin/end/step slot it sits in, advancing
+ *  the slot on each COLON (+1) or TYPECAST (+2, since it stands in for two colons with an implicit
+ *  empty middle bound). A bare `-` (MINUS with no wrapping `opt_slice_bound`) is DuckDB's
+ *  default-bound placeholder — the same as an empty bound (`l[:-:2]` ≡ `l[::2]`) — so it advances
+ *  nothing and fills nothing: never fabricated into a value. A `plsqlvariablename` child
+ *  (`arr[1:hi]`, `arr[lo:hi]`) is the lexer's PLSQLVARIABLENAME token standing in for a fused
+ *  `COLON identifier` bound — see the grammar comment on `indirection_el`'s plsqlvariablename alt —
+ *  so it advances the slot by 1 (like COLON) and un-fuses into a plain column bound. */
+function applySubscriptBracket(el: ParserRuleContext, base: Expr, cst: ParserRuleContext): Expr {
+	const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
+	if (idxNode) return { kind: "subscript", base, index: lowerExpr(idxNode), cst };
+
+	let slot = 0;
+	const bounds: [Expr | undefined, Expr | undefined, Expr | undefined] = [undefined, undefined, undefined];
+	for (let i = 0; i < el.getChildCount(); i++) {
+		const child = el.getChild(i);
+		if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_opt_slice_bound) {
+			const boundNode = directChildrenOfRule(child, P.RULE_a_expr)[0];
+			if (boundNode) bounds[slot] = lowerExpr(boundNode);
+		} else if (child instanceof ParserRuleContext && child.ruleIndex === P.RULE_plsqlvariablename) {
+			slot += 1;
+			bounds[slot] = fusedBoundColumn(child);
+		} else if (child instanceof TerminalNode) {
+			if (child.symbol.type === P.COLON) slot += 1;
+			else if (child.symbol.type === P.TYPECAST) slot += 2;
+			// OPEN_BRACKET / CLOSE_BRACKET / a bare MINUS placeholder: no-op.
+		}
+	}
+	return { kind: "subscript", base, index: bounds[0], end: bounds[1], step: bounds[2], slice: true, cst };
+}
+
+/** Un-fuse a `plsqlvariablename` (`PLSQLVARIABLENAME`, `:identifier` with no gap) standing in for a
+ *  slice's `COLON identifier` bound into a plain column reference, stripping the leading `:`. */
+function fusedBoundColumn(node: ParserRuleContext): Expr {
+	return { kind: "column", parts: [node.getText().replace(/^:/, "")], cst: node };
 }
 
 function lowerCase(node: ParserRuleContext): Expr {
@@ -1506,7 +1543,7 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 		directChildrenOfRule(app, P.RULE_plain_func_name)[0] ??
 		directChildrenOfRule(app, P.RULE_dotted_func_name)[0];
 	const name = (fname ? displayName(lastName(fname)) : (leftmostToken(app) ?? "")).toLowerCase();
-	const args = funcArgs(app);
+	const args = collectFuncArgs(app);
 	const within = directChildrenOfRule(node, P.RULE_within_group_clause)[0];
 	if (within) {
 		const sort = firstShallow(within, P.RULE_sort_clause);
@@ -1530,22 +1567,29 @@ function lowerFuncExpr(node: ParserRuleContext): Expr {
 	};
 }
 
-function funcArgs(app: ParserRuleContext): Expr[] {
-	const lowerFa = (fa: ParserRuleContext): Expr => {
-		const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
-		if (a) return lowerExpr(a);
-		const l = directChildrenOfRule(fa, P.RULE_lambda_expr)[0];
-		return l ? lowerLambda(l) : otherExpr(fa);
-	};
+/** Lower one func_arg_expr: `a_expr` directly, or `param_name (:= | =>) a_expr` (both grammar alts
+ *  always carry a direct a_expr child, and lowerExpr already recurses an a_expr down through c_expr into
+ *  lambda_expr on its own, so the lambda_expr fallback below is defensive, not the primary lambda path). */
+function lowerFuncArgExpr(fa: ParserRuleContext): Expr {
+	const a = directChildrenOfRule(fa, P.RULE_a_expr)[0];
+	if (a) return lowerExpr(a);
+	const l = directChildrenOfRule(fa, P.RULE_lambda_expr)[0];
+	return l ? lowerLambda(l) : otherExpr(fa);
+}
+
+/** func_arg_list's func_arg_expr* plus any func_arg_expr riding as a DIRECT child of `container` outside
+ *  the list. A VARIADIC-prefixed arg (`f(VARIADIC list)` and the trailing `f(a, VARIADIC list)`) is the
+ *  latter shape: func_application/dotted_func_application/plain_func_application all put it outside
+ *  func_arg_list, so it must be collected in this second pass too, else the whole arg is dropped. It
+ *  keeps its expr in the result as an ordinary arg; the VARIADIC marker itself is not modelled (no
+ *  consumer needs it). The func_arg_list always precedes the trailing variadic child, so source order is
+ *  preserved. Shared by the direct-call path (lowerFuncExpr) and the chained method-call path
+ *  (applyIndirection's `.f(args)`) so both keep the same argument fidelity. */
+function collectFuncArgs(container: ParserRuleContext): Expr[] {
 	const out: Expr[] = [];
-	const list = directChildrenOfRule(app, P.RULE_func_arg_list)[0];
-	if (list) for (const fa of directChildrenOfRule(list, P.RULE_func_arg_expr)) out.push(lowerFa(fa));
-	// A VARIADIC-prefixed arg (`f(VARIADIC list)` and the trailing `f(a, VARIADIC list)`) rides as a
-	// DIRECT func_arg_expr child of the application — the grammar puts it outside func_arg_list — so it
-	// must be collected here too, else the whole arg is dropped. It keeps its expr in `args` as an
-	// ordinary arg; the VARIADIC marker itself is not modelled (no consumer needs it). The func_arg_list
-	// always precedes the trailing variadic child, so source order is preserved.
-	for (const fa of directChildrenOfRule(app, P.RULE_func_arg_expr)) out.push(lowerFa(fa));
+	const list = directChildrenOfRule(container, P.RULE_func_arg_list)[0];
+	if (list) for (const fa of directChildrenOfRule(list, P.RULE_func_arg_expr)) out.push(lowerFuncArgExpr(fa));
+	for (const fa of directChildrenOfRule(container, P.RULE_func_arg_expr)) out.push(lowerFuncArgExpr(fa));
 	return out;
 }
 
@@ -1662,7 +1706,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);

@@ -5,10 +5,12 @@ import { lower } from "../../src/duckdb/lower.js";
 import { parseDuckdb } from "../../src/duckdb/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
+import { KNOWN_BAD } from "../duckdb-corpus-known-bad.js";
 
 // DuckDB conformance corpus (skipped when absent): duckdb/docs — every ```sql example from the
 // duckdb-web docs/current tree (tools/extract-duckdb-docs.mjs, ~2,026 files; duckdb-web is MIT).
@@ -42,16 +44,6 @@ const OTHER_BASELINE = 0;
 // The split is IR-identical over this whole corpus vs the pre-surgery grammar (hash-diffed, 1037/1037).
 const FALLBACK_RATCHET = 25;
 
-// Documented-broken query examples — each verified against its duckdb.org source page as
-// deliberately-invalid SQL. They fail to parse, so the organizer files them under unparsed/;
-// the gate asserts they STAY there.
-const KNOWN_BAD: Record<string, string> = {
-	"core_extensions_httpfs_s3api_legacy_authentication/5.sql":
-		"S3 legacy-auth page elides the join condition — `INNER JOIN 's3://…' t2;` with no ON/USING; DuckDB rejects a conditionless INNER JOIN.",
-	"sql_functions_overview/6.sql":
-		"functions/overview.md shows `FROM ('file').read_parquet()` explicitly annotated `-- does not work` (chaining does not apply to table functions).",
-};
-
 describe.skipIf(!existsSync(DOCS_CORPUS))("DuckDB grammar vs the duckdb-web docs corpus", () => {
 	it(
 		"parses 100% of the query bucket (organizer paths; KNOWN_BAD stay unparsed); lower+scope total; `other` ratchet",
@@ -61,6 +53,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("DuckDB grammar vs the duckdb-web docs
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, (sql) => parseDuckdb(sql).errors, QUERY_BASELINE, {
@@ -74,6 +67,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("DuckDB grammar vs the duckdb-web docs
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "duckdb");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -105,6 +99,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("DuckDB grammar vs the duckdb-web docs
 				fallbacks,
 				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(FALLBACK_RATCHET);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

@@ -5,6 +5,7 @@ import { describe, expect, it } from "vitest";
 import { lower } from "../../src/bigquery/lower.js";
 import { parseBigQuery } from "../../src/bigquery/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
+import { probeBody } from "../helpers/body-probe.js";
 
 // Is this case DETECT-ONLY — recognized and flagged but not parsed/validated, by cleared scope?
 // Two families: object DDL (CREATE/ALTER/DROP, incl. …FUNCTION/TABLE/PROCEDURE) and DEFINE MACRO
@@ -187,8 +188,9 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 		},
 	);
 
-	it("lower + resolveScopes never throw on a parsed positive case", { timeout: 600000 }, () => {
+	it("lower + resolveScopes never throw on a parsed positive case; body-non-emptiness probe", { timeout: 600000 }, () => {
 		const throws: string[] = [];
+		const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 		for (const f of positives()) {
 			const sql = readFileSync(f, "utf8");
 			let res;
@@ -199,11 +201,17 @@ describe.skipIf(!existsSync(CORPUS))("BigQuery vs the ZetaSQL parser .test corpu
 			}
 			if (res.errors !== 0) continue; // only fully-parsed cases must lower cleanly
 			try {
-				resolveScopes(lower(res.tree), "bigquery");
+				const ir = lower(res.tree);
+				probeBody(ir, f, bodyEmpty);
+				resolveScopes(ir, "bigquery");
 			} catch (e) {
 				throws.push(`${f}: ${(e as Error).message}`);
 			}
 		}
 		expect(throws, `lower/resolveScopes threw on:\n${throws.slice(0, 20).join("\n")}`).toEqual([]);
+		expect(
+			bodyEmpty,
+			`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+		).toEqual([]);
 	});
 });

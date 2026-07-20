@@ -631,19 +631,20 @@ function levelPseudoSource(cst: ParserRuleContext): Source {
 // --- PIVOT / UNPIVOT ---------------------------------------------------------
 
 function extractPivot(fromClause: ParserRuleContext): PivotInfo | undefined {
-	// pivot_unpivot: PIVOT '(' aggFn '(' aggCol ')' FOR forCol IN '(' pivot_in_clause ')' … ')' (as_alias …)?
+	// pivot_unpivot: PIVOT '(' aggFn '(' aggCol ')' FOR forCol IN '(' pivot_in_clause ')' … ')' (from_alias …)?
+	// The trailing RESULT alias is a `from_alias` (post-source slot: bare branch excludes PIVOT/UNPIVOT).
 	const node = shallowNodesOfRule(fromClause, P.RULE_pivot_unpivot)[0];
 	if (!node || !hasDirectToken(node, P.PIVOT)) return undefined;
 	const ids = directChildrenOfRule(node, P.RULE_id_).map((i) => i.getText());
 	// ids = [aggFn, aggColumn, forColumn] per the rule shape.
 	const inClause = directChildrenOfRule(node, P.RULE_pivot_in_clause)[0];
 	const values = inClause ? directChildrenOfRule(inClause, P.RULE_literal).map((l) => stripString(l.getText())) : [];
-	const alias = directChildrenOfRule(node, P.RULE_as_alias)[0];
+	const alias = directChildrenOfRule(node, P.RULE_from_alias)[0];
 	return {
 		values,
 		forColumns: ids[2] !== undefined ? [ids[2]] : [],
 		aggColumns: ids[1] !== undefined ? [ids[1]] : [],
-		alias: alias ? aliasText(alias) : undefined,
+		alias: alias ? fromAliasParts(alias).text : undefined,
 	};
 }
 
@@ -1479,7 +1480,9 @@ function columnsOf(expr: Expr, acc: ColumnRef[], clause: Clause): void {
 			break;
 		case "subscript":
 			columnsOf(expr.base, acc, clause);
-			columnsOf(expr.index, acc, clause);
+			if (expr.index) columnsOf(expr.index, acc, clause);
+			if (expr.end) columnsOf(expr.end, acc, clause);
+			if (expr.step) columnsOf(expr.step, acc, clause);
 			break;
 		case "other":
 			cstColumnRefs(expr.cst, acc, clause);

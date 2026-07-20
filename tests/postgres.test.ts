@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { parse } from "../src/index.js";
+import { parse, resolveScopes, Schema } from "../src/index.js";
+import { inferType } from "../src/infer/infer.js";
 import { lower } from "../src/postgres/lower.js";
 import { parsePostgres } from "../src/postgres/parse.js";
 
@@ -117,6 +118,130 @@ describe("postgres grammar — fork additions (doc-cited)", () => {
 
 	it("dollar quoting and :: casts (regression guard)", () => {
 		ok("SELECT $tag$body 'x' $$$tag$, 1::int, '1'::numeric(10,2);");
+	});
+});
+
+// Position-aware slice lowering (#lossless): applyIndirection's bracket branch used to read only a
+// DIRECT a_expr child of indirection_el, which exists for a plain `[idx]` but never for the slice
+// alt (`opt_slice_bound? COLON opt_slice_bound?` wraps each bound one level deeper) — so every slice
+// fell to the whole-bracket-text literal fallback, fusing lo/hi into one opaque string and dropping
+// any column referenced in either bound. Fixed by walking indirection_el's children in order so the
+// bound before COLON becomes `index` (begin) and the bound after becomes `end`; an omitted bound
+// stays absent, never fabricated.
+describe("postgres subscript slicing — position-aware begin/end (#lossless)", () => {
+	const strip = (o: unknown) =>
+		JSON.parse(JSON.stringify(o, (k, v) => (k === "cst" || k === "aliasCst" || k === "partSpans" ? undefined : v)));
+	const shapeOf = (sql: string) => {
+		const { ast } = parse(sql, "postgres");
+		const expr = ast.body.kind === "select" ? ast.body.projections[0]?.expr : undefined;
+		return strip(expr);
+	};
+	const num = (n: number) => ({ kind: "literal", text: String(n) });
+	const arr = { kind: "column", parts: ["arr"] };
+
+	it("x[2] — plain element access, unchanged shape (no slice flag)", () => {
+		expect(shapeOf("SELECT arr[2] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2) });
+	});
+
+	it("x[2:4] — begin + end, slice flag", () => {
+		expect(shapeOf("SELECT arr[2:4] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(2),
+			end: num(4),
+			slice: true,
+		});
+	});
+
+	it("x[:4] — empty begin stays absent, does NOT get misattributed as index", () => {
+		expect(shapeOf("SELECT arr[:4] FROM t;")).toEqual({ kind: "subscript", base: arr, end: num(4), slice: true });
+	});
+
+	it("x[2:] — empty end stays absent", () => {
+		expect(shapeOf("SELECT arr[2:] FROM t;")).toEqual({ kind: "subscript", base: arr, index: num(2), slice: true });
+	});
+
+	it("x[:] — both bounds absent, still a slice", () => {
+		expect(shapeOf("SELECT arr[:] FROM t;")).toEqual({ kind: "subscript", base: arr, slice: true });
+	});
+
+	// A bare colid immediately after the slice COLON used to not parse at all — a genuine LEXER
+	// collision, not a parser ambiguity: `:hi` (no gap) maximal-munches as ONE PLSQLVARIABLENAME
+	// token (psql/pgbench `:variable` interpolation, docs.postgresql.org/current/app-psql.html
+	// #APP-PSQL-INTERPOLATION — real corpus use: postgres/docs/parser/positive/dml/pgbench/1.sql),
+	// so the parser never sees a standalone COLON before "hi". Fixed for a non-empty begin
+	// (`arr[1:hi]`) by a new indirection_el alt that accepts the fused token and un-fuses it in
+	// lower() (postgresql.org/docs/current/arrays.html#ARRAYS-ACCESSING — a bound is any
+	// expression). Parenthesizing still works too.
+	it("a column used in a slice's end bound is not dropped from SelectExpr.columns", () => {
+		const { ast } = parse("SELECT arr[1:(hi)] FROM t;", "postgres");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		const cols = ast.body.columns.map((c) => c.parts.join("."));
+		expect(cols).toContain("arr");
+		expect(cols).toContain("hi"); // the defect's observable: previously dropped
+	});
+
+	// arr[1:hi] / arr[lo:hi]: the bare-identifier end bound now parses without parens, and the bound
+	// column shows up in SelectExpr.columns — the PLSQLVARIABLENAME token is un-fused back into a
+	// plain column end bound in applySubscriptBracket.
+	it("x[1:hi] — numeric begin, bare-identifier end (no parens needed)", () => {
+		expect(shapeOf("SELECT arr[1:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(1),
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[1:hi] FROM t;", "postgres");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "hi"]));
+	});
+
+	it("x[lo:hi] — both bounds bare identifiers", () => {
+		expect(shapeOf("SELECT arr[lo:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: ["lo"] },
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[lo:hi] FROM t;", "postgres");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "lo", "hi"]));
+	});
+
+	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed — deliberately. The fused token here
+	// is indistinguishable at the parser level from a bind-variable used as a plain index (the
+	// pgbench reading), since there's no preceding bound to disambiguate on. Flipping this reading
+	// would change what an ALREADY-PARSING construct means, not just widen acceptance — a semantic
+	// priority call between two independently-real features, left to a human decision rather than
+	// resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is the
+	// bind-variable-shaped column ":hi" (colon retained) — NOT a slice.
+	it("x[:hi] — still the pre-existing plsqlvariablename-index reading, not fixed (see task report)", () => {
+		expect(shapeOf("SELECT arr[:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: { kind: "column", parts: [":hi"] },
+		});
+	});
+
+	it("a slice's type is the base's own type (array/string), never the element type", () => {
+		const typeOf = (sql: string, schema: Schema) => {
+			const tree = resolveScopes(lower(parsePostgres(sql).tree));
+			const body = tree.root.body;
+			if (body.kind !== "select") throw new Error("expected select");
+			return inferType(body.projections[0].expr, tree.root, schema);
+		};
+		// A slice of array<string> is still array<string> — not the element type "string".
+		expect(typeOf("SELECT arr[2:4] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "array",
+			element: { kind: "scalar", name: "string" },
+		});
+		// Plain (non-slice) element access is unaffected by the slice-type rule: array<string>[2] → string.
+		expect(typeOf("SELECT arr[2] FROM t", new Schema({ t: { arr: "array<string>" } }))).toEqual({
+			kind: "scalar",
+			name: "string",
+		});
 	});
 });
 

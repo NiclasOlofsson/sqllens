@@ -197,7 +197,12 @@ function exprOrigins(expr: Expr, scope: Scope, schema: SchemaProvider, seen: Set
 				...expr.args.flatMap((a) => exprOrigins(a, scope, schema, seen)),
 			];
 		case "subscript":
-			return [...exprOrigins(expr.base, scope, schema, seen), ...exprOrigins(expr.index, scope, schema, seen)];
+			return [
+				...exprOrigins(expr.base, scope, schema, seen),
+				...(expr.index ? exprOrigins(expr.index, scope, schema, seen) : []),
+				...(expr.end ? exprOrigins(expr.end, scope, schema, seen) : []),
+				...(expr.step ? exprOrigins(expr.step, scope, schema, seen) : []),
+			];
 		case "lambda":
 			return exprOrigins(expr.body, scope, schema, seen); // param refs resolve to nothing
 		case "subquery":

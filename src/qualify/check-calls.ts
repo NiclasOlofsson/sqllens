@@ -131,7 +131,9 @@ function walkCalls(expr: Expr, scope: Scope, schema: SchemaProvider, diagnostics
 			return;
 		case "subscript":
 			walkCalls(expr.base, scope, schema, diagnostics);
-			walkCalls(expr.index, scope, schema, diagnostics);
+			if (expr.index) walkCalls(expr.index, scope, schema, diagnostics);
+			if (expr.end) walkCalls(expr.end, scope, schema, diagnostics);
+			if (expr.step) walkCalls(expr.step, scope, schema, diagnostics);
 			return;
 		case "with":
 			for (const b of expr.bindings) walkCalls(b.value, scope, schema, diagnostics);

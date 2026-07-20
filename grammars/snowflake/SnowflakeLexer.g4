@@ -852,6 +852,9 @@ RESTORE      : 'RESTORE';
 RESTRICT     : 'RESTRICT';
 RESTRICTIONS : 'RESTRICTIONS';
 RESULT       : 'RESULT';
+// Snowflake Scripting variable type (DECLARE res RESULTSET;), not a general SQL data type:
+// docs.snowflake.com/en/developer-guide/snowflake-scripting/variables
+RESULTSET    : 'RESULTSET';
 RESUME       : 'RESUME';
 // RETAINDAYS:                                            'RETAINDAYS';
 RETURN             : 'RETURN';

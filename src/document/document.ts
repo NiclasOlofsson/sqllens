@@ -36,7 +36,7 @@ import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
 import { lineageAt as lineageAtScopes, type LineageHop } from "../lineage/hops.js";
 import { referencesAt as referencesAtScopes, type Occurrences } from "../references/references.js";
 import type { Dialect } from "../dialect.js";
-import type { QueryExpr, SelectExpr, PartSpan } from "../ir/ir.js";
+import type { QueryExpr, SelectExpr, PartSpan, PipeStage } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
 import { partSpanOf, starSpanOf } from "../ir/part-span.js";
 import type { StatementCategory } from "../ir/statement.js";
@@ -766,16 +766,18 @@ export class SqlDocument {
 	/** Per-CTE column unions across all variants, keyed by NAME + declaration span (two same-named
 	 *  CTEs declared at different positions stay distinct entries; a CTE existing in only one arm
 	 *  still appears). Columns union by NAME; a column's representative span is the FIRST LIVE ARM's
-	 *  (arm iteration order = `this.variants` order) — the rule the variant-acceptance brief's A8a-c
+	 *  (arm iteration order = `this.variants` order): the rule the variant-acceptance brief's A8a-c
 	 *  pin. A CTE whose body is a set operation answers through the qualification (names per SQL
-	 *  setop semantics, spans from the declaring branch); a PIPE-syntax body answers no columns — a
-	 *  visible, ledgered gap, see `scopeOutputColumns`. Falls through to this document's own
-	 *  (single-arm) answer when there are no variants — there is no pre-existing single-doc
+	 *  setop semantics, spans from the declaring branch); a PIPE-syntax body answers the derivable
+	 *  subset, see `scopeOutputColumns`'s pipe doc comment. Falls through to this document's own
+	 *  (single-arm) answer when there are no variants; there is no pre-existing single-doc
 	 *  equivalent to delegate to, unlike unionSymbols/unionDiagnostics, so the no-variant case is
-	 *  just the one-arm instance of the same algorithm. Variant-only, memoized like `unionSymbols`.
-	 *  KNOWN GAP (visible, ledgered — not silently narrowed): on a multi-statement document these
-	 *  answer `[]` — the compound facade carries no CTEs/outputs; the per-cell merge is a tracked
-	 *  follow-up; single-statement documents (every dbt model) are fully covered. */
+	 *  just the one-arm instance of the same algorithm. A MULTI-STATEMENT document (no variants: the
+	 *  templated door always forces exactly one cell, so the two "multi" shapes never overlap) merges
+	 *  every statement CELL's own CTEs instead, each shifted from cell-relative to DOCUMENT coordinates
+	 *  (the same shift `analyze()` already applies to symbols/diagnostics for a multi-cell document);
+	 *  the compound facade itself carries no CTEs, so cells are the real per-statement source. Memoized
+	 *  like `unionSymbols`. */
 	unionCtes(schema?: SchemaProvider): UnionCte[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionCtesCache, s, () => this.buildUnionCtes(s));
@@ -789,12 +791,12 @@ export class SqlDocument {
 		}
 		const byKey = new Map<string, CteAgg>();
 		const order: string[] = [];
-		for (const doc of this.arms()) {
-			const qualification = doc.analyze(s).qualification;
-			for (const cteRef of collectCtes(doc.scopes.root)) {
-				const declarationSpan = partSpanOf(cteRef.def.nameCst ?? cteRef.def.cst);
-				if (!declarationSpan) continue; // no real token to key on — never fabricate a span
-				const name = resolveBehavior(doc.dialect).fold(cteRef.def.name);
+		for (const arm of this.armsData(s)) {
+			for (const cteRef of collectCtes(arm.scopeRoot)) {
+				const rawSpan = partSpanOf(cteRef.def.nameCst ?? cteRef.def.cst);
+				if (!rawSpan) continue; // no real token to key on, never fabricate a span
+				const declarationSpan = shiftPartSpan(rawSpan, arm.base.line, arm.base.col, arm.base.offset);
+				const name = resolveBehavior(arm.dialect).fold(cteRef.def.name);
 				const key = `${name}:${declarationSpan.start}`;
 				let entry = byKey.get(key);
 				if (!entry) {
@@ -802,8 +804,10 @@ export class SqlDocument {
 					byKey.set(key, entry);
 					order.push(key);
 				}
-				for (const col of scopeOutputColumns(cteRef.scope, qualification)) {
-					if (!entry.columns.has(col.name)) entry.columns.set(col.name, col.span);
+				for (const col of scopeOutputColumns(cteRef.scope, arm.qualification)) {
+					if (!entry.columns.has(col.name)) {
+						entry.columns.set(col.name, shiftSpan(col.span, arm.base.line, arm.base.col, arm.base.offset));
+					}
 				}
 			}
 		}
@@ -817,15 +821,13 @@ export class SqlDocument {
 		});
 	}
 
-	/** The document's final-SELECT (root scope) output columns unioned across arms — same NAME
-	 *  keying and representative-span rule as `unionCtes`. A setop root (the dbt-incremental
-	 *  `… UNION ALL …` arm shape) answers through the qualification — names per SQL setop semantics
-	 *  (left branch positionally, BY NAME appends right-only), spans from the declaring branch. A
-	 *  PIPE-syntax root answers `[]` — a visible, ledgered gap, see `scopeOutputColumns`. Falls
-	 *  through to this document's own root outputs when there are no variants.
-	 *  KNOWN GAP (visible, ledgered — not silently narrowed): on a multi-statement document these
-	 *  answer `[]` — the compound facade carries no CTEs/outputs; the per-cell merge is a tracked
-	 *  follow-up; single-statement documents (every dbt model) are fully covered. */
+	/** The document's final-SELECT (root scope) output columns unioned across arms: same NAME
+	 *  keying, representative-span rule, and multi-statement per-cell merge as `unionCtes` (see its
+	 *  doc comment). A setop root (the dbt-incremental `… UNION ALL …` arm shape) answers through the
+	 *  qualification, names per SQL setop semantics (left branch positionally, BY NAME appends
+	 *  right-only), spans from the declaring branch. A PIPE-syntax root answers the derivable subset,
+	 *  see `scopeOutputColumns`'s pipe doc comment. Falls through to this document's own root outputs
+	 *  when there are no variants and only one statement cell. */
 	unionOutputColumns(schema?: SchemaProvider): { name: string; span: Span }[] {
 		const s = schema ?? OPEN_PROVIDER;
 		return memoByVersion(this._unionOutputColumnsCache, s, () => this.buildUnionOutputColumns(s));
@@ -834,11 +836,10 @@ export class SqlDocument {
 	private buildUnionOutputColumns(s: SchemaProvider): { name: string; span: Span }[] {
 		const byName = new Map<string, Span>();
 		const order: string[] = [];
-		for (const doc of this.arms()) {
-			const qualification = doc.analyze(s).qualification;
-			for (const col of scopeOutputColumns(doc.scopes.root, qualification)) {
+		for (const arm of this.armsData(s)) {
+			for (const col of scopeOutputColumns(arm.scopeRoot, arm.qualification)) {
 				if (!byName.has(col.name)) {
-					byName.set(col.name, col.span);
+					byName.set(col.name, shiftSpan(col.span, arm.base.line, arm.base.col, arm.base.offset));
 					order.push(col.name);
 				}
 			}
@@ -846,10 +847,51 @@ export class SqlDocument {
 		return order.map((name) => ({ name, span: byName.get(name)! }));
 	}
 
-	/** The per-arm documents `unionCtes`/`unionOutputColumns` aggregate over: the real variants when
-	 *  they exist, else this document itself as the sole arm (see those methods' fall-through note). */
-	private arms(): readonly SqlDocument[] {
-		return this.variants.length === 0 ? [this] : this.variants.map((v) => v.doc());
+	/** One "arm" `unionCtes`/`unionOutputColumns` aggregate over, unified across the two shapes that
+	 *  can each independently make a document "multi" (never both at once: the templated door always
+	 *  builds exactly one statement cell, see its own comment above): a templated document's real
+	 *  variants (each a full arm SqlDocument, already in DOCUMENT coordinates, zero shift), or, for a
+	 *  plain multi-statement document, each statement CELL (cell-relative scopes, shifted to document
+	 *  coordinates by the cell's start, mirroring `buildAnalysis`'s per-cell shift). A single-cell,
+	 *  non-templated document is the trivial one-arm case of the same shape (zero shift, this
+	 *  document's own scopes/qualification). */
+	private armsData(s: SchemaProvider): {
+		scopeRoot: Scope;
+		qualification: Qualification;
+		dialect: Dialect;
+		base: { line: number; col: number; offset: number };
+	}[] {
+		const ZERO = { line: 0, col: 0, offset: 0 };
+		if (this.variants.length > 0) {
+			return this.variants.map((v) => {
+				const doc = v.doc();
+				return {
+					scopeRoot: doc.scopes.root,
+					qualification: doc.analyze(s).qualification,
+					dialect: doc.dialect,
+					base: ZERO,
+				};
+			});
+		}
+		if (this.statements.length > 1) {
+			return this.statements.map((cell, i) => {
+				const p = this.lines.positionAt(cell.span.start);
+				return {
+					scopeRoot: cell.scopes.root,
+					qualification: this.cellAnalysis(i, s).qualification,
+					dialect: this.dialect,
+					base: { line: p.line, col: p.column, offset: cell.span.start },
+				};
+			});
+		}
+		return [
+			{
+				scopeRoot: this.scopes.root,
+				qualification: this.analyze(s).qualification,
+				dialect: this.dialect,
+				base: ZERO,
+			},
+		];
 	}
 }
 
@@ -921,12 +963,10 @@ interface OutputColumn {
 /** A scope's own projected output columns as {name, span} pairs — schema-fed where a star needs
  *  expansion (via `qualification.expandStarOf`, the same expansion `deriveSymbols` rides, so the
  *  two never disagree). A `select` body enumerates its projections; a `setop` body answers through
- *  `qualification.columnsOf` with spans from the declaring branch (see below). KNOWN GAP (visible,
- *  ledgered — not silently narrowed): a PIPE body answers `[]` — its output spans live across its
- *  per-stage scopes (a pass-through last stage carries no projections of its own), and per-stage
- *  span attribution is unbuilt. An anonymous (unaliased, non-column) projection has no determinable
- *  name and is skipped, never fabricated; a star that qualify can't resolve (a schema gap) is
- *  skipped the same way. */
+ *  `qualification.columnsOf` with spans from the declaring branch (see below); a `pipe` body answers
+ *  through `pipeOutputColumns` (the derivable subset of pipe operators; see its own doc comment).
+ *  An anonymous (unaliased, non-column) projection has no determinable name and is skipped, never
+ *  fabricated; a star that qualify can't resolve (a schema gap) is skipped the same way. */
 function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputColumn[] {
 	const body = scope.body;
 	if (body.kind === "select") {
@@ -983,7 +1023,100 @@ function scopeOutputColumns(scope: Scope, qualification: Qualification): OutputC
 		}
 		return out;
 	}
-	return []; // pipe body — the documented gap above
+	if (body.kind === "pipe")
+		return scope.pipe ? pipeOutputColumns(scope.pipe.stages, scope.pipe.input, qualification) : [];
+	return [];
+}
+
+/** A PIPE-syntax scope's output columns: the STRUCTURALLY DERIVABLE subset of pipe operators only,
+ *  verified against the GoogleSQL pipe-syntax reference
+ *  (https://cloud.google.com/bigquery/docs/reference/standard-sql/pipe-syntax) and, for Databricks'
+ *  identical Spark 4.0 `|>` syntax, https://spark.apache.org/docs/latest/sql-pipe-syntax.html.
+ *  Walks the stage chain from the LAST stage backward:
+ *   - a terminal `select` stage fully redefines the column set. Its stage scope's own body is a
+ *     synthesized "select" (`stageBody` in scope.ts), so it re-enters the `select` branch above
+ *     verbatim (star expansion included: `qualify()` populates `expandStarOf` for a pipe SELECT's
+ *     star exactly as it does for a real one);
+ *   - a terminal `aggregate` stage names the GROUP BY keys first, then the aggregate expressions:
+ *     "The output columns from the AGGREGATE operator include all grouping columns first, followed
+ *     by all aggregate columns" (the reference's own wording; Spark's pipe-syntax page says the same:
+ *     "the evaluated grouping expressions followed by the evaluated aggregate functions"). See
+ *     `pipeAggregateColumns`;
+ *   - a terminal PASS-THROUGH stage (where/orderBy/limit/distinct/tablesample/assert/log/
+ *     staticDescribe/with/set/setop/recursiveUnion, none of which change the column set, matching
+ *     `stageOutputsFree`'s identical passthrough set, scope.ts's schema-free name-only twin of this
+ *     function) defers to whatever precedes it;
+ *   - falling through every stage reaches the pipe's own base `input`, whose output columns (a real
+ *     SELECT's projections, or another pipe/setop) pass through unchanged.
+ *  Every other terminal stage kind ABSTAINS (`[]`, never a guessed column list), because either the
+ *  shape change has no simple per-column span to anchor on (`extend`/`window` ADD columns via their
+ *  own projections but also keep the incoming ones, which carry no token at this stage; `drop`/
+ *  `rename` transform the incoming NAME list, but a renamed column's real token is the OLD name, so
+ *  showing it at the new name would misrepresent the span) or the new columns need a catalog this
+ *  pass doesn't have (`join`/`call`/`pivot`/`unpivot`/`matchRecognize`) or the operator is
+ *  terminal/branching/unmodelled (`describe`/`staticDescribe` narrows to a fixed schema, `if`/`fork`/
+ *  `tee` branch into sub-pipelines, `export`/`create`/`insert`/`as`/`other`). */
+function pipeOutputColumns(stages: readonly Scope[], input: Scope, qualification: Qualification): OutputColumn[] {
+	return pipeStageChainColumns(stages, stages.length - 1, input, qualification);
+}
+
+function pipeStageChainColumns(
+	stages: readonly Scope[],
+	i: number,
+	input: Scope,
+	qualification: Qualification,
+): OutputColumn[] {
+	if (i < 0) return scopeOutputColumns(input, qualification); // no stage redefines the shape: the base's own outputs
+	const stageScope = stages[i];
+	const stage = stageScope.pipeStage;
+	if (!stage) return [];
+	switch (stage.op) {
+		case "where":
+		case "orderBy":
+		case "limit":
+		case "distinct":
+		case "tablesample":
+		case "assert":
+		case "log":
+		case "staticDescribe":
+		case "with":
+		case "set":
+		case "setop":
+		case "recursiveUnion":
+			return pipeStageChainColumns(stages, i - 1, input, qualification); // unchanged column set
+		case "select":
+			return scopeOutputColumns(stageScope, qualification); // its body is a synthesized "select" (stageBody)
+		case "aggregate":
+			return pipeAggregateColumns(stage, stageScope);
+		default:
+			// extend/window/drop/rename/join/call/pivot/unpivot/matchRecognize/describe/if/fork/tee/
+			// export/create/insert/as/other: see pipeOutputColumns' doc comment.
+			return [];
+	}
+}
+
+/** A pipe AGGREGATE stage's own output columns: the GROUP BY keys, then the aggregate expressions
+ *  (see `pipeOutputColumns`' doc comment for the reference citation), the span-carrying twin of
+ *  `aggregateOutputsFree` in scope.ts (the schema-free name-only version this must agree with).
+ *  Abstains (`[]`, not a partial list) the moment any grouping key or aggregate has no determinable
+ *  name/span, matching `aggregateOutputsFree`'s own all-or-nothing "unknown" rule. */
+function pipeAggregateColumns(stage: Extract<PipeStage, { op: "aggregate" }>, stageScope: Scope): OutputColumn[] {
+	const keys: OutputColumn[] = [];
+	for (const g of stage.groupBy) {
+		if (g.kind !== "column") return []; // a non-column grouping key has no determinable name
+		const name = g.parts[g.parts.length - 1];
+		const span = partSpanOf(g.cst);
+		if (!span) return [];
+		keys.push({ name: behaviorOf(stageScope).fold(name), raw: name, span });
+	}
+	const aggs: OutputColumn[] = [];
+	for (const p of stage.aggregates) {
+		if (p.isStar || p.name === undefined) return []; // an anonymous/star aggregate has no determinable name
+		const span = partSpanOf(p.aliasCst ?? p.cst);
+		if (!span) return [];
+		aggs.push({ name: behaviorOf(stageScope).fold(p.name), raw: p.name, span });
+	}
+	return [...keys, ...aggs];
 }
 
 /** Shift a symbol's every span (its own span, its declaration target, its per-part spans, its

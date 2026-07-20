@@ -247,6 +247,14 @@ statement
     | ctes? dmlStatementNoWith                                         #dmlStatement
     | USE identifierReference                                          #use
     | USE namespace identifierReference                                #useNamespace
+    // USE CATALOG sets the current catalog (Unity Catalog): a Databricks statement not present
+    // in upstream apache/spark SqlBase.g4 (CATALOG never joins `namespace`'s NAMESPACE/DATABASE/
+    // SCHEMA there either; only `SET CATALOG expression` exists upstream, kept below unchanged).
+    // Reuses the pre-existing, previously unwired catalogIdentifierReference (identifier,
+    // string literal, or IDENTIFIER(expr)), matching the documented `{ USE | SET } CATALOG
+    // [ catalog_name | 'catalog_name' ]` form.
+    // https://docs.databricks.com/aws/en/sql/language-manual/sql-ref-syntax-ddl-use-catalog
+    | USE CATALOG catalogIdentifierReference                           #useCatalog
     | SET CATALOG expression                                           #setCatalog
     | CREATE namespace (IF errorCapturingNot EXISTS)? identifierReference
         (commentSpec |
@@ -1287,8 +1295,15 @@ expression
     : booleanExpression
     ;
 
+// Databricks-specific: some builtin table functions/options accept a dotted, qualified
+// argument key, e.g. `read_files(url, databricks.connection => 'conn')` and the
+// `ai_parse_document` option map. Upstream apache/spark SqlBase.g4's namedArgumentExpression
+// key is a single `identifier` (unmodeled there, a Databricks product extension over OSS
+// Spark, not a Catalyst grammar feature); widened here to multipartIdentifier so a qualified
+// key parses without dropping the qualifier.
+// https://docs.databricks.com/aws/en/sql/language-manual/functions/ai_parse_document
 namedArgumentExpression
-    : key=identifier FAT_ARROW value=expression
+    : key=multipartIdentifier FAT_ARROW value=expression
     ;
 
 functionArgument

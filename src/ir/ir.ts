@@ -337,8 +337,15 @@ export type Expr =
 	  }
 	/** A lambda used as a higher-order function argument: `x -> x + 1`, `(acc, x) -> …`. */
 	| { kind: "lambda"; params: string[]; body: Expr; cst: ParserRuleContext }
-	/** Element/array/map access: `arr[0]`, `m['k']`, `split(s,'-')[1]`. */
-	| { kind: "subscript"; base: Expr; index: Expr; cst: ParserRuleContext }
+	/** Element/array/map access: `arr[0]`, `m['k']`, `split(s,'-')[1]`. Also carries a SLICE
+	 *  (`l[lo:hi]`, `l[lo:hi:step]` — DuckDB/Postgres/Redshift list & string slicing,
+	 *  functions/list.md#slicing): `slice: true`, with `index` reused as the begin bound.
+	 *  Plain element access: `index` is the subscript expression, `end`/`step`/`slice` absent.
+	 *  Slice access: `index`/`end`/`step` are each present ONLY when that bound was actually
+	 *  written — an omitted bound (incl. DuckDB's bare `-` default-bound placeholder, which means
+	 *  the same as omitting it, e.g. `l[:-:2]` ≡ `l[::2]`) stays absent, never fabricated. Each
+	 *  present bound keeps its own `cst` span; `cst` on the node itself spans the whole `base[...]`. */
+	| { kind: "subscript"; base: Expr; index?: Expr; end?: Expr; step?: Expr; slice?: true; cst: ParserRuleContext }
 	/** ZetaSQL's expression-scoped `WITH(name AS expr, …, result)` — SQL-scoped let-bindings whose scope
 	 *  is the result expression. Modelled faithfully: the lowered `bindings` are retained (conservation and
 	 *  the walker see every binding value expr) and `result` is the expression the WITH evaluates to. We do

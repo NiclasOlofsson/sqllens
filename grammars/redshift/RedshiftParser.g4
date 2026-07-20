@@ -4396,7 +4396,12 @@ simple_select_pramary
    // TOP/DISTINCT; branch `distinct_clause target_list` was a strict subset), but removes the [1,2]/[2,3]
    // ambiguity that forced full-LL prediction on every SELECT — the parser now decides locally by whether
    // a target_list follows. lower() reads target_list via firstShallow, so the IR is unchanged.
-   : ( SELECT ((opt_all_clause | opt_top_clause? distinct_clause?)? into_clause? target_list | opt_all_clause? into_clause?)
+   // The select list is mandatory per the documented syntax (docs.aws.amazon.com/redshift/latest/dg/
+   // r_SELECT_list.html: `* | expression [, ...]`, not bracketed as optional): a bare SELECT / SELECT
+   // ALL / SELECT FROM t with no list is rejected. The one documented exception is SELECT INTO
+   // (docs.aws.amazon.com/redshift/latest/dg/r_SELECT_INTO.html), whose list is optional, so the
+   // no-target branch below still requires its own into_clause to justify the missing list.
+   : ( SELECT ((opt_all_clause | opt_top_clause? distinct_clause?)? into_clause? target_list | opt_all_clause? into_clause)
            exclude_clause?
            into_clause?
            from_clause?
@@ -4619,7 +4624,12 @@ from_clause
    ;
 
 from_list
-   : table_ref (COMMA table_ref)*
+   // Redshift PartiQL nested-data unnest join: a comma-separated FROM list may end with a bare ON
+   // predicate, no JOIN keyword (docs.aws.amazon.com/redshift/latest/dg/nested-data-use-cases.html,
+   // "Joining Amazon Redshift and nested data": `FROM t1, t1.arr a, t2 ON a.x = t2.y`), filtering the
+   // unnest cross product. lower() conserves it into SelectExpr.joinConditions without synthesizing a
+   // Join node; comma-separated sources stay plain `from` entries per the Join-node contract.
+   : table_ref (COMMA table_ref)* (ON a_expr)?
    ;
 
 table_ref
@@ -5258,6 +5268,19 @@ func_expr_common_subexpr
    | XMLPI OPEN_PAREN NAME_P collabel (COMMA a_expr)? CLOSE_PAREN
    | XMLROOT OPEN_PAREN XML_P a_expr COMMA xml_root_version opt_xml_root_standalone? CLOSE_PAREN
    | XMLSERIALIZE OPEN_PAREN document_or_content a_expr AS simpletypename CLOSE_PAREN
+   // SUPER object transform: input, plus optional KEEP (paths to carry over) and SET (path/value
+   // pairs to add or overwrite), each a plain comma list
+   // (docs.aws.amazon.com/redshift/latest/dg/r_object_transform_function.html):
+   //   OBJECT_TRANSFORM(input [KEEP path1, ...] [SET path1, value1, ...])
+   | OBJECT_TRANSFORM OPEN_PAREN a_expr object_transform_keep? object_transform_set? CLOSE_PAREN
+   ;
+
+object_transform_keep
+   : KEEP expr_list
+   ;
+
+object_transform_set
+   : SET expr_list
    ;
 
 xml_root_version
@@ -5533,8 +5556,33 @@ columnref
 
 indirection_el
    : DOT (attr_name | STAR)
-   | OPEN_BRACKET (a_expr | opt_slice_bound? COLON opt_slice_bound?) CLOSE_BRACKET
+   | OPEN_BRACKET (a_expr | opt_slice_bound? COLON opt_slice_bound? | opt_slice_bound plsqlvariablename | NamespaceUser) CLOSE_BRACKET
    ;
+// The plsqlvariablename alt: a bare-identifier end bound with a non-empty NUMERIC begin —
+// `arr[1:hi]` — has no whitespace before the identifier, so the lexer's PLSQLVARIABLENAME rule
+// (`:` + word chars, meant for psql/pgbench `:variable` interpolation,
+// docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION — real corpus use:
+// postgres/docs/parser/positive/dml/pgbench/1.sql, shared pg-family lexer) maximal-munches the
+// slice's COLON together with the identifier into one token before the parser ever sees a
+// standalone COLON. Real PostgreSQL array slicing accepts any expression as a bound
+// (postgresql.org/docs/current/arrays.html#ARRAYS-ACCESSING); this alt un-fuses that token by
+// requiring a MANDATORY begin bound, so it only ever matches this previously-unparseable shape and
+// never overlaps the pgbench reading (which has no preceding bound) or the plain `a_expr` alt
+// (which already fails on "begin PLSQLVARIABLENAME" — confirmed no viable alternative pre-fix).
+//
+// The NamespaceUser alt: a bare-identifier end bound with a non-empty IDENTIFIER begin —
+// `arr[lo:hi]` — fuses even more aggressively: Redshift's own `NamespaceUser: Identifier ':'
+// Identifier` lexer rule (used for datashare-consumer role refs, `GRANT ... TO IAM:Bob` — real
+// corpus use: redshift/docs/parser/positive/ddl/lake-formation-getting-started-consumer/1.sql; only
+// otherwise reachable from `rolespec` in GRANT/REVOKE/ALTER ROLE, a disjoint parser context from
+// array indirection) out-munches PLSQLVARIABLENAME and swallows BOTH sides of the colon into one
+// token. This alt accepts that whole fused token as a slice shape; lower.ts splits its text on the
+// colon to recover the begin/end identifiers. Purely additive here — NamespaceUser's meaning and
+// reachability in the rolespec/GRANT context are untouched.
+//
+// Both alts leave the symmetric empty-begin case `arr[:hi]` as-is (still reads as a plain index via
+// the plsqlvariablename c_expr, not a slice) — genuinely entangled with the pgbench reading and out
+// of scope here; narrowing it risks the corpus-verified bind-variable feature.
 
 opt_slice_bound
    : a_expr
@@ -5845,6 +5893,10 @@ unreserved_keyword
    | INSTEAD
    | INVOKER
    | ISOLATION
+   // SUPER object transform's clause keyword (docs.aws.amazon.com/redshift/latest/dg/
+   // r_object_transform_function.html); not in the reserved-words list, so it stays usable as an
+   // identifier outside OBJECT_TRANSFORM's KEEP clause.
+   | KEEP
    | KEY
    | LABEL
    | LANGUAGE
@@ -6062,6 +6114,11 @@ unreserved_keyword
    // System-table column names / non-reserved keywords usable as identifiers — none appear in the
    // reserved-words list (docs.aws.amazon.com/redshift/latest/dg/r_pg_keywords.html).
    | FILE | QUOTA | DISTSTYLE | APPROXIMATE
+   // ITEMS: borrowed for COLLECTION ITEMS TERMINATED BY (external-table ROW FORMAT DELIMITED, Hive
+   // SerDe style), but not itself in the reserved-words list, so it must stay usable as an ordinary
+   // identifier/attribute name, including in a SUPER dotted path like json_table.data.ITEMS.Name
+   // (docs.aws.amazon.com/redshift/latest/dg/super-configurations.html#upper-mixed-case).
+   | ITEMS
    ;
 
 col_name_keyword
@@ -6099,6 +6156,10 @@ col_name_keyword
    | NORMALIZE
    | NULLIF
    | numeric
+   // SUPER object transform (docs.aws.amazon.com/redshift/latest/dg/r_object_transform_function.html):
+   // dedicated call form (func_expr_common_subexpr), not in the reserved-words list, so it stays
+   // usable as an identifier outside its own call.
+   | OBJECT_TRANSFORM
    | OFFSET
    | OUT_P
    | OVERLAY

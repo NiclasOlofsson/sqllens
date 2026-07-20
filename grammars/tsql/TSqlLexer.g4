@@ -790,6 +790,8 @@ QUERYTRACEON                                : 'QUERYTRACEON'; // query OPTION tr
 AI_GENERATE_CHUNKS                          : 'AI_GENERATE_CHUNKS';     // functions/ai-generate-chunks-transact-sql
 AI_GENERATE_EMBEDDINGS                      : 'AI_GENERATE_EMBEDDINGS'; // functions/ai-generate-embeddings-transact-sql
 APPROXIMATE                                 : 'APPROXIMATE';            // TOP (n) WITH APPROXIMATE: functions/vector-search-transact-sql
+APPROX_PERCENTILE_CONT                      : 'APPROX_PERCENTILE_CONT'; // functions/approx-percentile-cont-transact-sql (SQL 2022+)
+APPROX_PERCENTILE_DISC                      : 'APPROX_PERCENTILE_DISC'; // functions/approx-percentile-disc-transact-sql (SQL 2022+)
 ARRAY                                       : 'ARRAY';                  // JSON_QUERY ... WITH ARRAY WRAPPER: functions/json-query-transact-sql
 BOTH                                        : 'BOTH';                   // TRIM([LEADING|TRAILING|BOTH] ...): functions/trim-transact-sql
 CHUNK_SIZE                                  : 'CHUNK_SIZE';             // functions/ai-generate-chunks-transact-sql
@@ -799,7 +801,11 @@ EXTERNALPUSHDOWN                            : 'EXTERNALPUSHDOWN';       // OPTIO
 NODE                                        : 'NODE';                   // OPTION (FORCE SINGLE NODE PLAN): queries/hints-transact-sql-query (Fabric DW)
 SINGLE                                      : 'SINGLE';                 // OPTION (FORCE SINGLE NODE PLAN): queries/hints-transact-sql-query (Fabric DW)
 FIXED                                       : 'FIXED';                  // CHUNK_TYPE = FIXED: functions/ai-generate-chunks-transact-sql
+FN                                           : 'FN';                    // ODBC escape {fn scalar_function(...)}: functions/odbc-scalar-functions-transact-sql
+FORCE_ANN_ONLY                              : 'FORCE_ANN_ONLY';         // VECTOR_SEARCH(...) AS r WITH (FORCE_ANN_ONLY): functions/vector-search-transact-sql
 GRAPH                                       : 'GRAPH';                  // WITHIN GROUP (GRAPH PATH): queries/match-sql-graph
+GUID                                        : 'GUID';                  // ODBC escape {GUID 'nnnnnnnn-...'}: odbc/reference/appendixes/guid-escape-sequences
+IGNORE                                       : 'IGNORE';                // LAG/LEAD ... IGNORE NULLS: functions/lag-transact-sql (SQL 2022+)
 JSON_ARRAYAGG                               : 'JSON_ARRAYAGG';          // functions/json-arrayagg-transact-sql
 JSON_OBJECTAGG                              : 'JSON_OBJECTAGG';         // functions/json-objectagg-transact-sql
 LABEL                                       : 'LABEL';                  // OPTION (LABEL = '…'): queries/option-clause-transact-sql
@@ -808,6 +814,7 @@ LEADING                                     : 'LEADING';                // funct
 MATCH                                       : 'MATCH';                  // queries/match-sql-graph
 METRIC                                      : 'METRIC';                 // functions/vector-search-transact-sql
 MODEL                                       : 'MODEL';                  // PREDICT / AI_GENERATE_EMBEDDINGS … USE MODEL
+NULLS                                       : 'NULLS';                  // LAG/LEAD ... IGNORE|RESPECT NULLS: functions/lag-transact-sql (SQL 2022+)
 ONNX                                        : 'ONNX';                   // PREDICT(… RUNTIME = ONNX): queries/predict-transact-sql
 OVERLAP                                     : 'OVERLAP';                // functions/ai-generate-chunks-transact-sql
 PARAMETERS                                  : 'PARAMETERS';             // functions/ai-generate-embeddings-transact-sql
@@ -818,6 +825,7 @@ REDUCE                                      : 'REDUCE';                 // queri
 ROLLUP                                      : 'ROLLUP';                 // GROUP BY ROLLUP(...) / WITH ROLLUP: queries/select-group-by-transact-sql
 TIMESTAMP                                   : 'TIMESTAMP';              // OPTION (FOR TIMESTAMP AS OF ...): queries/hints-transact-sql-query
 REGEXP_LIKE                                 : 'REGEXP_LIKE';            // functions/regexp-like-transact-sql (2025)
+RESPECT                                     : 'RESPECT';                // LAG/LEAD ... RESPECT NULLS: functions/lag-transact-sql (SQL 2022+)
 RETURNING                                   : 'RETURNING';              // JSON_VALUE/JSON_ARRAY/… RETURNING: functions/json-value-transact-sql
 RUNTIME                                     : 'RUNTIME';                // queries/predict-transact-sql (Synapse)
 SHORTEST_PATH                               : 'SHORTEST_PATH';          // queries/match-sql-graph
@@ -1305,6 +1313,8 @@ MOD_ASSIGN   : '%=';
 AND_ASSIGN   : '&=';
 XOR_ASSIGN   : '^=';
 OR_ASSIGN    : '|=';
+// Concatenation compound assignment (SQL 2025): language-elements/compound-assignment-pipes-transact-sql
+PIPE_ASSIGN  : '||=';
 
 DOUBLE_BAR   : '||';
 DOT          : '.';

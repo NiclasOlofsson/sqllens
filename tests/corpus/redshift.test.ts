@@ -9,10 +9,12 @@ import { lower } from "../../src/redshift/lower.js";
 import { parseRedshift } from "../../src/redshift/parse.js";
 import { resolveScopes } from "../../src/scope/scope.js";
 import { deriveSymbols } from "../../src/symbols/symbols.js";
+import { probeBody } from "../helpers/body-probe.js";
 import { sweepCallDiagnostics } from "../helpers/call-check.js";
 import { runDocsRatchet } from "../helpers/docs-ratchet.js";
 import { runNegativeCorpus } from "../helpers/negative-corpus.js";
 import { walkIr } from "../helpers/ir-walk.js";
+import { KNOWN_BAD } from "../redshift-corpus-known-bad.js";
 
 // Two Redshift conformance corpora, both gitignored and skipped when absent:
 //
@@ -50,26 +52,14 @@ const OTHER_BASELINE = 0; // measured 2026-07-01 over the parsed Redshift docs q
 // here first; may only fall.
 const FALLBACK_RATCHET = 4;
 
-// Documented-broken query examples — each verified against its AWS doc source as genuinely malformed
-// SQL (not a grammar gap, not scraper noise). They fail to parse, so the organizer files them under
-// unparsed/; `knownBad` asserts each STILL sits there (self-policing: if one starts parsing it leaves
-// unparsed/ and the assertion fails, so the entry is removed). The query gate is 100% of query/.
-// Pure scraper noise — leaked EXPLAIN plans, prose math,
-// expression-fragment listings, bare <placeholder> metasyntax — is fixed at the scraper instead
-// (tools/scrape-redshift-docs.mjs) so it never reaches the corpus.
-const KNOWN_BAD: Record<string, string> = {
-	"nested-data-use-cases/7.sql":
-		"AWS doc 'illustration' mixes comma-join with a trailing ON clause (FROM …, prices p ON …) — no JOIN keyword; rejected by the PostgreSQL/PartiQL grammar.",
-	"r_COPY_command_examples/34.sql":
-		"AWS doc Oracle-export example REPLACE(c2, \\n',\\\\n') is malformed — a stray \\n sits outside the string and the quotes are mismatched.",
-	"r_GROUP_BY_clause/3.sql":
-		"AWS doc typo — missing comma between col2 and sum(col3): `SELECT col1, col2 sum(col3) … GROUP BY ALL`. (GROUP BY ALL itself parses — see redshift.test.ts.)",
-	"r_SET_CONFIG/2.sql":
-		"AWS doc uses typographic smart quotes (‘…’) around the SET_CONFIG arguments — not valid SQL string delimiters.",
-	"SYS_DATASHARE_USAGE_PRODUCER/1.sql": "AWS doc typo — `SELECT DISTINCT` with an empty select list before FROM.",
-	"tutorial_multi-class_classification/7.sql":
-		"AWS doc has unbalanced parentheses — the first SELECT closes with ) but has no opening ( before UNION.",
-};
+// Documented-broken / out-of-scope query examples, each verified against its AWS doc source (or
+// mechanically, for the CREATE PROCEDURE/FUNCTION $$-body group) as genuinely not an in-scope grammar
+// gap. They fail to parse, so the organizer files them under unparsed/; `knownBad` asserts each STILL
+// sits there (self-policing: if one starts parsing it leaves unparsed/ and the assertion fails, so the
+// entry is removed). The query gate is 100% of query/. Pure scraper noise (leaked EXPLAIN plans, prose
+// math, expression-fragment listings, bare <placeholder> metasyntax) is fixed at the scraper instead
+// (tools/scrape-redshift-docs.mjs) so it never reaches the corpus. Full list + rationale, categorized:
+// tests/redshift-corpus-known-bad.ts.
 
 /** Two-stage SLL→LL parse of a whole file; returns the syntax-error count. */
 function parseFile(sql: string): number {
@@ -153,6 +143,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 			const samples = new Map<string, string>();
 			const throwers: string[] = [];
 			const callHits: string[] = []; // Task 12: call-signature diagnostics must be zero over valid SQL
+			const bodyEmpty: string[] = []; // body-non-emptiness probe (see tests/helpers/body-probe.ts)
 			let scoped = 0;
 			let fallbacks = 0;
 			runDocsRatchet(DOCS_CORPUS, parseFile, QUERY_BASELINE, {
@@ -166,6 +157,7 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 					try {
 						const ir = lower(tree);
 						walkIr(ir, tally, samples);
+						probeBody(ir, rel, bodyEmpty);
 						const scopes = resolveScopes(ir, "redshift");
 						deriveSymbols(scopes);
 						sweepCallDiagnostics(scopes, rel, callHits);
@@ -197,6 +189,10 @@ describe.skipIf(!existsSync(DOCS_CORPUS))("Redshift grammar vs the scraped docs 
 				fallbacks,
 				`SLL fallback count rose above the ${FALLBACK_RATCHET} ratchet — a grammar edit made prediction sicker`,
 			).toBeLessThanOrEqual(FALLBACK_RATCHET);
+			expect(
+				bodyEmpty,
+				`empty, unflagged SelectExpr bodies found:\n${bodyEmpty.slice(0, 20).join("\n")}`,
+			).toEqual([]);
 		},
 	);
 });

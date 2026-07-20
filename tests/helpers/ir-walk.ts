@@ -40,7 +40,9 @@ function walkExpr(e: Expr, tally: Map<string, number>, samples: Map<string, stri
 			break;
 		case "subscript":
 			walkExpr(e.base, tally, samples);
-			walkExpr(e.index, tally, samples);
+			if (e.index) walkExpr(e.index, tally, samples);
+			if (e.end) walkExpr(e.end, tally, samples);
+			if (e.step) walkExpr(e.step, tally, samples);
 			break;
 		case "with":
 			// Retained bindings + result are all visible to the walker (conservation: no dropped field expr).

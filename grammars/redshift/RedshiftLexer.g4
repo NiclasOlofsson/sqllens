@@ -3659,6 +3659,17 @@ TRY_CAST
    : 'TRY_CAST'
    ;
 
+// SUPER object transform's clause keyword (docs.aws.amazon.com/redshift/latest/dg/r_object_transform_function.html):
+// OBJECT_TRANSFORM(input [KEEP path, ...] [SET path, value, ...]). Both classified below (col_name_keyword /
+// unreserved_keyword) so they stay usable as identifiers outside this one call form.
+KEEP
+   : 'KEEP'
+   ;
+
+OBJECT_TRANSFORM
+   : 'OBJECT_TRANSFORM'
+   ;
+
 Identifier
    : IdentifierStartChar IdentifierChar*
    ;
