@@ -8,6 +8,7 @@ import type {
 	Join,
 	JoinKind,
 	LimitInfo,
+	PartSpan,
 	PivotInfo,
 	Projection,
 	QueryBody,
@@ -16,9 +17,10 @@ import type {
 	Source,
 	UnpivotInfo,
 	UnsupportedFlag,
+	VariableDecl,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
-import { partSpansOf } from "../ir/part-span.js";
+import { partSpanOf, partSpansOf } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
 import { displayName, fold, TSQL_NAME_CONFIG } from "./fold.js";
@@ -99,7 +101,65 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		total > 1 ? "multi-statement" : units.length === 0 && swallowed > 0 ? "broken" : undefined,
 	);
 	q.statement = statement;
+	// A lone DECLARE statement (statementCategory folds it to "utility", see unitCategory's
+	// another_statement branch) carries no query body to lower, but its variable declarations are
+	// real IR content, not a gap: populate them onto the flagged-empty QueryExpr. Only when this
+	// batch is exactly one real top-level statement; a multi-statement batch stays a flagged
+	// compound with no per-statement modeling, matching every other non-query category here.
+	if (statement === "utility" && total === 1 && units.length === 1) {
+		const decls = declarationsOf(units[0]);
+		if (decls) q.declarations = decls;
+	}
 	return q;
+}
+
+/** The variable declarations of a single top-level DECLARE statement (`another_statement ->
+ *  declare_statement`), or undefined when `unit` isn't a DECLARE. The list form (`declare_local`,
+ *  comma-separated) lowers each entry's name/type/initializer fully; the table-type
+ *  (`TABLE(...)` / a qualified user-defined table type name) and XML-schema-collection
+ *  alternatives get a bare name + their type text only (no deep modeling of the table shape). */
+function declarationsOf(unit: ParserRuleContext): VariableDecl[] | undefined {
+	const another = directChildrenOfRule(unit, P.RULE_another_statement)[0];
+	const declStmt = another ? directChildrenOfRule(another, P.RULE_declare_statement)[0] : undefined;
+	if (!declStmt) return undefined;
+	const locals = directChildrenOfRule(declStmt, P.RULE_declare_local);
+	if (locals.length) return locals.map(lowerDeclareLocal);
+	// `DECLARE @t TABLE(...)` / `DECLARE @t dbo.MyTableType` / `DECLARE @t XML(...)`: a single
+	// LOCAL_ID plus one of the three type-shape alternatives declare_local can't express.
+	const localId = directTerminal(declStmt, P.LOCAL_ID);
+	if (!localId) return undefined;
+	const typeNode =
+		directChildrenOfRule(declStmt, P.RULE_table_type_definition)[0] ??
+		directChildrenOfRule(declStmt, P.RULE_declare_as_table_name)[0] ??
+		directChildrenOfRule(declStmt, P.RULE_xml_type_definition)[0];
+	return [
+		{
+			name: localId.getText().slice(1),
+			nameSpan: partSpanOf(localId) ?? partSpanOf(declStmt) ?? ZERO_PART_SPAN,
+			typeText: typeNode?.getText(),
+			cst: declStmt,
+		},
+	];
+}
+
+/** A fallback span for the never-should-happen case a DECLARE target's own token is missing (a
+ *  broken/partial parse): `total`, so this stays a valid `PartSpan` rather than `undefined`. */
+const ZERO_PART_SPAN: PartSpan = { start: 0, end: 0, line: 0, column: 0, endLine: 0, endColumn: 0 };
+
+/** One `declare_local`: `LOCAL_ID AS? data_type ('=' expression)?`. */
+function lowerDeclareLocal(node: ParserRuleContext): VariableDecl {
+	const localId = directTerminal(node, P.LOCAL_ID);
+	const dt = directChildrenOfRule(node, P.RULE_data_type)[0];
+	const initExpr = directChildrenOfRule(node, P.RULE_expression)[0];
+	return {
+		// The @ sigil stripped, matching the `variable` Expr's `name` (a DECLARE target is always a
+		// local, never the `@@` system-variable form).
+		name: localId ? localId.getText().slice(1) : "",
+		nameSpan: (localId && partSpanOf(localId)) ?? partSpanOf(node) ?? ZERO_PART_SPAN,
+		typeText: dt?.getText(),
+		init: initExpr ? lowerExpression(initExpr) : undefined,
+		cst: node,
+	};
 }
 
 /**

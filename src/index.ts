@@ -146,6 +146,7 @@ export type {
 	TemplateSourceInfo,
 	UnpivotInfo,
 	UnsupportedFlag,
+	VariableDecl,
 	WindowSpec,
 } from "./ir/ir.js";
 

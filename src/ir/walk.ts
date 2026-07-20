@@ -46,6 +46,15 @@ export function allQueryExprs(root: QueryExpr): QueryExpr[] {
 	return out;
 }
 
+/** A QueryExpr's own DECLARE initializer expressions (T-SQL `DECLARE @x int = 1, @y int = @x + 1`).
+ *  `declarations` lives on QueryExpr itself, not on any QueryBody/Scope.body — the same "not reachable
+ *  from the body walk" shape as `orderBy`/`limit`, so callers attribute these to the owning scope the
+ *  same way (see node-at.ts / scope/walk.ts). Populated only on the top-level statement's QueryExpr;
+ *  absent everywhere else. NOT part of childExprs — these are not sub-expressions of any Expr. */
+export function declarationExprs(query: QueryExpr): Expr[] {
+	return query.declarations?.flatMap((d) => (d.init ? [d.init] : [])) ?? [];
+}
+
 /** Sub-expressions reachable WITHOUT crossing a scope boundary (no subquery/exists descent). */
 export function childExprs(expr: Expr): Expr[] {
 	switch (expr.kind) {

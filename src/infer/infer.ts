@@ -3,7 +3,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { asProvider, tableSourceColumns } from "../qualify/relation-columns.js";
-import { resolveScopes, type ResolvedSource, type Scope } from "../scope/scope.js";
+import { resolveScopes, rootDeclarations, type ResolvedSource, type Scope } from "../scope/scope.js";
 import { resolveColumnSource } from "../sema/resolve.js";
 import { coerce, commonType, fullInterval, isIntervalType } from "./coerce.js";
 import type { DialectBehavior } from "../dialect-behavior/behavior.js";
@@ -86,11 +86,21 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx:
 			// reference inside `result` types as a plain column ref (the documented lowering boundary).
 			return inferType(expr.result, scope, schema, ctx);
 		case "parameter":
-		case "variable":
-			// A bare document carries no type for a caller-bound placeholder or a session/local
-			// variable, never guessed. SEAM: T-SQL's `DECLARE @x int` gives a variable a real
-			// declared type; that flow-sensitive lookup is a later per-dialect task, not this one.
+			// A caller-bound placeholder carries no declared type anywhere in the IR: the CALLER
+			// binds it at execution time. Always unknown, never guessed.
 			return UNKNOWN;
+		case "variable": {
+			// A session/local variable's declared type, when this scope's own statement (its ROOT,
+			// see rootDeclarations) DECLAREs EXACTLY ONE variable of that name (never-wrong: 0 or >1
+			// same-named candidates stay unknown, matching symbols.ts's identical rule). T-SQL
+			// DECLARE @x <type> [= expr] (learn.microsoft.com/en-us/sql/t-sql/language-elements/
+			// declare-local-variable-transact-sql). Cross-STATEMENT linking (a DECLARE in an earlier
+			// document cell) is the document layer's job (src/document/document.ts); this is a
+			// same-statement, scope-local lookup only.
+			const decls = rootDeclarations(scope)?.filter((v) => v.name === expr.name);
+			const decl = decls?.length === 1 ? decls[0] : undefined;
+			return decl?.typeText ? d.parseType(decl.typeText) : UNKNOWN;
+		}
 		default:
 			// star / lambda (typed only inside its higher-order function) / other.
 			return UNKNOWN;

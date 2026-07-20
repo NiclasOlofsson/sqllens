@@ -34,9 +34,9 @@ import type { ParserRuleContext } from "antlr4ng";
 import { debugRethrow } from "../debug.js";
 import { parse, qualify, deriveSymbols, toScopes, TypeInfo } from "../api.js";
 import { lineageAt as lineageAtScopes, type LineageHop } from "../lineage/hops.js";
-import { referencesAt as referencesAtScopes, type Occurrences } from "../references/references.js";
+import { referencesAt as referencesAtScopes, type Occurrence, type Occurrences } from "../references/references.js";
 import type { Dialect } from "../dialect.js";
-import type { QueryExpr, SelectExpr, PartSpan, PipeStage } from "../ir/ir.js";
+import type { QueryExpr, SelectExpr, PartSpan, PipeStage, VariableDecl } from "../ir/ir.js";
 import { freezeIR } from "../ir/freeze.js";
 import { partSpanOf, starSpanOf } from "../ir/part-span.js";
 import type { StatementCategory } from "../ir/statement.js";
@@ -47,6 +47,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
+import type { Type } from "../infer/types.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
 import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
@@ -525,14 +526,51 @@ export class SqlDocument {
 		const cell = this.cellAt(offset);
 		if (!cell) return referencesAtScopes(this.scopes, offset, schema, this.ast);
 		const occ = referencesAtScopes(cell.scopes, offset - cell.span.start, schema, cell.ast);
-		if (!occ || cell.span.start === 0) return occ; // first cell: identity shift
+		if (!occ) return occ;
 		const base = this.lines.positionAt(cell.span.start);
 		const shift = (s: Span): Span => shiftSpan(s, base.line, base.column, cell.span.start);
-		return {
-			...occ,
-			declaration: occ.declaration ? shift(occ.declaration) : undefined,
-			occurrences: occ.occurrences.map((o) => ({ ...o, span: shift(o.span) })),
-		};
+		const shifted: Occurrences =
+			cell.span.start === 0
+				? occ // first cell: identity shift
+				: {
+						...occ,
+						declaration: occ.declaration ? shift(occ.declaration) : undefined,
+						occurrences: occ.occurrences.map((o) => ({ ...o, span: shift(o.span) })),
+					};
+		// A variable occurrence can span statement cells (a T-SQL DECLARE and its references each
+		// parse as their own scope tree, see buildAnalysis's cross-cell linking above), so the
+		// per-cell result above only ever sees THIS cell's own occurrences, with no declaration (a
+		// bare variable reference has no in-tree declaration node the way a CTE name does). Escalate
+		// to the document-wide grouping, mirroring how a parameter/variable already groups WITHIN one
+		// scope tree (references.ts's collectParam) but widened to the whole document and adding the
+		// declaration. Parameters stay per-cell only: a caller-bound placeholder has no
+		// cross-statement declaration site to escalate to.
+		return shifted.kind === "variable" && this.statements.length > 1
+			? this.escalateVariableOccurrences(shifted, schema)
+			: shifted;
+	}
+
+	/** Widen a per-cell "variable" Occurrences to the whole document: every Sym sharing `occ.symbol`'s
+	 *  name, across every statement cell, becomes an occurrence (declaration Syms included). Sourced
+	 *  from `analyze().symbols`, which already carries the cross-cell `definition` links
+	 *  `buildAnalysis` applies: a re-group over already-linked data, not a fresh resolution pass. */
+	private escalateVariableOccurrences(occ: Occurrences, schema?: SchemaProvider): Occurrences {
+		const matches = this.analyze(schema).symbols.filter(
+			(sym) => sym.kind === "variable" && sym.name === occ.symbol,
+		);
+		if (matches.length === 0) return occ;
+		const occurrences: Occurrence[] = [];
+		const seen = new Set<string>();
+		let declaration: Span | undefined;
+		for (const sym of matches) {
+			const role: Occurrence["role"] = sym.modifiers.includes("declaration") ? "declaration" : "reference";
+			const key = `${sym.span.start}:${sym.span.end}:${role}`;
+			if (seen.has(key)) continue;
+			seen.add(key);
+			occurrences.push({ span: sym.span, role });
+			if (role === "declaration" && declaration === undefined) declaration = sym.span;
+		}
+		return { symbol: occ.symbol, kind: "variable", declaration, occurrences };
 	}
 
 	/** The per-hop lineage spine anchored at `offset` (cell-aware): resolved over the CELL owning
@@ -656,14 +694,35 @@ export class SqlDocument {
 			const symbols: Sym[] = [];
 			const diagnostics: Diagnostic[] = [];
 			const cellQuals: Qualification[] = [];
+			// T-SQL DECLARE'd variables cross statement (`;`) boundaries within a batch but die at GO
+			// ("The scope of a variable lasts from the point it's declared until the end of the batch...
+			// in which it's declared", learn.microsoft.com/en-us/sql/t-sql/language-elements/
+			// variables-transact-sql, "Variable scope"). Each cell is its own scope tree (content-
+			// addressed caching means cross-cell state can only live here), so a per-name
+			// last-declaration map, walked in cell order and reset at GO, links a still-unlinked
+			// variable-reference Sym in a later cell to an earlier cell's declaration. Multiple same-name
+			// DECLAREs across cells are not ambiguous here (a later one legitimately re-declares/rebinds
+			// the name within a batch): that's simply "last wins"; genuine AMBIGUITY (two declare_local
+			// entries of the same name in ONE DECLARE statement) is a same-root-scope concern already
+			// resolved at the per-cell level (symbols.ts / infer.ts).
+			const lastDecl = new Map<string, { nameSpan: PartSpan; typeText?: string }>();
 			for (let i = 0; i < cells.length; i++) {
 				const ca = this.cellAnalysis(i, s);
 				cellQuals.push(ca.qualification);
 				const base = this.lines.positionAt(cells[i].span.start);
 				const off = cells[i].span.start;
-				symbols.push(...shiftSymsForCell(ca.symbols, base.line, base.column, off));
+				const shifted = shiftSymsForCell(ca.symbols, base.line, base.column, off);
+				for (const decl of cells[i].ast.declarations ?? []) {
+					lastDecl.set(decl.name, {
+						nameSpan: shiftPartSpan(decl.nameSpan, base.line, base.column, off),
+						typeText: decl.typeText,
+					});
+				}
+				linkVariableReferences(shifted, lastDecl, this.dialect);
+				symbols.push(...shifted);
 				for (const d of ca.qualification.diagnostics)
 					diagnostics.push(shiftSpanFields(d, base.line, base.column));
+				if (cellEndsAtGo(cells[i])) lastDecl.clear();
 			}
 			// The merged qualification: diagnostics in doc coordinates, and columnsOf delegating to the
 			// owning cell (scope objects are unique per cell, so only that cell answers non-"unknown").
@@ -1159,6 +1218,48 @@ function shiftSymsForCell(cellSyms: readonly Sym[], baseLine: number, baseCol: n
 	cellSyms.forEach((sym, i) => remap.set(sym, shifted[i]));
 	for (const sym of shifted) if (sym.source) sym.source = remap.get(sym.source) ?? sym.source;
 	return shifted;
+}
+
+/** Link every still-unlinked "variable" reference Sym in `syms` (`definition` undefined, meaning
+ *  this cell's own per-cell symbols pass found no same-statement DECLARE, see symbols.ts) to the
+ *  CURRENT per-name last-declaration entry, if any: the cross-CELL half of variable linking (see
+ *  `buildAnalysis`'s per-cell loop). Mutates `syms` in place: safe because it is the array
+ *  `shiftSymsForCell` just freshly allocated for THIS document's own analyze() result, never the
+ *  cell-relative array cached on the CachedCell (see that function's own doc comment on why
+ *  mutating a freshly-shifted Sym is safe). */
+function linkVariableReferences(
+	syms: Sym[],
+	lastDecl: ReadonlyMap<string, { nameSpan: PartSpan; typeText?: string }>,
+	dialect: Dialect,
+): void {
+	for (const sym of syms) {
+		if (sym.kind !== "variable" || !sym.modifiers.includes("reference") || sym.definition !== undefined) continue;
+		const hit = lastDecl.get(sym.name);
+		if (!hit) continue;
+		sym.definition = hit.nameSpan;
+		sym.type = hit.typeText ? parsedDeclType(hit.typeText, dialect) : undefined;
+	}
+}
+
+/** A declaration's `typeText` parsed through the dialect's own type parser (the same path a CAST's
+ *  `typeText` uses): undefined when there's no text or it doesn't parse to anything determinate,
+ *  never guessed. */
+function parsedDeclType(typeText: string, dialect: Dialect): Type | undefined {
+	const t = resolveBehavior(dialect).parseType(typeText);
+	return t.kind === "unknown" ? undefined : t;
+}
+
+/** Whether `cell`'s own text ends in a T-SQL GO batch separator: its LAST channel-0 token is
+ *  (case-insensitively) "GO". A cell's text always includes its own trailing separator verbatim
+ *  (`StatementCellSpan`'s doc comment: "includes the trailing separator"), and only a genuine
+ *  alone-on-its-line GO or a `;` ever ends a non-final cell (split.ts's `findSplitEnds`), so this
+ *  can't false-positive on an identifier merely named "go" mid-statement (the one, harmless,
+ *  exception is the FINAL cell of a document legitimately ending in a bare `go` reference with no
+ *  separator at all, where there is nothing left after it to reset anyway). */
+function cellEndsAtGo(cell: StatementCell): boolean {
+	const channel0 = cell.tokens.filter((t) => t.channel === 0);
+	const last = channel0.at(-1);
+	return last !== undefined && last.text.toUpperCase() === "GO";
 }
 
 /** One arm-containment hit: the region owning the matched arm, and that arm's index within it. */

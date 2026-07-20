@@ -1,5 +1,5 @@
 import type { Expr, QueryBody, QueryExpr } from "../ir/ir.js";
-import { allQueryExprs, selectExprs, stageExprs, walkExprs } from "../ir/walk.js";
+import { allQueryExprs, declarationExprs, selectExprs, stageExprs, walkExprs } from "../ir/walk.js";
 import type { Scope, ScopeTree } from "./scope.js";
 
 // ---------------------------------------------------------------------------
@@ -28,10 +28,11 @@ export function* walk(scopes: ScopeTree, ast?: QueryExpr): Generator<{ node: Exp
 	}
 	yield* walkScope(scopes.root);
 
-	// QueryExpr.orderBy / limit exprs live on QueryExpr, not in any Scope.body (a QueryBody),
-	// so the scope-body walk above can't reach them. When the AST is supplied, attribute each
-	// QueryExpr's orderBy + limit exprs to its owning scope (matched by body object identity) and
-	// run them through the same depth-first expansion. Additive — the walk above is unchanged.
+	// QueryExpr.orderBy / limit / declarations' init exprs live on QueryExpr, not in any Scope.body (a
+	// QueryBody), so the scope-body walk above can't reach them. When the AST is supplied, attribute
+	// each QueryExpr's orderBy + limit + declaration-initializer exprs to its owning scope (matched by
+	// body object identity) and run them through the same depth-first expansion. Additive — the walk
+	// above is unchanged.
 	if (ast) {
 		const bodyToScope = new Map<QueryBody, Scope>();
 		const indexScopes = (scope: Scope): void => {
@@ -49,6 +50,9 @@ export function* walk(scopes: ScopeTree, ast?: QueryExpr): Generator<{ node: Exp
 				for (const e of [lim.top, lim.offset, lim.fetch]) {
 					if (e) for (const node of walkExprs(e)) yield { node, scope };
 				}
+			}
+			for (const e of declarationExprs(qe)) {
+				for (const node of walkExprs(e)) yield { node, scope };
 			}
 		}
 	}

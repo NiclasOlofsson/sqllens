@@ -1,7 +1,7 @@
 import type { ParserRuleContext } from "antlr4ng";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
-import type { Expr, PartSpan, Projection, QueryBody } from "../ir/ir.js";
+import type { Expr, PartSpan, Projection, QueryBody, VariableDecl } from "../ir/ir.js";
 import { starSpanOf } from "../ir/part-span.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
@@ -9,7 +9,13 @@ import type { Type } from "../infer/types.js";
 import { originsOf, type Origin } from "../lineage/lineage.js";
 import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
-import { type ColumnResolution, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
+import {
+	rootDeclarations,
+	type ColumnResolution,
+	type ResolvedSource,
+	type Scope,
+	type ScopeTree,
+} from "../scope/scope.js";
 import { resolveColumnRef } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
@@ -212,80 +218,131 @@ function walk(
 
 	emitColumns(scope, frame, out, schema, sourceSyms, expandStarOf);
 	emitFunctions(scope, frame, out, schema);
+	// This statement's own DECLARE'd variables, set by resolveScopes on the ROOT scope only (see
+	// Scope.declarations), so this only ever fires once per tree. Each declaration gets its own
+	// Sym, and its initializer expression (if any) is walked through the SAME visitor emitFunctions
+	// uses: a DECLARE's flagged-empty body has no projections/where/etc. of its own, so an
+	// initializer's function/parameter/variable references (e.g. `@x` inside `@y`'s `= @x + 1`)
+	// would otherwise never be reached.
+	if (scope.declarations) {
+		for (const decl of scope.declarations) {
+			out.push(declarationSym(decl, frame, scope.dialect));
+			if (decl.init) visitExprSyms(decl.init, scope, frame, out, schema);
+		}
+	}
 }
 
-/** Function symbols (with aggregate/window modifiers), and parameter/variable occurrence symbols
- *  (one Sym per occurrence, modifier "reference", no definition link; a declaring DECLARE gets
- *  one in a later per-dialect task), from this frame's expression trees. */
+/** A declaration Sym for one `VariableDecl` (T-SQL DECLARE). Its type comes from parsing
+ *  `typeText` through the dialect's own type parser (the same path a CAST's `typeText` uses):
+ *  absent when there's no type text or it doesn't parse to anything determinate, never guessed. */
+function declarationSym(decl: VariableDecl, frame: string, dialect: string): Sym {
+	return {
+		kind: "variable",
+		modifiers: ["declaration"],
+		name: decl.name,
+		span: decl.nameSpan,
+		frame,
+		type: decl.typeText ? typeOrUndefined(resolveBehavior(dialect).parseType(decl.typeText)) : undefined,
+		node: decl,
+	};
+}
+
+/** Function symbols (with aggregate/window modifiers), and parameter/variable occurrence symbols,
+ *  from this frame's expression trees. */
 function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): void {
 	const body = scope.body;
 	if (body.kind !== "select") return;
-	const visit = (e: Expr): void => {
-		switch (e.kind) {
-			case "function":
-				out.push({
-					kind: "function",
-					modifiers: fnModifiers(e),
-					name: e.name,
-					span: spanOf(e.cst),
-					frame,
-					type: typeOrUndefined(inferType(e, scope, schema)),
-					node: e,
-				});
-				e.args.forEach(visit);
-				e.window?.partitionBy.forEach(visit);
-				e.window?.orderBy.forEach(visit);
-				break;
-			case "parameter":
-			case "variable":
-				out.push({
-					kind: e.kind,
-					modifiers: ["reference"],
-					name: e.name ?? e.text,
-					span: spanOf(e.cst),
-					frame,
-					node: e,
-				});
-				break;
-			case "binary":
-				visit(e.left);
-				visit(e.right);
-				break;
-			case "unary":
-				visit(e.operand);
-				break;
-			case "cast":
-				visit(e.expr);
-				break;
-			case "case":
-				e.whens.forEach((w) => {
-					visit(w.when);
-					visit(w.then);
-				});
-				if (e.elseExpr) visit(e.elseExpr);
-				break;
-			case "predicate":
-				visit(e.operand);
-				e.args.forEach(visit);
-				break;
-			case "lambda":
-				visit(e.body);
-				break;
-			case "subscript":
-				visit(e.base);
-				if (e.index) visit(e.index);
-				if (e.end) visit(e.end);
-				if (e.step) visit(e.step);
-				break;
-			// column/literal/star → not functions; subquery/exists → their own frames
+	for (const p of body.projections) visitExprSyms(p.expr, scope, frame, out, schema);
+	if (body.where) visitExprSyms(body.where, scope, frame, out, schema);
+	for (const j of body.joinConditions ?? []) visitExprSyms(j, scope, frame, out, schema);
+	for (const g of body.groupBy ?? []) visitExprSyms(g, scope, frame, out, schema);
+	if (body.having) visitExprSyms(body.having, scope, frame, out, schema);
+	if (body.qualify) visitExprSyms(body.qualify, scope, frame, out, schema);
+}
+
+/** The shared function/parameter/variable expr walk behind `emitFunctions` and the DECLARE
+ *  initializer walk above: the two places an expression tree can hold these occurrences. */
+function visitExprSyms(e: Expr, scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): void {
+	switch (e.kind) {
+		case "function":
+			out.push({
+				kind: "function",
+				modifiers: fnModifiers(e),
+				name: e.name,
+				span: spanOf(e.cst),
+				frame,
+				type: typeOrUndefined(inferType(e, scope, schema)),
+				node: e,
+			});
+			e.args.forEach((a) => visitExprSyms(a, scope, frame, out, schema));
+			e.window?.partitionBy.forEach((a) => visitExprSyms(a, scope, frame, out, schema));
+			e.window?.orderBy.forEach((a) => visitExprSyms(a, scope, frame, out, schema));
+			break;
+		case "parameter":
+			// A caller-bound placeholder has no declaration site in the query itself: never linked.
+			out.push({
+				kind: "parameter",
+				modifiers: ["reference"],
+				name: e.name ?? e.text,
+				span: spanOf(e.cst),
+				frame,
+				node: e,
+			});
+			break;
+		case "variable": {
+			// A session/local variable reference gains `definition`/`type` when EXACTLY ONE
+			// SAME-STATEMENT DECLARE of that name exists (rootDeclarations walks to this scope's
+			// root: a DECLARE and a reference sharing one root scope IS "the same statement", e.g.
+			// `@x` inside a later declaration's own initializer). 0 or >1 candidates stay unlinked
+			// (never-wrong); cross-STATEMENT linking is the document layer's job (document.ts).
+			const decls = rootDeclarations(scope)?.filter((d) => d.name === e.name);
+			const decl = decls?.length === 1 ? decls[0] : undefined;
+			out.push({
+				kind: "variable",
+				modifiers: ["reference"],
+				name: e.name ?? e.text,
+				span: spanOf(e.cst),
+				frame,
+				definition: decl?.nameSpan,
+				type: decl?.typeText
+					? typeOrUndefined(resolveBehavior(scope.dialect).parseType(decl.typeText))
+					: undefined,
+				node: e,
+			});
+			break;
 		}
-	};
-	for (const p of body.projections) visit(p.expr);
-	if (body.where) visit(body.where);
-	for (const j of body.joinConditions ?? []) visit(j);
-	for (const g of body.groupBy ?? []) visit(g);
-	if (body.having) visit(body.having);
-	if (body.qualify) visit(body.qualify);
+		case "binary":
+			visitExprSyms(e.left, scope, frame, out, schema);
+			visitExprSyms(e.right, scope, frame, out, schema);
+			break;
+		case "unary":
+			visitExprSyms(e.operand, scope, frame, out, schema);
+			break;
+		case "cast":
+			visitExprSyms(e.expr, scope, frame, out, schema);
+			break;
+		case "case":
+			e.whens.forEach((w) => {
+				visitExprSyms(w.when, scope, frame, out, schema);
+				visitExprSyms(w.then, scope, frame, out, schema);
+			});
+			if (e.elseExpr) visitExprSyms(e.elseExpr, scope, frame, out, schema);
+			break;
+		case "predicate":
+			visitExprSyms(e.operand, scope, frame, out, schema);
+			e.args.forEach((a) => visitExprSyms(a, scope, frame, out, schema));
+			break;
+		case "lambda":
+			visitExprSyms(e.body, scope, frame, out, schema);
+			break;
+		case "subscript":
+			visitExprSyms(e.base, scope, frame, out, schema);
+			if (e.index) visitExprSyms(e.index, scope, frame, out, schema);
+			if (e.end) visitExprSyms(e.end, scope, frame, out, schema);
+			if (e.step) visitExprSyms(e.step, scope, frame, out, schema);
+			break;
+		// column/literal/star → not functions; subquery/exists → their own frames
+	}
 }
 
 function fnModifiers(e: Extract<Expr, { kind: "function" }>): SymbolModifier[] {

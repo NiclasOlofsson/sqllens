@@ -1,6 +1,6 @@
 import type { ParserRuleContext } from "antlr4ng";
 import type { Expr, QueryBody, QueryExpr } from "../ir/ir.js";
-import { allQueryExprs, childExprs } from "../ir/walk.js";
+import { allQueryExprs, childExprs, declarationExprs } from "../ir/walk.js";
 import type { Scope, ScopeTree } from "../scope/scope.js";
 import { scopeExprs } from "../scope/walk.js";
 
@@ -52,10 +52,11 @@ export function nodeAt(tree: ScopeTree, offset: number, ast?: QueryExpr): NodeHi
 	};
 	walkScope(tree.root);
 
-	// QueryExpr.orderBy / limit exprs live on QueryExpr, not in any Scope.body (a QueryBody),
-	// so the scope-body walk above can't reach them. When the AST is supplied, attribute each
-	// QueryExpr's orderBy + limit exprs to its owning scope (matched by body object identity) and
-	// run them through the same smallest-covering machinery. Additive — the walk above is unchanged.
+	// QueryExpr.orderBy / limit / declarations' init exprs live on QueryExpr, not in any Scope.body (a
+	// QueryBody), so the scope-body walk above can't reach them. When the AST is supplied, attribute
+	// each QueryExpr's orderBy + limit + declaration-initializer exprs to its owning scope (matched by
+	// body object identity) and run them through the same smallest-covering machinery. Additive — the
+	// walk above is unchanged.
 	if (ast) {
 		const bodyToScope = new Map<QueryBody, Scope>();
 		const indexScopes = (scope: Scope): void => {
@@ -68,6 +69,7 @@ export function nodeAt(tree: ScopeTree, offset: number, ast?: QueryExpr): NodeHi
 			for (const e of qe.orderBy ?? []) walkExpr(e, scope);
 			const lim = qe.limit;
 			if (lim) for (const e of [lim.top, lim.offset, lim.fetch]) if (e) walkExpr(e, scope);
+			for (const e of declarationExprs(qe)) walkExpr(e, scope);
 		}
 	}
 	return best;

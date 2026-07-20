@@ -62,6 +62,29 @@ export interface QueryExpr {
 	/** Row-limiting clause (Spark LIMIT, T-SQL TOP / OFFSET-FETCH). Does not change the output
 	 *  columns or types — kept so the clause is modelled rather than silently dropped. */
 	limit?: LimitInfo;
+	/** The statement's own variable declarations (T-SQL `DECLARE @x int = 1, @y int`), set by the
+	 *  dialect's lower() on the TOP-LEVEL statement only. Populated today only by tsql's DECLARE
+	 *  lowering; absent means none. See `VariableDecl`. */
+	declarations?: VariableDecl[];
+	cst: ParserRuleContext;
+}
+
+/**
+ * One variable declared by the statement itself (T-SQL `DECLARE @x int = 1`): a SCRIPT-bound
+ * declaration, distinct from a caller-bound `parameter` (see the `parameter`/`variable` Expr
+ * kinds below: this is the declaration site a `variable` reference resolves to). `nameSpan` is
+ * the declared name's own span, sigil excluded, the same convention as the `variable` Expr's
+ * `name`. `typeText` is the declared type as written (a scalar type, or the TABLE(...)/XML(...)
+ * shape for a table-type/XML-schema DECLARE, no deep modeling of those). `init` is the
+ * initializer expression when the DECLARE assigns one (`= expr`); absent otherwise. Populated
+ * today only by T-SQL's DECLARE (learn.microsoft.com/en-us/sql/t-sql/language-elements/
+ * declare-local-variable-transact-sql).
+ */
+export interface VariableDecl {
+	name: string;
+	nameSpan: PartSpan;
+	typeText?: string;
+	init?: Expr;
 	cst: ParserRuleContext;
 }
 

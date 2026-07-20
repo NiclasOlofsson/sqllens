@@ -14,6 +14,7 @@ import type {
 	SubquerySource,
 	TableSource,
 	UnpivotInfo,
+	VariableDecl,
 } from "../ir/ir.js";
 import type { StatementCategory } from "../ir/statement.js";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
@@ -68,6 +69,11 @@ export interface Scope {
 	/** The dialect this query was lowered from ("databricks" | "tsql"). Drives dialect-specific
 	 *  type inference (function/literal/type knowledge); the rest of the layer ignores it. */
 	dialect: string;
+	/** The statement's own variable declarations (T-SQL DECLARE), copied from `QueryExpr.declarations`
+	 *  by `resolveScopes` onto the ROOT scope ONLY (a DECLARE statement's flagged-empty body has no
+	 *  nested scopes to carry it). Absent means none. A `variable` reference resolves against this by
+	 *  walking up to the root; see `declarationsOf` below. */
+	declarations?: readonly VariableDecl[];
 }
 
 export interface CteRef {
@@ -96,7 +102,22 @@ export type ResolvedSource =
 export function resolveScopes(query: QueryExpr, dialect?: string): ScopeTree {
 	const d = dialect ?? query.dialect;
 	if (!d) throw new Error("resolveScopes: no dialect — pass one, or use an IR produced by a dialect's lower()");
-	return { kind: "scopes", root: buildQueryScope(query, undefined, d), statement: query.statement ?? "other" };
+	const root = buildQueryScope(query, undefined, d);
+	if (query.declarations?.length) root.declarations = query.declarations;
+	return { kind: "scopes", root, statement: query.statement ?? "other" };
+}
+
+/** The declarations visible to `scope`: walks up to the ROOT (declarations, when present, live
+ *  only there; see `Scope.declarations`) and returns its list, or undefined. Shared by
+ *  infer/symbols to resolve a `variable` Expr's declared type / declaration site against the
+ *  SAME-STATEMENT DECLARE, applying the single-unambiguous-match rule at each call site (0 or
+ *  >1 candidates of the same name is never-wrong's cue to abstain, not this helper's). Cross-cell
+ *  linking (a DECLARE in an earlier document statement) is the document layer's job
+ *  (src/document/document.ts), not this scope-local walk. */
+export function rootDeclarations(scope: Scope): readonly VariableDecl[] | undefined {
+	let s = scope;
+	while (s.parent) s = s.parent;
+	return s.declarations;
 }
 
 export type ColumnResolution =
