@@ -110,7 +110,180 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		const decls = declarationsOf(units[0]);
 		if (decls) q.declarations = decls;
 	}
+	// A CREATE/ALTER PROCEDURE or FUNCTION (the only "ddl" batch_level_statement alternatives with a
+	// signature + body this slice models, trigger/view are untouched): layer signature parameters
+	// and body statements onto the SAME flagged-stub container (routine-frame slice).
+	if (statement === "ddl" && total === 1 && units.length === 1) {
+		applyRoutineFrame(q, units[0]);
+	}
 	return q;
+}
+
+/** The routine-frame slice: CREATE/ALTER PROCEDURE and CREATE/ALTER FUNCTION signature parameters +
+ *  body statements, layered onto the container's existing flagged-stub QueryExpr (same "ddl"
+ *  category, same stub body, EXCEPT the inline-TVF form, which genuinely IS a query and gets its
+ *  real body). `unit` is the top-level `batch_level_statement`; every other alternative (trigger,
+ *  view) is left untouched. */
+function applyRoutineFrame(q: QueryExpr, unit: ParserRuleContext): void {
+	const proc = directChildrenOfRule(unit, P.RULE_create_or_alter_procedure)[0];
+	if (proc) {
+		lowerProcedureFrame(q, proc);
+		return;
+	}
+	const func = directChildrenOfRule(unit, P.RULE_create_or_alter_function)[0];
+	if (func) lowerFunctionFrame(q, func);
+}
+
+/** `create_or_alter_procedure`: procedure_param(s) -> declarations; `AS sql_clauses*` -> statements
+ *  (unwrapping a single outer BEGIN...END, see routineBodyUnits). An `as_external_name` body has no
+ *  sql_clauses at all, so statements stays absent, matching the CLR-external DECLARE/RETURN gaps
+ *  already accepted elsewhere in this file. */
+function lowerProcedureFrame(q: QueryExpr, proc: ParserRuleContext): void {
+	const params = directChildrenOfRule(proc, P.RULE_procedure_param).map(lowerProcedureParam);
+	if (params.length) q.declarations = params;
+	const units = routineBodyUnits(directChildrenOfRule(proc, P.RULE_sql_clauses));
+	if (units.length) q.statements = units.map(lowerInnerStatement);
+}
+
+/** `create_or_alter_function`: procedure_param(s) -> declarations (shared across all three body
+ *  forms), then per RETURNS form:
+ *   - func_body_returns_scalar: BEGIN sql_clauses* RETURN <expr> END -> statements (the sql_clauses
+ *     only; RETURN's own scalar expression is deliberately NOT modelled: a synthetic statement
+ *     carrying it as a projection would be fabricated structure this dialect never wrote).
+ *   - func_body_returns_select: RETURNS TABLE ... RETURN select_statement_standalone -- this one
+ *     genuinely IS a query: its SELECT becomes the statement's OWN body (replacing the flagged
+ *     stub), so scopes/symbols/inference just work on it like any other query.
+ *   - func_body_returns_table: RETURNS @t TABLE(...) BEGIN sql_clauses* RETURN END -> statements,
+ *     plus the return table variable registers as its own VariableDecl (name + typeText), the same
+ *     shape as `DECLARE @t TABLE(...)`. */
+function lowerFunctionFrame(q: QueryExpr, func: ParserRuleContext): void {
+	const params = directChildrenOfRule(func, P.RULE_procedure_param).map(lowerProcedureParam);
+	if (params.length) q.declarations = params;
+
+	const scalar = directChildrenOfRule(func, P.RULE_func_body_returns_scalar)[0];
+	if (scalar) {
+		const units = routineBodyUnits(directChildrenOfRule(scalar, P.RULE_sql_clauses));
+		if (units.length) q.statements = units.map(lowerInnerStatement);
+		return;
+	}
+
+	const select = directChildrenOfRule(func, P.RULE_func_body_returns_select)[0];
+	if (select) {
+		const sel = firstOfRule(select, P.RULE_select_statement_standalone);
+		if (sel) {
+			const inner = lowerStandalone(sel);
+			q.body = inner.body;
+			q.ctes = inner.ctes;
+			q.orderBy = inner.orderBy;
+			q.limit = inner.limit;
+		}
+		return;
+	}
+
+	const table = directChildrenOfRule(func, P.RULE_func_body_returns_table)[0];
+	if (table) {
+		const units = routineBodyUnits(directChildrenOfRule(table, P.RULE_sql_clauses));
+		if (units.length) q.statements = units.map(lowerInnerStatement);
+		const localId = directTerminal(table, P.LOCAL_ID);
+		if (localId) {
+			const typeNode = directChildrenOfRule(table, P.RULE_table_type_definition)[0];
+			const tableVarDecl: VariableDecl = {
+				name: localId.getText().slice(1),
+				nameSpan: partSpanOf(localId) ?? partSpanOf(table) ?? ZERO_PART_SPAN,
+				typeText: typeNode?.getText(),
+				cst: table,
+			};
+			q.declarations = q.declarations ? [...q.declarations, tableVarDecl] : [tableVarDecl];
+		}
+	}
+}
+
+/** The routine body's own inner statement units: the `sql_clauses` directly following AS,
+ *  UNWRAPPING a single outer BEGIN...END wrapper (the block_statement's own sql_clauses children),
+ *  since that wrapper is syntactic grouping, not a nested statement of its own. A body with no
+ *  BEGIN...END (a bare `AS SELECT 1`, or several ungrouped sql_clauses) keeps each of its own units
+ *  as-is. Only create_or_alter_procedure's body needs this: func_body_returns_scalar/table bake
+ *  BEGIN...END directly into their own grammar rule, so their sql_clauses are already the inner
+ *  statements. */
+function routineBodyUnits(directUnits: ParserRuleContext[]): ParserRuleContext[] {
+	if (directUnits.length === 1 && unitCategory(directUnits[0]) === "compound") {
+		const cfl = directChildrenOfRule(directUnits[0], P.RULE_cfl_statement)[0];
+		const block = cfl ? directChildrenOfRule(cfl, P.RULE_block_statement)[0] : undefined;
+		if (block) return directChildrenOfRule(block, P.RULE_sql_clauses);
+	}
+	return directUnits;
+}
+
+/** Lower one inner statement of a routine body / scripting compound (a `sql_clauses` node,
+ *  SHAPE-IDENTICAL to a top-level batch unit, see topLevelUnits/unitCategory above) into its own
+ *  QueryExpr. A query unit gets its real body (through the existing lowerStandalone path); every
+ *  other category keeps the SAME honest flagged form + declarations handling a single top-level
+ *  unit of that category would get (unitCategory, declarationsOf): this reuses that per-unit
+ *  machinery one level deeper, it is not a separate lowering path. */
+function lowerInnerStatement(unit: ParserRuleContext): QueryExpr {
+	const category = unitCategory(unit);
+	if (category === "query") {
+		const sel = firstOfRule(unit, P.RULE_select_statement_standalone);
+		if (sel) {
+			const q = lowerStandalone(sel);
+			q.statement = "query";
+			return q;
+		}
+	}
+	const q = emptyQuery(unit);
+	q.statement = category;
+	if (category === "utility") {
+		const decls = declarationsOf(unit);
+		if (decls) q.declarations = decls;
+	}
+	return q;
+}
+
+/** One `procedure_param` (`LOCAL_ID AS? (type_schema '.')? data_type VARYING? ('=' default)?
+ *  (OUT|OUTPUT|READONLY)?`) -> a VariableDecl: name (sigil stripped), nameSpan from the LOCAL_ID,
+ *  typeText as written (the schema prefix + VARYING suffix are separate grammar pieces from
+ *  data_type, so they're stitched back on: normalized punctuation/spacing, not a token-exact
+ *  slice, same as this file's other multi-piece typeText captures), default value lowered as
+ *  init, mode from OUT/OUTPUT/READONLY. https://learn.microsoft.com/en-us/sql/relational-databases/
+ *  stored-procedures/parameters */
+function lowerProcedureParam(node: ParserRuleContext): VariableDecl {
+	const localId = directTerminal(node, P.LOCAL_ID);
+	const dt = directChildrenOfRule(node, P.RULE_data_type)[0];
+	const typeSchema = directChildrenOfRule(node, P.RULE_id_)[0];
+	let typeText = dt?.getText();
+	if (typeText !== undefined && typeSchema) typeText = `${typeSchema.getText()}.${typeText}`;
+	if (typeText !== undefined && hasDirectToken(node, P.VARYING)) typeText = `${typeText} VARYING`;
+	const def = directChildrenOfRule(node, P.RULE_procedure_param_default_value)[0];
+	return {
+		name: localId ? localId.getText().slice(1) : "",
+		nameSpan: (localId && partSpanOf(localId)) ?? partSpanOf(node) ?? ZERO_PART_SPAN,
+		typeText,
+		init: def ? lowerProcedureParamDefault(def) : undefined,
+		mode: paramMode(node),
+		cst: node,
+	};
+}
+
+/** `(OUT | OUTPUT | READONLY)?`: OUT/OUTPUT both mean the same modifier ("out"); absent otherwise. */
+function paramMode(node: ParserRuleContext): "out" | "readonly" | undefined {
+	if (hasDirectToken(node, P.OUT) || hasDirectToken(node, P.OUTPUT)) return "out";
+	if (hasDirectToken(node, P.READONLY)) return "readonly";
+	return undefined;
+}
+
+/** `procedure_param_default_value`: NULL_ | DEFAULT | constant | LOCAL_ID. A `constant` lowers as a
+ *  literal (matching every other constant lowering in this file); a LOCAL_ID default (another
+ *  variable) lowers as a `variable` reference, same as any other `@x` use; the bare NULL_/DEFAULT
+ *  keyword forms fall back to a literal of their own text. */
+function lowerProcedureParamDefault(node: ParserRuleContext): Expr {
+	const c = directChildrenOfRule(node, P.RULE_constant)[0];
+	if (c) return { kind: "literal", text: c.getText(), cst: node };
+	const localId = directTerminal(node, P.LOCAL_ID);
+	if (localId) {
+		const text = localId.getText();
+		return { kind: "variable", text, name: text.slice(1), cst: node };
+	}
+	return { kind: "literal", text: node.getText(), cst: node };
 }
 
 /** The variable declarations of a single top-level DECLARE statement (`another_statement ->
@@ -276,9 +449,7 @@ function lowerCte(cte: ParserRuleContext): CteDef {
 	// A nested WITH inside this CTE's own body (nested-common-table-expression): its CTEs scope to
 	// this CTE's inner query alone, so they ride that query's own `ctes` — not the outer WITH list.
 	const nestedWith = directChildrenOfRule(cte, P.RULE_with_expression)[0];
-	const nestedCtes = nestedWith
-		? directChildrenOfRule(nestedWith, P.RULE_common_table_expression).map(lowerCte)
-		: [];
+	const nestedCtes = nestedWith ? directChildrenOfRule(nestedWith, P.RULE_common_table_expression).map(lowerCte) : [];
 	return {
 		name,
 		nameCst: nameNode,

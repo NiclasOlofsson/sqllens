@@ -90,13 +90,14 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx:
 			// binds it at execution time. Always unknown, never guessed.
 			return UNKNOWN;
 		case "variable": {
-			// A session/local variable's declared type, when this scope's own statement (its ROOT,
-			// see rootDeclarations) DECLAREs EXACTLY ONE variable of that name (never-wrong: 0 or >1
-			// same-named candidates stay unknown, matching symbols.ts's identical rule). T-SQL
-			// DECLARE @x <type> [= expr] (learn.microsoft.com/en-us/sql/t-sql/language-elements/
-			// declare-local-variable-transact-sql). Cross-STATEMENT linking (a DECLARE in an earlier
-			// document cell) is the document layer's job (src/document/document.ts); this is a
-			// same-statement, scope-local lookup only.
+			// A session/local variable's declared type, when EXACTLY ONE visible DECLARE/parameter
+			// of that name exists (rootDeclarations pools every declaration in the WHOLE tree,
+			// never-wrong: 0 or >1 same-named candidates stay unknown, matching symbols.ts's
+			// identical rule; a body DECLARE reusing an outer name is 2 candidates, not a shadow).
+			// T-SQL DECLARE @x <type> [= expr] (learn.microsoft.com/en-us/sql/t-sql/language-elements/
+			// declare-local-variable-transact-sql) or a routine's own signature parameter.
+			// Cross-STATEMENT linking (a DECLARE in an earlier document cell) is the document
+			// layer's job (src/document/document.ts); this is a scope-local lookup only.
 			const decls = rootDeclarations(scope)?.filter((v) => v.name === expr.name);
 			const decl = decls?.length === 1 ? decls[0] : undefined;
 			return decl?.typeText ? d.parseType(decl.typeText) : UNKNOWN;

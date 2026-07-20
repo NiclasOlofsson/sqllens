@@ -7,12 +7,14 @@ import type { Expr, PipeStage, Projection, QueryBody, QueryExpr, SelectExpr, Sou
 // byte-for-byte duplicates.
 // ---------------------------------------------------------------------------
 
-/** Every QueryExpr reachable in the IR (the AST and its nested query blocks). */
+/** Every QueryExpr reachable in the IR (the AST, its nested query blocks, and, for a routine/
+ *  compound container, each inner statement of `statements`, recursively). */
 export function allQueryExprs(root: QueryExpr): QueryExpr[] {
 	const out: QueryExpr[] = [];
 	const visitQuery = (qe: QueryExpr): void => {
 		out.push(qe);
 		for (const cte of qe.ctes) visitQuery(cte.body);
+		for (const stmt of qe.statements ?? []) visitQuery(stmt);
 		visitBody(qe.body);
 	};
 	const visitSource = (source: Source): void => {

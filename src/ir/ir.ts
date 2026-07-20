@@ -62,10 +62,19 @@ export interface QueryExpr {
 	/** Row-limiting clause (Spark LIMIT, T-SQL TOP / OFFSET-FETCH). Does not change the output
 	 *  columns or types — kept so the clause is modelled rather than silently dropped. */
 	limit?: LimitInfo;
-	/** The statement's own variable declarations (T-SQL `DECLARE @x int = 1, @y int`), set by the
-	 *  dialect's lower() on the TOP-LEVEL statement only. Populated today only by tsql's DECLARE
-	 *  lowering; absent means none. See `VariableDecl`. */
+	/** The statement's own variable declarations (T-SQL `DECLARE @x int = 1, @y int`, or a routine's
+	 *  signature parameters), set by the dialect's lower() on the QueryExpr they belong to: the
+	 *  top-level statement for a DECLARE, or a routine's own container/inner statement for its
+	 *  parameters. Populated today only by tsql; absent means none. See `VariableDecl`. */
 	declarations?: VariableDecl[];
+	/** The inner statements of a routine body (CREATE/ALTER PROCEDURE, a scalar/table-valued
+	 *  FUNCTION) or a scripting compound (BEGIN...END), each a full QueryExpr lowered through the
+	 *  same per-statement machinery as a top-level batch unit (own body, own ctes, own cst). The
+	 *  CONTAINER statement (this QueryExpr) keeps its own `statement` category and its flagged stub
+	 *  `body`; the real content lives here. Populated today only by tsql; absent means none (a
+	 *  routine with an external body, or any non-routine statement). See `VariableDecl` for how a
+	 *  routine's own signature parameters ride `declarations` instead. */
+	statements?: QueryExpr[];
 	cst: ParserRuleContext;
 }
 
@@ -85,6 +94,11 @@ export interface VariableDecl {
 	nameSpan: PartSpan;
 	typeText?: string;
 	init?: Expr;
+	/** T-SQL routine parameter modifier: `OUT`/`OUTPUT` ("out") or `READONLY` ("readonly").
+	 *  Absent for a plain DECLARE'd variable and for a parameter with no modifier. No semantic
+	 *  effect yet beyond carrying the field (learn.microsoft.com/en-us/sql/relational-databases/
+	 *  stored-procedures/parameters). */
+	mode?: "out" | "readonly";
 	cst: ParserRuleContext;
 }
 
@@ -217,17 +231,7 @@ export interface UnpivotInfo {
 // ---------------------------------------------------------------------------
 
 export type JoinKind =
-	| "inner"
-	| "left"
-	| "right"
-	| "full"
-	| "cross"
-	| "semi"
-	| "anti"
-	| "asof"
-	| "positional"
-	| "natural"
-	| "lateral";
+	"inner" | "left" | "right" | "full" | "cross" | "semi" | "anti" | "asof" | "positional" | "natural" | "lateral";
 
 export interface Join {
 	/** The join category. NATURAL/LATERAL ride as the `natural`/`lateral` flags with `kind` set to the

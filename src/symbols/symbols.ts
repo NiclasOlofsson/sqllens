@@ -218,12 +218,13 @@ function walk(
 
 	emitColumns(scope, frame, out, schema, sourceSyms, expandStarOf);
 	emitFunctions(scope, frame, out, schema);
-	// This statement's own DECLARE'd variables, set by resolveScopes on the ROOT scope only (see
-	// Scope.declarations), so this only ever fires once per tree. Each declaration gets its own
-	// Sym, and its initializer expression (if any) is walked through the SAME visitor emitFunctions
-	// uses: a DECLARE's flagged-empty body has no projections/where/etc. of its own, so an
-	// initializer's function/parameter/variable references (e.g. `@x` inside `@y`'s `= @x + 1`)
-	// would otherwise never be reached.
+	// THIS scope's own declarations, set by buildQueryScope from its QueryExpr's `declarations` (see
+	// Scope.declarations): a top-level DECLARE's own scope, a routine's container scope (its
+	// signature parameters), and each of a routine body's inner statement scopes (its own DECLARE,
+	// if any), independently. Each declaration gets its own Sym, and its initializer expression (if
+	// any) is walked through the SAME visitor emitFunctions uses: a DECLARE's flagged-empty body has
+	// no projections/where/etc. of its own, so an initializer's function/parameter/variable
+	// references (e.g. `@x` inside `@y`'s `= @x + 1`) would otherwise never be reached.
 	if (scope.declarations) {
 		for (const decl of scope.declarations) {
 			out.push(declarationSym(decl, frame, scope.dialect));
@@ -291,10 +292,12 @@ function visitExprSyms(e: Expr, scope: Scope, frame: string, out: Sym[], schema:
 			break;
 		case "variable": {
 			// A session/local variable reference gains `definition`/`type` when EXACTLY ONE
-			// SAME-STATEMENT DECLARE of that name exists (rootDeclarations walks to this scope's
-			// root: a DECLARE and a reference sharing one root scope IS "the same statement", e.g.
-			// `@x` inside a later declaration's own initializer). 0 or >1 candidates stay unlinked
-			// (never-wrong); cross-STATEMENT linking is the document layer's job (document.ts).
+			// candidate DECLARE/parameter of that name is visible (rootDeclarations pools every
+			// declaration in the WHOLE tree rooted at this scope's absolute root, e.g. `@x` inside
+			// a later declaration's own initializer, or a routine parameter reached from inside its
+			// body). 0 or >1 candidates stay unlinked (never-wrong), including a body DECLARE that
+			// reuses an outer name, which is now 2 candidates, not a shadow. Cross-STATEMENT
+			// linking (an earlier TOP-LEVEL document cell) is the document layer's job (document.ts).
 			const decls = rootDeclarations(scope)?.filter((d) => d.name === e.name);
 			const decl = decls?.length === 1 ? decls[0] : undefined;
 			out.push({

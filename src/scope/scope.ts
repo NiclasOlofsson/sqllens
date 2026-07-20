@@ -69,10 +69,13 @@ export interface Scope {
 	/** The dialect this query was lowered from ("databricks" | "tsql"). Drives dialect-specific
 	 *  type inference (function/literal/type knowledge); the rest of the layer ignores it. */
 	dialect: string;
-	/** The statement's own variable declarations (T-SQL DECLARE), copied from `QueryExpr.declarations`
-	 *  by `resolveScopes` onto the ROOT scope ONLY (a DECLARE statement's flagged-empty body has no
-	 *  nested scopes to carry it). Absent means none. A `variable` reference resolves against this by
-	 *  walking up to the root; see `declarationsOf` below. */
+	/** This QueryExpr's own variable declarations (T-SQL DECLARE, or a routine's signature
+	 *  parameters), copied from `QueryExpr.declarations` by `buildQueryScope` onto the scope it
+	 *  builds: the top scope for a top-level DECLARE, or (for a routine) the container's own scope
+	 *  AND each inner statement's own scope, independently (a DECLARE nested in a routine body
+	 *  carries its OWN declarations here, distinct from the container's parameters). Absent means
+	 *  none. A `variable` reference resolves against the WHOLE tree (pooled) via `rootDeclarations`
+	 *  below, not just this one level. */
 	declarations?: readonly VariableDecl[];
 }
 
@@ -103,21 +106,30 @@ export function resolveScopes(query: QueryExpr, dialect?: string): ScopeTree {
 	const d = dialect ?? query.dialect;
 	if (!d) throw new Error("resolveScopes: no dialect — pass one, or use an IR produced by a dialect's lower()");
 	const root = buildQueryScope(query, undefined, d);
-	if (query.declarations?.length) root.declarations = query.declarations;
 	return { kind: "scopes", root, statement: query.statement ?? "other" };
 }
 
-/** The declarations visible to `scope`: walks up to the ROOT (declarations, when present, live
- *  only there; see `Scope.declarations`) and returns its list, or undefined. Shared by
- *  infer/symbols to resolve a `variable` Expr's declared type / declaration site against the
- *  SAME-STATEMENT DECLARE, applying the single-unambiguous-match rule at each call site (0 or
- *  >1 candidates of the same name is never-wrong's cue to abstain, not this helper's). Cross-cell
- *  linking (a DECLARE in an earlier document statement) is the document layer's job
+/** The declarations visible to `scope`: walk up to the tree's ROOT, then collect every
+ *  `.declarations` in the WHOLE tree rooted there (the root's own, plus every descendant scope's:
+ *  a routine's inner statement scopes hang as children of their container's own scope, see
+ *  buildQueryScope's `statements` wiring, so this reaches a routine's signature parameters AND
+ *  every inner statement's own DECLARE, from anywhere in the body). Declarations are pooled, not
+ *  shadowed by nesting/position: a body DECLARE reusing a parameter's (or a sibling statement's)
+ *  name becomes a 2-CANDIDATE AMBIGUITY, exactly like two DECLAREs of the same name in one
+ *  statement, never silently shadowed (never-wrong's cue to abstain, not this helper's; see the
+ *  single-unambiguous-match rule at each call site in infer.ts/symbols.ts). Cross-cell linking (a
+ *  DECLARE in an earlier TOP-LEVEL document statement) is still the document layer's job
  *  (src/document/document.ts), not this scope-local walk. */
 export function rootDeclarations(scope: Scope): readonly VariableDecl[] | undefined {
-	let s = scope;
-	while (s.parent) s = s.parent;
-	return s.declarations;
+	let root = scope;
+	while (root.parent) root = root.parent;
+	const out: VariableDecl[] = [];
+	const visit = (s: Scope): void => {
+		if (s.declarations?.length) out.push(...s.declarations);
+		for (const c of s.children) visit(c);
+	};
+	visit(root);
+	return out.length ? out : undefined;
 }
 
 export type ColumnResolution =
@@ -245,9 +257,11 @@ function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
 	};
 }
 
-/** Build the scope for a full query (which may declare its own CTEs). */
+/** Build the scope for a full query (which may declare its own CTEs, its own DECLARE'd/parameter
+ *  declarations, and, for a routine/compound container, its own inner statements). */
 function buildQueryScope(query: QueryExpr, parent?: Scope, dialect?: string): Scope {
 	const scope = newScope(query.body, parent, dialect);
+	if (query.declarations?.length) scope.declarations = query.declarations;
 	// CTEs are visible to the body and to later CTEs; build them in order.
 	for (const cte of query.ctes) {
 		const cteScope = buildQueryScope(cte.body, scope);
@@ -255,6 +269,13 @@ function buildQueryScope(query: QueryExpr, parent?: Scope, dialect?: string): Sc
 		if (cte.columnAliases) cteScope.outputs = cte.columnAliases;
 		scope.ctes.set(behaviorOf(scope).fold(cte.name), { def: cte, scope: cteScope });
 		scope.children.push(cteScope);
+	}
+	// A routine body / scripting compound's inner statements: each its own full scope tree, hung
+	// under THIS scope (so a body reference reaches the container's declarations by walking parent
+	// chains; see rootDeclarations). Not visible via `sources`/`ctes`, just a plain child, walked
+	// like an expression subquery by every generic scope-tree consumer (symbols/node-at/references).
+	for (const stmt of query.statements ?? []) {
+		scope.children.push(buildQueryScope(stmt, scope, scope.dialect));
 	}
 	fillScope(scope);
 	return scope;
