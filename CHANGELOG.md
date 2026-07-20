@@ -1,3 +1,20 @@
+# [1.6.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.5.1...v1.6.0) (2026-07-20)
+
+
+### Bug Fixes
+
+* **infer:** databricks types corrected against Spark's own analyzer (430 -> 5) ([1d4bd8e](https://github.com/NiclasOlofsson/sqllens/commit/1d4bd8e5976db20c87774dbd3abeab3848f5a7ad)), closes [#40](https://github.com/NiclasOlofsson/sqllens/issues/40)
+* **infer:** databricks wrong-type count is ZERO; per-column baseline + unit pins ([8212306](https://github.com/NiclasOlofsson/sqllens/commit/82123063b7968e14dd0731d2af1aca01242cb307))
+* **postgres:** registry rules corrected against pg_proc.dat, ledger emptied ([4acfae0](https://github.com/NiclasOlofsson/sqllens/commit/4acfae082af62e9e376d89da3a8d5f625eaef1b5))
+
+
+### Features
+
+* **api:** dialectVocabulary(dialect) - the per-dialect token catalog as data ([7430155](https://github.com/NiclasOlofsson/sqllens/commit/7430155cdb8df0d82633a6dcdf30501c36818ed4))
+* debt burn-down: completion prefix-pruning, fold sweep, small grammar fixes ([7a5011e](https://github.com/NiclasOlofsson/sqllens/commit/7a5011ec1feb0d67a6eceac0a75ac26ee0783d96))
+* DQL grammar/IR compliance pass (zero known non-compliance at parse + lower) ([c89d6a5](https://github.com/NiclasOlofsson/sqllens/commit/c89d6a56a3867389dfc0dbb80d0b4262a252d02a))
+* parameter and variable IR modeling across all dialects ([c1e9c21](https://github.com/NiclasOlofsson/sqllens/commit/c1e9c21846510e8adc901fd6d230df16ba7e4c7c))
+
 ## [1.5.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.5.0...v1.5.1) (2026-07-16)
 
 
