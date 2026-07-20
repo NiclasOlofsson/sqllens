@@ -33,6 +33,8 @@ export {
 	complete,
 	completeAt,
 	type Completion,
+	type CompletionResult,
+	type ReplaceRange,
 	jinjaSlotAt,
 	type JinjaSlot,
 	signatureAt,

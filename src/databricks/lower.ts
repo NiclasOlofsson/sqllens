@@ -1595,18 +1595,24 @@ function columnParts(primary: PrimaryExpressionContext): string[] | undefined {
 
 /** Resolve `IDENTIFIER('literal')` wherever it parses as `strictIdentifier`'s `#identifierLiteral`
  *  alt somewhere under `node` (an errorCapturingIdentifier, typically) to the identifier it
- *  constantly names; undefined when `node` isn't that shape at all, or the argument isn't constant. */
+ *  constantly names; undefined when `node` isn't that shape at all, the argument isn't constant,
+ *  or the constant names a MULTI-part path (an alias position takes one identifier, never a path). */
 function identifierLiteralText(node: ParseTree): string | undefined {
 	const ident = firstOfRule(node, P.RULE_identifier);
 	const strict = ident && firstOfRule(ident, P.RULE_strictIdentifier);
-	return strict instanceof IdentifierLiteralContext ? identifierClauseText(strict.stringLit()) : undefined;
+	if (!(strict instanceof IdentifierLiteralContext)) return undefined;
+	const text = identifierClauseText(strict.stringLit());
+	if (text === undefined) return undefined;
+	const parts = splitIdentifierClauseText(text);
+	return parts && parts.length === 1 ? parts[0] : undefined;
 }
 
 /** `IDENTIFIER('c1')` used as a bare value parses as a call to a function literally named
  *  IDENTIFIER — the SAME token sequence `#identifierLiteral` also matches. Returns the resolved
- *  single-part identifier when the lone argument is a constant string; undefined for anything
- *  else (a different function name, more than one argument, DISTINCT/OVER/FILTER/WITHIN GROUP,
- *  or a non-constant argument), so the caller falls back to an ordinary function-call lowering. */
+ *  name parts when the lone argument is a constant string (`'a.b'` → `["a", "b"]`, per
+ *  sql-ref-names-identifier-clause); undefined for anything else (a different function name, more
+ *  than one argument, DISTINCT/OVER/FILTER/WITHIN GROUP, or a non-constant argument), so the caller
+ *  falls back to an ordinary function-call lowering. */
 function identifierClauseParts(node: FunctionCallContext): string[] | undefined {
 	const fn = node.functionName();
 	if (!fn.IDENTIFIER_KW() || fn.expression() || fn.qualifiedName()) return undefined;
@@ -1615,7 +1621,7 @@ function identifierClauseParts(node: FunctionCallContext): string[] | undefined 
 	if (args.length !== 1) return undefined;
 	const argExpr = args[0].expression();
 	const text = argExpr ? constantStringExprText(argExpr) : undefined;
-	return text ? [text] : undefined;
+	return text !== undefined ? splitIdentifierClauseText(text) : undefined;
 }
 
 /** The constant string an `expression` node reduces to, or undefined if it is anything else
@@ -1630,14 +1636,12 @@ function constantStringExprText(exprCtx: ParserRuleContext): string | undefined 
 
 /**
  * A `stringLit` (`singleStringLit+` — one or more literal/parameter-marker segments coalesced)
- * resolved to its constant text, or undefined when it isn't constant or isn't safely a single
- * identifier segment:
+ * resolved to its constant text, or undefined when it isn't constant:
  *   - ANY segment is a parameter marker (`:name`/`?`) — resolved at execution time, not constant.
- *   - the text contains a `.` — Databricks reads a dotted string as a MULTI-part name
- *     (`IDENTIFIER('t.c1')` names table `t`, column `c1`); splitting that correctly means
- *     re-deriving Databricks' own multi-part-identifier parse (backtick-quoted segments can
- *     embed a literal dot) from a string's raw characters, not from real tokens. That's not
- *     exercised by any pinned case here, so it stays unresolved rather than mis-splitting.
+ *   - ANY segment carries a backslash/doubled-quote escape (unquoteSimpleStringLiteral): decoding
+ *     Spark's full string-literal escape table is out of scope for identifier resolution, so an
+ *     escaped literal stays unresolved rather than a guess.
+ * Splitting the text into name parts (dots outside backticks) is `splitIdentifierClauseText`'s job.
  */
 function identifierClauseText(stringLitCtx: StringLitContext): string | undefined {
 	let text = "";
@@ -1648,7 +1652,54 @@ function identifierClauseText(stringLitCtx: StringLitContext): string | undefine
 		if (body === undefined) return undefined;
 		text += body;
 	}
-	return text && !text.includes(".") ? text : undefined;
+	return text.length > 0 ? text : undefined;
+}
+
+/**
+ * Split an IDENTIFIER() clause's resolved constant text into name parts.
+ * docs.databricks.com/aws/en/sql/language-manual/sql-ref-names-identifier-clause's own example is a
+ * qualified table name, `` '`default`.`tab1`' ``: a dot OUTSIDE a backtick-quoted segment separates
+ * parts, same as writing the path directly (`IDENTIFIER('a.b')` names table `a`, column `b`). A
+ * backtick-quoted segment is one part and keeps ITS OWN backticks in the part text (identifier-
+ * delimiter-contract.md's databricks row: `ColumnRef.parts` keeps delimiters, never strips them).
+ * Declines (returns undefined) on anything not confidently a plain dotted/backtick-quoted path: an
+ * unterminated backtick, or an empty part from a leading/trailing/doubled dot, never a guess.
+ */
+function splitIdentifierClauseText(text: string): string[] | undefined {
+	const parts: string[] = [];
+	let current = "";
+	let inBacktick = false;
+	for (let i = 0; i < text.length; i++) {
+		const c = text[i];
+		if (inBacktick) {
+			if (c === "`") {
+				if (text[i + 1] === "`") {
+					current += "``"; // an escaped backtick within the segment, stays in the segment
+					i++;
+				} else {
+					current += "`"; // the closing delimiter
+					inBacktick = false;
+				}
+			} else {
+				current += c;
+			}
+			continue;
+		}
+		if (c === "`") {
+			current += "`"; // the opening delimiter
+			inBacktick = true;
+		} else if (c === ".") {
+			if (!current) return undefined; // a leading or doubled dot, no part precedes it
+			parts.push(current);
+			current = "";
+		} else {
+			current += c;
+		}
+	}
+	if (inBacktick) return undefined; // an unterminated backtick-quoted segment
+	if (!current) return undefined; // a trailing dot
+	parts.push(current);
+	return parts;
 }
 
 /** Strip one STRING_LITERAL/DOUBLEQUOTED_STRING token's delimiters (grammars/databricks/

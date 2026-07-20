@@ -119,7 +119,10 @@ const BIGQUERY_TABLE_RULES = new Set<number>([GoogleSQLParser.RULE_table_path_ex
 const BIGQUERY_COLUMN_RULES = new Set<number>([GoogleSQLParser.RULE_identifier]);
 const BIGQUERY_PREFERRED = new Set<number>([...BIGQUERY_TABLE_RULES, ...BIGQUERY_COLUMN_RULES]);
 const BIGQUERY_RELATION_KEYWORDS = new Set<number>([GoogleSQLLexer.FROM_SYMBOL, GoogleSQLLexer.JOIN_SYMBOL]);
-const BIGQUERY_NAME_TOKENS = new Set<number>([GoogleSQLLexer.IDENTIFIER]);
+// UNCLOSED_ESCAPED_IDENTIFIER is the dedicated recovery token GoogleSQL's lexer emits for a
+// backtick-quoted identifier with no closing backtick yet (`` `a `` mid-typing) — completion's
+// caret-in-a-partial-identifier detection needs it alongside the ordinary closed-form token.
+const BIGQUERY_NAME_TOKENS = new Set<number>([GoogleSQLLexer.IDENTIFIER, GoogleSQLLexer.UNCLOSED_ESCAPED_IDENTIFIER]);
 
 // ── Redshift (Bytebase/Postgres-derived fork) ───────────────────────────────
 //   post-FROM   → relation_expr (the relation slot; the leaf `identifier` also surfaces post-FROM
@@ -129,7 +132,13 @@ const REDSHIFT_TABLE_RULES = new Set<number>([RedshiftParser.RULE_relation_expr]
 const REDSHIFT_COLUMN_RULES = new Set<number>([RedshiftParser.RULE_a_expr]);
 const REDSHIFT_PREFERRED = new Set<number>([...REDSHIFT_TABLE_RULES, ...REDSHIFT_COLUMN_RULES]);
 const REDSHIFT_RELATION_KEYWORDS = new Set<number>([RedshiftLexer.FROM, RedshiftLexer.JOIN]);
-const REDSHIFT_NAME_TOKENS = new Set<number>([RedshiftLexer.Identifier, RedshiftLexer.QuotedIdentifier]);
+// UnterminatedQuotedIdentifier is the dedicated recovery token this Postgres-lineage lexer emits
+// for a `"a` with no closing quote yet (mid-typing) — needed alongside the ordinary closed form.
+const REDSHIFT_NAME_TOKENS = new Set<number>([
+	RedshiftLexer.Identifier,
+	RedshiftLexer.QuotedIdentifier,
+	RedshiftLexer.UnterminatedQuotedIdentifier,
+]);
 
 // ── Postgres / DuckDB (TVL-lineage forks like Redshift) ─────────────────────
 // The same rule split as Redshift applies (same grammar shapes): post-FROM → relation_expr,
@@ -138,13 +147,25 @@ const POSTGRES_TABLE_RULES = new Set<number>([PostgresParser.RULE_relation_expr]
 const POSTGRES_COLUMN_RULES = new Set<number>([PostgresParser.RULE_a_expr]);
 const POSTGRES_PREFERRED = new Set<number>([...POSTGRES_TABLE_RULES, ...POSTGRES_COLUMN_RULES]);
 const POSTGRES_RELATION_KEYWORDS = new Set<number>([PostgresLexer.FROM, PostgresLexer.JOIN]);
-const POSTGRES_NAME_TOKENS = new Set<number>([PostgresLexer.Identifier, PostgresLexer.QuotedIdentifier]);
+// UnterminatedQuotedIdentifier is the dedicated recovery token this lexer emits for a `"a` with no
+// closing quote yet (mid-typing) — needed alongside the ordinary closed form.
+const POSTGRES_NAME_TOKENS = new Set<number>([
+	PostgresLexer.Identifier,
+	PostgresLexer.QuotedIdentifier,
+	PostgresLexer.UnterminatedQuotedIdentifier,
+]);
 
 const DUCKDB_TABLE_RULES = new Set<number>([DuckdbParser.RULE_relation_expr]);
 const DUCKDB_COLUMN_RULES = new Set<number>([DuckdbParser.RULE_a_expr]);
 const DUCKDB_PREFERRED = new Set<number>([...DUCKDB_TABLE_RULES, ...DUCKDB_COLUMN_RULES]);
 const DUCKDB_RELATION_KEYWORDS = new Set<number>([DuckdbLexer.FROM, DuckdbLexer.JOIN]);
-const DUCKDB_NAME_TOKENS = new Set<number>([DuckdbLexer.Identifier, DuckdbLexer.QuotedIdentifier]);
+// UnterminatedQuotedIdentifier is the dedicated recovery token this Postgres-lineage lexer emits
+// for a `"a` with no closing quote yet (mid-typing) — needed alongside the ordinary closed form.
+const DUCKDB_NAME_TOKENS = new Set<number>([
+	DuckdbLexer.Identifier,
+	DuckdbLexer.QuotedIdentifier,
+	DuckdbLexer.UnterminatedQuotedIdentifier,
+]);
 
 // -- Trino (first-party SqlBase.g4 split) ------------------------------------
 // Post-FROM relation names live under relationPrimary/qualifiedName; column slots are

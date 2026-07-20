@@ -16,4 +16,18 @@ describe("Span carries offsets", () => {
 		expect(occ).not.toBeNull();
 		for (const o of occ!.occurrences) expect(SQL.slice(o.span.start, o.span.end)).toBe("amount");
 	});
+
+	// Star anchor (vocabulary-contract's adversarial case, tests/vocabulary-contract.test.ts): a star
+	// Sym's span must slice to exactly `*`, never a trailing modifier clause — `REPLACE (a * 2 AS a)`'s
+	// own expression carries a LATER `*` (multiplication) in the same star subtree, the adversarial
+	// shape that catches an unanchored `spanOf(projection.cst)` fallback. Regression pin: this Sym used
+	// to span the whole "* replace (a * 2 as a)" clause before routing through the shared starSpanOf
+	// (src/ir/part-span.ts) that document.ts's unionOutputColumns already used.
+	it("a star Sym's span slices to exactly `*`, not a trailing modifier clause", () => {
+		const sql = "select * replace (a * 2 as a) from t";
+		const scopes = toScopes(sql, { dialect: "duckdb" });
+		const syms = deriveSymbols(scopes);
+		const star = syms.find((s) => s.kind === "column" && s.modifiers.length === 1 && s.modifiers[0] === "star")!;
+		expect(sql.slice(star.span.start, star.span.end)).toBe("*");
+	});
 });

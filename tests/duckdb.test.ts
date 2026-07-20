@@ -403,6 +403,25 @@ describe("duckdb subscript slicing — position-aware begin/end/step (#lossless)
 		expect(ast.body.columns.map((c) => c.parts.join("."))).toContain("step_col");
 	});
 
+	// arr[1:2:hi]: the fused STEP-slot case, a bare-identifier STEP with no parens needed, after two
+	// ordinary bounds (`1`, `2`). Engine-verified against DuckDB v1.5.4 directly
+	// (temp_auto/duckdb-oracle/probe-slice-fused-step.mjs: `([1,2,3])[1:2:n]` parses and evaluates).
+	// Symmetric to x[1:hi] below, but the fused PLSQLVARIABLENAME token lands in the STEP slot
+	// instead of the END slot; applySubscriptBracket (src/duckdb/lower.ts) un-fuses it the same way.
+	it("x[1:2:hi]: numeric begin+end, bare-identifier step (fused step-slot)", () => {
+		expect(shapeOf("SELECT arr[1:2:hi] FROM t;")).toEqual({
+			kind: "subscript",
+			base: arr,
+			index: num(1),
+			end: num(2),
+			step: { kind: "column", parts: ["hi"] },
+			slice: true,
+		});
+		const { ast } = parse("SELECT arr[1:2:hi] FROM t;", "duckdb");
+		if (ast.body.kind !== "select") throw new Error("expected select");
+		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "hi"]));
+	});
+
 	// arr[1:hi] / arr[lo:hi]: the bare-identifier end bound now parses without parens, and the bound
 	// column shows up in SelectExpr.columns — the PLSQLVARIABLENAME token is un-fused back into a
 	// plain column end bound in applySubscriptBracket.

@@ -287,10 +287,14 @@ cited file carries the full rationale.
   reading (ruled 2026-07-20): the `:hi` token is lexically identical to a psql/pgbench bind
   variable used as an index, which is real, corpus-attested usage; re-reading it as a slice bound
   would flip an already-parsing construct. `arr[lo:hi]` (any begin bound present) parses as a
-  slice; `arr[:(hi)]` is the workaround. Step-slot fusion (`arr[1:2:hi]`) is likewise unmodeled.
+  slice; `arr[:(hi)]` is the workaround. postgres/redshift have no third (STEP) slice slot at all,
+  so step-slot fusion doesn't apply to them.
   DuckDB is NOT in this entry: real DuckDB v1.5.4 has no `:name` bind form at all (engine-verified
   rejection), so the parameter wave removed it there and duckdb `arr[:hi]` now parses as the slice
-  it is (engine-verified accepted).
+  it is (engine-verified accepted). DuckDB's STEP-slot fusion (`arr[1:2:hi]`, a bare-identifier
+  STEP after two ordinary bounds) is modeled too (engine-verified against DuckDB v1.5.4,
+  `temp_auto/duckdb-oracle/probe-slice-fused-step.mjs`): `indirection_el`'s COLON alt gained a
+  trailing `plsqlvariablename` alternative alongside its existing numeric-step tail.
 - Recovery-split exemption in `tests/broken-batch.test.ts`: tsql/redshift/postgres/duckdb
   are exempt from the phantom-batch assertion (a recovery fragment is provably
   indistinguishable from two real statements in those grammars).

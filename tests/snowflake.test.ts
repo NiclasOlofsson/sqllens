@@ -1612,3 +1612,54 @@ END;`,
 		expect(errorsOf("CREATE TABLE t (c1 RESULTSET)")).toBeGreaterThan(0);
 	});
 });
+
+// Snowflake Scripting LET (docs.snowflake.com/en/developer-guide/snowflake-scripting/variables):
+// "LET <variable_name> <type> { DEFAULT | := } <expression>;" (or, type inferred, without <type>).
+// Declares AND assigns a variable inline in a scripting block, without a separate DECLARE section.
+// Wired into task_scripting_statement only (shared by the standalone scripting_block and CREATE
+// TASK's scripting body, same seam as RESULTSET above); docs.snowflake.com/en/sql-reference/sql/
+// create-task's own example uses this exact shape (LET OUTPUT_DIR STRING := SYSTEM$GET_TASK_GRAPH_CONFIG(...)::string;).
+describe("Snowflake Scripting LET statement", () => {
+	it("parses LET with an explicit type and := (create-task's own doc example shape)", () => {
+		expect(
+			errorsOf(
+				`BEGIN
+  LET output_dir STRING := SYSTEM$GET_TASK_GRAPH_CONFIG('output_dir')::STRING;
+  RETURN output_dir;
+END;`,
+			),
+		).toBe(0);
+	});
+
+	it("parses LET with an explicit type and DEFAULT", () => {
+		expect(errorsOf("BEGIN LET revenue NUMBER(38, 2) DEFAULT 110.0; RETURN revenue; END;")).toBe(0);
+	});
+
+	it("parses LET with the type inferred from the assigned expression", () => {
+		expect(errorsOf("BEGIN LET value := (SELECT 1); RETURN value; END;")).toBe(0);
+	});
+
+	// The corpus shape this fix unblocks: CREATE TASK ... AS BEGIN ... LET ... END (functions/
+	// system_get_task_graph_config/2.sql).
+	it("parses CREATE TASK ... AS BEGIN ... LET ... END (sql-reference/sql/create-task)", () => {
+		expect(
+			errorsOf(
+				`CREATE OR REPLACE TASK my_child_task
+  AFTER my_task_root
+  AS
+    BEGIN
+      LET value := (SELECT SYSTEM$GET_TASK_GRAPH_CONFIG('dir'));
+      CREATE TABLE IF NOT EXISTS my_table(name VARCHAR, value VARCHAR);
+      INSERT INTO my_table VALUES('my_task_root dir', :value);
+    END;`,
+			),
+		).toBe(0);
+	});
+
+	// LET is not a reserved keyword (docs.snowflake.com/en/sql-reference/reserved-keywords), so
+	// adding the lexer token must not create an identifier hole.
+	it("GUARD: `let` is still usable as a bare column name", () => {
+		const { body } = selectBody("SELECT let FROM t");
+		expect(body.projections[0]).toMatchObject({ name: "let", expr: { kind: "column", parts: ["let"] } });
+	});
+});

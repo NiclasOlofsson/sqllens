@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import { toScopes, qualify, Schema } from "../src/index.js";
 import { parseTemplated } from "./helpers/templated.js";
 import type { ColumnRef } from "../src/ir/ir.js";
+import type { Dialect } from "../src/index.js";
 import type { Scope } from "../src/scope/scope.js";
 
 // Qualification.bindingOf — the read-only column→source binding the extension consumes for BARE columns
@@ -99,4 +100,31 @@ select * from warehouses_enriched`;
 		expect(binding?.source.kind).toBe("table");
 		expect(binding?.column.toLowerCase()).toBe("gold_warehousekey");
 	});
+});
+
+// ---------------------------------------------------------------------------
+// Vocabulary contract — ColumnBinding.column is the AS-WRITTEN column text (the raw ColumnRef
+// part, quoting delimiters already stripped by lower()'s keep-raw convention), never the
+// dialect-folded identity key: the above tests all normalize with `.toLowerCase()` before
+// comparing, so none pins the actual casing bindingOf hands back. Matching itself already runs
+// through the one fold engine (resolveColumnSource) regardless of what's rendered here.
+// ---------------------------------------------------------------------------
+describe("Qualification.bindingOf — vocabulary: .column is display text, not the fold key", () => {
+	const dialects: { dialect: Dialect; label: string }[] = [
+		{ dialect: "duckdb", label: "lower/lower" },
+		{ dialect: "snowflake", label: "upper/preserve" },
+		{ dialect: "postgres", label: "lower/preserve" },
+	];
+
+	for (const { dialect, label } of dialects) {
+		it(`${dialect} (${label}): an unquoted mixed-case column binds with its AS-WRITTEN spelling`, () => {
+			const schema = new Schema({ t: { Upper_Col: "int" } });
+			const sql = "select Upper_Col from t";
+			const scopes = toScopes(sql, { dialect });
+			const q = qualify(scopes, schema);
+			const body = scopes.root.body;
+			const ref = body.kind === "select" ? body.columns[0] : undefined;
+			expect(q.bindingOf(scopes.root, ref!)?.column).toBe("Upper_Col");
+		});
+	}
 });

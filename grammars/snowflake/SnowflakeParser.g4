@@ -2437,9 +2437,9 @@ copy_options
     | SIZE_LIMIT EQ num
     | PURGE EQ true_false
     | RETURN_FAILED_ONLY EQ true_false
-    | MATCH_BY_COLUMN_NAME EQ CASE_SENSITIVE
-    | CASE_INSENSITIVE
-    | NONE
+    // docs.snowflake.com/en/sql-reference/sql/copy-into-table: MATCH_BY_COLUMN_NAME = CASE_SENSITIVE
+    // | CASE_INSENSITIVE | NONE. All three belong to this option, not standalone alternatives.
+    | MATCH_BY_COLUMN_NAME EQ (CASE_SENSITIVE | CASE_INSENSITIVE | NONE)
     | ENFORCE_LENGTH EQ true_false
     | TRUNCATECOLUMNS EQ true_false
     | FORCE EQ true_false
@@ -3019,8 +3019,18 @@ task_scripting_statement_list
 task_scripting_statement
     : sql_command
     | call
+    | task_scripting_let
     | task_scripting_assignment
     | task_scripting_return
+    ;
+
+// docs.snowflake.com/en/developer-guide/snowflake-scripting/variables:
+// "LET <variable_name> <type> { DEFAULT | := } <expression>;" or, with the type inferred,
+// "LET <variable_name> { DEFAULT | := } <expression>;". Declares and assigns a variable inline in
+// a scripting block, without a separate DECLARE section (docs.snowflake.com/en/sql-reference/sql/
+// create-task's own example: LET OUTPUT_DIR STRING := SYSTEM$GET_TASK_GRAPH_CONFIG(...)::string;).
+task_scripting_let
+    : LET id_ (data_type | RESULTSET)? (DEFAULT | COLON EQ) expr
     ;
 
 task_scripting_assignment
@@ -4670,6 +4680,7 @@ non_reserved_words
     | LARGE
     | LAST_VALUE
     | LEN
+    | LET
     | LIMIT
     | LINEAR
     | LISTING

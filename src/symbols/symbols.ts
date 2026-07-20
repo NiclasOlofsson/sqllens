@@ -2,6 +2,7 @@ import type { ParserRuleContext } from "antlr4ng";
 import { behaviorOf } from "../dialect-behavior/carrier.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, PartSpan, Projection, QueryBody } from "../ir/ir.js";
+import { starSpanOf } from "../ir/part-span.js";
 import { endPosition } from "../ir/span.js";
 import { inferType } from "../infer/infer.js";
 import type { Type } from "../infer/types.js";
@@ -308,7 +309,11 @@ function emitColumns(
 		for (const p of body.projections) {
 			if (p.isStar) {
 				const q = p.expr.kind === "star" ? p.expr.qualifier : undefined;
-				const starSpan = spanOf(p.cst);
+				// The star's OWN span — the `*` character itself, never the qualifier or a modifier
+				// clause (Sym star-expansion wave rule, sqllens 9c87f55; same starSpanOf document.ts's
+				// scopeOutputColumns uses) — falling back to the whole projection's span only in the
+				// should-never-happen case a star projection's CST carries no literal `*` token.
+				const starSpan = (p.expr.kind === "star" ? starSpanOf(p.expr.cst) : undefined) ?? spanOf(p.cst);
 				out.push({
 					kind: "column",
 					modifiers: ["star"],

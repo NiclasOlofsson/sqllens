@@ -224,11 +224,25 @@ describe("IDENTIFIER() clause — constant-string case (sql-ref-names-identifier
 		expect(selectOf("SELECT 1 AS IDENTIFIER(:param)").projections[0].name).toBe("IDENTIFIER(:param)");
 	});
 
-	it("declines a dotted constant (multi-part name) rather than mis-splitting it into one part", () => {
-		// IDENTIFIER('t.c1') names table t, column c1, not a column literally called "t.c1" —
-		// splitting that correctly needs Databricks' own multi-part parse (docs/identifier-
-		// delimiter-contract.md); out of scope here, so it stays an unresolved function call.
-		expect(exprOf("SELECT IDENTIFIER('t.c1') FROM t")).toMatchObject({ kind: "function", name: "IDENTIFIER" });
+	it("splits a dotted constant into multi-part name parts (sql-ref-names-identifier-clause)", () => {
+		// IDENTIFIER('a.b') names table a, column b: a dot OUTSIDE any backtick-quoted segment
+		// separates parts, same as writing a.b directly.
+		expect(exprOf("SELECT IDENTIFIER('a.b') FROM t")).toMatchObject({ kind: "column", parts: ["a", "b"] });
+	});
+
+	it("keeps a backtick-quoted segment as ONE part even when it embeds a dot", () => {
+		// A backtick-quoted segment protects an embedded dot from splitting (the doc's own example:
+		// a qualified name like `default`.`tab1`); the part keeps its own delimiters (kept, per
+		// identifier-delimiter-contract.md's databricks row).
+		expect(exprOf("SELECT IDENTIFIER('`a.b`') FROM t")).toMatchObject({ kind: "column", parts: ["`a.b`"] });
+	});
+
+	it("never-wrong: an escaped segment in a dotted constant still declines", () => {
+		// The doubled single-quote in 'a''b.c' is a string-literal escape (a literal apostrophe).
+		// Decoding it is out of scope for identifier resolution, so the whole clause stays an
+		// unresolved function call, same as the unescaped-dot case did before this fix (unchanged
+		// caution: escapes never guess).
+		expect(exprOf("SELECT IDENTIFIER('a''b.c') FROM t")).toMatchObject({ kind: "function", name: "IDENTIFIER" });
 	});
 
 	it("leaves the IDENTIFIER-as-function-name form (a trailing call) untouched", () => {

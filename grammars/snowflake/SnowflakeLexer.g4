@@ -528,6 +528,9 @@ LEFT          : 'LEFT';
 LEN           : 'LEN';
 LENGTH        : 'LENGTH';
 // LEVEL:                                                 'LEVEL';
+// Snowflake Scripting LET (developer-guide/snowflake-scripting/variables): declare-and-assign a
+// variable inline in a scripting block, without a separate DECLARE section.
+LET    : 'LET';
 LIKE   : 'LIKE';
 LIMIT  : 'LIMIT';
 LINEAR : 'LINEAR';

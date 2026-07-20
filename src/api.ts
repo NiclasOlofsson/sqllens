@@ -311,7 +311,13 @@ export type { StatementCellSpan } from "./document/split.js";
 
 // Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
 // tables/columns + function names at the caret). Total: never throws.
-export { complete, completeAt, type Completion } from "./completion/complete.js";
+export {
+	complete,
+	completeAt,
+	type Completion,
+	type CompletionResult,
+	type ReplaceRange,
+} from "./completion/complete.js";
 
 // The NEUTRAL half of jinja completion: which call + arg slot the caret sits in inside a jinja tag
 // (`{{ ref('cu│` → { callee: "ref", argIndex: 0, prefix: "cu" }). Carries no dbt vocabulary; a

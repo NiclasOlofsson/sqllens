@@ -20,7 +20,9 @@ import { Token, type Vocabulary } from "antlr4ng";
 import { debugRethrow } from "../debug.js";
 import type { SqlDocument } from "../document/document.js";
 import { nodeAt } from "../document/node-at.js";
+import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
+import type { IdentKind } from "../ident/fold.js";
 import type { QueryExpr } from "../ir/ir.js";
 import type { Column } from "../qualify/schema.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
@@ -42,9 +44,10 @@ interface WalkTok {
 	text: string;
 }
 
-/** One completion candidate. The editor filters this list by the typed prefix and applies the
- *  chosen label at the caret; we only produce the labels, anchored at the caret offset. The
- *  `"template"` kind is a host candidate for a jinja call slot (a dbt model for a ref's arg). */
+/** One completion candidate, already pruned to the typed prefix (2026-07-12 ruling) and applied at
+ *  the caret / `CompletionResult.replaceRange`. The `"template"` kind is a host candidate for a
+ *  jinja call slot (a dbt model for a ref's arg) — its own, separately-decided contract (the
+ *  consumer still filters those by the typed prefix; see complete.jinja-candidates.test.ts). */
 export interface Completion {
 	label: string;
 	kind: "keyword" | "column" | "table" | "cte" | "namespace" | "function" | "template";
@@ -52,12 +55,34 @@ export interface Completion {
 	detail?: string;
 }
 
+/** The caret-anchored span of the partial identifier/keyword the candidates were pruned against —
+ *  `text.slice(start, end)` is what's already typed. `start` includes an opening delimiter when the
+ *  caret sits inside a quoted/bracketed/backtick-quoted identifier (`"my_t`, `` `my_t ``, `[my_t`),
+ *  so an editor that replaces this span never leaves a stray leading quote. `end` never extends past
+ *  the caret (`offset`) — even where a dialect's lexer greedily swallows an unterminated quoted
+ *  identifier past the caret, only the already-typed portion is ever reported or matched. */
+export interface ReplaceRange {
+	start: number;
+	end: number;
+}
+
+/** completeAt()'s result: an ordinary `Completion[]` (`.map`/`.filter`/iteration/`.length` all work
+ *  exactly as before — every existing consumer sees no change) carrying one optional extra
+ *  property, the same "array with named extras" shape TypeScript's own `RegExpMatchArray` uses for
+ *  `String.prototype.match`. `replaceRange` is present only when the caret sits inside a partially
+ *  typed word; an empty-prefix caret (a token boundary — nothing typed yet) returns a plain array
+ *  with no `replaceRange`, byte-identical to the pre-pruning contract. */
+export interface CompletionResult extends Array<Completion> {
+	replaceRange?: ReplaceRange;
+}
+
 /**
- * Completion candidates for the caret at `offset` in `doc`. Schema-aware when a `Schema` is given
- * (table names + column types). NEVER throws: on broken / mid-edit input it still returns the
- * keyword candidates the walk can reach.
+ * Completion candidates for the caret at `offset` in `doc`, pruned to the identifier/keyword
+ * fragment already typed there (case-insensitive, dialect-fold-aware; plain prefix match — never
+ * fuzzy). Schema-aware when a `Schema` is given (table names + column types). NEVER throws: on
+ * broken / mid-edit input it still returns the keyword candidates the walk can reach.
  */
-export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
+export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProvider): CompletionResult {
 	try {
 		return collect(doc, offset, schema);
 	} catch (e) {
@@ -70,7 +95,7 @@ export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProv
 /** @deprecated Use completeAt — same function, uniform cursor-verb naming. */
 export const complete = completeAt;
 
-function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Completion[] {
+function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): CompletionResult {
 	const dialect = doc.dialect;
 
 	// Inside a jinja tag ({{ ref('| }}, {% if | %}, {{ a ~ | }}) the caret is not in SQL at all, so SQL
@@ -113,7 +138,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 		...(cell ? cell.tokens : doc.tokens),
 		{ type: Token.EOF, channel: Token.DEFAULT_CHANNEL, start: end, text: "" },
 	];
-	const caretIdx = caretTokenIndex(walkTokens, offset);
+	const caretIdx = caretTokenIndex(walkTokens, offset, cfg);
 	const cand = collectCandidates(
 		meta.atn,
 		meta.entryRuleIndex,
@@ -197,7 +222,104 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 		}
 	}
 
-	return out;
+	return pruneByPrefix(out, walkTokens, offset, cfg, doc.text, dialect);
+}
+
+/** SQL identifier-quoting delimiters recognized across all ten dialects
+ *  (docs/identifier-delimiter-contract.md) — used only to recognize a PARTIAL, possibly
+ *  unterminated quoted identifier under the caret; a dialect's own quoting/case rules stay put in
+ *  src/<dialect>/fold.ts. */
+const CLOSE_FOR_OPEN: Readonly<Record<string, string>> = { '"': '"', "`": "`", "[": "]" };
+
+/** The identifier/keyword fragment under (or immediately preceding) the caret, read off the
+ *  document's OWN token stream — never re-lexed. Two shapes recognized:
+ *   - a bare word (keyword or identifier) the caret sits inside/at the end of (`SEL|`, `ifn|`) —
+ *     word-START only (`[A-Za-z_]`), so a numeric literal (`… WHERE x > 10|`) is never mistaken
+ *     for an identifier prefix;
+ *   - a delimited identifier: either ONE token spanning both delimiters (`cfg.nameTokens` — a
+ *     complete `"a"`/`` `a` ``/`[a]`, or an unterminated one some dialects lex greedily to EOF), or
+ *     a lone opening-delimiter character immediately followed by a bare identifier token (the
+ *     lexer error-recovery split other dialects produce for an unterminated `` `a `` / `"a` — the
+ *     delimiter alone fails to match any token and is skipped, the identifier body then lexes
+ *     cleanly on its own).
+ *  Returns undefined at a token boundary — nothing partially typed (the empty-prefix case, left
+ *  completely unpruned). The returned span never extends past `offset`: even where a dialect's
+ *  lexer greedily swallows an unterminated quoted identifier to EOF, only the already-typed portion
+ *  is ever reported. */
+function identifierPrefixAt(
+	toks: readonly WalkTok[],
+	offset: number,
+	cfg: CompletionConfig,
+	text: string,
+): { start: number; raw: string } | undefined {
+	for (let i = 0; i < toks.length; i++) {
+		const t = toks[i];
+		if (!t || t.channel !== Token.DEFAULT_CHANNEL) continue;
+		const nameLike = /^[A-Za-z_]/.test(t.text) || cfg.nameTokens.has(t.type);
+		if (nameLike && t.start < offset && offset <= t.start + t.text.length) {
+			let start = t.start;
+			// A lone opening-delimiter token immediately before this one (the split-recovery case) —
+			// fold it into the same partial identifier so the replace range covers it too.
+			for (let j = i - 1; j >= 0; j--) {
+				const p = toks[j];
+				if (!p || p.channel !== Token.DEFAULT_CHANNEL) continue;
+				if (p.start + p.text.length === start && Object.hasOwn(CLOSE_FOR_OPEN, p.text)) start = p.start;
+				break;
+			}
+			return { start, raw: text.slice(start, offset) };
+		}
+		if (t.start >= offset) return undefined; // moved past the caret — nothing partially typed here
+	}
+	return undefined;
+}
+
+/** Fold a (possibly partial/unterminated) identifier fragment to the same identity space
+ *  `behavior.fold` gives a COMPLETE identifier. A partial `"a`/`` `a `` /`[a` has no closing
+ *  delimiter yet — `fold()`'s own unwrap requires one to recognize it as quoted — so this
+ *  synthesizes the matching close for the fold call only; the raw text / replace range reported
+ *  elsewhere are untouched. Folding an already-complete candidate label through this is a no-op. */
+function foldForPrefixMatch(behavior: DialectBehavior, raw: string, kind: IdentKind): string {
+	const open = raw[0];
+	const close = open ? CLOSE_FOR_OPEN[open] : undefined;
+	const closed = close && !raw.endsWith(close) ? raw + close : raw;
+	return behavior.fold(closed, kind);
+}
+
+/** Post-filters the assembled SQL-slot candidates by the identifier/keyword fragment under the
+ *  caret (2026-07-12 ruling: "completeAt must return only candidates that validly complete at the
+ *  caret right now, pruned by the word already typed" — the library holds the token stream, CST,
+ *  and dialect fold rules, so it prunes here instead of handing the consumer the whole per-slot
+ *  set). An empty-prefix caret (a token boundary — nothing partially typed) returns `out`
+ *  completely unchanged: byte-identical to the pre-pruning contract, no `replaceRange`. Keywords
+ *  fold plain ASCII-case-insensitive (every dialect's keywords are case-insensitive, unlike
+ *  identifiers); identifier-kind candidates (column/table/cte/namespace/function) fold through the
+ *  dialect's own identity-key rule, `"table"` kind for `table` candidates (only BigQuery's table
+ *  case rule differs from the rest). Plain-prefix `startsWith` only — never fuzzy (never-wrong: no
+ *  guessed matches). Jinja template/call-slot candidates (returned earlier in `collect`, from
+ *  `templateCompletions`) are OUT of this — that path has its own, separately-decided "editor
+ *  filters" contract (tests/completion/complete.jinja-candidates.test.ts). */
+function pruneByPrefix(
+	out: Completion[],
+	toks: readonly WalkTok[],
+	offset: number,
+	cfg: CompletionConfig,
+	text: string,
+	dialect: string,
+): CompletionResult {
+	const prefix = identifierPrefixAt(toks, offset, cfg, text);
+	if (!prefix) return out;
+
+	const behavior = resolveBehavior(dialect);
+	const keywordPrefix = prefix.raw.toLowerCase();
+	const otherPrefix = foldForPrefixMatch(behavior, prefix.raw, "other");
+	const tablePrefix = foldForPrefixMatch(behavior, prefix.raw, "table");
+	const pruned: CompletionResult = out.filter((c) => {
+		if (c.kind === "keyword") return c.label.toLowerCase().startsWith(keywordPrefix);
+		const kind: IdentKind = c.kind === "table" ? "table" : "other";
+		return foldForPrefixMatch(behavior, c.label, kind).startsWith(kind === "table" ? tablePrefix : otherPrefix);
+	});
+	pruned.replaceRange = { start: prefix.start, end: offset };
+	return pruned;
 }
 
 /** The host's candidates for a jinja call slot, as completions. The template provider carries them,
@@ -255,17 +377,21 @@ function visibleCteNames(scopes: ScopeTree, ast: QueryExpr, offset: number): str
  *  convention):
  *   1. the token being TYPED — a word-like token whose span CONTAINS the caret (start < offset <=
  *      end). A caret at the end of `ifn` completes `ifn`; it does not mean the slot is filled.
- *      Word-like only: punctuation is never partially typed, so `abs(|` keeps rule 2.
+ *      Word-like OR a delimited identifier token (cfg.nameTokens: `` `a` ``/`"a"`/`[a]`) counts too —
+ *      without it, a caret inside a quoted identifier fell through to rule 2 and reported the
+ *      position of whatever token happened to follow it. Punctuation is never partially typed,
+ *      so `abs(|` keeps rule 2.
  *   2. between tokens — the first default-channel token whose `.start >= offset`; for an
  *      end-of-input caret that is the EOF sentinel's index (last entry).
  *  `toks` is the document's own token stream (doc coordinates) with the EOF sentinel appended.
  *  Source order makes one pass sufficient: a containing token starts before any `.start >= offset`
  *  token, so rule 1 fires first whenever it applies. */
-function caretTokenIndex(toks: readonly WalkTok[], offset: number): number {
+function caretTokenIndex(toks: readonly WalkTok[], offset: number, cfg: CompletionConfig): number {
 	for (let i = 0; i < toks.length; i++) {
 		const t = toks[i];
 		if (!t || t.channel !== Token.DEFAULT_CHANNEL) continue;
-		if (/^\w/.test(t.text) && t.start < offset && offset <= t.start + t.text.length) return i;
+		const wordLike = /^\w/.test(t.text) || cfg.nameTokens.has(t.type);
+		if (wordLike && t.start < offset && offset <= t.start + t.text.length) return i;
 		if (t.start >= offset) return i;
 	}
 	return toks.length - 1; // EOF

@@ -4534,15 +4534,21 @@ indirection_el
    // (temp_auto/duckdb-oracle/probe-slice.mjs, probe-slice2.mjs): `([1,2,3])[1:n]`, `[:n]`, and
    // `[1:n:1]` all parse and evaluate. This alt un-fuses the token (the begin bound is OPTIONAL, to
    // cover both `arr[1:hi]` and `arr[:hi]`), and an optional trailing `COLON opt_slice_bound?`
-   // still recovers a numeric STEP after the fused end (`arr[1:hi:2]`). The symmetric STEP-slot
-   // fusion (`arr[1:2:hi]`, a bare-identifier STEP) is NOT covered — steps are conventionally
-   // numeric strides, out of this fix's scope. NOTE: this is the ONLY place in the duckdb grammar
-   // that still accepts a `:name`-shaped token — real DuckDB v1.5.4 REJECTS `:name` as a general
-   // bind-style expression (`SELECT :x FROM t` -> "Parser Error: syntax error at or near \":\"",
-   // engine-verified via temp_auto/duckdb-oracle/probe-params.mjs), so `plsqlvariablename` was
-   // removed from `identifier` and from `c_expr`'s bare alt (postgres-fork inheritance artifact,
-   // not a real DuckDB feature) and survives only fused inside a bracketed slice bound here.
-   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)? | opt_slice_bound? plsqlvariablename (COLON opt_slice_bound?)?) CLOSE_BRACKET
+   // still recovers a numeric STEP after the fused end (`arr[1:hi:2]`). NOTE: this is the ONLY
+   // place in the duckdb grammar that still accepts a `:name`-shaped token: real DuckDB v1.5.4
+   // REJECTS `:name` as a general bind-style expression (`SELECT :x FROM t` -> "Parser Error:
+   // syntax error at or near \":\"", engine-verified via temp_auto/duckdb-oracle/probe-params.mjs),
+   // so `plsqlvariablename` was removed from `identifier` and from `c_expr`'s bare alt
+   // (postgres-fork inheritance artifact, not a real DuckDB feature) and survives only fused
+   // inside a bracketed slice bound here.
+   // The COLON alt's own trailing `plsqlvariablename` alternative is the symmetric STEP-slot
+   // fusion, `arr[1:2:hi]`, a bare-identifier STEP after two ordinary bounds (`2` then the
+   // fused `:hi`), engine-verified against DuckDB v1.5.4 directly
+   // (temp_auto/duckdb-oracle/probe-slice-fused-step.mjs): `([1,2,3])[1:2:n]` parses and
+   // evaluates. `applySubscriptBracket` (src/duckdb/lower.ts) already un-fuses a
+   // `plsqlvariablename` generically by slot position, so no lowering change was needed, only
+   // this grammar alt to let the token appear in the trailing (STEP) slot too.
+   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? ((COLON opt_slice_bound?) | plsqlvariablename)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)? | opt_slice_bound? plsqlvariablename (COLON opt_slice_bound?)?) CLOSE_BRACKET
    ;
 
 opt_slice_bound

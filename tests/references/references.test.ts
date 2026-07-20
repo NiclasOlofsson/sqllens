@@ -6,6 +6,8 @@ import { Schema } from "../../src/qualify/schema.js";
 import { referencesAt, type Occurrences } from "../../src/references/references.js";
 import type { Span } from "../../src/symbols/symbols.js";
 import { LineIndex } from "../../src/document/line-index.js";
+import { toScopes } from "../../src/index.js";
+import type { Dialect } from "../../src/index.js";
 
 // Build a ScopeTree + IR for a Databricks query (the dialect doesn't matter — the engine runs on
 // the shared IR). Returns the tree, ast, and a LineIndex so the test can map spans back to text.
@@ -132,4 +134,40 @@ describe("referencesAt — core occurrence engine", () => {
 		expect(refTexts.some((s) => s.includes("a"))).toBe(true);
 		expect(result.occurrences.length).toBeGreaterThanOrEqual(2);
 	});
+});
+
+// ---------------------------------------------------------------------------
+// Vocabulary contract — Occurrences.symbol is a DISPLAY name (unquote-only, no case change),
+// never the dialect-folded identity key: it feeds hover/go-to-definition/rename text, and a
+// consumer must see what was written, not a case-folded catalog key (the same #38 ruling
+// symbols.ts's relationSymbol documents — "shows a table's as-written spelling, not the folded
+// identity key" — applied to the sibling references surface, which carried no such pin before).
+// Matching internally still runs through the ONE fold engine underneath (proven correct
+// elsewhere per-dialect: tests/ident.fold.test.ts, lineage.hops.test.ts's case-preserving hop);
+// this only pins what the identity RENDERS as, across the three fold-family shapes
+// tests/vocabulary-contract.test.ts uses for the union views.
+// ---------------------------------------------------------------------------
+describe("referencesAt — vocabulary: Occurrences.symbol is display text, not the fold key", () => {
+	const dialects: { dialect: Dialect; label: string }[] = [
+		{ dialect: "duckdb", label: "lower/lower" },
+		{ dialect: "snowflake", label: "upper/preserve" },
+		{ dialect: "postgres", label: "lower/preserve" },
+	];
+
+	for (const { dialect, label } of dialects) {
+		it(`${dialect} (${label}): an unquoted mixed-case column renders as WRITTEN`, () => {
+			const sql = "select Upper_Col from t";
+			const scopes = toScopes(sql, { dialect });
+			const occ = referencesAt(scopes, sql.indexOf("Upper_Col") + 1);
+			expect(occ?.symbol).toBe("Upper_Col");
+		});
+
+		it(`${dialect} (${label}): a quoted CTE name renders with delimiters stripped, case preserved`, () => {
+			const sql = 'with "Mixed_Cte" as (select a from t) select a from "Mixed_Cte"';
+			const scopes = toScopes(sql, { dialect });
+			const occ = referencesAt(scopes, sql.lastIndexOf("Mixed_Cte") + 1);
+			expect(occ?.symbol).toBe("Mixed_Cte"); // quotes stripped, mixed case kept verbatim
+			expect(occ?.kind).toBe("cte");
+		});
+	}
 });
