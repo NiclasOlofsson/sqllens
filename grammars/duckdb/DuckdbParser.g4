@@ -3954,7 +3954,13 @@ c_expr
    | aexprconst opt_indirection # c_expr_expr
    | plain_func_expr opt_indirection # c_expr_expr
    | columnref # c_expr_expr
-   | plsqlvariablename # c_expr_expr
+   // No bare `plsqlvariablename` (`:name`) alt here (unlike the shared postgres/redshift fork this
+   // grammar started from): real DuckDB v1.5.4 rejects `:name` as a general expression —
+   // `SELECT :x FROM t` -> "Parser Error: syntax error at or near \":\"" — engine-verified via
+   // temp_auto/duckdb-oracle/probe-params.mjs. `plsqlvariablename` (the parser rule wrapping the
+   // PLSQLVARIABLENAME token) still exists and is still referenced, but only from
+   // indirection_el's bracketed slice-bound alt below, where it un-fuses a lexer maximal-munch
+   // artifact, not a real bind-variable feature.
    | OPEN_PAREN a_expr_in_parens = a_expr CLOSE_PAREN opt_indirection # c_expr_expr
    | case_expr # c_expr_case
    // opt_indirection added in this fork: subscript/slice on a call result — array_value(1,2,3)[2]
@@ -4516,21 +4522,27 @@ indirection_el
    // to one TYPECAST token and never reaches the COLON alt above. begin?::step? recovers those.
    // It stays BELOW the plain `a_expr` index, so a genuine cast-index `l[x::INT]` (a valid typename
    // step-less) still reads as the index — pure acceptance widening (#13, functions/list.md#slicing).
-   // The plsqlvariablename alt: a bare-identifier END bound with a non-empty begin — `arr[1:hi]`,
-   // `arr[lo:hi]` — has no whitespace before the identifier, so the lexer's PLSQLVARIABLENAME rule
-   // (`:` + word chars, meant for psql/pgbench `:variable` interpolation,
-   // docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION — real corpus use:
-   // postgres/docs/parser/positive/dml/pgbench/1.sql, shared pg-family lexer) maximal-munches that
-   // COLON together with the identifier into one token before the parser ever sees a standalone
-   // COLON, the same way `::`/TYPECAST does above. Real array slicing accepts any expression as a
-   // bound (duckdb.org/docs/current/sql/functions/list.md#slicing); this alt un-fuses the token by
-   // requiring a MANDATORY begin bound, so it only ever matches this previously-unparseable shape —
-   // never the empty-begin `arr[:hi]` (still reads as a plain plsqlvariablename index, entangled
-   // with the pgbench reading, out of scope) — and an optional trailing `COLON opt_slice_bound?`
+   // The plsqlvariablename alt: a bare-identifier END bound — `arr[1:hi]`, `arr[lo:hi]`, and the
+   // empty-begin `arr[:hi]` — has no whitespace before the identifier, so the lexer's
+   // PLSQLVARIABLENAME rule (`:` + word chars, inherited from the shared pg-family lexer, where it
+   // means psql/pgbench `:variable` interpolation — docs.postgresql.org/current/app-psql.html
+   // #APP-PSQL-INTERPOLATION) maximal-munches that COLON together with the identifier into one
+   // token before the parser ever sees a standalone COLON, the same way `::`/TYPECAST does above.
+   // Real DuckDB array slicing accepts any expression as a bound
+   // (duckdb.org/docs/current/sql/functions/list.md#slicing), INCLUDING a bare identifier with
+   // either bound empty or filled — engine-verified against DuckDB v1.5.4 directly
+   // (temp_auto/duckdb-oracle/probe-slice.mjs, probe-slice2.mjs): `([1,2,3])[1:n]`, `[:n]`, and
+   // `[1:n:1]` all parse and evaluate. This alt un-fuses the token (the begin bound is OPTIONAL, to
+   // cover both `arr[1:hi]` and `arr[:hi]`), and an optional trailing `COLON opt_slice_bound?`
    // still recovers a numeric STEP after the fused end (`arr[1:hi:2]`). The symmetric STEP-slot
    // fusion (`arr[1:2:hi]`, a bare-identifier STEP) is NOT covered — steps are conventionally
-   // numeric strides, out of this fix's scope.
-   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)? | opt_slice_bound plsqlvariablename (COLON opt_slice_bound?)?) CLOSE_BRACKET
+   // numeric strides, out of this fix's scope. NOTE: this is the ONLY place in the duckdb grammar
+   // that still accepts a `:name`-shaped token — real DuckDB v1.5.4 REJECTS `:name` as a general
+   // bind-style expression (`SELECT :x FROM t` -> "Parser Error: syntax error at or near \":\"",
+   // engine-verified via temp_auto/duckdb-oracle/probe-params.mjs), so `plsqlvariablename` was
+   // removed from `identifier` and from `c_expr`'s bare alt (postgres-fork inheritance artifact,
+   // not a real DuckDB feature) and survives only fused inside a bracketed slice bound here.
+   | OPEN_BRACKET (a_expr | (opt_slice_bound | MINUS)? COLON (opt_slice_bound | MINUS)? (COLON opt_slice_bound?)? | (opt_slice_bound | MINUS)? TYPECAST (opt_slice_bound | MINUS)? | opt_slice_bound? plsqlvariablename (COLON opt_slice_bound?)?) CLOSE_BRACKET
    ;
 
 opt_slice_bound
@@ -4767,10 +4779,13 @@ bare_col_label
    ;
 
 identifier
+   // No `plsqlvariablename` alt here (unlike the shared postgres/redshift fork this grammar started
+   // from): a bare `:name` is not a valid DuckDB identifier anywhere — real DuckDB v1.5.4 rejects it
+   // at parse time (see the c_expr comment above); it survives only fused inside a bracketed slice
+   // bound, per indirection_el's comment.
    : Identifier opt_uescape?
    | QuotedIdentifier
    | UnicodeQuotedIdentifier
-   | plsqlvariablename
    | plsqlidentifier
    | plsql_unreserved_keyword
    ;

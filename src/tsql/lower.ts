@@ -850,8 +850,23 @@ function lowerExpression(node: ParserRuleContext): Expr {
 		case P.RULE_full_column_name:
 			return { kind: "column", parts: nameParts(node), partSpans: columnPartSpans(node), cst: node };
 		case P.RULE_primitive_expression:
-		case P.RULE_primitive_constant:
+		case P.RULE_primitive_constant: {
+			// LOCAL_ID (`@x` local, `@@x` system -- a single lexer token, distinguished by leading
+			// `@` count, learn.microsoft.com/en-us/sql/t-sql/language-elements/variables-transact-sql)
+			// is a session/local variable, not a literal; a bare `?` (PLACEHOLDER, nested one rule
+			// deeper via `primitive_constant -> parameter -> PLACEHOLDER`) is a caller-bound
+			// parameter marker. Everything else here (NULL/DEFAULT/string/numeric/money literals)
+			// stays a literal, unchanged.
+			const localId = directTerminal(node, P.LOCAL_ID);
+			if (localId) {
+				const text = localId.getText();
+				return text.startsWith("@@")
+					? { kind: "variable", text, name: text.slice(2), system: true, cst: node }
+					: { kind: "variable", text, name: text.slice(1), cst: node };
+			}
+			if (hasToken(node, P.PLACEHOLDER)) return { kind: "parameter", text: node.getText(), cst: node };
 			return { kind: "literal", text: node.getText(), cst: node };
+		}
 		case P.RULE_function_call:
 			return lowerFunction(node);
 		case P.RULE_case_expression:

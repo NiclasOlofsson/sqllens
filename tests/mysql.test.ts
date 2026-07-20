@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/mysql/lower.js";
 import { parseMysql } from "../src/mysql/parse.js";
+import { analyze } from "../src/api.js";
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { deriveSymbols } from "../src/symbols/symbols.js";
+import { referencesAt } from "../src/references/references.js";
 
 // MySQL is a new dialect: grammar forked from grammars-v4 sql/mysql/Positive-Technologies
 // (Kochurkin's split MySqlLexer/MySqlParser pair). Only parse() and lower() are
@@ -452,5 +457,114 @@ describe("Mysql 8.0.19+ query expressions", () => {
 		if (q.body.kind !== "setop") throw new Error("expected the inner chain folded as a setop");
 		expect(q.limit?.top).toMatchObject({ text: "1" });
 		expect(q.limit?.offset).toMatchObject({ text: "1" });
+	});
+});
+
+// `?` is MySQL's one documented prepared-statement placeholder
+// (dev.mysql.com/doc/refman/8.4/en/sql-prepared-statements.html: PREPARE ... FROM 'SELECT ...
+// WHERE id = ?'), also substituted by every connector at bind time. The grammar had NO token for
+// it at all — `SELECT ? FROM t` errored, and worse, `VALUES (?)` reported ZERO errors while error
+// recovery silently swallowed the token, yielding an empty projection list (a lossless
+// violation). `@x` / `@@version` are documented user/system variables
+// (dev.mysql.com/doc/refman/8.4/en/user-variables.html, .../using-system-variables.html) that
+// parsed fine but lowered as anonymous literals. This block pins the PLACEHOLDER token + the
+// `parameter`/`variable` IR lowering (src/ir/ir.ts).
+describe("Mysql parameter and variable references", () => {
+	it("lowers a bare `?` placeholder to a parameter node in SELECT position", () => {
+		const { body } = selectBody("SELECT ? FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect((body.projections[0].expr as { name?: string }).name).toBeUndefined();
+	});
+
+	it("lowers `?` to a parameter node in WHERE position", () => {
+		const { body } = selectBody("SELECT a FROM t WHERE a = ?");
+		expect(body.where).toMatchObject({ kind: "binary", op: "=" });
+		expect((body.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	// Regression pin for the audit's latent recovery bug: before the PLACEHOLDER token existed,
+	// `VALUES (?)` reported 0 syntax errors yet silently dropped the `?`, yielding an EMPTY
+	// projection list. It must now parse clean AND keep the placeholder as a real projection.
+	it("conserves the `?` in a VALUES row — the audit's silent-swallow regression", () => {
+		const { errors } = parseMysql("VALUES (?)");
+		expect(errors).toBe(0);
+		const { body } = selectBody("VALUES (?)");
+		expect(body.projections).toHaveLength(1); // NOT empty — the audit-era bug dropped it
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	// `functionArgs`/`functionArg` (the generic scalar-function call shape most functions use) admit
+	// `constant` directly, bypassing expressionAtom — a separate lowering fast path (lowerArg) that
+	// had its own un-fixed `constant` -> literal mapping. Pins that `?` gets the same parameter
+	// treatment inside a function call, not just in SELECT/WHERE/VALUES position.
+	it("lowers `?` to a parameter node as a scalar-function-call argument", () => {
+		const { body } = selectBody("SELECT UPPER(?) FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "function", name: "upper" });
+		const args = (body.projections[0].expr as { args?: unknown[] }).args;
+		expect(args?.[0]).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	it("lowers `@x` (LOCAL_ID) to a user variable node, sigil stripped, not a system variable", () => {
+		const { body } = selectBody("SELECT @x FROM t WHERE @x > 1");
+		expect(body.projections[0].expr).toMatchObject({ kind: "variable", text: "@x", name: "x" });
+		expect((body.projections[0].expr as { system?: boolean }).system).toBeUndefined();
+	});
+
+	it("lowers `@@version` (GLOBAL_ID) to a system variable node", () => {
+		const { body } = selectBody("SELECT @@version FROM t");
+		expect(body.projections[0].expr).toMatchObject({
+			kind: "variable",
+			text: "@@version",
+			name: "version",
+			system: true,
+		});
+	});
+
+	it("keeps the GLOBAL./SESSION. scope qualifier as part of the variable's name (using-system-variables.html)", () => {
+		const g = selectBody("SELECT @@GLOBAL.sql_mode FROM t").body;
+		expect(g.projections[0].expr).toMatchObject({
+			kind: "variable",
+			text: "@@GLOBAL.sql_mode",
+			name: "GLOBAL.sql_mode",
+			system: true,
+		});
+		const s = selectBody("SELECT @@SESSION.sql_mode FROM t").body;
+		expect(s.projections[0].expr).toMatchObject({
+			kind: "variable",
+			text: "@@SESSION.sql_mode",
+			name: "SESSION.sql_mode",
+			system: true,
+		});
+	});
+
+	it("fires no unknown-column diagnostic on a schema-attached analyze for any of these forms", () => {
+		const schema = new Schema({ t: { a: "int" } });
+		const { diagnostics } = analyze("SELECT ?, @x, @@version, a FROM t WHERE a = ? AND @x > 0", "mysql", {
+			schema,
+		});
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("deriveSymbols emits parameter/variable kinds, one Sym per occurrence", () => {
+		const scopes = resolveScopes(lower(parseMysql("SELECT ?, @x, @@version FROM t WHERE a = ?").tree), "mysql");
+		const syms = deriveSymbols(scopes).filter((s) => s.kind === "parameter" || s.kind === "variable");
+		expect(syms.map((s) => [s.kind, s.name])).toEqual([
+			["parameter", "?"],
+			["variable", "x"],
+			["variable", "version"],
+			["parameter", "?"],
+		]);
+		expect(syms.every((s) => s.modifiers.includes("reference"))).toBe(true);
+	});
+
+	it("referencesAt groups two `@x` occurrences and keys separately from an unrelated name", () => {
+		const sql = "SELECT @x FROM t WHERE @x > 1";
+		const scopes = resolveScopes(lower(parseMysql(sql).tree), "mysql");
+		const occ = referencesAt(scopes, sql.indexOf("@x"));
+		expect(occ).not.toBeNull();
+		expect(occ!.kind).toBe("variable");
+		expect(occ!.symbol).toBe("x");
+		expect(occ!.occurrences).toHaveLength(2);
+		expect(occ!.occurrences.every((o) => o.role === "reference")).toBe(true);
 	});
 });

@@ -889,7 +889,7 @@ function lowerExpr(node: ParserRuleContext): Expr {
 		case P.RULE_functionCall:
 			return lowerFunctionCall(node);
 		case P.RULE_constant:
-			return { kind: "literal", text: node.getText(), cst: node };
+			return lowerConstant(node);
 		case P.RULE_fullColumnName:
 			return columnRef(node);
 		case P.RULE_expressionOrDefault: {
@@ -899,6 +899,18 @@ function lowerExpr(node: ParserRuleContext): Expr {
 		default:
 			return otherExpr(node);
 	}
+}
+
+/** `constant`: a literal, EXCEPT the `?` prepared-statement placeholder
+ *  (dev.mysql.com/doc/refman/8.4/en/sql-prepared-statements.html) — a caller-bound parameter, not
+ *  a literal. Shared by every site that lowers a bare `constant` node (lowerExpr's direct
+ *  dispatch, constantExpressionAtom, and the generic functionArgs/functionArg fast path used by
+ *  most scalar function calls), so `?` gets the same treatment everywhere the grammar shapes a
+ *  constant. `cst` defaults to `node` itself; callers that lower a `constant` reached through an
+ *  outer expressionAtom pass that outer node instead, matching their existing span convention. */
+function lowerConstant(node: ParserRuleContext, cst: ParserRuleContext = node): Expr {
+	if (hasDirectToken(node, P.PLACEHOLDER)) return { kind: "parameter", text: node.getText(), cst };
+	return { kind: "literal", text: node.getText(), cst };
 }
 
 /** expression:
@@ -1045,9 +1057,11 @@ function lowerPredicate(node: ParserRuleContext): Expr {
 function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	const atoms = directChildrenOfRule(node, P.RULE_expressionAtom);
 
-	// constantExpressionAtom
+	// constantExpressionAtom. Bare `?`, so neither `name` nor `ordinal` is set on the resulting
+	// parameter node — MySQL's placeholder carries no positional/named identity of its own (see
+	// ir.ts's `parameter` doc comment).
 	const c = directChildrenOfRule(node, P.RULE_constant)[0];
-	if (c && atoms.length === 0) return { kind: "literal", text: c.getText(), cst: node };
+	if (c && atoms.length === 0) return lowerConstant(c, node);
 	// matchAgainstExpressionAtom: MATCH '(' cols ')' AGAINST '(' expr searchModifier? ')' — modelled as
 	// a function call so EVERY matched column and the against-expression contribute column refs (a MATCH
 	// atom has direct fullColumnName children, so this must run before the bare-column branch below).
@@ -1069,9 +1083,19 @@ function lowerExpressionAtom(node: ParserRuleContext): Expr {
 	// functionCallExpressionAtom
 	const fc = directChildrenOfRule(node, P.RULE_functionCall)[0];
 	if (fc && atoms.length === 0) return lowerFunctionCall(fc);
-	// mysqlVariableExpressionAtom
+	// mysqlVariableExpressionAtom: LOCAL_ID (`@x`, a user variable) or GLOBAL_ID (`@@version` /
+	// `@@GLOBAL.x` / `@@SESSION.x`, a system variable) — session/local variable references, not
+	// literals (dev.mysql.com/doc/refman/8.4/en/user-variables.html,
+	// .../using-system-variables.html). `name` strips only the sigil(s); a scope qualifier
+	// (`GLOBAL.` / `SESSION.`) stays part of the name, since it is part of the variable's path.
 	const mv = directChildrenOfRule(node, P.RULE_mysqlVariable)[0];
-	if (mv && atoms.length === 0) return { kind: "literal", text: mv.getText(), cst: node };
+	if (mv && atoms.length === 0) {
+		const text = mv.getText();
+		if (hasDirectToken(mv, P.GLOBAL_ID)) {
+			return { kind: "variable", text, name: text.slice(2), system: true, cst: node };
+		}
+		return { kind: "variable", text, name: text.slice(1), cst: node };
+	}
 
 	// existsExpressionAtom: EXISTS '(' subqueryBody ')'
 	if (hasDirectToken(node, P.EXISTS)) {
@@ -1243,7 +1267,7 @@ function directArgRuleChildren(node: ParserRuleContext): ParserRuleContext[] {
 function lowerArg(node: ParserRuleContext): Expr {
 	switch (node.ruleIndex) {
 		case P.RULE_constant:
-			return { kind: "literal", text: node.getText(), cst: node };
+			return lowerConstant(node);
 		case P.RULE_fullColumnName:
 			return columnRef(node);
 		case P.RULE_functionCall:

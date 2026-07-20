@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { analyze, parse } from "../src/index.js";
 import { lower } from "../src/trino/lower.js";
 import { parseTrino } from "../src/trino/parse.js";
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { deriveSymbols } from "../src/symbols/symbols.js";
+import type { SelectExpr } from "../src/ir/ir.js";
 
 // The Trino dialect over the FIRST-PARTY trinodb SqlBase.g4 (split in grammars/trino/, pinned
 // release 482). Feature probes doc-cited against trino.io/docs/current; the grammar itself needs
@@ -296,5 +300,50 @@ describe("trino — parse + lower onto the shared IR", () => {
 		for (const sql of broken) {
 			expect(() => analyze(sql, "trino"), sql).not.toThrow();
 		}
+	});
+});
+
+// `?` is Trino's only bind-parameter form (trino.io/docs/current/sql/execute.html) — the CST's
+// ParameterContext used to collapse to a hardcoded literal; this pins the `parameter` IR lowering
+// (src/ir/ir.ts). Trino has no documented `variable` (session/local) form of its own.
+function selectBody(sql: string): SelectExpr {
+	const { tree, errors } = parseTrino(sql);
+	expect(errors, sql).toBe(0);
+	const ir = lower(tree);
+	if (ir.body.kind !== "select") throw new Error(`expected a select body, got ${ir.body.kind}`);
+	return ir.body;
+}
+
+describe("trino parameter references", () => {
+	it("lowers `?` to a parameter node in SELECT and WHERE position, no name/ordinal", () => {
+		const body = selectBody("SELECT ? FROM t WHERE a = ?");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect((body.projections[0].expr as { name?: string }).name).toBeUndefined();
+		expect((body.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	it("fires no unknown-column diagnostic on a schema-attached analyze", () => {
+		const schema = new Schema({ t: { a: "bigint" } });
+		const { diagnostics } = analyze("SELECT ?, a FROM t WHERE a = ?", "trino", { schema });
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("as a call argument, is an unknown-typed operand: no false call diagnostic", () => {
+		const schema = new Schema({ t: { a: "bigint" } });
+		const { diagnostics } = analyze("SELECT abs(?) FROM t", "trino", { schema });
+		const kinds = diagnostics.map((d) => d.kind);
+		expect(kinds).not.toContain("wrong-arity");
+		expect(kinds).not.toContain("wrong-argument-type");
+	});
+
+	it("deriveSymbols emits a parameter kind, one Sym per occurrence", () => {
+		const { tree } = parseTrino("SELECT ?, ? FROM t");
+		const scopes = resolveScopes(lower(tree), "trino");
+		const syms = deriveSymbols(scopes).filter((s) => s.kind === "parameter");
+		expect(syms.map((s) => [s.kind, s.name])).toEqual([
+			["parameter", "?"],
+			["parameter", "?"],
+		]);
+		expect(syms.every((s) => s.modifiers.includes("reference"))).toBe(true);
 	});
 });

@@ -274,6 +274,19 @@ export type Expr =
 			cst: ParserRuleContext;
 	  }
 	| { kind: "literal"; text: string; cst: ParserRuleContext }
+	/** A caller-bound placeholder: `?`, `?3` (T-SQL/ODBC-style ordinal), `:name`, `$1`/`$name`
+	 *  (Postgres-family positional/named), BigQuery `@name`. `text` is the token exactly as
+	 *  written (lossless). `name` is set for a named form (the identifier, sigil stripped);
+	 *  `ordinal` for an explicitly numbered form (`$1` -> 1, `?3` -> 3); neither is set for a bare
+	 *  `?`, since its position is the CONSUMER's derivation, never fabricated here. A DIFFERENT
+	 *  concept from `variable` below (vendors document them separately): a parameter is bound by
+	 *  the CALLER at execution time, a variable is bound by the SCRIPT itself. */
+	| { kind: "parameter"; text: string; name?: string; ordinal?: number; cst: ParserRuleContext }
+	/** A session/local variable reference: T-SQL/MySQL `@x` (local), `@@version`-style system
+	 *  variables (`system: true`), BigQuery `@@x` (system, script-level). `name` is the
+	 *  identifier with its sigil(s) stripped; `text` is the token as written. See `parameter`
+	 *  above for why these stay separate node kinds. */
+	| { kind: "variable"; text: string; name: string; system?: true; cst: ParserRuleContext }
 	/** `*` or a qualified `t.*` — `qualifier` is the table parts for the latter. The optional
 	 *  modifiers transform the expansion (Snowflake `* EXCLUDE/ILIKE/RENAME/REPLACE …`,
 	 *  Databricks `* EXCEPT (…)`); they are applied by the qualify pass, which owns expansion. */

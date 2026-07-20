@@ -5181,7 +5181,25 @@ expr
     | expr NOT? REGEXP expr // REGEXP operator (RLIKE synonym): docs.snowflake.com/en/sql-reference/functions/regexp
     // LIKE ALL alongside ANY: docs.snowflake.com/en/sql-reference/functions/like
     | expr NOT? (LIKE | ILIKE) (ANY | ALL) LR_BRACKET expr (COMMA expr)* RR_BRACKET (ESCAPE expr)?
+    // A caller-bound placeholder as a general value expression (`SELECT ?`, `WHERE a > :x`,
+    // `VALUES (?)`). A PRIMARY (non-left-recursive) alternative: its unique lead tokens QMARK / COLON
+    // are only reachable at expr-start, so they never collide with the infix `expr COLON expr` variant
+    // path (that COLON is consumed by the left-recursive suffix, after a primary). Kept above the
+    // catch-all primitive_expression. docs.snowflake.com/en/sql-reference/bind-variables
+    | bind_variable
     | primitive_expression //Should be latest rule as it's nearly a catch all
+    ;
+
+// Caller-bound placeholders usable wherever a value expression is expected: a positional `?` or a
+// named `:name` bind variable (JDBC/ODBC/Python client style, and Snowflake Scripting bind variables).
+// A parameter is bound by the CALLER at execution time, distinct from a `$var` session variable
+// (which rides as a column via id_). docs.snowflake.com/en/sql-reference/bind-variables
+// `:name` here is the PREFIX form; the INFIX `expr COLON expr` (variant path `v:a`) is unaffected: its
+// COLON follows an expression, so this primary (COLON at expr-start) never competes with it. COLON_COLON
+// (`::` cast) is its own token, so `x::t` is never mis-lexed as `x : :t`.
+bind_variable
+    : QMARK
+    | COLON id_
     ;
 
 lambda_params

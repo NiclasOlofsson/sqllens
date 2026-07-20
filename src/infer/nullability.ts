@@ -57,9 +57,9 @@ export function inferNullability(expr: Expr, scope: Scope, schema: SchemaProvide
 		case "function":
 			return functionNullability(expr, scope, schema, ctx);
 		default:
-			// predicate / exists / subquery / subscript / star / lambda / with / other — no provable
-			// verdict without more machinery (three-valued predicates, scalar-subquery cardinality,
-			// nested-field nullability). NEVER-WRONG default.
+			// predicate / exists / subquery / subscript / star / lambda / with / parameter / variable /
+			// other: no provable verdict without more machinery (three-valued predicates, scalar-
+			// subquery cardinality, nested-field nullability, a DECLARE-typed variable). NEVER-WRONG default.
 			return "unknown";
 	}
 }

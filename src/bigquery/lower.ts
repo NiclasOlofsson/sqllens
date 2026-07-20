@@ -1519,9 +1519,11 @@ function lowerLeaf(node: ParserRuleContext): Expr {
 		case P.RULE_floating_point_literal:
 		case P.RULE_date_or_time_literal:
 		case P.RULE_range_literal:
-		case P.RULE_parameter_expression:
-		case P.RULE_system_variable_expression:
 			return { kind: "literal", text: node.getText(), cst: node };
+		case P.RULE_parameter_expression:
+			return lowerParameterExpression(node);
+		case P.RULE_system_variable_expression:
+			return lowerSystemVariableExpression(node);
 		case P.RULE_identifier:
 			return { kind: "column", parts: [identText(node)], partSpans: partSpansOf([node]), cst: node };
 		case P.RULE_path_expression:
@@ -1998,6 +2000,26 @@ function extractExpressionSubqueries(select: ParserRuleContext, fromQueries: Set
 }
 
 // --- name helpers ----------------------------------------------------------------
+
+/** parameter_expression: named_parameter_expression | QUESTION_SYMBOL
+ *  (cloud.google.com/bigquery/docs/parameterized-queries). Bare `?` carries no name/ordinal —
+ *  BigQuery's positional form has no explicit index, so `ordinal` stays a consumer derivation,
+ *  never fabricated here. `@name` resolves through named_parameter_expression's single
+ *  dot_identifier; reusing pathParts is safe since that rule holds exactly one dot_identifier
+ *  and no identifier head, so it degenerates to a one-element (dot-split, backtick-stripped) path. */
+function lowerParameterExpression(node: ParserRuleContext): Expr {
+	const named = firstOfRule(node, P.RULE_named_parameter_expression);
+	if (!named) return { kind: "parameter", text: node.getText(), cst: node };
+	return { kind: "parameter", text: node.getText(), name: pathParts(named).join("."), cst: node };
+}
+
+/** system_variable_expression: ATAT_SYMBOL dot_identifier (DOT_SYMBOL dot_identifier)* — a script-
+ *  level system variable (cloud.google.com/bigquery/docs/reference/system-variables), e.g.
+ *  `@@dataset_id` or the dotted `@@a.b`. `name` is the dotted path with the `@@` sigil stripped;
+ *  pathParts already handles this shape (no identifier head, one-or-more dot_identifier tail). */
+function lowerSystemVariableExpression(node: ParserRuleContext): Expr {
+	return { kind: "variable", text: node.getText(), name: pathParts(node).join("."), system: true, cst: node };
+}
 
 /** path_expression: identifier (DOT dot_identifier)* — the dotted parts. The head is an identifier;
  *  later parts are dot_identifier (which may be a reserved keyword after the dot). A single

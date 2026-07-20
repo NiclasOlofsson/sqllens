@@ -10,6 +10,7 @@ import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
 import { resolveColumnRef, resolveColumnSource } from "../sema/resolve.js";
+import { walk as walkScopeExprs } from "../scope/walk.js";
 import type { Span, SymbolKind } from "../symbols/symbols.js";
 
 // ---------------------------------------------------------------------------
@@ -86,6 +87,12 @@ function compute(scopes: ScopeTree, offset: number, schema: SchemaProvider, ast?
 		const id = columnIdentity(hit.scope, ref, schema);
 		const raw = hit.expr.parts[hit.expr.parts.length - 1] ?? "";
 		if (id) return collectColumn(scopes, id, schema, behaviorOf(scopes.root).displayName(raw));
+	}
+
+	// 1b. A parameter/variable occurrence, grouped document-wide by kind + (name ?? ordinal ??
+	//     text), never by position (a bare `?` fabricates no positional identity).
+	if (hit && (hit.expr.kind === "parameter" || hit.expr.kind === "variable")) {
+		return collectParam(scopes, hit.expr, ast);
 	}
 
 	// 2. Else: a NAME under the cursor (a CTE name, a source/table name, a source alias). Find the
@@ -196,6 +203,48 @@ function projectionMatches(id: Identity, scope: Scope, expr: Expr, schema: Schem
 	}
 	const ref: ColumnRef = { kind: "columnref", parts: expr.parts, clause: "projection", cst: expr.cst };
 	return columnMatches(id, scope, ref, schema);
+}
+
+// --- parameter / variable identity ------------------------------------------
+// Schema-free and scope-free BY DESIGN: a bind parameter/session variable is not a relational name,
+// so there is no source/origin to key on the way a column does. The DECIDED SHAPE keys document-wide
+// on kind + (name ?? ordinal ?? text): same-named `:x` in two statements is the same logical bind;
+// a bare `?` (no name/ordinal) groups by its own raw text rather than a fabricated position.
+
+/** The document-wide grouping key for a parameter/variable occurrence. */
+function paramKey(expr: Extract<Expr, { kind: "parameter" | "variable" }>): string {
+	const ident =
+		expr.kind === "parameter"
+			? (expr.name ?? (expr.ordinal !== undefined ? String(expr.ordinal) : expr.text))
+			: expr.name;
+	return `${expr.kind}:${ident}`;
+}
+
+/** Every occurrence sharing `expr`'s grouping key, across the whole tree, no declaration (a
+ *  DECLARE'd variable's own declaring Sym/link is a later per-dialect task). */
+function collectParam(
+	scopes: ScopeTree,
+	expr: Extract<Expr, { kind: "parameter" | "variable" }>,
+	ast?: QueryExpr,
+): Occurrences {
+	const key = paramKey(expr);
+	const occ: Occurrence[] = [];
+	const seen = new Set<string>();
+	for (const { node } of walkScopeExprs(scopes, ast)) {
+		if (node.kind !== "parameter" && node.kind !== "variable") continue;
+		if (paramKey(node) !== key) continue;
+		const span = spanOf(node.cst);
+		const spanKeyStr = spanKey(span) + "reference";
+		if (seen.has(spanKeyStr)) continue;
+		seen.add(spanKeyStr);
+		occ.push({ span, role: "reference" });
+	}
+	return {
+		symbol: expr.name ?? expr.text,
+		kind: expr.kind,
+		declaration: undefined,
+		occurrences: occ,
+	};
 }
 
 // --- name (CTE / source / alias) identity ----------------------------------

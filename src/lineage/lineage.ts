@@ -209,7 +209,7 @@ function exprOrigins(expr: Expr, scope: Scope, schema: SchemaProvider, seen: Set
 		case "exists":
 			return subqueryOrigins(expr.query, schema, seen, scope.dialect);
 		default:
-			return []; // literal / star / other
+			return []; // literal / star / parameter / variable / other: no base-table origin
 	}
 }
 

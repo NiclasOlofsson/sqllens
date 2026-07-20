@@ -950,7 +950,9 @@ function lowerValue(ve: ValueExpressionContext, ctx: Ctx): Expr {
 
 function lowerPrimary(pe: PrimaryExpressionContext, ctx: Ctx): Expr {
 	if (pe instanceof LiteralsContext) return { kind: "literal", text: pe.getText(), cst: pe };
-	if (pe instanceof ParameterContext) return { kind: "literal", text: "?", cst: pe };
+	// `?` is Trino's only bind-parameter form (trino.io/docs/current/sql/execute.html); the CST
+	// gives no ordinal, so this stays a bare parameter (the consumer's own derivation).
+	if (pe instanceof ParameterContext) return { kind: "parameter", text: "?", cst: pe };
 	if (pe instanceof PositionContext) {
 		return fn(
 			pe,

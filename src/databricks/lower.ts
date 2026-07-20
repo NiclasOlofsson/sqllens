@@ -17,7 +17,9 @@ import {
 	LambdaContext,
 	LogicalBinaryContext,
 	LogicalNotContext,
+	NamedParameterLiteralContext,
 	ParenthesizedExpressionContext,
+	PosParameterLiteralContext,
 	PredicatedContext,
 	PrimaryExpressionContext,
 	RowConstructorContext,
@@ -1085,7 +1087,7 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	if (node instanceof StarContext) {
 		return { kind: "star", qualifier: starQualifier(node), exclude: starExclude(node), cst: node };
 	}
-	if (node instanceof ConstantDefaultContext) return { kind: "literal", text: node.getText(), cst: node };
+	if (node instanceof ConstantDefaultContext) return lowerConstant(node);
 	if (node instanceof FunctionCallContext) {
 		// A bare `IDENTIFIER('c1')` parses ambiguously as a call to a function literally named
 		// IDENTIFIER (see identifierClauseParts) — resolve it to the column it names before
@@ -1208,6 +1210,24 @@ function lowerExpression(node: ParserRuleContext): Expr {
 	// recurse into the single expression child if that's all there is.
 	const sole = soleExprChild(node);
 	return sole ? lowerExpression(sole) : otherExpr(node);
+}
+
+/** `constant` (dispatched through its `#constantDefault` wrapper) — every alt but the two bind-
+ *  parameter markers stays a plain literal, as before. `?` -> parameter (no name/ordinal, per
+ *  docs.databricks.com/en/sql/language-manual/sql-ref-parameter-marker.html); `:name` -> parameter
+ *  with the leading `:` stripped (the identifier keeps its own delimiters as written, matching this
+ *  dialect's keep-not-strip convention). `IDENTIFIER(:p)` never reaches here — it's a function-call
+ *  shape handled earlier in lowerExpression. */
+function lowerConstant(node: ConstantDefaultContext): Expr {
+	const constant = node.constant();
+	if (constant instanceof PosParameterLiteralContext) {
+		return { kind: "parameter", text: node.getText(), cst: node };
+	}
+	if (constant instanceof NamedParameterLiteralContext) {
+		const name = constant.namedParameterMarker().simpleIdentifier().getText();
+		return { kind: "parameter", text: node.getText(), name, cst: node };
+	}
+	return { kind: "literal", text: node.getText(), cst: node };
 }
 
 /** Lower a `valueExpression predicate` (PredicatedContext) into a typed predicate Expr. */

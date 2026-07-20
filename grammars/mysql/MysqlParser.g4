@@ -2313,6 +2313,11 @@ constant
     // on dev.mysql.com/doc/refman/8.4/en/cast-functions.html. Upstream never modelled them.
     | (DATE | TIME | TIMESTAMP) stringLiteral
     | NOT? nullLiteral = (NULL_LITERAL | NULL_SPEC_LITERAL)
+    // The `?` prepared-statement placeholder, MySQL's one documented parameter marker
+    // (dev.mysql.com/doc/refman/8.4/en/sql-prepared-statements.html). Wired into `constant`
+    // (not a separate expressionAtom alternative) so it lands anywhere a literal is legal —
+    // including expressionOrDefault's VALUES (...) row constructors.
+    | PLACEHOLDER
     ;
 
 //    Data Types

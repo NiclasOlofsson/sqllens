@@ -1321,10 +1321,23 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 		const args = list ? directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr) : [];
 		return { kind: "function", name: "grouping", args, aggregate: false, distinct: false, cst: node };
 	}
-	// PARAM ($1) / plsqlvariablename — a bind parameter / variable; not a column reference.
-	if (hasDirectToken(node, P.PARAM)) return { kind: "literal", text: node.getText(), cst: node };
+	// PARAM ($1) opt_indirection — a caller-bound positional bind parameter (`text` keeps any
+	// trailing indirection as-written; the ordinal comes from the PARAM token itself, always this
+	// alt's first child, since opt_indirection carries no ordinal of its own).
+	if (hasDirectToken(node, P.PARAM)) {
+		const paramText = node.getChild(0)!.getText();
+		return { kind: "parameter", text: node.getText(), ordinal: Number(paramText.slice(1)), cst: node };
+	}
+	// plsqlvariablename (`:name`) direct alt: unreachable for a bare `:name` in practice — columnref's
+	// `colid -> identifier -> plsqlvariablename` reduction (see lowerColumnref) is a strict superset
+	// of this alt and wins ANTLR's ambiguity resolution — but kept correct rather than left dead-wrong.
+	// Same psql/pgbench CLIENT-side interpolation as lowerColumnref (inherited from the Postgres fork),
+	// not a server-side bind: docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION.
 	const plsqlvar = directChildrenOfRule(node, P.RULE_plsqlvariablename)[0];
-	if (plsqlvar) return { kind: "column", parts: [plsqlvar.getText()], cst: node };
+	if (plsqlvar) {
+		const text = plsqlvar.getText();
+		return { kind: "parameter", text, name: text.slice(1), cst: node };
+	}
 	// row constructors / OVERLAPS — not modelled structurally.
 	const exprs = collectOfRule(node, P.RULE_a_expr).map(lowerExpr);
 	if (exprs.length)
@@ -1332,11 +1345,26 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 	return otherExpr(node);
 }
 
-/** columnref: colid indirection?  — colid is the head; indirection adds .attr / .* / [idx]. */
+/** columnref: colid indirection?  — colid is the head; indirection adds .attr / .* / [idx].
+ *
+ * A bare `:name` (PLSQLVARIABLENAME) reduces through `colid -> identifier -> plsqlvariablename`
+ * (see the `identifier` grammar rule, inherited from the Postgres fork), so it parses AS a
+ * columnref, not via c_expr's dedicated (unreachable-in-practice) `plsqlvariablename` alt — this
+ * is where the false unknown-column diagnostic actually fired. It's psql/pgbench CLIENT-side
+ * variable interpolation, not a server-side bind:
+ * docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION. A bare reference (no further
+ * indirection) lowers to a parameter node instead of a column. */
 function lowerColumnref(node: ParserRuleContext): Expr {
 	const colid = directChildrenOfRule(node, P.RULE_colid)[0];
-	const head = colid ? textOf(colid) : node.getText();
 	const ind = directChildrenOfRule(node, P.RULE_indirection)[0];
+	if (!ind && colid) {
+		const plsqlvar = collectOfRule(colid, P.RULE_plsqlvariablename)[0];
+		if (plsqlvar) {
+			const text = plsqlvar.getText();
+			return { kind: "parameter", text, name: text.slice(1), cst: node };
+		}
+	}
+	const head = colid ? textOf(colid) : node.getText();
 	const base: Expr = { kind: "column", parts: [head], cst: node };
 	const expr = ind ? applyIndirection(base, ind, node) : base;
 	if (expr.kind !== "column") return expr;

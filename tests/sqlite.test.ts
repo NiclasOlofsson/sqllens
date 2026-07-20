@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { lower } from "../src/sqlite/lower.js";
 import { parseSqlite } from "../src/sqlite/parse.js";
+import { analyze } from "../src/api.js";
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { deriveSymbols } from "../src/symbols/symbols.js";
+import { referencesAt } from "../src/references/references.js";
 
 // SQLite is a new dialect: grammar forked from grammars-v4 sql/sqlite (Martin Mirchev's
 // precedence-cascade expr variant). Only parse() and lower() are SQLite-specific — the
@@ -222,5 +227,83 @@ describe("Sqlite lower -> IR", () => {
 		for (const sql of ["SELECT", "SELECT FROM WHERE", "SELECT a FROM", "WITH x AS (", ")(;;", ""]) {
 			expect(() => lower(parseSqlite(sql).tree)).not.toThrow();
 		}
+	});
+});
+
+// BIND_PARAMETER (grammars/sqlite/SQLiteLexer.g4: '?' DIGIT* | [:@$] IDENTIFIER) — every spelling
+// is a caller-bound placeholder, bindable via the C API (sqlite.org/lang_expr.html#varparam), so
+// all five lower to `parameter`, never `variable`. It used to collapse into an anonymous literal;
+// this pins the IR shape (src/ir/ir.ts). The doc's Tcl-only `$AAAA` extension (a `::`-separated
+// path, an optional `(...)` suffix) is NOT reachable through our grammar: probed directly, `SELECT
+// $name::sub` and `SELECT $name(1)` both fail to parse ("mismatched input ... expecting <EOF>"),
+// since BIND_PARAMETER's `$` alt only ever consumes a single IDENTIFIER. Only the plain identifier
+// form is exercised here.
+describe("Sqlite parameter references", () => {
+	it("lowers a bare `?` to a parameter node in SELECT and WHERE position, no name/ordinal", () => {
+		const { body } = selectBody("SELECT ? FROM t WHERE a = ?");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect((body.projections[0].expr as { name?: string }).name).toBeUndefined();
+		expect((body.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	it("lowers `?3` to a parameter node carrying its explicit ordinal", () => {
+		const { body } = selectBody("SELECT ?3 FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?3", ordinal: 3 });
+	});
+
+	it("lowers `:name` / `@name` / `$name` to a named parameter, sigil stripped", () => {
+		const { body } = selectBody("SELECT :who, @who, $who FROM t");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: ":who", name: "who" });
+		expect(body.projections[1].expr).toMatchObject({ kind: "parameter", text: "@who", name: "who" });
+		expect(body.projections[2].expr).toMatchObject({ kind: "parameter", text: "$who", name: "who" });
+	});
+
+	it("lowers `:name` to a named parameter node in WHERE position", () => {
+		const { body } = selectBody("SELECT a FROM t WHERE a = :who");
+		expect((body.where as { right?: unknown }).right).toMatchObject({
+			kind: "parameter",
+			text: ":who",
+			name: "who",
+		});
+	});
+
+	it("fires no unknown-column diagnostic on a schema-attached analyze for any of these forms", () => {
+		const schema = new Schema({ t: { a: "integer", b: "text" } });
+		const { diagnostics } = analyze("SELECT ?, ?3, :who, @who, $who, a FROM t WHERE a = ? AND b = :who", "sqlite", {
+			schema,
+		});
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("as a call argument, is an unknown-typed operand: no false call diagnostic", () => {
+		const schema = new Schema({ t: { a: "integer" } });
+		const { diagnostics } = analyze("SELECT abs(?), abs(:x) FROM t", "sqlite", { schema });
+		const kinds = diagnostics.map((d) => d.kind);
+		expect(kinds).not.toContain("wrong-arity");
+		expect(kinds).not.toContain("wrong-argument-type");
+	});
+
+	it("deriveSymbols emits parameter kinds, one Sym per occurrence", () => {
+		const scopes = resolveScopes(lower(parseSqlite("SELECT ?, ?3, :who, @x, $x FROM t").tree), "sqlite");
+		const syms = deriveSymbols(scopes).filter((s) => s.kind === "parameter");
+		expect(syms.map((s) => [s.kind, s.name])).toEqual([
+			["parameter", "?"],
+			["parameter", "?3"],
+			["parameter", "who"],
+			["parameter", "x"],
+			["parameter", "x"],
+		]);
+		expect(syms.every((s) => s.modifiers.includes("reference"))).toBe(true);
+	});
+
+	it("referencesAt groups two `:x` occurrences and keys separately from an unrelated name", () => {
+		const sql = "SELECT :x FROM t WHERE a = :x AND b = :y";
+		const scopes = resolveScopes(lower(parseSqlite(sql).tree), "sqlite");
+		const occ = referencesAt(scopes, sql.indexOf(":x"));
+		expect(occ).not.toBeNull();
+		expect(occ!.kind).toBe("parameter");
+		expect(occ!.symbol).toBe("x");
+		expect(occ!.occurrences).toHaveLength(2);
+		expect(occ!.occurrences.every((o) => o.role === "reference")).toBe(true);
 	});
 });

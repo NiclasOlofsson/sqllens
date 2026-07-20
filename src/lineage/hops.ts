@@ -519,7 +519,7 @@ function childExprs(expr: Expr): Expr[] {
 		case "star":
 			return expr.replace?.map((r) => r.expr) ?? [];
 		default:
-			return []; // column / literal / subquery / exists / other — leaves here
+			return []; // column / literal / parameter / variable / subquery / exists / other: leaves here
 	}
 }
 

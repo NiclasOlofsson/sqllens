@@ -661,3 +661,76 @@ describe("BigQuery lowerExpr cst invariant (task 4 Step 5)", () => {
 		assertRealCstEverywhere(ir, "query", new Set());
 	});
 });
+
+// `?` and `@name` are BigQuery's caller-bound query parameters
+// (cloud.google.com/bigquery/docs/parameterized-queries); `@@name` / `@@a.b` are script-level
+// system variables (cloud.google.com/bigquery/docs/reference/system-variables). The grammar routes
+// them through three distinct rules (parameter_expression / named_parameter_expression /
+// system_variable_expression) that used to collapse into an anonymous literal — this pins the
+// `parameter`/`variable` IR lowering (src/ir/ir.ts).
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { deriveSymbols } from "../src/symbols/symbols.js";
+import { analyze } from "../src/index.js";
+
+describe("BigQuery parameter and variable references", () => {
+	it("lowers a bare `?` to a parameter node in SELECT and WHERE position, no name/ordinal", () => {
+		const b = q("SELECT ? FROM t WHERE a = ?");
+		expect(b.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect((b.projections[0].expr as { name?: string }).name).toBeUndefined();
+		expect((b.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	it("lowers `@name` to a named parameter node in SELECT and WHERE position", () => {
+		const b = q("SELECT @who FROM t WHERE a = @who");
+		expect(b.projections[0].expr).toMatchObject({ kind: "parameter", text: "@who", name: "who" });
+		expect((b.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "@who", name: "who" });
+	});
+
+	it("lowers `@@name` to a system variable node", () => {
+		const b = q("SELECT @@dataset_id FROM t WHERE a = @@dataset_id");
+		expect(b.projections[0].expr).toMatchObject({
+			kind: "variable",
+			text: "@@dataset_id",
+			name: "dataset_id",
+			system: true,
+		});
+		expect((b.where as { right?: unknown }).right).toMatchObject({
+			kind: "variable",
+			name: "dataset_id",
+			system: true,
+		});
+	});
+
+	it("keeps a dotted `@@a.b` system variable path joined in `name`", () => {
+		const b = q("SELECT @@a.b FROM t");
+		expect(b.projections[0].expr).toMatchObject({ kind: "variable", text: "@@a.b", name: "a.b", system: true });
+	});
+
+	it("fires no unknown-column diagnostic on a schema-attached analyze for any of these forms", () => {
+		const schema = new Schema({ t: { a: "int64", b: "string" } });
+		const { diagnostics } = analyze("SELECT ?, @who, @@dataset_id, @@a.b, a FROM t WHERE a = ? AND b = @who", "bigquery", {
+			schema,
+		});
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("as a call argument, is an unknown-typed operand: curated ABS's numeric check stays silent", () => {
+		const schema = new Schema({ t: { a: "int64" } });
+		const { diagnostics } = analyze("SELECT ABS(?), ABS(@x) FROM t", "bigquery", { schema });
+		const kinds = diagnostics.map((d) => d.kind);
+		expect(kinds).not.toContain("wrong-arity");
+		expect(kinds).not.toContain("wrong-argument-type");
+	});
+
+	it("deriveSymbols emits parameter/variable kinds, one Sym per occurrence", () => {
+		const scopes = resolveScopes(query("SELECT ?, @who, @@dataset_id FROM t"), "bigquery");
+		const syms = deriveSymbols(scopes).filter((s) => s.kind === "parameter" || s.kind === "variable");
+		expect(syms.map((s) => [s.kind, s.name])).toEqual([
+			["parameter", "?"],
+			["parameter", "who"],
+			["variable", "dataset_id"],
+		]);
+		expect(syms.every((s) => s.modifiers.includes("reference"))).toBe(true);
+	});
+});

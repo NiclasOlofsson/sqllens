@@ -663,7 +663,7 @@ function lowerUnary(node: ParserRuleContext): Expr {
 function lowerExprBase(node: ParserRuleContext): Expr {
 	const lit = directChildrenOfRule(node, P.RULE_literal_value)[0];
 	if (lit) return { kind: "literal", text: lit.getText(), cst: node };
-	if (hasDirectToken(node, P.BIND_PARAMETER)) return { kind: "literal", text: node.getText(), cst: node };
+	if (hasDirectToken(node, P.BIND_PARAMETER)) return lowerBindParameter(node);
 
 	// (schema_name '.')? table_name '.' column_name — a qualified column reference.
 	const colName = directChildrenOfRule(node, P.RULE_column_name)[0];
@@ -697,6 +697,23 @@ function lowerExprBase(node: ParserRuleContext): Expr {
 	const rec = directChildrenOfRule(node, P.RULE_expr_recursive)[0];
 	if (rec) return lowerExprRecursive(rec);
 	return otherExpr(node); // raise_function, or an unmodelled shape — columns recovered from the CST
+}
+
+/** BIND_PARAMETER: '?' DIGIT* | [:@$] IDENTIFIER (grammars/sqlite/SQLiteLexer.g4). All five spellings
+ *  are caller-bound (bindable via the C API — sqlite.org/lang_expr.html#varparam), never a `variable`:
+ *  bare `?` -> parameter (no name/ordinal); `?NNN` -> ordinal NNN; `:name`/`@name`/`$name` -> name with
+ *  exactly one leading sigil stripped (lossless: the raw IDENTIFIER text, quoting included, survives
+ *  verbatim in `name`, matching this dialect's keep-delimiters convention elsewhere).
+ *  The doc's Tcl-only `$AAAA` extension (a `::`-separated path, an optional `(...)` suffix) is NOT
+ *  reachable here: our BIND_PARAMETER token is `[:@$] IDENTIFIER` with no such suffix, so anything
+ *  past the identifier lexes as separate tokens and the statement fails to parse — verified by probe
+ *  (`$name::sub` / `$name(1)` both error "mismatched input ... expecting <EOF>"). Since a grammar
+ *  change is out of scope for this task, only the plain identifier form is ever seen here. */
+function lowerBindParameter(node: ParserRuleContext): Expr {
+	const text = node.getText();
+	if (text === "?") return { kind: "parameter", text, cst: node };
+	if (text[0] === "?") return { kind: "parameter", text, ordinal: Number(text.slice(1)), cst: node };
+	return { kind: "parameter", text, name: text.slice(1), cst: node };
 }
 
 /** expr_recursive:

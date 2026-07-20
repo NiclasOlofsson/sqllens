@@ -107,6 +107,61 @@ describe("T-SQL lower -> IR", () => {
 	});
 });
 
+// The collapsed primitive_expression/primitive_constant case used to lower `@x`, `@@sysvar`, and
+// `?` all to one indistinguishable `literal` node. Split per the parameter/variable IR (ir.ts,
+// tests/parameter-ir.test.ts): LOCAL_ID is a session/local variable (double-`@` = system), a bare
+// `?` is a caller-bound parameter marker. Everything else in the collapsed case (NULL/DEFAULT/
+// string/numeric/money literals) is untouched.
+describe("T-SQL lower -> IR: parameter/variable split", () => {
+	it("lowers a local variable `@x` to a variable node", () => {
+		const { q } = ir("SELECT @x");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.projections[0].expr).toMatchObject({ kind: "variable", text: "@x", name: "x" });
+		expect(q.body.projections[0].expr).not.toHaveProperty("system");
+	});
+
+	it("lowers a system variable `@@version` to a variable node with system: true", () => {
+		const { q } = ir("SELECT @@version");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.projections[0].expr).toMatchObject({
+			kind: "variable",
+			text: "@@version",
+			name: "version",
+			system: true,
+		});
+	});
+
+	it("lowers a bare `?` to a parameter node", () => {
+		const { q } = ir("SELECT ?");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect(q.body.projections[0].expr).not.toHaveProperty("name");
+		expect(q.body.projections[0].expr).not.toHaveProperty("ordinal");
+	});
+
+	it("leaves other primitive_expression/primitive_constant forms as literals", () => {
+		const { q } = ir("SELECT 1, 1.5, 'a', NULL, DEFAULT, $5.00");
+		if (q.body.kind !== "select") throw new Error("select");
+		expect(q.body.projections.map((p) => p.expr)).toEqual(
+			["1", "1.5", "'a'", "NULL", "DEFAULT", "$5.00"].map((text) =>
+				expect.objectContaining({ kind: "literal", text }),
+			),
+		);
+	});
+
+	it("a variable used as a function argument lowers to a variable node, not a literal", () => {
+		const { q } = ir("SELECT f(@x, @@rowcount, ?)");
+		if (q.body.kind !== "select") throw new Error("select");
+		const call = q.body.projections[0].expr;
+		if (call.kind !== "function") throw new Error("function");
+		expect(call.args).toEqual([
+			expect.objectContaining({ kind: "variable", name: "x" }),
+			expect.objectContaining({ kind: "variable", name: "rowcount", system: true }),
+			expect.objectContaining({ kind: "parameter", text: "?" }),
+		]);
+	});
+});
+
 describe("T-SQL flows through the dialect-agnostic semantic layer", () => {
 	it("resolveScopes builds sources from the T-SQL IR", () => {
 		const tree = scopes("SELECT a FROM t");

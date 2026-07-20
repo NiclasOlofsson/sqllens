@@ -1279,6 +1279,10 @@ SINGLE_QUOTE_SYMB  : '\'';
 DOUBLE_QUOTE_SYMB  : '"';
 REVERSE_QUOTE_SYMB : '`';
 COLON_SYMB         : ':';
+// The `?` prepared-statement placeholder, MySQL's one documented parameter marker: PREPARE ...
+// FROM 'SELECT ... WHERE id = ?' (dev.mysql.com/doc/refman/8.4/en/sql-prepared-statements.html).
+// Also the marker every MySQL connector (JDBC, mysqlclient, …) substitutes at bind time.
+PLACEHOLDER        : '?';
 
 fragment QUOTE_SYMB: SINGLE_QUOTE_SYMB | DOUBLE_QUOTE_SYMB | REVERSE_QUOTE_SYMB;
 

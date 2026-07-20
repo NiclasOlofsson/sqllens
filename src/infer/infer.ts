@@ -85,6 +85,12 @@ export function inferType(expr: Expr, scope: Scope, schema: SchemaProvider, ctx:
 			// ZetaSQL WITH-expr evaluates to its result. Bindings are not substituted, so a binding
 			// reference inside `result` types as a plain column ref (the documented lowering boundary).
 			return inferType(expr.result, scope, schema, ctx);
+		case "parameter":
+		case "variable":
+			// A bare document carries no type for a caller-bound placeholder or a session/local
+			// variable, never guessed. SEAM: T-SQL's `DECLARE @x int` gives a variable a real
+			// declared type; that flow-sensitive lookup is a later per-dialect task, not this one.
+			return UNKNOWN;
 		default:
 			// star / lambda (typed only inside its higher-order function) / other.
 			return UNKNOWN;

@@ -283,6 +283,14 @@ cited file carries the full rationale.
   flipping string-literal lexing for the rest of the session is context-sensitive lexing, out of
   reach for an ANTLR lexer without a mode hack tied to statement execution order (entry in
   `tests/tsql-corpus-known-bad.ts`).
+- postgres/redshift empty-begin slices with a named bound (`arr[:hi]`) keep their bind-variable
+  reading (ruled 2026-07-20): the `:hi` token is lexically identical to a psql/pgbench bind
+  variable used as an index, which is real, corpus-attested usage; re-reading it as a slice bound
+  would flip an already-parsing construct. `arr[lo:hi]` (any begin bound present) parses as a
+  slice; `arr[:(hi)]` is the workaround. Step-slot fusion (`arr[1:2:hi]`) is likewise unmodeled.
+  DuckDB is NOT in this entry: real DuckDB v1.5.4 has no `:name` bind form at all (engine-verified
+  rejection), so the parameter wave removed it there and duckdb `arr[:hi]` now parses as the slice
+  it is (engine-verified accepted).
 - Recovery-split exemption in `tests/broken-batch.test.ts`: tsql/redshift/postgres/duckdb
   are exempt from the phantom-batch assertion (a recovery fragment is provably
   indistinguishable from two real statements in those grammars).

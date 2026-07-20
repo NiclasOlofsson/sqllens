@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parse, resolveScopes, Schema } from "../src/index.js";
+import { deriveSymbols, parse, qualify, referencesAt, resolveScopes, Schema } from "../src/index.js";
 import { inferType } from "../src/infer/infer.js";
 import { lower } from "../src/postgres/lower.js";
 import { parsePostgres } from "../src/postgres/parse.js";
+import type { SelectExpr } from "../src/ir/ir.js";
 
 // The PostgreSQL grammar additions made in this fork, each doc-cited at its grammar rule and
 // asserted here so a regen/regression is caught: WITH RECURSIVE SEARCH/CYCLE (§7.8.2), the
@@ -210,18 +211,20 @@ describe("postgres subscript slicing — position-aware begin/end (#lossless)", 
 		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "lo", "hi"]));
 	});
 
-	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed — deliberately. The fused token here
-	// is indistinguishable at the parser level from a bind-variable used as a plain index (the
-	// pgbench reading), since there's no preceding bound to disambiguate on. Flipping this reading
-	// would change what an ALREADY-PARSING construct means, not just widen acceptance — a semantic
-	// priority call between two independently-real features, left to a human decision rather than
-	// resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is the
-	// bind-variable-shaped column ":hi" (colon retained) — NOT a slice.
+	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed as a slice — deliberately. The fused
+	// token here is indistinguishable at the parser level from a bind-variable used as a plain index
+	// (the pgbench reading), since there's no preceding bound to disambiguate on. Flipping this
+	// reading would change what an ALREADY-PARSING construct means, not just widen acceptance — a
+	// semantic priority call between two independently-real features, left to a human decision rather
+	// than resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is
+	// the bind variable `:hi` — NOT a slice — now lowered as a `parameter` node (not a column), since
+	// psql/pgbench `:name` interpolation is a caller-bound placeholder, not a column reference
+	// (docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION).
 	it("x[:hi] — still the pre-existing plsqlvariablename-index reading, not fixed (see task report)", () => {
 		expect(shapeOf("SELECT arr[:hi] FROM t;")).toEqual({
 			kind: "subscript",
 			base: arr,
-			index: { kind: "column", parts: [":hi"] },
+			index: { kind: "parameter", text: ":hi", name: "hi" },
 		});
 	});
 
@@ -351,5 +354,55 @@ describe("postgres c_expr — function applications resolve under SLL (no LL fal
 		bad("SELECT count(*) '5'"); // STAR arg — never a typed literal
 		bad("SELECT f() '5'"); // empty arg — never a typed literal
 		bad("SELECT f(a, VARIADIC b) '5'"); // VARIADIC arg — never a typed literal
+	});
+});
+
+// `:name` (PLSQLVARIABLENAME) is psql/pgbench CLIENT-side variable interpolation, not a server-side
+// bind parameter (docs.postgresql.org/current/app-psql.html#APP-PSQL-INTERPOLATION); `$1` is a real
+// server-side positional bind parameter. Both previously lowered wrong — `:name` as a plain column
+// (firing a false unknown-column diagnostic on valid pgbench SQL, e.g.
+// postgres/docs/parser/positive/dml/pgbench/1.sql's `abalance + :delta`), `$1` as a literal — so
+// neither participated in the shared parameter/variable consumers (qualify, symbols, references;
+// see tests/parameter-ir.test.ts). Both now lower to the `parameter` IR node.
+describe("postgres parameter IR — :name / $1", () => {
+	function select(sql: string): SelectExpr {
+		const body = lower(parsePostgres(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body;
+	}
+
+	it(":x lowers to a parameter node in both a SELECT projection and a WHERE comparison", () => {
+		const body = select("SELECT :x FROM t WHERE a > :x");
+		expect(body.projections[0]?.expr).toMatchObject({ kind: "parameter", text: ":x", name: "x" });
+		expect(body.where).toMatchObject({ kind: "binary", right: { kind: "parameter", text: ":x", name: "x" } });
+	});
+
+	it("$1 lowers to a parameter node with its ordinal, in both a projection and a WHERE comparison", () => {
+		const body = select("SELECT $1 FROM t WHERE a > $2");
+		expect(body.projections[0]?.expr).toMatchObject({ kind: "parameter", text: "$1", ordinal: 1 });
+		expect(body.where).toMatchObject({ kind: "binary", right: { kind: "parameter", text: "$2", ordinal: 2 } });
+	});
+
+	it("a schema-attached qualify fires zero unknown-column diagnostics for :x used twice", () => {
+		const scopes = resolveScopes(parse("SELECT :x FROM t WHERE a > :x", "postgres").ast, "postgres");
+		expect(qualify(scopes, new Schema({ t: { a: "int" } })).diagnostics).toEqual([]);
+	});
+
+	it("deriveSymbols emits a parameter symbol, not a phantom column, for :x", () => {
+		const scopes = resolveScopes(parse("SELECT :x FROM t WHERE a > :x", "postgres").ast, "postgres");
+		const syms = deriveSymbols(scopes, new Schema({ t: { a: "int" } }));
+		const paramSyms = syms.filter((s) => s.name === "x");
+		expect(paramSyms).toHaveLength(2);
+		for (const s of paramSyms) expect(s.kind).toBe("parameter");
+		expect(syms.some((s) => s.kind === "column" && s.name === "x")).toBe(false);
+	});
+
+	it("referencesAt groups the two :x occurrences", () => {
+		const sql = "SELECT :x FROM t WHERE a > :x";
+		const scopes = resolveScopes(parse(sql, "postgres").ast, "postgres");
+		const occ = referencesAt(scopes, sql.indexOf(":x"));
+		expect(occ).not.toBeNull();
+		expect(occ!.kind).toBe("parameter");
+		expect(occ!.occurrences).toHaveLength(2);
 	});
 });

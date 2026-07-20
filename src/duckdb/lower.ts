@@ -1393,9 +1393,22 @@ function lowerCExpr(node: ParserRuleContext): Expr {
 		const args = list ? directChildrenOfRule(list, P.RULE_a_expr).map(lowerExpr) : [];
 		return { kind: "function", name: "grouping", args, aggregate: false, distinct: false, cst: node };
 	}
-	if (hasDirectToken(node, P.PARAM)) return { kind: "literal", text: node.getText(), cst: node };
-	const plsqlvar = directChildrenOfRule(node, P.RULE_plsqlvariablename)[0];
-	if (plsqlvar) return { kind: "column", parts: [plsqlvar.getText()], cst: node };
+	// PARAM opt_indirection — DuckDB prepared-statement parameters (extended in this fork):
+	// auto-increment `?`, positional `$1`, and named `$name` —
+	// duckdb.org/docs/current/sql/query_syntax/prepared_statements. `text` keeps any trailing
+	// indirection as-written; the ordinal/name comes from the PARAM token itself, always this alt's
+	// first child. A bare `?` carries neither name nor ordinal — its position is the consumer's
+	// derivation, never fabricated here (see the `parameter` IR doc comment).
+	if (hasDirectToken(node, P.PARAM)) {
+		const paramText = node.getChild(0)!.getText();
+		const text = node.getText();
+		if (paramText === "?") return { kind: "parameter", text, cst: node };
+		if (/^\$\d+$/.test(paramText))
+			return { kind: "parameter", text, ordinal: Number(paramText.slice(1)), cst: node };
+		return { kind: "parameter", text, name: paramText.slice(1), cst: node };
+	}
+	// No `plsqlvariablename` direct alt here (see the c_expr grammar comment): a bare `:name` is not
+	// a real DuckDB feature and no longer parses as a c_expr child at all.
 	const exprs = collectOfRule(node, P.RULE_a_expr).map(lowerExpr);
 	if (exprs.length)
 		return { kind: "function", name: "row", args: exprs, aggregate: false, distinct: false, cst: node };
@@ -1479,9 +1492,11 @@ function applyIndirection(base: Expr, indirection: ParserRuleContext, cst: Parse
  *  empty middle bound). A bare `-` (MINUS with no wrapping `opt_slice_bound`) is DuckDB's
  *  default-bound placeholder — the same as an empty bound (`l[:-:2]` ≡ `l[::2]`) — so it advances
  *  nothing and fills nothing: never fabricated into a value. A `plsqlvariablename` child
- *  (`arr[1:hi]`, `arr[lo:hi]`) is the lexer's PLSQLVARIABLENAME token standing in for a fused
- *  `COLON identifier` bound — see the grammar comment on `indirection_el`'s plsqlvariablename alt —
- *  so it advances the slot by 1 (like COLON) and un-fuses into a plain column bound. */
+ *  (`arr[1:hi]`, `arr[lo:hi]`, or the empty-begin `arr[:hi]`) is the lexer's PLSQLVARIABLENAME
+ *  token standing in for a fused `COLON identifier` bound — see the grammar comment on
+ *  `indirection_el`'s plsqlvariablename alt — so it advances the slot by 1 (like COLON) and
+ *  un-fuses into a plain column bound; an absent begin never touched slot 0, so this is correct
+ *  whether or not a leading `opt_slice_bound` preceded it. */
 function applySubscriptBracket(el: ParserRuleContext, base: Expr, cst: ParserRuleContext): Expr {
 	const idxNode = directChildrenOfRule(el, P.RULE_a_expr)[0];
 	if (idxNode) return { kind: "subscript", base, index: lowerExpr(idxNode), cst };

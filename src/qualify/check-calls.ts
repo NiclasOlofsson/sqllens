@@ -142,7 +142,8 @@ function walkCalls(expr: Expr, scope: Scope, schema: SchemaProvider, diagnostics
 		case "star":
 			for (const r of expr.replace ?? []) walkCalls(r.expr, scope, schema, diagnostics);
 			return;
-		// column / literal / subquery / exists / other → leaf, or its own scope: nothing to walk here.
+		// column / literal / parameter / variable / subquery / exists / other → leaf, or its own
+		// scope: nothing to walk here.
 	}
 }
 

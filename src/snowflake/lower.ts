@@ -1142,6 +1142,8 @@ function lowerExpr(node: ParserRuleContext): Expr {
 /** Lower a non-`expr` expression-production node. */
 function lowerExprChild(node: ParserRuleContext): Expr {
 	switch (node.ruleIndex) {
+		case P.RULE_bind_variable:
+			return lowerBindVariable(node);
 		case P.RULE_primitive_expression:
 			return lowerPrimitive(node);
 		case P.RULE_literal:
@@ -1248,6 +1250,18 @@ function lowerPrimitive(node: ParserRuleContext): Expr {
 			cst: node,
 		};
 	return { kind: "literal", text: node.getText(), cst: node };
+}
+
+/** bind_variable: QMARK | COLON id_. A caller-bound placeholder as a general value expression.
+ *  `?` is positional (no name; its position is the CONSUMER's derivation, never fabricated here);
+ *  `:name` is named (the id_, the leading COLON sigil stripped). `text` is the token as written
+ *  (lossless). Distinct from a `$var` session variable (which lowers as a column via id_); vendors
+ *  document them separately: docs.snowflake.com/en/sql-reference/bind-variables */
+function lowerBindVariable(node: ParserRuleContext): Expr {
+	const id = directChildrenOfRule(node, P.RULE_id_)[0];
+	return id
+		? { kind: "parameter", text: node.getText(), name: id.getText(), cst: node }
+		: { kind: "parameter", text: node.getText(), cst: node };
 }
 
 function lowerIff(node: ParserRuleContext): Expr {

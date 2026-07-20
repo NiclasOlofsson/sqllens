@@ -73,7 +73,7 @@ export function childExprs(expr: Expr): Expr[] {
 		case "star":
 			return expr.replace?.map((r) => r.expr) ?? [];
 		default:
-			// column / literal / subquery / exists / other — leaves for node-at purposes
+			// column / literal / parameter / variable / subquery / exists / other: leaves for node-at purposes
 			return [];
 	}
 }

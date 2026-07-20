@@ -172,14 +172,4 @@ export const KNOWN_BAD: Record<string, string> = {
 	"sql/show-backups-in-backup-set/3.sql": "SHOW BACKUPS IN BACKUP SET ... ->> ... — ->> chaining operator not modeled",
 	"sql/show-snapshots-in-snapshot-set/2.sql": "SHOW SNAPSHOTS IN SNAPSHOT SET ... ->> ... — ->> chaining operator not modeled",
 	"sql/show-snapshots-in-snapshot-set/3.sql": "SHOW SNAPSHOTS IN SNAPSHOT SET ... ->> ... — ->> chaining operator not modeled",
-
-	// Gap-adjacent residue: the IDENTIFIER(?) bind-variable argument (GAP 1) and Scripting RESULTSET
-	// (GAP 2) fixes land in this session, but each file has ONE OTHER statement/clause using `?` or a
-	// named `:var` as a general bind-variable VALUE expression — not the IDENTIFIER() object-name
-	// argument. `?`/`:name` aren't wired into `expr` generally; a broader, separate bind-variable-
-	// expression gap. docs.snowflake.com/en/sql-reference/identifier-literal
-	"identifier-literal/15.sql":
-		"USE SCHEMA/CREATE TABLE/FROM/DROP TABLE IDENTIFIER(?) all now parse; INSERT ... VALUES (?), (?), (?) and WHERE t1.c1 > (?) use `?` as a general bind-variable value expression — unmodeled",
-	"bind-variables/15.sql":
-		"DECLARE ... RESULTSET ... BEGIN ... END now parses; CONCAT('Hello ', :NAME, '!') uses a named bind variable (:NAME) as a general value expression inside a function call — unmodeled",
 };

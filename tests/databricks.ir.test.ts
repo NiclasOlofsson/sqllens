@@ -2,6 +2,10 @@ import { describe, expect, it } from "vitest";
 import { parseDatabricks } from "../src/databricks/parse.js";
 import { lower } from "../src/databricks/lower.js";
 import type { QueryBody, SelectExpr } from "../src/ir/ir.js";
+import { analyze } from "../src/index.js";
+import { Schema } from "../src/qualify/schema.js";
+import { resolveScopes } from "../src/scope/scope.js";
+import { deriveSymbols } from "../src/symbols/symbols.js";
 
 function asSelect(body: QueryBody): SelectExpr {
 	if (body.kind !== "select") throw new Error("expected a select body");
@@ -307,5 +311,69 @@ describe("batch parse entry (issue #1)", () => {
 		// SyntaxDiagnostic.line is 1-based (src/parse-diagnostics.ts); the broken `SELEC 2`
 		// is on the second source line, so the first diagnostic reports line 2.
 		expect(r.diagnostics[0].line).toBe(2);
+	});
+});
+
+// `?` and `:name` are Databricks' caller-bound parameter markers
+// (docs.databricks.com/en/sql/language-manual/sql-ref-parameter-marker.html), grammar alts
+// #posParameterLiteral / #namedParameterLiteral of `constant`, both collapsing through
+// ConstantDefaultContext — this pins the `parameter` IR lowering (src/ir/ir.ts). Databricks has no
+// documented `variable` (session/local) form of its own.
+function selectBody(sql: string): SelectExpr {
+	const r = parseDatabricks(sql);
+	expect(r.errors, sql).toBe(0);
+	return asSelect(lower(r.tree).body);
+}
+
+describe("Databricks parameter references", () => {
+	it("lowers a bare `?` to a parameter node in SELECT and WHERE position, no name/ordinal", () => {
+		const body = selectBody("SELECT ? FROM t WHERE a = ?");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect((body.projections[0].expr as { name?: string }).name).toBeUndefined();
+		expect((body.where as { right?: unknown }).right).toMatchObject({ kind: "parameter", text: "?" });
+	});
+
+	it("lowers `:name` to a named parameter node in SELECT and WHERE position", () => {
+		const body = selectBody("SELECT :who FROM t WHERE a = :who");
+		expect(body.projections[0].expr).toMatchObject({ kind: "parameter", text: ":who", name: "who" });
+		expect((body.where as { right?: unknown }).right).toMatchObject({
+			kind: "parameter",
+			text: ":who",
+			name: "who",
+		});
+	});
+
+	it("IDENTIFIER(:p) stays a function call, its argument still a real parameter node", () => {
+		const body = selectBody("SELECT IDENTIFIER(:p) FROM t");
+		expect(body.projections[0].expr).toMatchObject({
+			kind: "function",
+			name: "IDENTIFIER",
+			args: [{ kind: "parameter", text: ":p", name: "p" }],
+		});
+	});
+
+	it("fires no unknown-column diagnostic on a schema-attached analyze for either form", () => {
+		const schema = new Schema({ t: { a: "int", b: "string" } });
+		const { diagnostics } = analyze("SELECT ?, :who, a FROM t WHERE a = ? AND b = :who", "databricks", { schema });
+		expect(diagnostics).toEqual([]);
+	});
+
+	it("as a call argument, is an unknown-typed operand: curated abs's numeric check stays silent", () => {
+		const schema = new Schema({ t: { a: "int" } });
+		const { diagnostics } = analyze("SELECT abs(?), abs(:x) FROM t", "databricks", { schema });
+		const kinds = diagnostics.map((d) => d.kind);
+		expect(kinds).not.toContain("wrong-arity");
+		expect(kinds).not.toContain("wrong-argument-type");
+	});
+
+	it("deriveSymbols emits parameter kinds, one Sym per occurrence", () => {
+		const r = parseDatabricks("SELECT ?, :who FROM t");
+		const scopes = resolveScopes(lower(r.tree), "databricks");
+		const syms = deriveSymbols(scopes).filter((s) => s.kind === "parameter");
+		expect(syms.map((s) => [s.kind, s.name])).toEqual([
+			["parameter", "?"],
+			["parameter", "who"],
+		]);
+		expect(syms.every((s) => s.modifiers.includes("reference"))).toBe(true);
 	});
 });

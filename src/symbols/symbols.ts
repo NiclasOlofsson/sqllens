@@ -26,7 +26,7 @@ import { resolveColumnRef } from "../sema/resolve.js";
 
 // The symbol model is the graph of NAMED relational entities. Token-level concerns
 // (literals, keyword highlighting) belong to a separate SemanticTokens projection, not here;
-// `view`/parameters would need a catalog / param modelling we don't have, so they aren't kinds.
+// `view` would need a catalog we don't have, so it isn't a kind.
 export type SymbolKind =
 	// relations
 	| "table"
@@ -36,7 +36,11 @@ export type SymbolKind =
 	// within a relation / expression
 	| "column"
 	| "alias"
-	| "function";
+	| "function"
+	// a caller-bound placeholder (`?`, `:name`, `$1`, BigQuery `@name`) and a session/local
+	// variable reference (`@x`, `@@sysvar`); see ir.ts's `parameter`/`variable` Expr kinds.
+	| "parameter"
+	| "variable";
 
 export type SymbolModifier = "declaration" | "reference" | "output" | "aggregate" | "window" | "correlated" | "star";
 
@@ -209,7 +213,9 @@ function walk(
 	emitFunctions(scope, frame, out, schema);
 }
 
-/** Function symbols (with aggregate/window modifiers) from this frame's expression trees. */
+/** Function symbols (with aggregate/window modifiers), and parameter/variable occurrence symbols
+ *  (one Sym per occurrence, modifier "reference", no definition link; a declaring DECLARE gets
+ *  one in a later per-dialect task), from this frame's expression trees. */
 function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaProvider): void {
 	const body = scope.body;
 	if (body.kind !== "select") return;
@@ -228,6 +234,17 @@ function emitFunctions(scope: Scope, frame: string, out: Sym[], schema: SchemaPr
 				e.args.forEach(visit);
 				e.window?.partitionBy.forEach(visit);
 				e.window?.orderBy.forEach(visit);
+				break;
+			case "parameter":
+			case "variable":
+				out.push({
+					kind: e.kind,
+					modifiers: ["reference"],
+					name: e.name ?? e.text,
+					span: spanOf(e.cst),
+					frame,
+					node: e,
+				});
 				break;
 			case "binary":
 				visit(e.left);
@@ -422,7 +439,7 @@ function columnExprsByCst(body: QueryBody): Map<ParserRuleContext, Extract<Expr,
 				if (e.end) visit(e.end);
 				if (e.step) visit(e.step);
 				break;
-			// literal/star/subquery/exists/with/other → no further column refs modelled here
+			// literal/star/subquery/exists/with/parameter/variable/other → no further column refs modelled here
 		}
 	};
 	for (const p of body.projections) visit(p.expr);

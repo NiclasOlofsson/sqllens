@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { parse, qualify, resolveScopes, Schema } from "../src/index.js";
+import { deriveSymbols, parse, qualify, referencesAt, resolveScopes, Schema } from "../src/index.js";
 import { lower } from "../src/duckdb/lower.js";
 import { parseDuckdb } from "../src/duckdb/parse.js";
 import { inferType } from "../src/infer/infer.js";
+import type { SelectExpr } from "../src/ir/ir.js";
 
 // The DuckDB surface built onto the Postgres-derived fork, each addition doc-cited at its
 // grammar rule (duckdb.org/docs/current) and asserted here — parse AND, where the IR models it,
@@ -431,18 +432,22 @@ describe("duckdb subscript slicing — position-aware begin/end/step (#lossless)
 		expect(ast.body.columns.map((c) => c.parts.join("."))).toEqual(expect.arrayContaining(["arr", "lo", "hi"]));
 	});
 
-	// arr[:hi] (EMPTY begin, bare-identifier end) is NOT fixed — deliberately. The fused token here
-	// is indistinguishable at the parser level from a bind-variable used as a plain index (the
-	// pgbench reading), since there's no preceding bound to disambiguate on. Flipping this reading
-	// would change what an ALREADY-PARSING construct means, not just widen acceptance — a semantic
-	// priority call between two independently-real features, left to a human decision rather than
-	// resolved unilaterally. Current (unchanged) behavior: reads as a plain index whose value is the
-	// bind-variable-shaped column ":hi" (colon retained) — NOT a slice.
-	it("x[:hi] — still the pre-existing plsqlvariablename-index reading, not fixed (see task report)", () => {
+	// arr[:hi] (EMPTY begin, bare-identifier end) IS fixed for duckdb, unlike postgres/redshift where
+	// this shape is deliberately left as the pre-existing plsqlvariablename-index reading (a
+	// genuinely ambiguous human call there, since either reading is a real feature on those
+	// dialects). For duckdb there is no ambiguity to weigh: `:name` is not a real DuckDB expression
+	// at all (DuckDB v1.5.4 rejects `SELECT :x FROM t` outright — engine-verified,
+	// temp_auto/duckdb-oracle/probe-params.mjs), while `arr[:hi]` (empty-begin slice, bare-identifier
+	// end) DOES parse and evaluate on the real engine — engine-verified,
+	// temp_auto/duckdb-oracle/probe-slice2.mjs. So the fused PLSQLVARIABLENAME token here can only
+	// ever be the slice-bound reading; `indirection_el`'s slice alt makes the begin bound optional to
+	// accept it, and it un-fuses into a plain column end bound like `arr[1:hi]` above.
+	it("x[:hi] — empty begin, bare-identifier end: now a slice (engine-verified against DuckDB v1.5.4)", () => {
 		expect(shapeOf("SELECT arr[:hi] FROM t;")).toEqual({
 			kind: "subscript",
 			base: arr,
-			index: { kind: "column", parts: [":hi"] },
+			end: { kind: "column", parts: ["hi"] },
+			slice: true,
 		});
 	});
 
@@ -465,6 +470,70 @@ describe("duckdb subscript slicing — position-aware begin/end/step (#lossless)
 			kind: "scalar",
 			name: "string",
 		});
+	});
+});
+
+// DuckDB prepared-statement parameters — auto-increment `?`, positional `$1`, named `$name`
+// (duckdb.org/docs/current/sql/query_syntax/prepared_statements). Previously all three lowered as
+// a literal (firing a false unknown-column-adjacent miss and keeping them out of the shared
+// parameter/variable consumers — qualify, symbols, references; see tests/parameter-ir.test.ts). A
+// bare `:name` is NOT a real DuckDB feature (engine-verified against DuckDB v1.5.4:
+// `SELECT :x FROM t` -> "Parser Error: syntax error at or near \":\"",
+// temp_auto/duckdb-oracle/probe-params.mjs) and no longer parses as a general expression at all —
+// unlike postgres/redshift, where the same shape is genuine psql/pgbench client-side interpolation.
+describe("duckdb parameter IR — ?, $1, $name", () => {
+	function select(sql: string): SelectExpr {
+		const body = lower(parseDuckdb(sql).tree).body;
+		if (body.kind !== "select") throw new Error("expected select");
+		return body;
+	}
+
+	it("? lowers to a parameter node with neither name nor ordinal", () => {
+		const body = select("SELECT ? FROM t WHERE a > ?");
+		expect(body.projections[0]?.expr).toMatchObject({ kind: "parameter", text: "?" });
+		expect(body.projections[0]?.expr).not.toHaveProperty("name");
+		expect(body.projections[0]?.expr).not.toHaveProperty("ordinal");
+		expect(body.where).toMatchObject({ kind: "binary", right: { kind: "parameter", text: "?" } });
+	});
+
+	it("$1 lowers to a parameter node with its ordinal", () => {
+		const body = select("SELECT $1 FROM t WHERE a > $2");
+		expect(body.projections[0]?.expr).toMatchObject({ kind: "parameter", text: "$1", ordinal: 1 });
+		expect(body.where).toMatchObject({ kind: "binary", right: { kind: "parameter", text: "$2", ordinal: 2 } });
+	});
+
+	it("$name lowers to a parameter node with its name", () => {
+		const body = select("SELECT $x FROM t WHERE a > $x");
+		expect(body.projections[0]?.expr).toMatchObject({ kind: "parameter", text: "$x", name: "x" });
+		expect(body.where).toMatchObject({ kind: "binary", right: { kind: "parameter", text: "$x", name: "x" } });
+	});
+
+	it(":x no longer parses as a general expression (engine-verified rejection)", () => {
+		expect(parseDuckdb("SELECT :x FROM t").errors).toBeGreaterThan(0);
+		expect(parseDuckdb("SELECT * FROM t WHERE a > :x").errors).toBeGreaterThan(0);
+	});
+
+	it("a schema-attached qualify fires zero unknown-column diagnostics for $x used twice", () => {
+		const scopes = resolveScopes(parse("SELECT $x FROM t WHERE a > $x", "duckdb").ast, "duckdb");
+		expect(qualify(scopes, new Schema({ t: { a: "int" } })).diagnostics).toEqual([]);
+	});
+
+	it("deriveSymbols emits a parameter symbol, not a phantom column, for $x", () => {
+		const scopes = resolveScopes(parse("SELECT $x FROM t WHERE a > $x", "duckdb").ast, "duckdb");
+		const syms = deriveSymbols(scopes, new Schema({ t: { a: "int" } }));
+		const paramSyms = syms.filter((s) => s.name === "x");
+		expect(paramSyms).toHaveLength(2);
+		for (const s of paramSyms) expect(s.kind).toBe("parameter");
+		expect(syms.some((s) => s.kind === "column" && s.name === "x")).toBe(false);
+	});
+
+	it("referencesAt groups the two $x occurrences", () => {
+		const sql = "SELECT $x FROM t WHERE a > $x";
+		const scopes = resolveScopes(parse(sql, "duckdb").ast, "duckdb");
+		const occ = referencesAt(scopes, sql.indexOf("$x"));
+		expect(occ).not.toBeNull();
+		expect(occ!.kind).toBe("parameter");
+		expect(occ!.occurrences).toHaveLength(2);
 	});
 });
 
