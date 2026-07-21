@@ -31,6 +31,9 @@ import type { Occurrences } from "./references/references.js";
 import type { LineageHop } from "./lineage/hops.js";
 import { signatureAt, type SignatureHelpInfo } from "./signature/signature.js";
 import type { Scope, ScopeTree } from "./scope/scope.js";
+import type { Frame } from "./scope/frame.js";
+import type { ClauseInfo } from "./scope/clauses.js";
+import type { SetOpArms } from "./scope/setop-arms.js";
 import type { Span, Sym } from "./symbols/symbols.js";
 import type { TemplateEngine } from "./template/engine.js";
 import type { Token } from "./token/token.js";
@@ -172,6 +175,16 @@ export class SqlSession {
 	}
 	lineageAt(offset: number): LineageHop | undefined {
 		return this.doc.lineageAt(offset, this.schema);
+	}
+	/** Schema-free: frame identity is structural. */
+	frameAt(offset: number): Frame | undefined {
+		return this.doc.frameAt(offset);
+	}
+	clausesOf(scope: Scope): ClauseInfo[] {
+		return this.doc.clausesOf(scope);
+	}
+	setOpArmsOf(scope: Scope): SetOpArms | undefined {
+		return this.doc.setOpArmsOf(scope);
 	}
 	variantAt(offset: number): DocumentVariant | undefined {
 		return this.doc.variantAt(offset);

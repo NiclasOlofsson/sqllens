@@ -12,6 +12,7 @@ import type { SchemaProvider } from "../qualify/schema-provider.js";
 import {
 	rootDeclarations,
 	type ColumnResolution,
+	type CteRef,
 	type ResolvedSource,
 	type Scope,
 	type ScopeTree,
@@ -110,6 +111,69 @@ export interface Sym {
 /** The main query's frame label (no enclosing CTE / subquery). */
 export const MAIN_FRAME = "_main_";
 
+/** The frame-naming rules for a construct that opens its own frame, SHARED between `walk` (which
+ *  emits Syms alongside) and `frameLabels` (below), so a CTE / subquery / graph-table can never be
+ *  named two different things by the two passes. */
+function cteFrameLabel(scope: Scope, cteRef: CteRef): string {
+	return behaviorOf(scope).displayName(cteRef.def.name);
+}
+function subqueryFrameLabel(scope: Scope, src: Extract<ResolvedSource, { kind: "subquery" }>): string {
+	return src.source.alias ? behaviorOf(scope).displayName(src.source.alias) : "_subquery_";
+}
+function graphtableFrameLabel(src: Extract<ResolvedSource, { kind: "graphtable" }>): string {
+	return src.source.alias ?? src.source.graph.join(".");
+}
+
+/** Map every Scope reachable from `tree.root` to the SAME frame label `deriveSymbols`' own `walk`
+ *  assigns it: `MAIN_FRAME` for the root, a CTE's display name, a subquery's alias / `_subquery_`, a
+ *  graph table's alias / dotted path, `_sub_` for every other nested scope (expression subqueries, a
+ *  routine's inner statements). Shares the per-construct NAMING helpers above with `walk`, so the two
+ *  can't independently invent different names for the same construct; the surrounding which-scopes-
+ *  recurse shape (ctes / branches / pipe / sources / children) mirrors `walk`'s own traversal (a new
+ *  scope-opening construct added to `walk` needs the same addition here). `src/scope/frame.ts`'s
+ *  `frameAt` builds on this map, so it and `deriveSymbols`/`unionSymbols` agree on a scope's frame BY
+ *  CONSTRUCTION (same naming helpers), not by coincidence. */
+export function frameLabels(tree: ScopeTree): Map<Scope, string> {
+	const out = new Map<Scope, string>();
+	labelScope(tree.root, MAIN_FRAME, out);
+	return out;
+}
+
+function labelScope(scope: Scope, frame: string, out: Map<Scope, string>): void {
+	out.set(scope, frame);
+	const walked = new Set<Scope>();
+	for (const [, cteRef] of scope.ctes) {
+		labelScope(cteRef.scope, cteFrameLabel(scope, cteRef), out);
+		walked.add(cteRef.scope);
+	}
+	if (scope.branches) {
+		labelScope(scope.branches.left, frame, out);
+		labelScope(scope.branches.right, frame, out);
+		walked.add(scope.branches.left);
+		walked.add(scope.branches.right);
+	}
+	if (scope.body.kind === "pipe" && scope.pipe) {
+		labelScope(scope.pipe.input, frame, out);
+		walked.add(scope.pipe.input);
+		for (const st of scope.pipe.stages) {
+			labelScope(st, frame, out);
+			walked.add(st);
+		}
+	}
+	for (const src of scope.sources.values()) {
+		if (src.kind === "subquery") {
+			labelScope(src.scope, subqueryFrameLabel(scope, src), out);
+			walked.add(src.scope);
+		} else if (src.kind === "graphtable") {
+			labelScope(src.scope, graphtableFrameLabel(src), out);
+			walked.add(src.scope);
+		}
+	}
+	for (const child of scope.children) {
+		if (!walked.has(child)) labelScope(child, "_sub_", out);
+	}
+}
+
 /** Derive the symbol graph. A `schema` lets column/function symbols carry inferred types;
  *  without one (the default), names + spans + frames + definitions are still produced.
  *  `expandStarOf` (typically `Qualification.expandStarOf`) additionally expands a resolvable
@@ -158,7 +222,7 @@ function walk(
 	// CTE declarations, and each CTE body as its own frame. The map key is the FOLDED identity;
 	// the symbol (and frame label) shows the display form of the declared name.
 	for (const [, cteRef] of scope.ctes) {
-		const name = behaviorOf(scope).displayName(cteRef.def.name);
+		const name = cteFrameLabel(scope, cteRef);
 		out.push({
 			kind: "cte",
 			modifiers: ["declaration"],
@@ -197,17 +261,10 @@ function walk(
 		out.push(relSym);
 		if (alias) out.push(alias);
 		if (src.kind === "subquery") {
-			walk(
-				src.scope,
-				src.source.alias ? behaviorOf(scope).displayName(src.source.alias) : "_subquery_",
-				out,
-				schema,
-				sourceSyms,
-				expandStarOf,
-			);
+			walk(src.scope, subqueryFrameLabel(scope, src), out, schema, sourceSyms, expandStarOf);
 			walked.add(src.scope);
 		} else if (src.kind === "graphtable") {
-			walk(src.scope, src.source.alias ?? src.source.graph.join("."), out, schema, sourceSyms, expandStarOf);
+			walk(src.scope, graphtableFrameLabel(src), out, schema, sourceSyms, expandStarOf);
 			walked.add(src.scope);
 		}
 	}

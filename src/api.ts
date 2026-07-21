@@ -340,6 +340,13 @@ export { FN_DOCS, lookupFnDoc, type FnDoc } from "./signature/docs.js";
 // Total: never throws; returns null off-symbol.
 export { referencesAt, type Occurrence, type Occurrences } from "./references/references.js";
 
+// Frame / clause / set-op-arm geometry: the SQL debugger's marker-planting primitives, which frame
+// (CTE) a document position sits in, that frame's ordered clause list, and set-op arm spans. Total:
+// never throws; frameAt/clausesOf/setOpArmsOf all degrade to undefined/[] off-symbol or off-shape.
+export { frameAt, type Frame } from "./scope/frame.js";
+export { clausesOf, type ClauseInfo, type ClauseKind } from "./scope/clauses.js";
+export { setOpArmsOf, type SetOpArm, type SetOpArms } from "./scope/setop-arms.js";
+
 // Per-dialect function/keyword/type-name membership sets — for lint-style "is this identifier a
 // known X for this dialect?" checks. Computed once per dialect and cached.
 export { dialectSymbols, dialectVocabulary, type DialectSymbols, type DialectVocabulary } from "./dialect-symbols.js";

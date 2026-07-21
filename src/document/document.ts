@@ -42,6 +42,9 @@ import { partSpanOf, starSpanOf } from "../ir/part-span.js";
 import type { StatementCategory } from "../ir/statement.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { CteRef, Scope, ScopeTree } from "../scope/scope.js";
+import { frameAt as frameAtScopes, type Frame } from "../scope/frame.js";
+import { clausesOf as clausesOfScope, type ClauseInfo } from "../scope/clauses.js";
+import { setOpArmsOf as setOpArmsOfScope, type SetOpArms } from "../scope/setop-arms.js";
 import type { Qualification, Diagnostic } from "../qualify/qualify.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
@@ -583,6 +586,56 @@ export class SqlDocument {
 		const cell = this.cellAt(offset);
 		if (!cell) return lineageAtScopes(this.scopes, offset, schema);
 		return lineageAtScopes(cell.scopes, offset - cell.span.start, schema);
+	}
+
+	/** The owning frame (the Scope + its `Sym.frame`-matching label) for `offset`, cell-aware,
+	 *  mirroring `nodeAt`: resolved over the CELL owning the offset, with a cell-relative offset. The
+	 *  returned `Frame.scope`'s own CST spans stay CELL-relative (same convention as `NodeHit.expr`):
+	 *  a caller turning it into a document Range shifts by the owning cell's start. Schema-free (frame
+	 *  identity is structural). Total: undefined off-document / with no cells; never throws. */
+	frameAt(offset: number): Frame | undefined {
+		const cell = this.cellAt(offset);
+		if (!cell) return frameAtScopes(this.scopes, offset, this.ast);
+		return frameAtScopes(cell.scopes, offset - cell.span.start, cell.ast);
+	}
+
+	/** The ordered clause list for `scope` (typically the `scope` a prior `frameAt` call returned),
+	 *  shifted to document coordinates. Finds the owning cell by matching `scope`'s tree ROOT against
+	 *  each cell's own `scopes.root` (a Scope is always reachable from exactly one cell's root): a
+	 *  `scope` this document didn't produce answers `[]`, never a guess. */
+	clausesOf(scope: Scope): ClauseInfo[] {
+		const i = this.cellIndexOfScope(scope);
+		if (i < 0) return [];
+		const raw = clausesOfScope(scope, this._cells[i].tokens);
+		if (i === 0) return raw; // first cell: identity shift
+		const span = this.statements[i].span;
+		const base = this.lines.positionAt(span.start);
+		return raw.map((c) => ({
+			kind: c.kind,
+			anchorSpan: shiftPartSpan(c.anchorSpan, base.line, base.column, span.start),
+			span: shiftPartSpan(c.span, base.line, base.column, span.start),
+		}));
+	}
+
+	/** Set-op arm geometry for `scope` (undefined for a non-setop frame), shifted to document
+	 *  coordinates the same way `clausesOf` is. */
+	setOpArmsOf(scope: Scope): SetOpArms | undefined {
+		const raw = setOpArmsOfScope(scope);
+		if (!raw) return raw;
+		const i = this.cellIndexOfScope(scope);
+		if (i <= 0) return raw; // not found (defensive), or the first cell: identity shift either way
+		const span = this.statements[i].span;
+		const base = this.lines.positionAt(span.start);
+		const shift = (s: PartSpan) => shiftPartSpan(s, base.line, base.column, span.start);
+		return { span: shift(raw.span), arms: raw.arms.map((a) => ({ scope: a.scope, span: shift(a.span) })) };
+	}
+
+	/** The index into `this._cells`/`this.statements` of the cell whose scope tree ROOT is `scope`'s
+	 *  own root (walking `scope.parent` up), or -1 when `scope` belongs to no cell of this document. */
+	private cellIndexOfScope(scope: Scope): number {
+		let root = scope;
+		while (root.parent) root = root.parent;
+		return this._cells.findIndex((c) => c.scopes.root === root);
 	}
 
 	/** The coherent per-arm variants of a templated document (engine.variants() consumed). `[]` on

@@ -1,8 +1,10 @@
 import type {
 	ColumnRef,
 	CteDef,
+	Expr,
 	GraphTableSource,
 	LateralViewSource,
+	LimitInfo,
 	PipeExpr,
 	PipeStage,
 	PivotInfo,
@@ -77,6 +79,15 @@ export interface Scope {
 	 *  none. A `variable` reference resolves against the WHOLE tree (pooled) via `rootDeclarations`
 	 *  below, not just this one level. */
 	declarations?: readonly VariableDecl[];
+	/** This QueryExpr's own ORDER BY sort expressions, copied from `QueryExpr.orderBy` by
+	 *  `buildQueryScope` the same way `declarations` above is (additive), so a consumer that needs
+	 *  "this scope's own trailing ORDER BY" (src/scope/clauses.ts's `clausesOf`) reads it straight off
+	 *  the Scope instead of re-matching a QueryExpr by body identity. Absent means none. A set-op
+	 *  branch / pipe stage scope (built via `buildBodyScope`, no owning QueryExpr) never carries this. */
+	orderBy?: Expr[];
+	/** This QueryExpr's own row-limiting clause (LIMIT / TOP / OFFSET-FETCH), copied from
+	 *  `QueryExpr.limit` the same way `orderBy` above is. Absent means none. */
+	limit?: LimitInfo;
 }
 
 export interface CteRef {
@@ -262,6 +273,8 @@ function newScope(body: QueryBody, parent?: Scope, dialect?: string): Scope {
 function buildQueryScope(query: QueryExpr, parent?: Scope, dialect?: string): Scope {
 	const scope = newScope(query.body, parent, dialect);
 	if (query.declarations?.length) scope.declarations = query.declarations;
+	if (query.orderBy?.length) scope.orderBy = query.orderBy;
+	if (query.limit) scope.limit = query.limit;
 	// CTEs are visible to the body and to later CTEs; build them in order.
 	for (const cte of query.ctes) {
 		const cteScope = buildQueryScope(cte.body, scope);
