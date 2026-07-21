@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
+import { nodeAt } from "../src/document/node-at.js";
+import { referencesAt } from "../src/references/references.js";
 import { lower } from "../src/snowflake/lower.js";
 import { parseSnowflake } from "../src/snowflake/parse.js";
+import { resolveScopes, rootDeclarations } from "../src/scope/scope.js";
+import { probeBody } from "./helpers/body-probe.js";
 
 // Snowflake is the third dialect: grammar forked from grammars-v4 sql/snowflake, cleaned
 // against the official reference docs. Only parse() and lower() are Snowflake-specific —
@@ -1694,5 +1698,173 @@ END;`,
 	it("GUARD: `let` is still usable as a bare column name", () => {
 		const { body } = selectBody("SELECT let FROM t");
 		expect(body.projections[0]).toMatchObject({ name: "let", expr: { kind: "column", parts: ["let"] } });
+	});
+});
+
+// ---------------------------------------------------------------------------
+// Snowflake Scripting statements[] (the routine-frame slice's Snowflake counterpart, see ir.ts's
+// `statements` field doc and src/tsql/lower.ts's applyRoutineFrame/lowerInnerStatement, plus this
+// dialect's own applyScriptingFrame/lowerCommand/lowerInnerScriptingStatement). The scripting-block
+// CONTAINER keeps the honesty fix above unchanged (flagged "compound" stub, empty projections/from):
+// these tests add the layer ON TOP — real inner bodies, a DECLARE section's/LET's declarations, and
+// the shared scope/reference machinery reaching into a scripting block for the first time.
+// ---------------------------------------------------------------------------
+describe("Snowflake Scripting statements[] (body)", () => {
+	it("a two-SELECT scripting block's statements[] carry real bodies", () => {
+		const sql = "BEGIN SELECT a1 FROM t1; SELECT a2 FROM t2; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		expect(q.statement).toBe("compound");
+		expect(q.statements).toHaveLength(2);
+		expect(q.statements?.[0]?.statement).toBe("query");
+		if (q.statements?.[0]?.body.kind === "select") {
+			expect(q.statements[0].body.projections).toHaveLength(1);
+			expect(q.statements[0].body.from).toHaveLength(1);
+			expect(q.statements[0].body.unsupported ?? []).toEqual([]);
+		} else {
+			throw new Error("select");
+		}
+		expect(q.statements?.[1]?.statement).toBe("query");
+	});
+
+	it("scripting-only inner statements (LET, assignment, CALL, RETURN) stay honestly flagged, no query body", () => {
+		const sql = "BEGIN LET v := 1; v := v + 1; CALL my_proc(); RETURN v; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		expect(q.statements).toHaveLength(4);
+		for (const stmt of q.statements ?? []) {
+			expect(stmt.body.kind).toBe("select");
+			if (stmt.body.kind === "select") expect(stmt.body.unsupported).toContain("non-query");
+		}
+		expect(q.statements?.[1]?.statement).toBe("other"); // v := v + 1 (bare assignment)
+		expect(q.statements?.[2]?.statement).toBe("utility"); // CALL
+		expect(q.statements?.[3]?.statement).toBe("other"); // RETURN
+	});
+
+	it("a nested BEGIN...END inside a scripting block layers its own statements[] recursively", () => {
+		const sql = "BEGIN BEGIN SELECT a FROM t; END; RETURN 1; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		expect(q.statements).toHaveLength(2);
+		const nested = q.statements?.[0];
+		expect(nested?.statement).toBe("compound");
+		if (nested?.body.kind === "select") expect(nested.body.unsupported).toContain("compound");
+		expect(nested?.statements).toHaveLength(1);
+		expect(nested?.statements?.[0]?.statement).toBe("query");
+		if (nested?.statements?.[0]?.body.kind === "select") expect(nested.statements[0].body.from).toHaveLength(1);
+	});
+
+	describe("body-non-emptiness probe stays clean over a scripting block's inner statements", () => {
+		it("a scripting block with a real inner SELECT raises no probe hits on that statement", () => {
+			const { q } = ir("BEGIN SELECT a FROM t; END;");
+			const hits: string[] = [];
+			probeBody(q, "scripting.sql", hits);
+			expect(hits).toEqual([]);
+		});
+	});
+});
+
+describe("Snowflake Scripting statements[] (DECLARE section + LET declarations)", () => {
+	it("a DECLARE section's variables become the container's declarations: name, typeText, RESULTSET", () => {
+		const sql = `
+DECLARE
+  name STRING;
+  temperature FLOAT;
+  res RESULTSET;
+BEGIN
+  res := (SELECT 1 AS a);
+  RETURN res;
+END;`;
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		expect(q.statement).toBe("compound");
+		expect(q.declarations).toHaveLength(3);
+		expect(q.declarations?.[0]).toMatchObject({ name: "name", typeText: "STRING" });
+		expect(q.declarations?.[1]).toMatchObject({ name: "temperature", typeText: "FLOAT" });
+		expect(q.declarations?.[2]).toMatchObject({ name: "res", typeText: "RESULTSET" });
+		expect(q.declarations?.[2]?.init).toBeUndefined(); // no initializer in this grammar
+	});
+
+	it("nameSpan covers exactly the declared variable's own token", () => {
+		const sql = "DECLARE\n  counter INTEGER;\nBEGIN\n  RETURN counter;\nEND;";
+		const { q } = ir(sql);
+		const span = q.declarations?.[0]?.nameSpan;
+		expect(span).toBeDefined();
+		expect(sql.slice(span!.start, span!.end)).toBe("counter");
+	});
+
+	it("LET declares AND assigns: its own inner statement carries the declaration with a real init expr", () => {
+		const sql = "BEGIN LET v := 1 + 2; RETURN v; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		expect(q.statements).toHaveLength(2);
+		const letStmt = q.statements?.[0];
+		expect(letStmt?.statement).toBe("other");
+		expect(letStmt?.declarations).toHaveLength(1);
+		expect(letStmt?.declarations?.[0]).toMatchObject({ name: "v" });
+		expect(letStmt?.declarations?.[0]?.init).toMatchObject({ kind: "binary" });
+	});
+
+	it("LET with an explicit type and DEFAULT: typeText + a literal init", () => {
+		const sql = "BEGIN LET revenue NUMBER(38, 2) DEFAULT 110.0; RETURN revenue; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		const decl = q.statements?.[0]?.declarations?.[0];
+		expect(decl).toMatchObject({ name: "revenue" });
+		expect(decl?.typeText).toBeTruthy();
+		expect(decl?.init).toMatchObject({ kind: "literal" });
+	});
+
+	// Declarations pool tree-wide (rootDeclarations), the SAME machinery infer.ts/symbols.ts already
+	// use for a tsql body DECLARE or a routine parameter — proven reachable from inside a scripting
+	// block for the first time. Snowflake itself has no Expr construct that resolves to `kind:
+	// "variable"` yet (a scripting variable used inside embedded SQL is `:name`, a bind_variable,
+	// which lowers to `kind: "parameter"` — a caller-bound placeholder, "never linked" by design,
+	// see src/symbols/symbols.ts; a bare-identifier scripting expression lowers as an ordinary
+	// `column`). So this proves the DECLARATION side of the wiring (visible tree-wide from any inner
+	// scope), not an end-to-end reference link — there is no Snowflake syntax yet that would trigger
+	// one; see the accompanying report for that open question.
+	it("a DECLARE section variable's declaration is visible tree-wide from an inner SELECT's own scope", () => {
+		const sql = "DECLARE\n  v INTEGER;\nBEGIN\n  SELECT a FROM t;\nEND;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		const tree = resolveScopes(q, "snowflake");
+		const innerScope = tree.root.children.find((c) => c.body.kind === "select" && c.body.from.length > 0);
+		expect(innerScope).toBeDefined();
+		const decls = rootDeclarations(innerScope!);
+		expect(decls?.some((d) => d.name === "v" && d.typeText === "INTEGER")).toBe(true);
+	});
+
+	it("a LET-declared variable's declaration is likewise visible tree-wide from a later inner statement's own scope", () => {
+		const sql = "BEGIN LET v := 1; SELECT a FROM t; END;";
+		const { q, errors } = ir(sql);
+		expect(errors).toBe(0);
+		const tree = resolveScopes(q, "snowflake");
+		const selectScope = tree.root.children.find((c) => c.body.kind === "select" && c.body.from.length > 0);
+		expect(selectScope).toBeDefined();
+		const decls = rootDeclarations(selectScope!);
+		expect(decls?.some((d) => d.name === "v")).toBe(true);
+	});
+});
+
+describe("nodeAt / referencesAt reach inner-statement expressions in a scripting block", () => {
+	it("nodeAt finds a column reference inside statements[1]'s body, offset-based", () => {
+		const sql = "BEGIN SELECT a1 FROM t1; SELECT a2 FROM t2; END;";
+		const { q } = ir(sql);
+		const tree = resolveScopes(q, "snowflake");
+		const off = sql.lastIndexOf("a2");
+		const hit = nodeAt(tree, off, q);
+		expect(hit).toBeDefined();
+		expect(hit!.expr.kind).toBe("column");
+	});
+
+	it("referencesAt groups repeated column references within one inner statement", () => {
+		const sql = "BEGIN SELECT a FROM t1 WHERE a > 0; SELECT b FROM t2; END;";
+		const { q } = ir(sql);
+		const tree = resolveScopes(q, "snowflake");
+		const off = sql.indexOf("a > 0");
+		const occ = referencesAt(tree, off, undefined, q);
+		expect(occ).not.toBeNull();
+		expect(occ!.occurrences.length).toBeGreaterThanOrEqual(2);
 	});
 });

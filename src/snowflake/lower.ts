@@ -16,9 +16,10 @@ import type {
 	Source,
 	UnpivotInfo,
 	UnsupportedFlag,
+	VariableDecl,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
-import { partSpansOf } from "../ir/part-span.js";
+import { partSpanOf, partSpansOf, type PartSpan } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
 import { displayName, SNOWFLAKE_NAME_CONFIG } from "./fold.js";
@@ -138,27 +139,128 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		q.statement = statement;
 		return q;
 	}
-	const qs = shallowFirstOfRule(commands[0], P.RULE_query_statement);
-	if (qs) {
-		const q = lowerQueryStatement(qs);
-		q.statement = statement;
-		return q;
-	}
+	const q = lowerCommand(commands[0]);
+	q.statement = statement;
+	return q;
+}
+
+/**
+ * Lower a single `sql_command` into a QueryExpr: a `query_statement` gets its real body; a
+ * `create_materialized_view`-style bare `select_statement` gets its real body (see the
+ * query_statement-miss comment below); a standalone Snowflake Scripting BEGIN...END block
+ * (isScriptingBlock) gets the flagged "compound" stub PLUS its own declarations/statements
+ * (applyScriptingFrame — the routine-frame slice's Snowflake counterpart, see tsql's
+ * applyRoutineFrame); anything else gets the flagged "non-query" stub. Shared by the top-level
+ * batch's single-command case (lowerImpl) and each scripting-block inner statement whose own
+ * alternative is a nested `sql_command` (lowerInnerScriptingStatement) — a nested scripting block
+ * recurses through this SAME function, so nesting layers naturally.
+ */
+function lowerCommand(cmd: ParserRuleContext): QueryExpr {
+	const qs = shallowFirstOfRule(cmd, P.RULE_query_statement);
+	if (qs) return lowerQueryStatement(qs);
 	// create_materialized_view's body is `AS select_statement`, not `AS query_statement` like its
 	// sibling CREATE forms (grammars/snowflake/SnowflakeParser.g4 create_materialized_view — upstream
 	// comment: "MATERIALIZED VIEW accept only simple select statement at this time"), so the
 	// query_statement search above misses it; fall back to a bare select_statement.
-	const stmt = shallowFirstOfRule(commands[0], P.RULE_select_statement);
-	if (stmt) {
-		const q = selectStatementToQuery(stmt);
-		q.statement = statement;
-		return q;
-	}
+	const stmt = shallowFirstOfRule(cmd, P.RULE_select_statement);
+	if (stmt) return selectStatementToQuery(stmt);
 	// A standalone Snowflake Scripting BEGIN...END block (isScriptingBlock) is a statement
 	// *sequence*, not a query — flag the whole thing as "compound" (mirrors databricks'
 	// isCompound/"compound" convention) rather than the generic "non-query".
-	const q = nonQuery(commands[0], isScriptingBlock(commands[0]) ? "compound" : "non-query");
-	q.statement = statement;
+	if (isScriptingBlock(cmd)) {
+		const q = nonQuery(cmd, "compound");
+		applyScriptingFrame(q, cmd);
+		return q;
+	}
+	return nonQuery(cmd, "non-query");
+}
+
+/** Layers a Snowflake Scripting BEGIN...END block's DECLARE-section variables (declarations) and
+ *  body statements (statements[]) onto the container's existing flagged "compound" QueryExpr —
+ *  docs.snowflake.com/en/developer-guide/snowflake-scripting/blocks. `cmd` is the sql_command whose
+ *  isScriptingBlock is true. */
+function applyScriptingFrame(q: QueryExpr, cmd: ParserRuleContext): void {
+	const oc = directChildrenOfRule(cmd, P.RULE_other_command)[0];
+	const sb = oc ? directChildrenOfRule(oc, P.RULE_scripting_block)[0] : undefined;
+	const tsb = sb ? directChildrenOfRule(sb, P.RULE_task_scripting_block)[0] : undefined;
+	if (!tsb) return;
+	// DECLARE <name> (<data_type>|RESULTSET); ... — the block's own signature-like preamble, parallel
+	// to a routine's signature parameters (tsql's procedure_param): container-level declarations.
+	const declList = directChildrenOfRule(tsb, P.RULE_task_scripting_declaration_list)[0];
+	if (declList) {
+		const decls = directChildrenOfRule(declList, P.RULE_task_scripting_declaration).map(lowerScriptingDeclaration);
+		if (decls.length) q.declarations = decls;
+	}
+	const stmtList = directChildrenOfRule(tsb, P.RULE_task_scripting_statement_list)[0];
+	if (stmtList) {
+		const units = directChildrenOfRule(stmtList, P.RULE_task_scripting_statement);
+		if (units.length) q.statements = units.map(lowerInnerScriptingStatement);
+	}
+}
+
+/** One `task_scripting_declaration` (`id_ (data_type | RESULTSET)`, no initializer in this grammar)
+ *  -> a VariableDecl. RESULTSET is a Snowflake Scripting variable type, not a general data_type
+ *  (docs.snowflake.com/en/developer-guide/snowflake-scripting/variables), so it rides as typeText
+ *  the same as a normal declared type. */
+function lowerScriptingDeclaration(node: ParserRuleContext): VariableDecl {
+	const idNode = directChildrenOfRule(node, P.RULE_id_)[0];
+	const dt = directChildrenOfRule(node, P.RULE_data_type)[0];
+	return {
+		name: idNode?.getText() ?? "",
+		nameSpan: (idNode && partSpanOf(idNode)) ?? partSpanOf(node) ?? ZERO_PART_SPAN,
+		typeText: dt?.getText() ?? (hasDirectToken(node, P.RESULTSET) ? "RESULTSET" : undefined),
+		cst: node,
+	};
+}
+
+/** One `task_scripting_let` (`LET id_ (data_type | RESULTSET)? (DEFAULT | COLON EQ) expr`) -> a
+ *  VariableDecl: declare-and-assign inline, so — unlike task_scripting_declaration — this one DOES
+ *  carry a real `init` Expr, lowered through the same shared expr machinery as any other value.
+ *  docs.snowflake.com/en/developer-guide/snowflake-scripting/variables */
+function lowerScriptingLet(node: ParserRuleContext): VariableDecl {
+	const idNode = directChildrenOfRule(node, P.RULE_id_)[0];
+	const dt = directChildrenOfRule(node, P.RULE_data_type)[0];
+	const exprNode = directChildrenOfRule(node, P.RULE_expr)[0];
+	return {
+		name: idNode?.getText() ?? "",
+		nameSpan: (idNode && partSpanOf(idNode)) ?? partSpanOf(node) ?? ZERO_PART_SPAN,
+		typeText: dt?.getText() ?? (hasDirectToken(node, P.RESULTSET) ? "RESULTSET" : undefined),
+		init: exprNode ? lowerExpr(exprNode) : undefined,
+		cst: node,
+	};
+}
+
+/** A fallback span for the never-should-happen case a scripting variable's own id_ token is
+ *  missing (a broken/partial parse): stays a valid `PartSpan` rather than `undefined`. */
+const ZERO_PART_SPAN: PartSpan = { start: 0, end: 0, line: 0, column: 0, endLine: 0, endColumn: 0 };
+
+/** Lower one inner statement of a Snowflake Scripting body (a `task_scripting_statement` node) into
+ *  its own QueryExpr — the routine-frame slice's Snowflake counterpart of tsql's
+ *  lowerInnerStatement. `sql_command` reuses lowerCommand (a real query gets its real body; a
+ *  nested scripting block gets its own declarations/statements, recursively). `task_scripting_let`
+ *  declares AND assigns, so its own declaration rides this statement's `declarations` (mirrors a
+ *  tsql body DECLARE: mid-body, not container-level — rootDeclarations pools the whole tree
+ *  regardless). `call` / `task_scripting_assignment` / `task_scripting_return` are scripting-only
+ *  with no query body: honest flagged stubs, categorised like other_command's grab-bag alternatives
+ *  (CALL -> utility via keywordCategory; a bare assignment/RETURN carries no recognised verb ->
+ *  "other"). RETURN's own expression is deliberately NOT modelled, matching tsql's routine RETURN
+ *  (a synthetic projection would be fabricated structure this dialect never wrote). */
+function lowerInnerScriptingStatement(unit: ParserRuleContext): QueryExpr {
+	const cmd = directChildrenOfRule(unit, P.RULE_sql_command)[0];
+	if (cmd) {
+		const q = lowerCommand(cmd);
+		q.statement = commandCategory(cmd);
+		return q;
+	}
+	const letNode = directChildrenOfRule(unit, P.RULE_task_scripting_let)[0];
+	if (letNode) {
+		const q = nonQuery(unit, "non-query");
+		q.statement = "other";
+		q.declarations = [lowerScriptingLet(letNode)];
+		return q;
+	}
+	const q = nonQuery(unit, "non-query");
+	q.statement = keywordCategory(unit.start?.text ?? "");
 	return q;
 }
 

@@ -8,6 +8,7 @@ import {
 	ColumnReferenceContext,
 	ComparisonContext,
 	ConstantDefaultContext,
+	CreateVariableContext,
 	CurrentLikeContext,
 	DatabricksParser as P,
 	DereferenceContext,
@@ -66,10 +67,11 @@ import type {
 	Source,
 	UnpivotInfo,
 	UnsupportedFlag,
+	VariableDecl,
 	WindowSpec,
 } from "../ir/ir.js";
 import { keywordCategory, swallowedCategories, swallowedStatements, type StatementCategory } from "../ir/statement.js";
-import { partSpansOf } from "../ir/part-span.js";
+import { partSpanOf, partSpansOf, type PartSpan } from "../ir/part-span.js";
 import { freezeIR } from "../ir/freeze.js";
 import { qualifiedNameOf, type QualifiedName } from "../ir/qualified-name.js";
 import { DATABRICKS_NAME_CONFIG } from "./fold.js";
@@ -207,9 +209,24 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 		return flagged(tree, "other", swallowed > 0 ? "broken" : "empty");
 	const stmt = elements[0] ?? tree; // the single element, or a legacy single-statement root
 	const statement = statementCategory(stmt);
-	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the
-	// whole thing rather than modelling whichever SELECT happens to come first inside it.
-	if (isCompound(stmt)) return flagged(stmt, statement, "compound");
+	// A BEGIN…END scripting compound is a statement *sequence*, not a query — flag the whole thing
+	// rather than modelling whichever SELECT happens to come first inside it, PLUS its own inner
+	// statements (applyCompoundFrame — the routine-frame slice's Databricks counterpart, see tsql's
+	// applyRoutineFrame / snowflake's applyScriptingFrame).
+	if (isCompound(stmt)) {
+		const q = flagged(stmt, statement, "compound");
+		applyCompoundFrame(q, stmt);
+		return q;
+	}
+	return lowerStatement(stmt);
+}
+
+/** Lower a single statement-shaped node into a QueryExpr: a real query gets its real body;
+ *  anything else gets the flagged "non-query" stub. Shared by lowerImpl's single-element case and
+ *  each compound inner statement whose own alternative is a nested `statement`
+ *  (lowerInnerCompoundStatement). */
+function lowerStatement(stmt: ParserRuleContext): QueryExpr {
+	const statement = statementCategory(stmt);
 	const query = firstOfRule(stmt, P.RULE_query);
 	if (!query) return flagged(stmt, statement, "non-query");
 	const lowered = lowerQuery(query);
@@ -218,11 +235,89 @@ function lowerImpl(tree: ParserRuleContext): QueryExpr {
 }
 
 /** A BEGIN…END scripting compound: the batch element's BEGIN-led alternative, or a legacy
- *  `singleCompoundStatement` root (other entries into this lowering still work). */
+ *  `singleCompoundStatement` root (other entries into this lowering still work). A NESTED
+ *  `beginEndCompoundBlock` inside another compound's own body is detected directly by
+ *  lowerInnerCompoundStatement instead (it is never routed through `statement`/lowerStatement, so
+ *  it never reaches this function). */
 function isCompound(stmt: ParserRuleContext): boolean {
 	if (stmt.ruleIndex === P.RULE_multiStatementElement && stmt.start?.type === P.BEGIN) return true;
 	return !!firstOfRule(stmt, P.RULE_singleCompoundStatement);
 }
+
+/** The `compoundBody` of a compound-shaped node: a direct child for the two shapes that carry one
+ *  right on themselves (a BEGIN-led `multiStatementElement`, or a nested `beginEndCompoundBlock`),
+ *  else a deep search for the legacy `singleCompoundStatement` root's own child. */
+function compoundBodyOf(stmt: ParserRuleContext): ParserRuleContext | undefined {
+	const direct = directChildrenOfRule(stmt, P.RULE_compoundBody)[0];
+	if (direct) return direct;
+	const single = firstOfRule(stmt, P.RULE_singleCompoundStatement);
+	return single ? directChildrenOfRule(single, P.RULE_compoundBody)[0] : undefined;
+}
+
+/** Layers a BEGIN...END scripting compound's inner statements (statements[]) onto the container's
+ *  existing flagged "compound" QueryExpr. Databricks' compoundBody has no variable-DECLARE
+ *  statement of its own (declareConditionStatement declares a named SQLSTATE handler condition, not
+ *  a typed variable — grammars/databricks/DatabricksParser.g4); the DECLARE-VARIABLE form
+ *  (`#createVariable`) is a plain `statement` alternative reachable from inside a compound body too,
+ *  so it rides that inner statement's own `declarations` (lowerInnerCompoundStatement) — there is no
+ *  container-level declarations counterpart here, unlike tsql/snowflake's signature-like preamble. */
+function applyCompoundFrame(q: QueryExpr, stmt: ParserRuleContext): void {
+	const body = compoundBodyOf(stmt);
+	if (!body) return;
+	const units = directChildrenOfRule(body, P.RULE_compoundStatement);
+	if (units.length) q.statements = units.map(lowerInnerCompoundStatement);
+}
+
+/** One `compoundStatement` of a scripting body -> its own QueryExpr. A nested `beginEndCompoundBlock`
+ *  gets the same flagged "compound" stub + recursive statements[] (applyCompoundFrame called again,
+ *  so nesting layers naturally to any depth). A `statement` gets its real body via the shared
+ *  per-statement lowering (lowerStatement); its `#createVariable` alternative (DECLARE [OR REPLACE] [VARIABLE]
+ *  name [, name...] [data_type] [DEFAULT|= expr] — sql-ref-syntax-ddl-declare-variable) ALSO carries
+ *  its own `declarations`, mirroring a tsql body DECLARE / a Snowflake scripting LET: mid-body, not
+ *  container-level (rootDeclarations pools the whole tree regardless of nesting depth). Every other
+ *  scripting-only control-flow alternative (declareConditionStatement, setStatementInsideSqlScript,
+ *  declareHandlerStatement, ifElseStatement, caseStatement, whileStatement, repeatStatement,
+ *  leaveStatement, iterateStatement, loopStatement, forStatement) has no query body to lower — an
+ *  honest flagged "non-query" stub, categorised by leading keyword like the top-level grab-bag
+ *  commands. */
+function lowerInnerCompoundStatement(unit: ParserRuleContext): QueryExpr {
+	const nested = directChildrenOfRule(unit, P.RULE_beginEndCompoundBlock)[0];
+	if (nested) {
+		const q = flagged(nested, "compound", "compound");
+		applyCompoundFrame(q, nested);
+		return q;
+	}
+	const stmt = directChildrenOfRule(unit, P.RULE_statement)[0];
+	if (stmt) {
+		const q = lowerStatement(stmt);
+		if (stmt instanceof CreateVariableContext) q.declarations = lowerCreateVariable(stmt);
+		return q;
+	}
+	return flagged(unit, keywordCategory(unit.start?.text ?? ""), "non-query");
+}
+
+/** `DECLARE [OR REPLACE] [VARIABLE] name [, name...] [data_type] [{DEFAULT|=} expr]` (Databricks
+ *  session variables, sql-ref-syntax-ddl-declare-variable): ONE shared data_type/default expression
+ *  across every name in the list — duplicated onto EACH name's own VariableDecl, matching the doc's
+ *  own multi-name example (`DECLARE var1, var2 DOUBLE DEFAULT rand()`: both get type DOUBLE and
+ *  their own evaluation of the same expression). */
+function lowerCreateVariable(node: CreateVariableContext): VariableDecl[] {
+	const dt = node.dataType();
+	const typeText = dt?.getText();
+	const defaultExpr = node.variableDefaultExpression();
+	const init = defaultExpr ? lowerExpression(defaultExpr.expression()) : undefined;
+	return node.identifierReference().map((idRef) => ({
+		name: idRef.getText(),
+		nameSpan: partSpanOf(idRef) ?? partSpanOf(node) ?? ZERO_PART_SPAN,
+		typeText,
+		init,
+		cst: idRef,
+	}));
+}
+
+/** A fallback span for the never-should-happen case a declared variable's own name token is missing
+ *  (a broken/partial parse): stays a valid `PartSpan` rather than `undefined`. */
+const ZERO_PART_SPAN: PartSpan = { start: 0, end: 0, line: 0, column: 0, endLine: 0, endColumn: 0 };
 
 /**
  * The statement category, from the parse — not the source text. Spark's `statement` rule labels its
