@@ -1,3 +1,20 @@
+# [1.7.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.6.0...v1.7.0) (2026-07-22)
+
+
+### Bug Fixes
+
+* **databricks:** top-level LIMIT/OFFSET reach the IR ([2d17e4d](https://github.com/NiclasOlofsson/sqllens/commit/2d17e4d1f887a9fb5711ff7811f8297ba296c83b))
+
+
+### Features
+
+* frameAt, clausesOf, setOpArmsOf: the debugger's where-is-what surfaces ([b7ef6bd](https://github.com/NiclasOlofsson/sqllens/commit/b7ef6bd01408e61dca487e5831af043a8d1893c6))
+* reserved/soft keyword split + completion candidate decoration (anvil asks) ([03f4703](https://github.com/NiclasOlofsson/sqllens/commit/03f47037940c0373214d23a756fe612d4bd5158c))
+* scripting compounds model their inner statements (snowflake, databricks) ([9e14e70](https://github.com/NiclasOlofsson/sqllens/commit/9e14e70dde87a35f3ee968af815e723aa89153d2))
+* Spark-gate temp-view threading + snowflake scripting honesty ([6aa04f3](https://github.com/NiclasOlofsson/sqllens/commit/6aa04f329eaee01deb1c550eccfa7eb3e28e37b8)), closes [#40](https://github.com/NiclasOlofsson/sqllens/issues/40)
+* **tsql:** DECLARE variable linking and declared-type flow ([555a46c](https://github.com/NiclasOlofsson/sqllens/commit/555a46cb2cb79fed17f613b51e71eb08f745b953))
+* **tsql:** routine frames: procedure/function signatures and bodies in the IR ([65efca2](https://github.com/NiclasOlofsson/sqllens/commit/65efca2ce654ac88de7d009001c5eb78848af3d6))
+
 # [1.6.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.5.1...v1.6.0) (2026-07-20)
 
 
