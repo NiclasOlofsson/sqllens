@@ -9,6 +9,7 @@ import {
 	type ClauseKind,
 } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
+import { dbt } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
 // The SQL debugger's three marker-planting primitives: frameAt (which CTE/frame
@@ -265,6 +266,88 @@ describe("clausesOf", () => {
 			const from = clauses.find((c) => c.kind === "from")!;
 			expect(armText.slice(from.span.start, from.span.end)).toBe("FROM anchor_table");
 		}
+	});
+
+	// Regression (v1.7.0): a templated relation ({{ ref('x') }}) sitting in the FROM slot made the
+	// WHOLE "from" entry vanish. The FROM keyword is plain SQL text outside the jinja tag — only the
+	// relation itself is a placeholder fill — so the clause is real and must anchor on the real
+	// keyword; only the region the fill occupies is templated. Root cause: the templated source's
+	// `cst` starts at the placeholder-fill token, which the unified token stream (src/minijinja/
+	// parse.ts) replaces wholesale with channel-2 jinja tokens — so no channel-0 token starts there,
+	// and clauses.ts's own exact-index backward lookup missed. Matrix reproduced verbatim from the
+	// consumer report, plus the sibling shapes (JOIN's templated side, an aliased templated source,
+	// multiple templated sources comma-joined).
+	describe("templated FROM sources (anchor/adjacency across a jinja fill)", () => {
+		const dbtOpts = () => ({ templating: minijinja(), ...dbt() });
+
+		it("plain baseline (no jinja): select,from", () => {
+			const Q = "select id from raw_a";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			expect(doc.clausesOf(doc.scopes.root).map((c) => c.kind)).toEqual(["select", "from"]);
+		});
+
+		it("templated FROM alone: from is present, anchored on the real keyword", () => {
+			const Q = "select id from {{ ref('raw_a') }}";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			expect(Q.slice(from.anchorSpan.start, from.anchorSpan.end)).toBe("from");
+			expect(Q.slice(from.span.start, from.span.end)).toBe("from {{ ref('raw_a') }}");
+		});
+
+		it("templated FROM + trailing WHERE: both from and where present", () => {
+			const Q = "select id from {{ ref('raw_a') }} where id > 0";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from", "where"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			const where = clauses.find((c) => c.kind === "where")!;
+			expect(Q.slice(from.span.start, from.span.end)).toBe("from {{ ref('raw_a') }}");
+			expect(Q.slice(where.span.start, where.span.end)).toBe("where id > 0");
+		});
+
+		it("templated FROM with a bare alias: from's span extends through the alias", () => {
+			const Q = "select c.id from {{ ref('raw_a') }} c";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			expect(Q.slice(from.anchorSpan.start, from.anchorSpan.end)).toBe("from");
+			expect(Q.slice(from.span.start, from.span.end)).toBe("from {{ ref('raw_a') }} c");
+		});
+
+		it("JOIN with a templated right side: from + join both present", () => {
+			const Q = "select id from a join {{ ref('raw_b') }} on a.id = id";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from", "join"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			const join = clauses.find((c) => c.kind === "join")!;
+			// FROM's own span extends through the trailing join's ON predicate, same as the plain case.
+			expect(Q.slice(from.span.start, from.span.end)).toBe(Q.slice(Q.indexOf("from"), Q.length));
+			expect(Q.slice(join.anchorSpan.start, join.anchorSpan.end)).toBe("join");
+			expect(Q.slice(join.span.start, join.span.end)).toBe("join {{ ref('raw_b') }} on a.id = id");
+		});
+
+		it("multiple templated sources, comma-joined: from anchors once on the real keyword", () => {
+			const Q = "select id from {{ ref('raw_a') }}, {{ ref('raw_b') }}";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			expect(Q.slice(from.anchorSpan.start, from.anchorSpan.end)).toBe("from");
+			expect(Q.slice(from.span.start, from.span.end)).toBe("from {{ ref('raw_a') }}, {{ ref('raw_b') }}");
+		});
+
+		it("templated + aliased sources on both sides of a JOIN", () => {
+			const Q = "select a.id from {{ ref('raw_a') }} a join {{ ref('raw_b') }} b on a.id = b.id";
+			const doc = SqlDocument.create(Q, "databricks", dbtOpts());
+			const clauses = doc.clausesOf(doc.scopes.root);
+			expect(clauses.map((c) => c.kind)).toEqual(["select", "from", "join"]);
+			const from = clauses.find((c) => c.kind === "from")!;
+			expect(Q.slice(from.span.start, from.span.end)).toBe(Q.slice(Q.indexOf("from"), Q.length));
+		});
 	});
 });
 

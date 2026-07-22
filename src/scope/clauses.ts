@@ -221,11 +221,35 @@ function joinAnchor(coded: Coded, offset: number): PartSpan | undefined {
 	return spanFromTokens(coded.tokens[idx], coded.tokens[end - 1]);
 }
 
-/** `phrase` immediately preceding the token starting at `contentStart` (e.g. content-start = the
- *  first GROUP BY expression's own start ⇒ the two tokens right before it must read "GROUP","BY"). */
+/** The index of the first `coded.tokens` entry whose `start >= offset` (coded.tokens is
+ *  source-ordered), or `coded.tokens.length` when none qualifies. Whenever a token really does
+ *  start exactly at `offset` this is that token's own index — identical to an exact
+ *  `indexByStart` lookup for the overwhelmingly common case. It also degrades correctly when NO
+ *  token starts exactly at `offset`: a templated FROM/JOIN source's content starts at the
+ *  placeholder fill's position, but that fill is entirely CHANNEL-2 jinja tokens in the merged
+ *  stream (src/minijinja/parse.ts's clipToTagBoundaries drops the placeholder's own channel-0
+ *  token wholesale), so no channel-0 token starts there. Using the next real token as the
+ *  reference point still finds the true keyword immediately before it: nothing real (only the
+ *  clipped tag) sits between the keyword and the content in that case. */
+function indexAtOrAfter(coded: Coded, offset: number): number {
+	let lo = 0;
+	let hi = coded.tokens.length;
+	while (lo < hi) {
+		const mid = (lo + hi) >>> 1;
+		if (coded.tokens[mid].start < offset) lo = mid + 1;
+		else hi = mid;
+	}
+	return lo;
+}
+
+/** `phrase` immediately preceding the content that starts at `contentStart` (e.g. content-start =
+ *  the first GROUP BY expression's own start ⇒ the two tokens right before it must read "GROUP",
+ *  "BY"). Uses `indexAtOrAfter` rather than an exact `indexByStart` lookup so a templated FROM
+ *  fill (whose own token is missing from this channel-0 view, see `indexAtOrAfter`) still anchors
+ *  on the real keyword preceding it, instead of the whole clause silently vanishing. */
 function matchBackward(coded: Coded, contentStart: number, phrase: string[]): PartSpan | undefined {
-	const idx = coded.indexByStart.get(contentStart);
-	if (idx === undefined || idx < phrase.length) return undefined;
+	const idx = indexAtOrAfter(coded, contentStart);
+	if (idx < phrase.length) return undefined;
 	const from = idx - phrase.length;
 	for (let i = 0; i < phrase.length; i++) {
 		if (coded.tokens[from + i].text.toUpperCase() !== phrase[i]) return undefined;
