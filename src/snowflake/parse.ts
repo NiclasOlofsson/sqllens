@@ -11,6 +11,7 @@ import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
+import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
@@ -44,7 +45,13 @@ export function parseSnowflake(sql: string): ParseResult {
 	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
 		let cached: Token[] | undefined;
 		return Object.defineProperty(base as ParseResult, "tokens", {
-			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "snowflake")),
+			get: () =>
+				(cached ??= mapTokens(
+					lexer,
+					tokens.getTokens(),
+					"snowflake",
+					deriveConsumedAs((base as ParseResult).tree, CONSUMED_AS_RULES.snowflake),
+				)),
 			enumerable: true,
 			configurable: true,
 		});

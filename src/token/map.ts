@@ -11,14 +11,26 @@ import { Token as AntlrToken, type Lexer } from "antlr4ng";
 import type { Dialect } from "../dialect.js";
 import { endPosition } from "../ir/span.js";
 import { classifyToken } from "./classify.js";
+import type { ConsumedAs } from "./consumed-as.js";
 import type { Token } from "./token.js";
 
 /**
  * Map a list of antlr tokens to neutral `Token`s for the given dialect.
  * Order is preserved, trivia is kept, and the EOF sentinel is skipped. Spans
  * (start/stop/line/column) are copied verbatim so positions round-trip exactly.
+ *
+ * `consumedAs` is the tokenIndex -> verdict map `deriveConsumedAs` (consumed-as.ts) built from
+ * this same parse's CST. Omitted entirely by `tokenize()` (lexer-only, no parse ran, no CST to
+ * derive from): every `Token.consumedAs` field stays absent in that case. When present, only
+ * KEYWORD-role tokens ever get the field set; every other role is untouched, matching
+ * `Token.consumedAs`'s doc.
  */
-export function mapTokens(lexer: Lexer, antlrTokens: AntlrToken[], dialect: Dialect): Token[] {
+export function mapTokens(
+	lexer: Lexer,
+	antlrTokens: AntlrToken[],
+	dialect: Dialect,
+	consumedAs?: Map<number, ConsumedAs>,
+): Token[] {
 	const out: Token[] = [];
 	for (const tok of antlrTokens) {
 		if (tok.type === AntlrToken.EOF) continue;
@@ -28,7 +40,8 @@ export function mapTokens(lexer: Lexer, antlrTokens: AntlrToken[], dialect: Dial
 			lexer.vocabulary.getSymbolicName(tok.type) ?? lexer.vocabulary.getDisplayName(tok.type) ?? String(tok.type);
 		const text = tok.text ?? "";
 		const end = endPosition(tok.line, tok.column, text);
-		out.push({
+		const role = classifyToken(lexer, tok.type, dialect);
+		const neutral: Token = {
 			type: tok.type,
 			name,
 			text,
@@ -39,8 +52,13 @@ export function mapTokens(lexer: Lexer, antlrTokens: AntlrToken[], dialect: Dial
 			endLine: end.endLine,
 			endColumn: end.endColumn,
 			channel: tok.channel,
-			role: classifyToken(lexer, tok.type, dialect),
-		});
+			role,
+		};
+		if (consumedAs && role === "keyword") {
+			const verdict = consumedAs.get(tok.tokenIndex);
+			if (verdict) neutral.consumedAs = verdict;
+		}
+		out.push(neutral);
 	}
 	return out;
 }

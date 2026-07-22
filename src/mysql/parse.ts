@@ -11,6 +11,7 @@ import { MysqlLexer } from "../generated/mysql/MysqlLexer.js";
 import { MysqlParser } from "../generated/mysql/MysqlParser.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
+import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
@@ -44,7 +45,13 @@ export function parseMysql(sql: string): ParseResult {
 	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
 		let cached: Token[] | undefined;
 		return Object.defineProperty(base as ParseResult, "tokens", {
-			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "mysql")),
+			get: () =>
+				(cached ??= mapTokens(
+					lexer,
+					tokens.getTokens(),
+					"mysql",
+					deriveConsumedAs((base as ParseResult).tree, CONSUMED_AS_RULES.mysql),
+				)),
 			enumerable: true,
 			configurable: true,
 		});

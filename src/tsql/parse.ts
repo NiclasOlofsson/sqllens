@@ -11,6 +11,7 @@ import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { TSqlParser } from "../generated/tsql/TSqlParser.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
+import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
@@ -46,7 +47,13 @@ export function parseTSql(sql: string): ParseResult {
 	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
 		let cached: Token[] | undefined;
 		return Object.defineProperty(base as ParseResult, "tokens", {
-			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "tsql")),
+			get: () =>
+				(cached ??= mapTokens(
+					lexer,
+					tokens.getTokens(),
+					"tsql",
+					deriveConsumedAs((base as ParseResult).tree, CONSUMED_AS_RULES.tsql),
+				)),
 			enumerable: true,
 			configurable: true,
 		});

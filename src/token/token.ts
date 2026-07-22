@@ -46,4 +46,17 @@ export interface Token {
 	/** 0 = default, 1 = HIDDEN. */
 	channel: number;
 	role: TokenRole;
+	/**
+	 * How a KEYWORD-role token was actually consumed by the parse, derived post-parse from the CST
+	 * (see `consumed-as.ts`): `"identifier"` when the parser's grammar absorbed it through a
+	 * non-reserved-word / name-wrapper rule (a keyword used as a bare column/table/alias name),
+	 * `"type"` when absorbed through a data-type production (a keyword used as a type name, only
+	 * for the dialects where that grammar cleanly separates from identifier use; see the per-dialect
+	 * notes next to `CONSUMED_AS_RULES`), `"keyword"` when neither: the token's ordinary keyword
+	 * sense. ABSENT (no field) for: every non-keyword-role token, `tokenize()`'s lexer-only stream (no
+	 * parse ran), a keyword-role token the parse never actually consumed (error-recovery skipped
+	 * regions; hidden-channel tokens never reach the parser to begin with), and any case with no
+	 * clean verdict. Honest absence, never a guess.
+	 */
+	consumedAs?: "keyword" | "identifier" | "type";
 }

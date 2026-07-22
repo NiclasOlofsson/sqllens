@@ -5,6 +5,7 @@ import { dotPathTokenSource } from "./dot-path.js";
 import { postParseDiagnostics } from "./post-validate.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
+import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
@@ -44,7 +45,13 @@ export function parseBigQuery(sql: string): ParseResult {
 	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
 		let cached: Token[] | undefined;
 		return Object.defineProperty(base as ParseResult, "tokens", {
-			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "bigquery")),
+			get: () =>
+				(cached ??= mapTokens(
+					lexer,
+					tokens.getTokens(),
+					"bigquery",
+					deriveConsumedAs((base as ParseResult).tree, CONSUMED_AS_RULES.bigquery),
+				)),
 			enumerable: true,
 			configurable: true,
 		});

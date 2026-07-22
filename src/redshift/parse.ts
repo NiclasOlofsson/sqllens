@@ -11,6 +11,7 @@ import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
+import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
 import { mapTokens } from "../token/map.js";
 import type { Token } from "../token/token.js";
 
@@ -44,7 +45,13 @@ export function parseRedshift(sql: string): ParseResult {
 	const withTokens = (base: Omit<ParseResult, "tokens">): ParseResult => {
 		let cached: Token[] | undefined;
 		return Object.defineProperty(base as ParseResult, "tokens", {
-			get: () => (cached ??= mapTokens(lexer, tokens.getTokens(), "redshift")),
+			get: () =>
+				(cached ??= mapTokens(
+					lexer,
+					tokens.getTokens(),
+					"redshift",
+					deriveConsumedAs((base as ParseResult).tree, CONSUMED_AS_RULES.redshift),
+				)),
 			enumerable: true,
 			configurable: true,
 		});
