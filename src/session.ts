@@ -23,7 +23,7 @@ import { UNKNOWN } from "./infer/types.js";
 import type { TagNode } from "./minijinja/tag-ast.js";
 import type { TemplateRegion, TemplateSymbol } from "./minijinja/regions.js";
 import type { SyntaxDiagnostic } from "./parse-diagnostics.js";
-import { completeAt, type CompletionResult } from "./completion/complete.js";
+import { completeAt, type CompleteOptions, type CompletionResult } from "./completion/complete.js";
 import type { Diagnostic, Qualification } from "./qualify/qualify.js";
 import type { SchemaProvider } from "./qualify/schema-provider.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "./qualify/template-provider.js";
@@ -164,8 +164,8 @@ export class SqlSession {
 		const hit = this.nodeAt(offset);
 		return hit ? this.types().typeOf(hit.expr, hit.scope) : UNKNOWN;
 	}
-	completeAt(offset: number): CompletionResult {
-		return completeAt(this.doc, offset, this.schema);
+	completeAt(offset: number, opts?: CompleteOptions): CompletionResult {
+		return completeAt(this.doc, offset, this.schema, opts);
 	}
 	signatureAt(offset: number): SignatureHelpInfo | null {
 		return signatureAt(this.doc, offset);

@@ -90,6 +90,16 @@ import { TRINO_ALIASES } from "./trino/infer.js";
 import { SQLITE_ALIASES } from "./sqlite/infer.js";
 import { MYSQL_ALIASES } from "./mysql/infer.js";
 import { SIGNATURES } from "./signature/signatures.js";
+import { DATABRICKS_RESERVED } from "./databricks/reserved.generated.js";
+import { TSQL_RESERVED } from "./tsql/reserved.generated.js";
+import { SNOWFLAKE_RESERVED } from "./snowflake/reserved.generated.js";
+import { BIGQUERY_RESERVED } from "./bigquery/reserved.generated.js";
+import { REDSHIFT_RESERVED } from "./redshift/reserved.generated.js";
+import { POSTGRES_RESERVED } from "./postgres/reserved.generated.js";
+import { DUCKDB_RESERVED } from "./duckdb/reserved.generated.js";
+import { TRINO_RESERVED } from "./trino/reserved.generated.js";
+import { SQLITE_RESERVED } from "./sqlite/reserved.generated.js";
+import { MYSQL_RESERVED } from "./mysql/reserved.generated.js";
 
 /** Per-dialect membership sets — canonical UPPERCASE names. See module header for sources
  *  and heuristic limits per set. */
@@ -181,19 +191,72 @@ function typesFor(dialect: Dialect): Set<string> {
 // (identifiers, numbers) have no literal spelling and are absent by
 // construction — they aren't vocabulary. Compound units (GROUP BY) are parser-
 // level sequences, not lexer tokens, and are deliberately NOT invented here.
+//
+// Each keyword entry also carries its RESERVED/soft split (the anvil channel ask, 2026-07-22:
+// "expose the reserved/soft split... your grammars already encode it"). Source: the per-dialect
+// src/<dialect>/reserved.generated.ts tables, probe-derived by tools/gen-reserved.ts (three
+// identifier-position probes — alias/column/table — through the dialect's own real parser; see
+// that tool's header for the full method and the verified honesty notes, including why the AS-
+// alias position is excluded from the `reserved` bit but still recorded). `reserved` is the
+// operative truth of THIS grammar, not the SQL standard's or the vendor's own reserved-word list —
+// a keyword can be standard-reserved and still parse as a plain identifier in a lenient fork (all
+// 424 Databricks keywords, including SELECT/FROM, score soft — verified real: the fork's
+// `SQL_standard_keyword_behavior` defaults to `false`, Spark SQL's documented Hive-compatible
+// default), or vice versa.
 // ---------------------------------------------------------------------------
 
-/** A dialect's token catalog: literal spelling → the lexer rule's symbolic name. */
+/** Per-position identifier-admission record for one keyword in one dialect, probe-derived (see
+ *  tools/gen-reserved.ts). `reserved` is true iff the grammar admits the keyword as neither a bare
+ *  column reference nor a bare table name; `alias` (the AS-labeled projection-alias slot) is
+ *  recorded but deliberately excluded from `reserved` — verified genuinely maximally permissive by
+ *  grammar design in several of these dialects (Postgres's own keyword-appendix docs: any keyword
+ *  is a valid column label after AS), so folding it in would score classic reserved words like
+ *  FROM as soft purely on that slot's leniency. */
+export interface KeywordReservation {
+	/** True iff admitted in NEITHER the column NOR the table position. */
+	reserved: boolean;
+	/** Parses clean as a SELECT-list alias: `SELECT 1 AS <kw>`. */
+	alias: boolean;
+	/** Parses clean as a bare column reference: `SELECT <kw> FROM t`. */
+	column: boolean;
+	/** Parses clean as a bare table name: `SELECT a FROM <kw>`. */
+	table: boolean;
+}
+
+/** One vocabulary keyword's symbolic lexer name plus its reserved/soft split. */
+export interface KeywordEntry extends KeywordReservation {
+	/** Symbolic lexer rule name (e.g. "SELECT", bigquery's "SELECT_SYMBOL"). */
+	symbol: string;
+}
+
+/** A dialect's token catalog: literal spelling → the lexer rule's symbolic name (+ reserved split
+ *  for keywords). */
 export interface DialectVocabulary {
-	/** Keyword literal text (canonical UPPERCASE) → symbolic token name (e.g. "SELECT" → "SELECT"). */
-	keywords: ReadonlyMap<string, string>;
+	/** Keyword literal text (canonical UPPERCASE) → symbol name + reserved/soft split. */
+	keywords: ReadonlyMap<string, KeywordEntry>;
 	/** Operator/punctuation literal text (exact spelling) → symbolic token name (e.g. "::" → its rule name). */
 	operators: ReadonlyMap<string, string>;
 }
 
+// Per-dialect probe-derived reservation table (src/<dialect>/reserved.generated.ts, built by
+// tools/gen-reserved.ts). Keyed the same canonical-uppercase way as `keywords` above.
+const RESERVED: Record<Dialect, Record<string, KeywordReservation>> = {
+	databricks: DATABRICKS_RESERVED,
+	tsql: TSQL_RESERVED,
+	snowflake: SNOWFLAKE_RESERVED,
+	bigquery: BIGQUERY_RESERVED,
+	redshift: REDSHIFT_RESERVED,
+	postgres: POSTGRES_RESERVED,
+	duckdb: DUCKDB_RESERVED,
+	trino: TRINO_RESERVED,
+	sqlite: SQLITE_RESERVED,
+	mysql: MYSQL_RESERVED,
+};
+
 function vocabularyFor(dialect: Dialect): DialectVocabulary {
 	const vocab = LEXERS[dialect]().vocabulary;
-	const keywords = new Map<string, string>();
+	const reservation = RESERVED[dialect];
+	const keywords = new Map<string, KeywordEntry>();
 	const operators = new Map<string, string>();
 	for (let type = 1; type <= vocab.maxTokenType; type++) {
 		const literal = vocab.getLiteralName(type);
@@ -201,8 +264,17 @@ function vocabularyFor(dialect: Dialect): DialectVocabulary {
 		const text = literal.replace(/^'/, "").replace(/'$/, "");
 		if (text.includes("'")) continue; // quoted-string literal tokens are not vocabulary
 		const name = vocab.getSymbolicName(type) ?? text.toUpperCase();
-		if (BARE_WORD.test(text)) keywords.set(text.toUpperCase(), name);
-		else operators.set(text, name);
+		if (BARE_WORD.test(text)) {
+			const key = text.toUpperCase();
+			const r = reservation[key];
+			if (!r) {
+				throw new Error(
+					`reserved.generated.ts is stale for ${dialect}: keyword "${key}" has no reservation entry — ` +
+						`run "node --import tsx tools/gen-reserved.ts" to regenerate`,
+				);
+			}
+			keywords.set(key, { symbol: name, ...r });
+		} else operators.set(text, name);
 	}
 	return { keywords, operators };
 }
@@ -221,6 +293,25 @@ export function dialectVocabulary(dialect: Dialect): DialectVocabulary {
 	const vocabulary = vocabularyFor(dialect);
 	VOCAB_CACHE.set(dialect, vocabulary);
 	return vocabulary;
+}
+
+const RESERVED_CACHE = new Map<Dialect, ReadonlySet<string>>();
+
+/**
+ * The dialect's hard-reserved keyword spellings (canonical UPPERCASE) — every keyword whose
+ * `KeywordEntry.reserved` is true, i.e. the grammar admits it as neither a bare column reference
+ * nor a bare table name (the AS-alias slot is excluded from this determination; see
+ * `KeywordReservation`'s doc comment). A convenience over `dialectVocabulary(dialect).keywords`
+ * for the common "is this identifier a reserved word?" membership check. Computed once per
+ * dialect and cached.
+ */
+export function reservedKeywords(dialect: Dialect): ReadonlySet<string> {
+	const cached = RESERVED_CACHE.get(dialect);
+	if (cached) return cached;
+	const out = new Set<string>();
+	for (const [kw, entry] of dialectVocabulary(dialect).keywords) if (entry.reserved) out.add(kw);
+	RESERVED_CACHE.set(dialect, out);
+	return out;
 }
 
 const CACHE = new Map<Dialect, DialectSymbols>();

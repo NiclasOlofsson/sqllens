@@ -24,9 +24,10 @@ import type { DialectBehavior } from "../dialect-behavior/behavior.js";
 import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { IdentKind } from "../ident/fold.js";
 import type { QueryExpr } from "../ir/ir.js";
+import { partSpanOf, type PartSpan } from "../ir/part-span.js";
 import type { Column } from "../qualify/schema.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
-import { DefaultTemplateProvider } from "../qualify/template-provider.js";
+import { DefaultTemplateProvider, type TemplateCall } from "../qualify/template-provider.js";
 import { callOf } from "../minijinja/apply-tags.js";
 import type { TagNode } from "../minijinja/tag-ast.js";
 import { sourcesMatchingQualifier, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
@@ -53,6 +54,10 @@ export interface Completion {
 	kind: "keyword" | "column" | "table" | "cte" | "namespace" | "function" | "template";
 	/** Extra display info, e.g. a column's type when the schema knows it. */
 	detail?: string;
+	/** Long-form documentation for the candidate. completeAt's own resolution never fills this in —
+	 *  it is set ONLY by a `decorate` hook (CompleteOptions.decorate) answering one. Absent when no
+	 *  hook ran, or the hook answered nothing for this candidate. */
+	documentation?: string;
 }
 
 /** The caret-anchored span of the partial identifier/keyword the candidates were pruned against —
@@ -76,15 +81,83 @@ export interface CompletionResult extends Array<Completion> {
 	replaceRange?: ReplaceRange;
 }
 
+/** The decoration hook's answer for ONE candidate — display text supplied from real structure,
+ *  merged onto the Completion completeAt is about to return. Every field optional: an absent field
+ *  leaves that part of the candidate as completeAt itself produced it (a schema-fed column's own
+ *  `detail` survives unless the hook overrides it); returning nothing at all leaves the candidate
+ *  wholly undecorated. */
+export interface CandidateDecoration {
+	detail?: string;
+	documentation?: string;
+}
+
+/**
+ * The STRUCTURAL identity of a candidate completeAt is about to return — anvil's decoration-hook ask
+ * (channel, 2026-07-20): "hand back STRUCTURAL identity, not just the label string". Discriminated by
+ * the candidate's own `kind`. Every extra field is present ONLY when completeAt's own resolution
+ * already produced it (never-wrong: nothing here is synthesized or re-derived) — e.g. a "column"
+ * candidate from the broken-input FROM/JOIN token-stream fallback (fromRelationColumns /
+ * qualifiedFallbackColumns) carries no `source`, because no ResolvedSource exists on that path.
+ *
+ * `"template"` covers the jinja call-slot candidates (a dbt model name for a `ref('|` arg, a source
+ * name for `source('|`) — the "table candidate that resolves through a templated call" from the
+ * ask: its `call` is the SAME TemplateCall (`JinjaSlot.call`) `templateCandidates` was already asked
+ * with, so a consumer names the model/source without re-parsing the call text.
+ */
+export type CandidateIdentity =
+	| { kind: "keyword" }
+	| { kind: "function" }
+	| { kind: "namespace" }
+	| { kind: "table" }
+	| {
+			kind: "cte";
+			/** The CTE name's own declaration span (`CteDef.nameCst`, falling back to the whole
+			 *  `CteDef.cst` when the name has no real token) — pins the RIGHT declaration even when
+			 *  another CTE of the same name shadows it in a nested scope. Absent only when the CTE
+			 *  itself has no real token to key on (a broken/nameless mid-edit CTE). */
+			declarationSpan?: PartSpan;
+	  }
+	| {
+			kind: "column";
+			/** The resolved scope source this column came from (the same ResolvedSource
+			 *  scope/qualify already produced — a table/CTE/subquery/lateral/relation/graphtable/pivot).
+			 *  Absent when the column came from the broken-input token-stream fallback, which has no
+			 *  ResolvedSource to carry. */
+			source?: ResolvedSource;
+	  }
+	| { kind: "template"; call: TemplateCall };
+
+/** Per-candidate decoration hook (`CompleteOptions.decorate`): completeAt calls this once for each
+ *  candidate it is about to return, with the candidate as built so far and its structural identity,
+ *  and merges the answer's `detail`/`documentation` onto it. The candidate SET is unaffected — this
+ *  only supplies display text, never adds/removes/reorders a candidate. Total-safe: a throwing hook
+ *  degrades to the undecorated candidate (never breaks completeAt), the same total-by-contract
+ *  posture every other completeAt internal failure gets (SQLLENS_DEBUG=1 rethrows — src/debug.ts). */
+export type DecorateCandidate = (
+	candidate: Completion,
+	identity: CandidateIdentity,
+) => CandidateDecoration | undefined | void;
+
+/** completeAt's options — currently just the decoration hook. Additive: every existing 3-arg call
+ *  site keeps compiling and behaving byte-identically (no `opts`, no decoration). */
+export interface CompleteOptions {
+	decorate?: DecorateCandidate;
+}
+
 /**
  * Completion candidates for the caret at `offset` in `doc`, pruned to the identifier/keyword
  * fragment already typed there (case-insensitive, dialect-fold-aware; plain prefix match — never
  * fuzzy). Schema-aware when a `Schema` is given (table names + column types). NEVER throws: on
  * broken / mid-edit input it still returns the keyword candidates the walk can reach.
  */
-export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProvider): CompletionResult {
+export function completeAt(
+	doc: SqlDocument,
+	offset: number,
+	schema?: SchemaProvider,
+	opts?: CompleteOptions,
+): CompletionResult {
 	try {
-		return collect(doc, offset, schema);
+		return collect(doc, offset, schema, opts?.decorate);
 	} catch (e) {
 		// Total by contract: a walk/parse hiccup must not surface to the editor.
 		debugRethrow(e);
@@ -95,7 +168,12 @@ export function completeAt(doc: SqlDocument, offset: number, schema?: SchemaProv
 /** @deprecated Use completeAt — same function, uniform cursor-verb naming. */
 export const complete = completeAt;
 
-function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): CompletionResult {
+function collect(
+	doc: SqlDocument,
+	offset: number,
+	schema?: SchemaProvider,
+	decorate?: DecorateCandidate,
+): CompletionResult {
 	const dialect = doc.dialect;
 
 	// Inside a jinja tag ({{ ref('| }}, {% if | %}, {{ a ~ | }}) the caret is not in SQL at all, so SQL
@@ -107,7 +185,7 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 	const tags = doc.templated?.tags;
 	if (tags) {
 		const slot = jinjaSlotAt(tags, doc.text, offset);
-		if (slot) return templateCompletions(slot, schema);
+		if (slot) return templateCompletions(slot, schema, decorate);
 		if (tags.some((t) => offset > t.tagSpan.start && offset < t.tagSpan.end)) return [];
 	}
 
@@ -150,17 +228,21 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 
 	const out: Completion[] = [];
 	const seen = new Set<string>(); // dedup by `${kind}\0${label}`
-	const add = (c: Completion): void => {
+	// Per-candidate structural identity (CandidateIdentity), keyed by the Completion object itself —
+	// consulted only when `decorate` is set (decorateResult, at the end of this function).
+	const identities = new Map<Completion, CandidateIdentity>();
+	const add = (c: Completion, identity: CandidateIdentity): void => {
 		const key = `${c.kind}\0${c.label}`;
 		if (seen.has(key)) return;
 		seen.add(key);
 		out.push(c);
+		identities.set(c, identity);
 	};
 
 	// keywords — from candidate token types whose grammar literal is a word.
 	for (const type of cand.tokens) {
 		const label = keywordLabel(meta.vocabulary, type);
-		if (label) add({ label, kind: "keyword" });
+		if (label) add({ label, kind: "keyword" }, { kind: "keyword" });
 	}
 
 	// A RELATION PATH position (#38 stage 6): a dotted chain right before the caret whose anchor
@@ -178,7 +260,8 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 
 	if (atRelationPath) {
 		if (schema?.childrenOf) {
-			for (const child of schema.childrenOf(path.parts, dialect)) add({ label: child.name, kind: child.kind });
+			for (const child of schema.childrenOf(path.parts, dialect))
+				add({ label: child.name, kind: child.kind }, { kind: child.kind } as CandidateIdentity);
 		}
 	} else if (path.parts.length > 0) {
 		// A qualified MEMBER position (`o.|`, `gold.orders.|`) — anvil item 2: only the columns of
@@ -187,11 +270,11 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 		// mid-edit the walk often reports nothing, but the dot chain itself is the member-position
 		// evidence (it is the completion trigger character), and an unmatched qualifier answers [].
 		const scoped = qualifiedSourceColumns(cellScopes, cellAst, cellOffset, path.parts, dialect, schema);
-		for (const c of scoped) add(c);
+		for (const c of scoped.items) add(c, { kind: "column", source: scoped.source });
 		// Mid-edit the dangling dot often breaks the FROM parse and the scope is EMPTY — the same
 		// failure the bare-slot fallback covers. Its member twin: read `FROM/JOIN name [alias]`
 		// pairs off the token stream and answer the matching relation's schema columns.
-		if (scoped.length === 0 && schema) {
+		if (scoped.items.length === 0 && schema) {
 			const fallback = qualifiedFallbackColumns(
 				walkTokens,
 				cfg,
@@ -201,28 +284,68 @@ function collect(doc: SqlDocument, offset: number, schema?: SchemaProvider): Com
 				doc.templated?.tags,
 				doc.text,
 			);
-			for (const c of fallback) add(c);
+			for (const c of fallback) add(c, { kind: "column" });
 		}
 	} else {
 		if (atTable) {
 			// Bare relation slot: in-scope CTE names FIRST (they shadow same-named catalog tables),
 			// then the catalog's tables.
-			for (const name of visibleCteNames(cellScopes, cellAst, cellOffset)) add({ label: name, kind: "cte" });
-			if (schema) for (const t of schema.tables(dialect)) add({ label: t, kind: "table" });
+			for (const cte of visibleCteNames(cellScopes, cellAst, cellOffset))
+				add({ label: cte.name, kind: "cte" }, { kind: "cte", declarationSpan: cte.declarationSpan });
+			if (schema) for (const t of schema.tables(dialect)) add({ label: t, kind: "table" }, { kind: "table" });
 		}
 		// columns — value/column slot: the columns visible from the enclosing scope, plus a
 		// broken-input fallback reading FROM/JOIN relation names straight off the token stream.
 		if (atColumn) {
-			for (const c of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema)) add(c);
+			for (const { completion, source } of visibleColumns(cellScopes, cellAst, dialect, cellOffset, schema))
+				add(completion, { kind: "column", source });
 			if (schema)
 				for (const c of fromRelationColumns(walkTokens, cfg, schema, dialect, doc.templated?.tags, doc.text))
-					add(c);
+					add(c, { kind: "column" });
 			// functions — value/column slot: the dialect's inference-registry function names.
-			for (const fn of Object.keys(resolveBehavior(dialect).functions)) add({ label: fn, kind: "function" });
+			for (const fn of Object.keys(resolveBehavior(dialect).functions))
+				add({ label: fn, kind: "function" }, { kind: "function" });
 		}
 	}
 
-	return pruneByPrefix(out, walkTokens, offset, cfg, doc.text, dialect);
+	const result = pruneByPrefix(out, walkTokens, offset, cfg, doc.text, dialect);
+	return decorate ? decorateResult(result, identities, decorate) : result;
+}
+
+/** Apply `decorate` to one candidate, merging its `detail`/`documentation` onto a COPY (the input is
+ *  never mutated). Total-safe: a throwing hook degrades to the undecorated candidate unchanged;
+ *  SQLLENS_DEBUG=1 rethrows (src/debug.ts), the same posture every other completeAt internal failure
+ *  gets. */
+function applyDecoration(candidate: Completion, identity: CandidateIdentity, decorate: DecorateCandidate): Completion {
+	try {
+		const d = decorate(candidate, identity);
+		if (!d) return candidate;
+		return {
+			...candidate,
+			...(d.detail !== undefined ? { detail: d.detail } : {}),
+			...(d.documentation !== undefined ? { documentation: d.documentation } : {}),
+		};
+	} catch (e) {
+		debugRethrow(e);
+		return candidate;
+	}
+}
+
+/** Decorate every candidate in the assembled SQL-slot result (post prefix-pruning — a pruned-out
+ *  candidate never reaches the consumer's hook), preserving `replaceRange` (Array.prototype.map
+ *  drops it — it is not an own array index). `identities` was populated by `add()` during collect();
+ *  a candidate somehow missing an entry (never happens in practice — every `add()` call site provides
+ *  one) falls back to its bare kind rather than crashing. */
+function decorateResult(
+	result: CompletionResult,
+	identities: Map<Completion, CandidateIdentity>,
+	decorate: DecorateCandidate,
+): CompletionResult {
+	const decorated: CompletionResult = result.map((c) =>
+		applyDecoration(c, identities.get(c) ?? ({ kind: c.kind } as CandidateIdentity), decorate),
+	);
+	if (result.replaceRange) decorated.replaceRange = result.replaceRange;
+	return decorated;
 }
 
 /** SQL identifier-quoting delimiters recognized across all ten dialects
@@ -326,14 +449,23 @@ function pruneByPrefix(
  *  so this reads the `schema` when it is one (a DbtTemplateProvider IS a SchemaProvider, and the host
  *  already passes it here for column/table completion); the neutral provider offers none. A jinja slot
  *  with no candidates still returns [], never SQL keywords, so a caret inside a tag never leaks SQL
- *  completion. */
-function templateCompletions(slot: JinjaSlot, schema?: SchemaProvider): Completion[] {
+ *  completion. Every item's structural identity is `{ kind: "template", call: slot.call }` — the SAME
+ *  TemplateCall `templateCandidates` was asked with (a dbt model/source candidate resolves through
+ *  this call, so a `decorate` hook names it without re-parsing the call text). */
+function templateCompletions(
+	slot: JinjaSlot,
+	schema?: SchemaProvider,
+	decorate?: DecorateCandidate,
+): CompletionResult {
 	if (!(schema instanceof DefaultTemplateProvider)) return [];
-	return schema.templateCandidates(slot.call, slot.argIndex).map((c) => ({
+	const items = schema.templateCandidates(slot.call, slot.argIndex).map((c) => ({
 		label: c.label,
 		kind: "template" as const,
 		...(c.detail !== undefined ? { detail: c.detail } : {}),
 	}));
+	if (!decorate) return items;
+	const identity: CandidateIdentity = { kind: "template", call: slot.call };
+	return items.map((c) => applyDecoration(c, identity, decorate));
 }
 
 /** The dotted qualifier immediately before the caret (#38): `analytics.` → ["analytics"],
@@ -365,11 +497,22 @@ function dottedPrefixAt(toks: readonly WalkTok[], caretIdx: number): { parts: st
 	return { parts, anchorIdx };
 }
 
-/** The CTE names visible from the caret's enclosing scope, as declared (display text). */
-function visibleCteNames(scopes: ScopeTree, ast: QueryExpr, offset: number): string[] {
+/** The CTE names visible from the caret's enclosing scope, as declared (display text), each with its
+ *  declaration span (`CteDef.nameCst`, falling back to the whole `CteDef.cst`) — the same span
+ *  `SqlDocument.unionCtes` keys its own per-CTE aggregation on, so a `decorate` hook can pin "12
+ *  columns" to the right declaration even when a nested scope shadows the name. */
+function visibleCteNames(
+	scopes: ScopeTree,
+	ast: QueryExpr,
+	offset: number,
+): { name: string; declarationSpan?: PartSpan }[] {
 	const scope = enclosingScope(scopes, ast, offset);
-	const out: string[] = [];
-	for (let s = scope; s; s = s.parent) for (const cte of s.ctes.values()) out.push(cte.def.name);
+	const out: { name: string; declarationSpan?: PartSpan }[] = [];
+	for (let s = scope; s; s = s.parent) {
+		for (const cte of s.ctes.values()) {
+			out.push({ name: cte.def.name, declarationSpan: partSpanOf(cte.def.nameCst ?? cte.def.cst) });
+		}
+	}
 	return out;
 }
 
@@ -466,7 +609,9 @@ function fromRelationColumns(
 /** The columns of the ONE source a dotted qualifier matches from the caret's scope (anvil item 2):
  *  `o.|` answers o's columns only. Matching is sourcesMatchingQualifier — the same validated,
  *  any-depth primitive column BINDING uses — walking enclosing scopes nearest-first. Ambiguous or
- *  unmatched qualifiers answer nothing (never a fabricated union). */
+ *  unmatched qualifiers answer nothing (never a fabricated union). `source` rides along (the matched
+ *  ResolvedSource, when exactly one matched) so the caller can attach it as the column candidates'
+ *  structural identity. */
 function qualifiedSourceColumns(
 	scopes: ScopeTree,
 	ast: QueryExpr,
@@ -474,18 +619,22 @@ function qualifiedSourceColumns(
 	qualParts: string[],
 	dialect: string,
 	schema?: SchemaProvider,
-): Completion[] {
+): { items: Completion[]; source?: ResolvedSource } {
 	const scope = enclosingScope(scopes, ast, offset);
-	if (!scope) return [];
+	if (!scope) return { items: [] };
 	const behavior = resolveBehavior(dialect);
 	for (let s: Scope | undefined = scope; s; s = s.parent) {
 		const matches = sourcesMatchingQualifier(s, qualParts);
-		if (matches.length > 1) return [];
+		if (matches.length > 1) return { items: [] };
 		if (matches.length === 1) {
-			return columnsOf(matches[0]!, dialect, schema).map((c) => ({ ...c, label: behavior.displayName(c.label) }));
+			const source = matches[0]!;
+			return {
+				items: columnsOf(source, dialect, schema).map((c) => ({ ...c, label: behavior.displayName(c.label) })),
+				source,
+			};
 		}
 	}
-	return [];
+	return { items: [] };
 }
 
 /** The member-position twin of `fromRelationColumns` (#38): when the scope is empty (the dangling
@@ -564,18 +713,19 @@ function qualifiedFallbackColumns(
 
 /** The columns visible from the scope enclosing `offset` (a CELL-relative offset into `scopes`).
  *  Derived sources / CTEs expose their own output column names; base-table sources get their columns
- *  (and types) from the schema. */
+ *  (and types) from the schema. Each item rides alongside the ResolvedSource it came from — the
+ *  column candidate's structural identity (a `decorate` hook's "source relation"). */
 function visibleColumns(
 	scopes: ScopeTree,
 	ast: QueryExpr,
 	dialect: string,
 	offset: number,
 	schema?: SchemaProvider,
-): Completion[] {
+): { completion: Completion; source: ResolvedSource }[] {
 	const scope = enclosingScope(scopes, ast, offset);
 	if (!scope) return [];
 	const behavior = resolveBehavior(dialect);
-	const out: Completion[] = [];
+	const out: { completion: Completion; source: ResolvedSource }[] = [];
 	const seen = new Set<string>();
 	for (const src of scope.sources.values()) {
 		for (const col of columnsOf(src, dialect, schema)) {
@@ -583,7 +733,7 @@ function visibleColumns(
 			const key = behavior.fold(col.label);
 			if (seen.has(key)) continue;
 			seen.add(key);
-			out.push({ ...col, label: behavior.displayName(col.label) });
+			out.push({ completion: { ...col, label: behavior.displayName(col.label) }, source: src });
 		}
 	}
 	return out;

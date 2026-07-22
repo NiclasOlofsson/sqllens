@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { dialectSymbols, dialectVocabulary } from "../src/dialect-symbols.js";
+import { dialectSymbols, dialectVocabulary, reservedKeywords } from "../src/dialect-symbols.js";
 import type { Dialect } from "../src/api.js";
 import { resolveBehavior } from "../src/dialect-behavior/registry.js";
 
@@ -92,7 +92,7 @@ describe.each(DIALECTS)("dialectVocabulary(%s)", (dialect) => {
 		expect(v.operators.size).toBeGreaterThan(5);
 		// The NAME is the dialect's own lexer rule name — bigquery says SELECT_SYMBOL,
 		// sqlite SELECT_, most others SELECT. Dialect-true, not standardized.
-		expect(v.keywords.get("SELECT")).toMatch(/^SELECT/);
+		expect(v.keywords.get("SELECT")?.symbol).toMatch(/^SELECT/);
 	});
 
 	it("keyword keys are canonical UPPERCASE; operator keys never match the bare-word shape", () => {
@@ -113,5 +113,82 @@ describe("dialectVocabulary is dialect-TRUE, not a shared table", () => {
 		expect(dialectVocabulary("postgres").operators.get("::")).toBe("TYPECAST");
 		// Pattern-lexed or absent forms are honestly absent, never invented.
 		expect(dialectVocabulary("postgres").operators.get("<=>")).toBeUndefined();
+	});
+});
+
+// reservedKeywords / KeywordEntry.reserved — the anvil "reserved/soft split" ask (2026-07-22).
+// Probe-derived by tools/gen-reserved.ts: `reserved` is true iff the dialect's OWN generated
+// parser admits the keyword as neither a bare column reference nor a bare table name (the
+// AS-labeled alias slot is excluded — see that tool's header and dialect-symbols.ts's
+// `KeywordReservation` doc comment for why). Consumer semantics: membership in `reservedKeywords`
+// is the reserved-word lint check; every other keyword keeps ordinary identifier treatment.
+
+describe.each(DIALECTS)("reservedKeywords(%s)", (dialect) => {
+	it("is a subset of the dialect's keyword vocabulary, canonical UPPERCASE", () => {
+		const reserved = reservedKeywords(dialect);
+		const { keywords } = dialectVocabulary(dialect);
+		// databricks is a verified, real exception (see the sanity-anchors describe below): this
+		// fork's default `SQL_standard_keyword_behavior = false` routes every keyword through the
+		// huge `nonReserved` production, so it genuinely has zero reserved keywords.
+		if (dialect === "databricks") expect(reserved.size).toBe(0);
+		else expect(reserved.size).toBeGreaterThan(0);
+		for (const kw of reserved) {
+			expect(kw).toBe(kw.toUpperCase());
+			expect(keywords.has(kw)).toBe(true);
+		}
+	});
+
+	it("agrees with the per-keyword KeywordEntry.reserved flag", () => {
+		const reserved = reservedKeywords(dialect);
+		for (const [kw, entry] of dialectVocabulary(dialect).keywords) {
+			expect(reserved.has(kw)).toBe(entry.reserved);
+			// reserved is defined as "admitted in neither column nor table position".
+			expect(entry.reserved).toBe(!(entry.column || entry.table));
+		}
+	});
+
+	it("totality: every vocabulary keyword was classified (dialectVocabulary would throw otherwise)", () => {
+		expect(dialectVocabulary(dialect).keywords.size).toBe(dialectSymbols(dialect).keywords.size);
+	});
+
+	it("caches: repeat calls return the identical Set instance", () => {
+		expect(reservedKeywords(dialect)).toBe(reservedKeywords(dialect));
+	});
+});
+
+describe("reservedKeywords sanity anchors (probe-verified 2026-07-22)", () => {
+	it("SELECT is reserved in every dialect except Databricks", () => {
+		for (const dialect of DIALECTS) {
+			if (dialect === "databricks") continue;
+			expect(reservedKeywords(dialect).has("SELECT")).toBe(true);
+		}
+	});
+
+	it("Databricks is a verified, real exception: SELECT (and FROM) are soft", () => {
+		// Not a probe artifact: this fork's grammar defaults `SQL_standard_keyword_behavior = false`
+		// (grammars/databricks/DatabricksParser.g4), Spark SQL's documented Hive-compatible default,
+		// which routes `identifier` through the huge `nonReserved` production — verified directly by
+		// parsing `SELECT a FROM and` and reading back a real table named AND in the lowered IR, not
+		// merely a zero-error count. Databricks scores literally zero reserved keywords.
+		expect(reservedKeywords("databricks").has("SELECT")).toBe(false);
+		expect(reservedKeywords("databricks").has("FROM")).toBe(false);
+		expect(reservedKeywords("databricks").size).toBe(0);
+	});
+
+	it("postgres FROM is reserved", () => {
+		expect(reservedKeywords("postgres").has("FROM")).toBe(true);
+	});
+
+	it("snowflake PIVOT/UNPIVOT are soft (the post-source-slot split — SnowflakeParser.g4)", () => {
+		expect(reservedKeywords("snowflake").has("PIVOT")).toBe(false);
+		expect(reservedKeywords("snowflake").has("UNPIVOT")).toBe(false);
+	});
+
+	it("tsql VECTOR is soft — it isn't even a keyword TOKEN (a plain identifier by construction, so it can never appear in reservedKeywords)", () => {
+		// TSqlParser.g4's data_type rule reads VECTOR(n, ...) through the generic `id_` identifier
+		// rule; only VECTOR_SEARCH is a distinct lexer token. Absence from the vocabulary entirely
+		// is the honest strongest form of "soft" — there is no reserved-word question to ask.
+		expect(dialectVocabulary("tsql").keywords.has("VECTOR")).toBe(false);
+		expect(reservedKeywords("tsql").has("VECTOR")).toBe(false);
 	});
 });
