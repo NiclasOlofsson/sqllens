@@ -56,6 +56,7 @@ import type {
 	Join,
 	JoinKind,
 	LateralViewSource,
+	LimitInfo,
 	PipeExpr,
 	PipeSetItem,
 	PipeStage,
@@ -371,7 +372,8 @@ function lowerQuery(query: ParserRuleContext): QueryExpr {
 	// ORDER BY references the body's output (a select's scope, or a set-op's left branch),
 	// so its columns belong to the body's `columns` — for both selects and set ops.
 	if (orderBy && body.kind !== "pipe") for (const o of orderBy) columnsOf(o, body.columns, "orderBy");
-	return { kind: "query", ctes, body, orderBy, cst: query };
+	const limit = extractLimit(query);
+	return { kind: "query", ctes, body, orderBy, limit, cst: query };
 }
 
 /** The ORDER BY sort expressions from the query's queryOrganization (not SORT/CLUSTER/DISTRIBUTE BY). */
@@ -397,6 +399,45 @@ function extractOrderBy(query: ParserRuleContext): Expr[] | undefined {
 		}
 	}
 	return items.length ? items : undefined;
+}
+
+/** The LIMIT / OFFSET row-limiting clause from the query's queryOrganization (grammar:
+ *  `(LIMIT (ALL | expression))? (OFFSET expression)?`) — learn.microsoft.com/en-us/azure/databricks/
+ *  sql/language-manual/sql-ref-syntax-qry-select-limit. `LIMIT ALL` is Spark's documented no-cap
+ *  spelling (no row-count expression to carry); recorded as a present-but-unbounded clause, the
+ *  same convention as postgres' extractLimit's `LIMIT ALL` handling. */
+function extractLimit(query: ParserRuleContext): LimitInfo | undefined {
+	const qo = directChildrenOfRule(query, P.RULE_queryOrganization)[0];
+	if (!qo) return undefined;
+	const info: LimitInfo = {};
+	let any = false;
+	let afterLimit = false;
+	let afterOffset = false;
+	for (let i = 0; i < qo.getChildCount(); i++) {
+		const child = qo.getChild(i);
+		if (!(child instanceof ParserRuleContext)) {
+			const t = (child as TerminalNode | null)?.symbol?.type;
+			if (t === P.LIMIT) {
+				any = true;
+				afterLimit = true;
+			} else if (t === P.ALL) {
+				afterLimit = false; // LIMIT ALL — no row cap; recorded as present-but-unbounded
+			} else if (t === P.OFFSET) {
+				any = true;
+				afterOffset = true;
+				afterLimit = false;
+			}
+			continue;
+		}
+		if (afterLimit && child.ruleIndex === P.RULE_expression) {
+			info.top = lowerExpression(child);
+			afterLimit = false;
+		} else if (afterOffset && child.ruleIndex === P.RULE_expression) {
+			info.offset = lowerExpression(child);
+			afterOffset = false;
+		}
+	}
+	return any ? info : undefined;
 }
 
 /** A queryTerm is a pipe (`queryTerm |> rhs`), a set operation (two queryTerm branches), or a select. */

@@ -89,17 +89,13 @@ describe("frameAt", () => {
 });
 
 describe("clausesOf", () => {
-	// One representative query per dialect, each with select/from/where/groupBy/having/orderBy
+	// One representative query per dialect, each with select/from/where/groupBy/having/orderBy/limit
 	// (+ qualify where the dialect has it) pinned EXACTLY: anchor + span are textual slices of the
-	// fixture, so a wrong span reads as a wrong substring, not an opaque offset mismatch. Databricks's
-	// own lower.ts never populates a top-level `QueryExpr.limit` at all (only within pipe-stage
-	// syntax), an accepted, pre-existing IR gap, not something this task fixes, so LIMIT is left out
-	// of this fixture entirely rather than asserting a clause the IR genuinely doesn't hold; the
-	// snowflake test below covers "limit" instead (its lower.ts does extract it).
+	// fixture, so a wrong span reads as a wrong substring, not an opaque offset mismatch.
 	it("databricks: every clause anchored + spanned exactly, incl. QUALIFY", () => {
 		const Q =
 			"select a, b from t where a > 1 group by a having count(*) > 1 " +
-			"qualify row_number() over (order by a) = 1 order by a";
+			"qualify row_number() over (order by a) = 1 order by a limit 10";
 		const doc = SqlDocument.create(Q, "databricks");
 		const clauses = doc.clausesOf(doc.scopes.root);
 		const byKind = new Map(clauses.map((c) => [c.kind, c]));
@@ -128,7 +124,10 @@ describe("clausesOf", () => {
 		expect(slice(byKind.get("orderBy")!.anchorSpan.start, byKind.get("orderBy")!.anchorSpan.end)).toBe("order by");
 		expect(slice(byKind.get("orderBy")!.span.start, byKind.get("orderBy")!.span.end)).toBe("order by a");
 
-		// document order: select < from < where < groupBy < having < qualify < orderBy
+		expect(slice(byKind.get("limit")!.anchorSpan.start, byKind.get("limit")!.anchorSpan.end)).toBe("limit");
+		expect(slice(byKind.get("limit")!.span.start, byKind.get("limit")!.span.end)).toBe("limit 10");
+
+		// document order: select < from < where < groupBy < having < qualify < orderBy < limit
 		expect(clauses.map((c) => c.kind)).toEqual([
 			"select",
 			"from",
@@ -137,6 +136,7 @@ describe("clausesOf", () => {
 			"having",
 			"qualify",
 			"orderBy",
+			"limit",
 		]);
 		// "window" is in the kind vocabulary but never fabricated: the IR retains no top-level named
 		// WINDOW clause (only per-function OVER specs), so it never appears here.
@@ -211,6 +211,15 @@ describe("clausesOf", () => {
 		expect(limit).toBeDefined();
 		expect(Q.slice(limit.anchorSpan.start, limit.anchorSpan.end)).toBe("limit");
 		expect(Q.slice(limit.span.start, limit.span.end)).toBe("limit 10");
+	});
+
+	it("databricks: trailing LIMIT ... OFFSET (queryOrganization's own LIMIT/OFFSET, not just pipe-stage)", () => {
+		const Q = "select a from t order by a limit 10 offset 5";
+		const doc = SqlDocument.create(Q, "databricks");
+		const limit = doc.clausesOf(doc.scopes.root).find((c) => c.kind === "limit")!;
+		expect(limit).toBeDefined();
+		expect(Q.slice(limit.anchorSpan.start, limit.anchorSpan.end)).toBe("limit");
+		expect(Q.slice(limit.span.start, limit.span.end)).toBe("limit 10 offset 5");
 	});
 
 	it("emits only clauses that exist in the text: a bare SELECT has no where/groupBy/having/etc", () => {

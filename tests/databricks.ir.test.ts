@@ -26,6 +26,25 @@ describe("lower: CST -> IR", () => {
 		expect(ir.body.from[0]).toMatchObject({ kind: "table", relation: { parts: ["t"] } });
 	});
 
+	it("models a top-level LIMIT / OFFSET (queryOrganization, not just the pipe-stage form)", () => {
+		const { tree, errors } = parseDatabricks("SELECT a FROM t ORDER BY a LIMIT 10 OFFSET 5");
+		expect(errors).toBe(0);
+		const ir = lower(tree);
+		expect(ir.orderBy).toHaveLength(1);
+		expect(ir.limit?.top).toMatchObject({ kind: "literal", text: "10" });
+		expect(ir.limit?.offset).toMatchObject({ kind: "literal", text: "5" });
+	});
+
+	// docs.databricks.com/en/sql/language-manual/sql-ref-syntax-qry-select-limit.html — LIMIT ALL is
+	// Spark's documented no-cap spelling: the clause is present but carries no row-count expression.
+	it("models LIMIT ALL as a present-but-unbounded clause", () => {
+		const { tree, errors } = parseDatabricks("SELECT a FROM t LIMIT ALL");
+		expect(errors).toBe(0);
+		const ir = lower(tree);
+		expect(ir.limit).toBeDefined();
+		expect(ir.limit?.top).toBeUndefined();
+	});
+
 	it("does not throw on a non-query statement; flags it as non-query", () => {
 		const ir = lower(parseDatabricks("CREATE TABLE t (a INT, b STRING)").tree);
 		const sel = asSelect(ir.body);
