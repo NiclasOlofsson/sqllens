@@ -1,3 +1,15 @@
+# [1.8.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.7.0...v1.8.0) (2026-07-23)
+
+
+### Bug Fixes
+
+* clausesOf anchors FROM across templated fills ([bec7e29](https://github.com/NiclasOlofsson/sqllens/commit/bec7e2953e0eb81498a0454c4d6c8650d501a957))
+
+
+### Features
+
+* Token.consumedAs: per-occurrence keyword/identifier/type verdicts ([fd4e68b](https://github.com/NiclasOlofsson/sqllens/commit/fd4e68ba2ad28a67611431f2c6ebd6d22687de52))
+
 # [1.7.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.6.0...v1.7.0) (2026-07-22)
 
 
