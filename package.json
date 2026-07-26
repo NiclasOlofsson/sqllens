@@ -80,7 +80,7 @@
 	"license": "MIT",
 	"type": "module",
 	"devDependencies": {
-		"@semantic-release/changelog": "^6.0.3",
+		"@semantic-release/changelog": "^7.0.0",
 		"@semantic-release/git": "^10.0.1",
 		"@semantic-release/github": "^12.0.9",
 		"@semantic-release/npm": "^13.1.5",
