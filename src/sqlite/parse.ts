@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { SqliteLexer } from "../generated/sqlite/SqliteLexer.js";
 import { SqliteParser } from "../generated/sqlite/SqliteParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -92,3 +93,18 @@ function attachErrorCounter(lexer: Lexer, parser: SqliteParser, listener: ANTLRE
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`parse`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new SqliteLexer(input),
+	newParser: (tokens) => new SqliteParser(tokens),
+	entries: {
+		statement: (p) => p.parse(),
+		expression: (p) => p.expr(),
+		tableSource: (p) => p.join_clause(),
+		cteList: separatedList((p) => p.common_table_expression(), SqliteLexer.COMMA),
+		selectList: separatedList((p) => p.result_column(), SqliteLexer.COMMA),
+	},
+});

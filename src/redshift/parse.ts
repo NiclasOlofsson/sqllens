@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { RedshiftLexer } from "../generated/redshift/RedshiftLexer.js";
 import { RedshiftParser } from "../generated/redshift/RedshiftParser.js";
+import { defineFragmentGrammar } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -92,3 +93,18 @@ function attachErrorCounter(lexer: Lexer, parser: RedshiftParser, listener: ANTL
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`root`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new RedshiftLexer(input),
+	newParser: (tokens) => new RedshiftParser(tokens),
+	entries: {
+		statement: (p) => p.root(),
+		expression: (p) => p.a_expr(),
+		tableSource: (p) => p.table_ref(),
+		cteList: (p) => p.cte_list(),
+		selectList: (p) => p.target_list(),
+	},
+});

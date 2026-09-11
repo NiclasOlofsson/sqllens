@@ -49,13 +49,14 @@ import { parse } from "../api.js";
 import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
+import { type FragmentRange, openFragments } from "../fragment.js";
 import { endPosition } from "../ir/span.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
-import { templateRegions, templateSymbols } from "./regions.js";
+import { templateRegions, templateSymbols, type TemplateRegion } from "./regions.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
@@ -274,6 +275,65 @@ function scrubPlaceholderDiagnostics(
 	return { diagnostics, bySegment };
 }
 
+/**
+ * Re-read every `{% macro %}` body as an SQL fragment. The whole-file statement parse's
+ * diagnostics are replaced wholesale: they are recovery noise once a body has derailed it
+ * (a body that is a CASE expression leaves "missing 'CASE' at EOF" far outside itself).
+ * What replaces them: the text OUTSIDE the macro bodies read as a statement batch (a model
+ * file that also defines a macro keeps its real errors), plus each body's own fragment
+ * read. Lexer diagnostics (offset-less) are kept as they are. Each region learns what its
+ * body is (`body`); a body with no SQL token gets no verdict and no diagnostic. Mutates the
+ * regions' `body` field only. Files without a macro region are untouched.
+ */
+function reparseMacroBodies(
+	regions: TemplateRegion[],
+	diagnostics: SyntaxDiagnostic[],
+	placeholder: string,
+	dialect: Dialect,
+): SyntaxDiagnostic[] {
+	const macros: TemplateRegion[] = [];
+	// Macros can sit under an if/for (a guarded definition); a macro inside a macro body is
+	// covered by the outer body's read and not visited on its own.
+	const visit = (list: TemplateRegion[]): void => {
+		for (const region of list) {
+			if (region.kind === "macro") macros.push(region);
+			else for (const arm of region.arms) visit(arm.children);
+		}
+	};
+	visit(regions);
+	if (macros.length === 0) return diagnostics;
+
+	const fragments = openFragments(placeholder, dialect);
+	const bodies: FragmentRange[] = [];
+	const own: SyntaxDiagnostic[] = [];
+	for (const region of macros) {
+		const arm = region.arms[0];
+		if (!arm) continue;
+		// An unclosed macro (mid-edit, no endmacro yet) closes at its own opening tag with an empty
+		// body; its SQL runs to the end of the text, so that is what gets read.
+		const unclosed = arm.bodySpan.end <= arm.bodySpan.start && region.span.end === arm.tagSpan.end;
+		const body: FragmentRange = unclosed ? { start: arm.tagSpan.end, end: placeholder.length } : arm.bodySpan;
+		if (body.end <= body.start) continue;
+		bodies.push(body);
+		const fragment = fragments.parse([body]);
+		if (!fragment) continue;
+		own.push(...fragment.diagnostics);
+		if (fragment.clean) region.body = fragment.kind;
+	}
+
+	// The remainder: everything between the bodies, as the statement batch it always was.
+	const remainder: FragmentRange[] = [];
+	let at = 0;
+	for (const body of [...bodies].sort((a, b) => a.start - b.start)) {
+		if (body.start > at) remainder.push({ start: at, end: body.start });
+		at = Math.max(at, body.end);
+	}
+	if (at < placeholder.length) remainder.push({ start: at, end: placeholder.length });
+	const rest = fragments.parse(remainder, ["statement"]);
+
+	return [...diagnostics.filter((d) => d.offset === undefined), ...(rest?.diagnostics ?? []), ...own];
+}
+
 /** The core build — total by construction (every composed piece is total). */
 function build(text: string, dialect: Dialect, provider: TemplateProvider): TemplatedParseResult {
 	const { segments, placeholder, tagTokens } = segment(text, provider);
@@ -354,8 +414,21 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// surface a consumer naturally reads — and the raw fill-quoting messages are
 	// engine-internal, never public (the gold__vendor F5 leak, 2026-07-06: the raw
 	// "mismatched input 'jjjj…'" reached a user's screen through sql.diagnostics).
+	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
+	// Both are total; they ride inside build()'s caller try/catch for totality.
+	const regions = templateRegions(tags, text);
+	const symbols = templateSymbols(tags);
+
+	// Macro bodies (issue #48): a `{% macro %}` body is whatever gets pasted at the call site,
+	// so the whole-file statement parse is the wrong reading for most of them. Each top-level
+	// macro body is re-read from the placeholder as a fragment (statement, expression, FROM-slot
+	// source, CTE list, select list; src/fragment.ts) and its own diagnostics replace whatever
+	// the statement parse reported inside that body. The IR and tokens stay the whole-file
+	// parse's: the fragment verdict rides the region as `body`.
+	const sqlDiagnostics = reparseMacroBodies(regions, sqlResult.diagnostics, placeholder, dialect);
+
 	const { diagnostics: scrubbed, bySegment } = scrubPlaceholderDiagnostics(
-		sqlResult.diagnostics,
+		sqlDiagnostics,
 		tagRanges,
 		text,
 		placeholder,
@@ -372,11 +445,6 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	}
 	const finalSql = { ...sqlResult, diagnostics: scrubbed };
 	const diagnostics = [...scrubbed, ...jinjaDiagnostics].sort((a, b) => (a.offset ?? 0) - (b.offset ?? 0));
-
-	// Step 6 (R4): pair the control tags into regions + extract set/macro symbols.
-	// Both are total; they ride inside build()'s caller try/catch for totality.
-	const regions = templateRegions(tags, text);
-	const symbols = templateSymbols(tags);
 
 	return {
 		tokens,

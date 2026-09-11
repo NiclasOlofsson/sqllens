@@ -1,6 +1,14 @@
-import { BailErrorStrategy, CharStream, CommonTokenStream, type ParserATNSimulator, PredictionMode } from "antlr4ng";
+import {
+	BailErrorStrategy,
+	CharStream,
+	CommonTokenStream,
+	type ParserATNSimulator,
+	PredictionMode,
+	Token as AntlrToken,
+} from "antlr4ng";
 import { GoogleSQLLexer } from "../generated/bigquery/GoogleSQLLexer.js";
 import { GoogleSQLParser } from "../generated/bigquery/GoogleSQLParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { dotPathTokenSource } from "./dot-path.js";
 import { postParseDiagnostics } from "./post-validate.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
@@ -83,3 +91,29 @@ export function parseBigQuery(sql: string): ParseResult {
 		return withTokens({ tree, errors: diagnostics.length, diagnostics, sllFallback: true });
 	}
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`root`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	// The same token pipeline as parseBigQuery: the DOT_IDENTIFIER path rewrite and the
+	// literal-escape validation ride the lex; the post-parse tree checks ride each parse.
+	lex: (text) => {
+		const lexer = new GoogleSQLLexer(CharStream.fromString(text));
+		lexer.removeErrorListeners();
+		const { source, escapeDiagnostics } = dotPathTokenSource(text, lexer);
+		const stream = new CommonTokenStream(source);
+		stream.fill();
+		return { tokens: stream.getTokens().filter((t) => t.type !== AntlrToken.EOF), diagnostics: escapeDiagnostics };
+	},
+	newLexer: (input) => new GoogleSQLLexer(input),
+	newParser: (tokens) => new GoogleSQLParser(tokens),
+	postParse: postParseDiagnostics,
+	entries: {
+		statement: (p) => p.root(),
+		expression: (p) => p.expression(),
+		tableSource: (p) => p.from_clause_contents(),
+		cteList: separatedList((p) => p.with_clause_entry(), GoogleSQLLexer.COMMA_SYMBOL),
+		selectList: (p) => p.select_list(),
+	},
+});

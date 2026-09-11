@@ -706,6 +706,71 @@
 		],
 		"placeholder": "                                            \n\n                         \n    j0jjjjjjj * 100\n              \n\nselect\n    order_id,\n    amount\nfrom orders\nwhere amount > 0\n"
 	},
+	"fixture:21_select_slot_macros.sql": {
+		"segments": [
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 0,
+				"end": 60,
+				"text": "{{ config(\n    tags = [\"salesforecast\",\"anaplan\",\"bro\"]\n) }}"
+			},
+			{
+				"kind": "sql",
+				"start": 60,
+				"end": 72
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 72,
+				"end": 112,
+				"text": "{{bronze_key_cleaning('sf.dataareaid')}}"
+			},
+			{
+				"kind": "sql",
+				"start": 112,
+				"end": 132
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 132,
+				"end": 178,
+				"text": "{{bronze_date_cleaning('forecastcreatedate')}}"
+			},
+			{
+				"kind": "sql",
+				"start": 178,
+				"end": 206
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 206,
+				"end": 242,
+				"text": "{{bronze_key_cleaning('sf.itemid')}}"
+			},
+			{
+				"kind": "sql",
+				"start": 242,
+				"end": 361
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 361,
+				"end": 401,
+				"text": "{{ ref('anaplan__salesforecastdaily') }}"
+			},
+			{
+				"kind": "sql",
+				"start": 401,
+				"end": 511
+			}
+		],
+		"placeholder": "          \n                                            \n    \nselect\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as companykey\n    ,j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as forecastcreatedate\n    ,j2jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as itemkey,\n    'anaplan' as sourcesystemkey,\n    sf.quantity,\n    sf.modified_datetime as max_modified_datetime\nfrom j3jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as sf\nwhere\n    coalesce(sf.dataareaid, 0) <> 0\n    and left(forecastdate, 7) >= left(forecastcreatedate, 7)\n"
+	},
 	"syn:multiline-expr-macro": {
 		"segments": [
 			{

@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { DatabricksLexer } from "../generated/databricks/DatabricksLexer.js";
 import { DatabricksParser } from "../generated/databricks/DatabricksParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -95,3 +96,18 @@ function attachErrorCounter(lexer: Lexer, parser: DatabricksParser, listener: AN
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`multiStatement`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new DatabricksLexer(input),
+	newParser: (tokens) => new DatabricksParser(tokens),
+	entries: {
+		statement: (p) => p.multiStatement(),
+		expression: (p) => p.expression(),
+		tableSource: (p) => p.relation(),
+		cteList: separatedList((p) => p.namedQuery(), DatabricksLexer.COMMA),
+		selectList: (p) => p.namedExpressionSeq(),
+	},
+});

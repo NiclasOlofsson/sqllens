@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { TSqlLexer } from "../generated/tsql/TSqlLexer.js";
 import { TSqlParser } from "../generated/tsql/TSqlParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -96,3 +97,18 @@ function attachErrorCounter(lexer: Lexer, parser: TSqlParser, listener: ANTLRErr
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`tsql_file`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new TSqlLexer(input),
+	newParser: (tokens) => new TSqlParser(tokens),
+	entries: {
+		statement: (p) => p.tsql_file(),
+		expression: (p) => p.expression(),
+		tableSource: (p) => p.table_source(),
+		cteList: separatedList((p) => p.common_table_expression(), TSqlLexer.COMMA),
+		selectList: (p) => p.select_list(),
+	},
+});

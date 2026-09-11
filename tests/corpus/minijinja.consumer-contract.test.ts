@@ -225,6 +225,18 @@ describe("jinja CONSUMER-CONTRACT gate — no placeholder leaks any public name 
 				}
 			});
 
+			it("4b) deriveSymbols — no column symbol (any part) is a placeholder run", () => {
+				// A scalar-slot hole (`select {{ my_macro() }}`) must not surface as a column
+				// reference symbol: anvil's contract checker read one (2026-09-11) and reported
+				// "Column 'j0jjj…' not found in <model>" on every select-slot macro.
+				const { sql } = parseTemplated(text, DIALECT);
+				for (const s of deriveSymbols(sql.ast, new Schema({}))) {
+					if (s.kind !== "column") continue;
+					for (const part of s.name.split("."))
+						expect(isPlaceholderRun(part), `column symbol name "${s.name}"`).toBe(false);
+				}
+			});
+
 			it("5) tokens — the unified stream never surfaces a placeholder-fill token", () => {
 				const { tokens } = parseTemplated(text, DIALECT);
 				for (const tok of tokens) {

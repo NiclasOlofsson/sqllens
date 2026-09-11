@@ -202,6 +202,42 @@ frozen after `lower()`), so the downstream pipeline works unchanged.
   span }` — go-to-definition on `{% set %}` / `{% macro %}`. Both ride the templated result as
   `regions` / `symbols`.
 
+## Macro bodies — fragments, not statements
+
+A model file is a statement; a `{% macro %}` body is whatever gets pasted at the call site: a
+statement, an expression (`CASE … END`, `concat(…)`), a FROM-slot source (`(subquery)` for
+`cross apply`), a CTE list pasted after `WITH`, a select list. The whole-file statement parse
+is the wrong reading for most of them (issue #48: every expression macro in a dbt project got
+"mismatched input 'CASE' expecting …" at its first token).
+
+So a file with macro regions gets a second read (`src/fragment.ts`, wired in `build()`):
+
+- The placeholder is lexed once with the dialect's own token pipeline (bigquery's dot-path
+  rewrite and literal-escape checks included), and each macro body's token slice is parsed
+  through a `ListTokenSource` against the dialect's EOF-anchored fragment entries, tried in
+  order: `statement`, `expression`, `tableSource`, `cteList`, `selectList`. The entries drive
+  the grammar's OWN rules (`expression`, `table_source`, the CTE and select-list rules, a
+  comma-separated loop where the grammar has no bare list rule) and the driver checks the EOF
+  anchor itself; each `src/<dialect>/parse.ts` binds them via `defineFragmentGrammar`. The
+  grammars are untouched on purpose: an added `expression EOF` wrapper rule widens
+  `expression`'s SLL follow set and flipped an unrelated bigquery corpus positive from
+  SLL-clean to an LL failure. No substring re-lex, so every diagnostic is already
+  document-positioned.
+- The first clean reading wins and the region records it: `TemplateRegion.body` (macro regions
+  only). A body that is none of them carries no verdict; its diagnostics come from the reading
+  that got furthest before its first error (a heuristic for the broken-input case only, never a
+  claim). An empty body gets nothing.
+- The whole-file parse's syntax diagnostics are replaced wholesale: they are recovery noise
+  once a body has derailed the statement parse. What replaces them is the text outside the
+  bodies read as a statement batch (a model file that also defines a macro keeps its real
+  errors) plus each body's own read. The IR, tokens and CST stay the whole-file parse's. An
+  unclosed macro (mid-edit) reads to the end of the text. Files without a macro region are
+  untouched.
+
+The fragment tree is not lowered: a macro body yields diagnostics and a kind, not an `Expr`.
+That is the open half (lowering the expression / CTE-list readings onto the IR) and lands on
+consumer demand.
+
 ## Variant realization
 
 For the editor, sqllens enumerates every `{% if %}/{% elif %}/{% else %}` branch *structurally*,

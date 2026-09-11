@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { SnowflakeLexer } from "../generated/snowflake/SnowflakeLexer.js";
 import { SnowflakeParser } from "../generated/snowflake/SnowflakeParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -92,3 +93,18 @@ function attachErrorCounter(lexer: Lexer, parser: SnowflakeParser, listener: ANT
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`snowflake_file`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new SnowflakeLexer(input),
+	newParser: (tokens) => new SnowflakeParser(tokens),
+	entries: {
+		statement: (p) => p.snowflake_file(),
+		expression: (p) => p.expr(),
+		tableSource: (p) => p.table_source(),
+		cteList: separatedList((p) => p.common_table_expression(), SnowflakeLexer.COMMA),
+		selectList: (p) => p.select_list(),
+	},
+});

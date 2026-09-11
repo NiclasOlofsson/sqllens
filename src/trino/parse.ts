@@ -9,6 +9,7 @@ import {
 } from "antlr4ng";
 import { TrinoLexer } from "../generated/trino/TrinoLexer.js";
 import { TrinoParser } from "../generated/trino/TrinoParser.js";
+import { defineFragmentGrammar, separatedList } from "../fragment-grammar.js";
 import { makeErrorCollector } from "../parse-diagnostics.js";
 import type { ParseResult } from "../parse-result.js";
 import { CONSUMED_AS_RULES, deriveConsumedAs } from "../token/consumed-as.js";
@@ -89,3 +90,18 @@ function attachErrorCounter(lexer: Lexer, parser: TrinoParser, listener: ANTLREr
 	parser.removeErrorListeners();
 	parser.addErrorListener(listener);
 }
+
+/** The fragment entries (src/fragment.ts): the grammar's own rules for a statement batch
+ *  (`root`), an expression, a FROM-slot source, a CTE list (no WITH) and a select list;
+ *  the driver anchors each at EOF. For templated macro bodies. */
+export const fragmentGrammar = defineFragmentGrammar({
+	newLexer: (input) => new TrinoLexer(input),
+	newParser: (tokens) => new TrinoParser(tokens),
+	entries: {
+		statement: (p) => p.root(),
+		expression: (p) => p.expression(),
+		tableSource: (p) => p.relation(),
+		cteList: separatedList((p) => p.namedQuery(), TrinoLexer.COMMA),
+		selectList: separatedList((p) => p.selectItem(), TrinoLexer.COMMA),
+	},
+});

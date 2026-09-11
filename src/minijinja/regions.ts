@@ -25,6 +25,7 @@
 // ---------------------------------------------------------------------------
 
 import { LineIndex } from "../document/line-index.js";
+import type { FragmentKind } from "../fragment-grammar.js";
 import type { PartSpan } from "../ir/part-span.js";
 import type { TagNode } from "./tag-ast.js";
 
@@ -47,6 +48,12 @@ export interface TemplateRegion {
 	arms: TemplateArm[];
 	/** Opening tag start → closing tag end (or the last known tag end when unbalanced). */
 	span: PartSpan;
+	/**
+	 * `macro` regions only: what the body parsed clean as — a statement, an expression, a
+	 * FROM-slot source, a CTE list (pasted after WITH), or a select list. Absent when the body
+	 * holds no SQL or parsed clean as none of them (the diagnostics then say where it broke).
+	 */
+	body?: FragmentKind;
 }
 
 /** A go-to-def template symbol — a `{% set %}` target or a `{% macro %}` name. */

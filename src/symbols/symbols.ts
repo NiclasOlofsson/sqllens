@@ -493,6 +493,10 @@ function emitColumns(
 	// recovered from an unmodelled `other` node) honestly gets no node.
 	const columnNodes = columnExprsByCst(body);
 	for (const ref of body.columns) {
+		// A template hole in a scalar slot (`select {{ my_macro() }}`) is not a column reference:
+		// its `parts` is the placeholder fill, and a symbol named after it (bound to whatever source
+		// the single-source rule picks) is a wrong claim. Consumers reach the tag through `tags`.
+		if (ref.template) continue;
 		const res = resolveColumnRef(scope, ref, schema);
 		const modifiers: SymbolModifier[] = ["reference"];
 		// A reference that binds to a source outside this scope is correlated.
