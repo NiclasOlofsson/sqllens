@@ -1,3 +1,10 @@
+## [1.8.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.8.0...v1.8.1) (2026-09-11)
+
+
+### Bug Fixes
+
+* read macro bodies as fragments; keep template holes out of symbols ([85542dd](https://github.com/NiclasOlofsson/sqllens/commit/85542ddeee2666406ef958598163975ddf03a508)), closes [#48](https://github.com/NiclasOlofsson/sqllens/issues/48)
+
 # [1.8.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.7.0...v1.8.0) (2026-07-23)
 
 
