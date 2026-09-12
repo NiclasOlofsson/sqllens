@@ -1,3 +1,10 @@
+## [1.9.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.9.0...v1.9.1) (2026-09-12)
+
+
+### Bug Fixes
+
+* macro shapes from literal-led bodies and signature defaults ([0b17677](https://github.com/NiclasOlofsson/sqllens/commit/0b1767741f32596187bdb32a579dca5301d08032))
+
 # [1.9.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.8.1...v1.9.0) (2026-09-12)
 
 
