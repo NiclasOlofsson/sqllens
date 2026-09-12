@@ -262,10 +262,15 @@ definition, and the result carries it: `TemplatedParseResult.macros: MacroShape[
   `cteList` → `cte-definition`, `selectList` → `column-list`, `tableSource` → `relation`,
   `statement` → `statement`);
 - a body that OPENS with a hole bound to one of the macro's own parameters
-  (`{{ stat|default('where') }} {{ col }} = 0`) records `keywordParam { name, index, default? }`:
-  the clause keyword is whatever the caller passes for that parameter (jinja `default` filter
-  semantics), and `shapes` carries the default's shape (`where` → `where-clause`, `and`/`or` →
+  (`{{ stat|default('where') }} {{ col }} = 0`, or `{% macro m(col, stat='where') %}{{ stat }} …`)
+  records `keywordParam { name, index, default? }`: the clause keyword is whatever the caller
+  passes for that parameter, defaulting to the `|default()` filter's literal, else the signature
+  default; `shapes` carries the default's shape (`where` → `where-clause`, `and`/`or` →
   `conjunct`) or nothing when there is no default;
+- a body that literally opens with `and`/`or`/`where` (past whitespace and `--` comment lines)
+  whose remainder reads as an expression → that clause's shape. T-SQL keeps comparisons out of
+  its scalar `expression` rule, so its `expression` fragment entry is `expression` then
+  `search_condition` (fragment entries may list alternatives);
 - when every SQL byte of the body sits under `if` regions with no `else` arm, `nothing` is added
   last: the macro can render empty.
 

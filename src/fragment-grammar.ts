@@ -71,7 +71,9 @@ export interface FragmentGrammarSpec<P extends Parser> {
 	lex?: (text: string) => FragmentLex;
 	newLexer: (input: CharStream) => Lexer;
 	newParser: (tokens: CommonTokenStream) => P;
-	entries: { readonly [K in FragmentKind]: FragmentEntry<P> };
+	/** One entry per kind, or several tried in order (tsql's `expression` is its scalar `expression`
+	 *  then `search_condition`: the grammar keeps comparisons out of the scalar rule). */
+	entries: { readonly [K in FragmentKind]: FragmentEntry<P> | readonly FragmentEntry<P>[] };
 	/** The list separator token type (COMMA). A list body (`cteList`/`selectList`) may end with
 	 *  one: a macro's CTE list often ends `),` because the caller appends more CTEs. */
 	separator: number;
@@ -113,9 +115,13 @@ function trailingInput(parser: Parser): SyntaxDiagnostic | undefined {
 /** Bind a dialect's lexer, parser and fragment entry rules into a `FragmentGrammar`. */
 export function defineFragmentGrammar<P extends Parser>(spec: FragmentGrammarSpec<P>): FragmentGrammar {
 	const { newLexer, newParser, entries, separator, postParse } = spec;
+	const alternatives = (kind: FragmentKind): readonly FragmentEntry<P>[] => {
+		const e = entries[kind];
+		return Array.isArray(e) ? (e as readonly FragmentEntry<P>[]) : [e as FragmentEntry<P>];
+	};
 	/** The entry, then a trailing separator on a list body is consumed rather than left over. */
-	const run = (parser: P, kind: FragmentKind): ParserRuleContext => {
-		const tree = entries[kind](parser);
+	const run = (parser: P, entry: FragmentEntry<P>, kind: FragmentKind): ParserRuleContext => {
+		const tree = entry(parser);
 		const input = parser.inputStream;
 		if (LIST_KINDS.has(kind) && input.LA(1) === separator && input.LA(2) === AntlrToken.EOF) input.consume();
 		return tree;
@@ -130,34 +136,49 @@ export function defineFragmentGrammar<P extends Parser>(spec: FragmentGrammarSpe
 	return {
 		lex,
 		parse(slice, kind, bail) {
-			const tokens = new CommonTokenStream(new ListTokenSource([...slice]));
-			const parser = newParser(tokens);
-			const collector = makeErrorCollector();
-			parser.removeErrorListeners();
-			parser.addErrorListener(collector.listener);
-			const sim = parser.interpreter as ParserATNSimulator;
-			if (bail) {
-				parser.errorHandler = new BailErrorStrategy();
-				sim.predictionMode = PredictionMode.SLL;
-				let tree: ParserRuleContext;
-				try {
-					tree = run(parser, kind);
-				} catch {
-					return undefined;
+			// Each alternative gets a fresh parser over the same slice; bail mode returns the first
+			// clean one, LL mode the alternative that got furthest before its first error.
+			let best: FragmentParse | undefined;
+			let bestAt = -1;
+			for (const entry of alternatives(kind)) {
+				const tokens = new CommonTokenStream(new ListTokenSource([...slice]));
+				const parser = newParser(tokens);
+				const collector = makeErrorCollector();
+				parser.removeErrorListeners();
+				parser.addErrorListener(collector.listener);
+				const sim = parser.interpreter as ParserATNSimulator;
+				if (bail) {
+					parser.errorHandler = new BailErrorStrategy();
+					sim.predictionMode = PredictionMode.SLL;
+					let tree: ParserRuleContext;
+					try {
+						tree = run(parser, entry, kind);
+					} catch {
+						continue;
+					}
+					// A grammar action can report through the listener without throwing (bigquery's
+					// join-balance check); that is not a clean parse either. Nor is leftover input.
+					if (collector.diagnostics.length > 0 || trailingInput(parser)) continue;
+					const post = postParse?.(tree) ?? [];
+					if (post.length === 0) return { tree, diagnostics: [] };
+					continue;
 				}
-				// A grammar action can report through the listener without throwing (bigquery's
-				// join-balance check); that is not a clean parse either. Nor is leftover input.
-				if (collector.diagnostics.length > 0 || trailingInput(parser)) return undefined;
-				const post = postParse?.(tree) ?? [];
-				return post.length === 0 ? { tree, diagnostics: [] } : undefined;
+				sim.predictionMode = PredictionMode.LL;
+				const tree = run(parser, entry, kind);
+				const trailing = trailingInput(parser);
+				const diagnostics = [
+					...collector.diagnostics,
+					...(trailing ? [trailing] : []),
+					...(postParse?.(tree) ?? []),
+				];
+				if (diagnostics.length === 0) return { tree, diagnostics };
+				const at = diagnostics[0].offset ?? Number.MAX_SAFE_INTEGER;
+				if (at > bestAt) {
+					bestAt = at;
+					best = { tree, diagnostics };
+				}
 			}
-			sim.predictionMode = PredictionMode.LL;
-			const tree = run(parser, kind);
-			const trailing = trailingInput(parser);
-			return {
-				tree,
-				diagnostics: [...collector.diagnostics, ...(trailing ? [trailing] : []), ...(postParse?.(tree) ?? [])],
-			};
+			return best;
 		},
 	};
 }

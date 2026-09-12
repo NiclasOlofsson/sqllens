@@ -49,7 +49,7 @@ import { parse } from "../api.js";
 import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
-import { type FragmentRange, openFragments } from "../fragment.js";
+import { type FragmentRange, type FragmentSession, openFragments } from "../fragment.js";
 import type { PartSpan } from "../ir/part-span.js";
 import { endPosition } from "../ir/span.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
@@ -317,7 +317,7 @@ function reparseMacroBodies(
 	regions: TemplateRegion[],
 	diagnostics: SyntaxDiagnostic[],
 	placeholder: string,
-	dialect: Dialect,
+	fragments: () => FragmentSession,
 ): SyntaxDiagnostic[] {
 	const macros: TemplateRegion[] = [];
 	// Macros can sit under an if/for (a guarded definition); a macro inside a macro body is
@@ -331,7 +331,6 @@ function reparseMacroBodies(
 	visit(regions);
 	if (macros.length === 0) return diagnostics;
 
-	const fragments = openFragments(placeholder, dialect);
 	const bodies: FragmentRange[] = [];
 	for (const region of macros) {
 		const arm = region.arms[0];
@@ -342,7 +341,7 @@ function reparseMacroBodies(
 		const body: FragmentRange = unclosed ? { start: arm.tagSpan.end, end: placeholder.length } : arm.bodySpan;
 		if (body.end <= body.start) continue;
 		bodies.push(body);
-		const verdict = fragments.verdict([body]);
+		const verdict = fragments().verdict([body]);
 		if (verdict) region.body = verdict;
 	}
 
@@ -354,7 +353,7 @@ function reparseMacroBodies(
 		at = Math.max(at, body.end);
 	}
 	if (at < placeholder.length) remainder.push({ start: at, end: placeholder.length });
-	const rest = fragments.parse(remainder, ["statement"]);
+	const rest = fragments().parse(remainder, ["statement"]);
 
 	return [...diagnostics.filter((d) => d.offset === undefined), ...(rest?.diagnostics ?? [])];
 }
@@ -417,7 +416,13 @@ const DEFAULT_KEYWORD_SHAPE: Record<string, ExpansionShape> = {
  *      `else` arm, the macro can render to nothing → `nothing`, last.
  * Anything else stays out (never-wrong): a hole with no visible default, a return-only body.
  */
-function macroShapesOf(regions: TemplateRegion[], tags: TagNode[], text: string, placeholder: string): MacroShape[] {
+function macroShapesOf(
+	regions: TemplateRegion[],
+	tags: TagNode[],
+	text: string,
+	placeholder: string,
+	fragments: () => FragmentSession,
+): MacroShape[] {
 	const out: MacroShape[] = [];
 	const visit = (list: TemplateRegion[]): void => {
 		for (const region of list) {
@@ -436,18 +441,29 @@ function macroShapesOf(regions: TemplateRegion[], tags: TagNode[], text: string,
 			if (region.body) shapes.push(VERDICT_SHAPE[region.body]);
 			else {
 				// A body opening with a hole: `{{ name }}` / `{{ name|default('kw') }}`, `name` one of
-				// the macro's declared parameters (the signature's args are bare identifiers).
+				// the macro's declared parameters. The signature's args are `name` or `name=default`
+				// (the jinja-standard default spelling); the filter default wins over the signature's.
 				const lead = leadingHole(arm.bodySpan, tags, placeholder);
 				const holeText = lead ? text.slice(lead.tagSpan.start, lead.tagSpan.end) : "";
 				const bound = /^\{\{-?\s*([A-Za-z_]\w*)\s*(?:\||-?\}\})/.exec(holeText)?.[1];
-				const params = (open.calls[0]?.args ?? []).map((a) => text.slice(a.span.start, a.span.end).trim());
-				const index = bound === undefined ? -1 : params.indexOf(bound);
-				const fallback = /\|\s*default\(\s*['"](\w+)['"]\s*\)/.exec(holeText)?.[1];
+				const params = (open.calls[0]?.args ?? []).map((a) =>
+					signatureParam(text.slice(a.span.start, a.span.end)),
+				);
+				const index = bound === undefined ? -1 : params.findIndex((p) => p?.name === bound);
+				const fallback = /\|\s*default\(\s*['"](\w+)['"]\s*\)/.exec(holeText)?.[1] ?? params[index]?.default;
 				if (bound !== undefined && index >= 0) {
 					keywordParam = { name: bound, index, ...(fallback !== undefined ? { default: fallback } : {}) };
 				}
 				const clause = fallback ? DEFAULT_KEYWORD_SHAPE[fallback.toLowerCase()] : undefined;
 				if (clause) shapes.push(clause);
+				// A body that literally opens with the clause keyword (`and {{ c }} = 0`): the shape the
+				// same word resolves to through a hole, provided the rest reads as an expression.
+				if (!lead) {
+					const led = leadingKeyword(arm.bodySpan, placeholder);
+					if (led && fragments().verdict([{ start: led.end, end: arm.bodySpan.end }], ["expression"])) {
+						shapes.push(DEFAULT_KEYWORD_SHAPE[led.word]);
+					}
+				}
 			}
 			if ((shapes.length > 0 || keywordParam) && rendersToNothing(arm, placeholder)) shapes.push("nothing");
 			out.push({
@@ -479,6 +495,23 @@ export function shapesForCall(macro: MacroShape, call: TemplateCall): ExpansionS
 	const clause = word !== undefined ? DEFAULT_KEYWORD_SHAPE[word] : undefined;
 	const rest = macro.shapes.filter((s) => s !== "where-clause" && s !== "conjunct");
 	return clause ? [clause, ...rest] : rest;
+}
+
+/** One signature argument, `name` or `name=default` (a quoted string default is unquoted). */
+function signatureParam(argText: string): { name: string; default?: string } | undefined {
+	const m = /^\s*([A-Za-z_]\w*)\s*(?:=\s*(.+?))?\s*$/s.exec(argText);
+	if (!m) return undefined;
+	const raw = m[2];
+	const literal = raw === undefined ? undefined : /^(['\"])(.*)\1$/s.exec(raw)?.[2];
+	return { name: m[1], ...(literal !== undefined ? { default: literal } : {}) };
+}
+
+/** A clause keyword (`and`/`or`/`where`) opening the body, past whitespace and `--` comment lines:
+ *  the word (lowercased) and the offset just past it. */
+function leadingKeyword(body: PartSpan, placeholder: string): { word: string; end: number } | undefined {
+	const slice = placeholder.slice(body.start, body.end);
+	const m = /^(?:\s|--[^\n]*\n)*(and|or|where)\b/i.exec(slice);
+	return m ? { word: m[1].toLowerCase(), end: body.start + m[0].length } : undefined;
 }
 
 /** The expression tag at the very start of a body (only whitespace, comments and control tags
@@ -599,8 +632,11 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// source, CTE list, select list; src/fragment.ts) and its own diagnostics replace whatever
 	// the statement parse reported inside that body. The IR and tokens stay the whole-file
 	// parse's: the fragment verdict rides the region as `body`.
-	const sqlDiagnostics = reparseMacroBodies(regions, sqlResult.diagnostics, placeholder, dialect);
-	const macros = macroShapesOf(regions, tags, text, placeholder);
+	// One lex of the placeholder, opened on first use, shared by both macro passes.
+	let session: FragmentSession | undefined;
+	const fragments = (): FragmentSession => (session ??= openFragments(placeholder, dialect));
+	const sqlDiagnostics = reparseMacroBodies(regions, sqlResult.diagnostics, placeholder, fragments);
+	const macros = macroShapesOf(regions, tags, text, placeholder, fragments);
 
 	const { diagnostics: scrubbed, bySegment } = scrubPlaceholderDiagnostics(
 		sqlDiagnostics,

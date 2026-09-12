@@ -107,7 +107,9 @@ export const fragmentGrammar = defineFragmentGrammar({
 	separator: TSqlLexer.COMMA,
 	entries: {
 		statement: (p) => p.tsql_file(),
-		expression: (p) => p.expression(),
+		// T-SQL keeps comparisons out of the scalar `expression` rule (they are `search_condition`
+		// predicates), so an expression body is either.
+		expression: [(p) => p.expression(), (p) => p.search_condition()],
 		tableSource: (p) => p.table_source(),
 		cteList: separatedList((p) => p.common_table_expression(), TSqlLexer.COMMA),
 		selectList: (p) => p.select_list(),

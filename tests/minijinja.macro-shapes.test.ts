@@ -55,6 +55,39 @@ describe("MacroShape: shapes read from the definition text", () => {
 		expect(m.keywordParam).toEqual({ name: "stat", index: 1 });
 	});
 
+	it("a body that literally opens with the clause keyword → that clause's shape (anvil gap 1)", () => {
+		for (const dialect of ["tsql", "databricks"] as const) {
+			const of = (t: string) => parseTemplated(t, dialect).macros[0].shapes;
+			expect(of(`{% macro m(c) %}and {{ c }} = false{% endmacro %}`), dialect).toEqual(["conjunct"]);
+			expect(of(`{% macro m(c) %}or {{ c }} = false{% endmacro %}`), dialect).toEqual(["conjunct"]);
+			expect(of(`{% macro m(c) %}where {{ c }} = false{% endmacro %}`), dialect).toEqual(["where-clause"]);
+			expect(
+				of(`{% macro m(c) %}
+  -- note
+  and {{ c }} = false
+{% endmacro %}`),
+				dialect,
+			).toEqual(["conjunct"]);
+			// The keyword alone, or a remainder that is no expression, claims nothing.
+			expect(of(`{% macro m(c) %}and {{ c }} = {% endmacro %}`), dialect).toEqual([]);
+		}
+	});
+
+	it("a signature default is the hole's default (anvil gap 2); the filter default wins over it", () => {
+		const a = macrosOf(`{% macro m(col, mode='and') %}{{ mode }} {{ col }} >= 1{% endmacro %}`)[0];
+		expect(a.keywordParam).toEqual({ name: "mode", index: 1, default: "and" });
+		expect(a.shapes).toEqual(["conjunct"]);
+		expect(shapesForCall(a, { name: "m", args: ["c"] })).toEqual(["conjunct"]);
+		expect(shapesForCall(a, { name: "m", args: ["c", "where"] })).toEqual(["where-clause"]);
+		const b = macrosOf(`{% macro m(col, mode="where") %}{{ mode|default('and') }} {{ col }} >= 1{% endmacro %}`)[0];
+		expect(b.keywordParam).toEqual({ name: "mode", index: 1, default: "and" });
+	});
+
+	it("tsql: a comparison body is an expression (search_condition alternative)", () => {
+		const [m] = macrosOf(`{% macro m(c) %}{{ c }} = 0{% endmacro %}`);
+		expect(m.shapes).toEqual(["expr"]);
+	});
+
 	it("a return-only body → no shapes, no binding (never-wrong)", () => {
 		const [m] = macrosOf(`{% macro cutoff() %}\n  -- the cutoff\n  {{ return('202601') }}\n{% endmacro %}`);
 		expect(m.shapes).toEqual([]);
