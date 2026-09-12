@@ -100,6 +100,7 @@ function attachErrorCounter(lexer: Lexer, parser: MysqlParser, listener: ANTLREr
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new MysqlLexer(input),
 	newParser: (tokens) => new MysqlParser(tokens),
+	separator: MysqlLexer.COMMA,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.expression(),

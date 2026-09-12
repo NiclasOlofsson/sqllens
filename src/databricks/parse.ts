@@ -103,6 +103,7 @@ function attachErrorCounter(lexer: Lexer, parser: DatabricksParser, listener: AN
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new DatabricksLexer(input),
 	newParser: (tokens) => new DatabricksParser(tokens),
+	separator: DatabricksLexer.COMMA,
 	entries: {
 		statement: (p) => p.multiStatement(),
 		expression: (p) => p.expression(),

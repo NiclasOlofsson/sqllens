@@ -100,6 +100,7 @@ function attachErrorCounter(lexer: Lexer, parser: RedshiftParser, listener: ANTL
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new RedshiftLexer(input),
 	newParser: (tokens) => new RedshiftParser(tokens),
+	separator: RedshiftLexer.COMMA,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.a_expr(),

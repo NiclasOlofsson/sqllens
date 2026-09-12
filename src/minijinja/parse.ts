@@ -50,17 +50,21 @@ import { debugRethrow } from "../debug.js";
 import type { Dialect } from "../dialect.js";
 import { MinijinjaLexer } from "../generated/minijinja/MinijinjaLexer.js";
 import { type FragmentRange, openFragments } from "../fragment.js";
+import type { PartSpan } from "../ir/part-span.js";
 import { endPosition } from "../ir/span.js";
 import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
 import { applyTemplateTags } from "./apply-tags.js";
-import { templateRegions, templateSymbols, type TemplateRegion } from "./regions.js";
+import { templateRegions, templateSymbols, type TemplateArm, type TemplateRegion } from "./regions.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
-import type { TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
+import type { MacroShape, TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
+import type { ExpansionShape } from "../qualify/template-provider.js";
+import type { TemplateCall } from "../ir/ir.js";
+import type { FragmentKind } from "../fragment-grammar.js";
 
 /**
  * A single shared `MinijinjaLexer` instance, used ONLY for its static vocabulary
@@ -81,7 +85,7 @@ export { templateRegions, templateSymbols } from "./regions.js";
 // TemplatedParseOptions / TemplatedParseResult now live in ../template/engine.js
 // (the neutral TemplateEngine contract); re-exported here so every existing
 // import site keeps working.
-export type { TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
+export type { MacroShape, TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
 
 /** No-op accessors for the degraded/no-correlation path: total, never wrong. */
 function noCorrelation(): Pick<TemplatedParseResult, "tagOf" | "nodeOf" | "diagnosticsOf"> {
@@ -234,14 +238,20 @@ function parseSliceTag(slice: readonly AntlrToken[]): { tree: ParserRuleContext;
  *  diagnostic's owning range back to its TagNode (Task 10). */
 type TagSegment = Extract<Segment, { kind: "tag" }>;
 
+/** A pure placeholder-fill run: `j` + up to two base-35 ordinal chars + `j` padding (segment.ts). */
+const FILL_RUN = /^j[0-9a-ik-z]{0,2}j*$/;
+
 /**
- * Scrub placeholder gibberish out of SQL syntax diagnostics. A diagnostic whose
- * offending token starts inside a tag range is really complaining about the TAG:
- * rewrite every occurrence of the placeholder token's text in the message with the
- * tag's original source text, and widen offset/length (+ line/column) to the whole
- * tag. Diagnostics outside every tag pass through untouched. `bySegment` carries the
- * widened diagnostics keyed by the owning tag segment — build() maps that back to a
- * TagNode for `diagnosticsOf`.
+ * Scrub placeholder gibberish out of SQL syntax diagnostics. Two parts:
+ *   - every message: each placeholder FILL RUN of any tag is rewritten to that tag's original
+ *     source text. ANTLR's "no viable alternative at input '…'" quotes a whole token RANGE, so a
+ *     fill can sit inside a message whose offending token is plain SQL far away; fills are
+ *     ordinal-unique, so plain substring replacement (longest fill first, a shorter fill can be
+ *     a prefix of a longer one) is exact;
+ *   - a diagnostic whose offending token starts inside a tag range is really complaining about
+ *     the TAG: its offset/length (+ line/column) widen to the whole tag.
+ * `bySegment` carries the widened diagnostics keyed by the owning tag segment — build() maps
+ * that back to a TagNode for `diagnosticsOf`.
  */
 function scrubPlaceholderDiagnostics(
 	diags: SyntaxDiagnostic[],
@@ -251,13 +261,29 @@ function scrubPlaceholderDiagnostics(
 ): { diagnostics: SyntaxDiagnostic[]; bySegment: Map<TagSegment, SyntaxDiagnostic[]> } {
 	const bySegment = new Map<TagSegment, SyntaxDiagnostic[]>();
 	if (tagRanges.length === 0) return { diagnostics: diags, bySegment };
-	const diagnostics = diags.map((d) => {
-		if (d.offset === undefined) return d;
-		const tag = tagRanges.find((s) => d.offset! >= s.start && d.offset! < s.end);
-		if (!tag) return d;
-		const seen = placeholder.slice(d.offset, d.offset + d.length);
+	// fill run → the tag's source text, longest fill first.
+	const fills: [string, string][] = [];
+	for (const tag of tagRanges) {
 		const tagText = text.slice(tag.start, tag.end);
-		const message = seen.length > 0 ? d.message.split(`'${seen}'`).join(`'${tagText}'`) : d.message;
+		for (const run of placeholder.slice(tag.start, tag.end).split(/\s+/)) {
+			if (run.length >= 3 && FILL_RUN.test(run)) fills.push([run, tagText]);
+		}
+	}
+	fills.sort((a, b) => b[0].length - a[0].length);
+	const scrubMessage = (message: string): string => {
+		for (const [run, tagText] of fills) if (message.includes(run)) message = message.split(run).join(tagText);
+		return message;
+	};
+	const diagnostics = diags.map((d) => {
+		const tag =
+			d.offset === undefined ? undefined : tagRanges.find((s) => d.offset! >= s.start && d.offset! < s.end);
+		if (!tag) {
+			const message = scrubMessage(d.message);
+			return message === d.message ? d : { ...d, message };
+		}
+		const seen = placeholder.slice(d.offset, d.offset! + d.length);
+		const tagText = text.slice(tag.start, tag.end);
+		const message = scrubMessage(seen.length > 0 ? d.message.split(`'${seen}'`).join(`'${tagText}'`) : d.message);
 		const pos = docPosAt(text, tag.start);
 		const widened = {
 			...d,
@@ -280,10 +306,12 @@ function scrubPlaceholderDiagnostics(
  * diagnostics are replaced wholesale: they are recovery noise once a body has derailed it
  * (a body that is a CASE expression leaves "missing 'CASE' at EOF" far outside itself).
  * What replaces them: the text OUTSIDE the macro bodies read as a statement batch (a model
- * file that also defines a macro keeps its real errors), plus each body's own fragment
- * read. Lexer diagnostics (offset-less) are kept as they are. Each region learns what its
- * body is (`body`); a body with no SQL token gets no verdict and no diagnostic. Mutates the
- * regions' `body` field only. Files without a macro region are untouched.
+ * file that also defines a macro keeps its real errors). Lexer diagnostics (offset-less)
+ * are kept as they are. Each region learns what its body is (`body`); a body that reads
+ * clean as none of the kinds carries NO diagnostic and no verdict: a body is whatever gets
+ * pasted at the call site (a clause tail led by a keyword hole has no reading and never
+ * will), so "matches no known shape" is not evidence of invalid SQL (never-wrong). Mutates
+ * the regions' `body` field only. Files without a macro region are untouched.
  */
 function reparseMacroBodies(
 	regions: TemplateRegion[],
@@ -305,7 +333,6 @@ function reparseMacroBodies(
 
 	const fragments = openFragments(placeholder, dialect);
 	const bodies: FragmentRange[] = [];
-	const own: SyntaxDiagnostic[] = [];
 	for (const region of macros) {
 		const arm = region.arms[0];
 		if (!arm) continue;
@@ -315,10 +342,8 @@ function reparseMacroBodies(
 		const body: FragmentRange = unclosed ? { start: arm.tagSpan.end, end: placeholder.length } : arm.bodySpan;
 		if (body.end <= body.start) continue;
 		bodies.push(body);
-		const fragment = fragments.parse([body]);
-		if (!fragment) continue;
-		own.push(...fragment.diagnostics);
-		if (fragment.clean) region.body = fragment.kind;
+		const verdict = fragments.verdict([body]);
+		if (verdict) region.body = verdict;
 	}
 
 	// The remainder: everything between the bodies, as the statement batch it always was.
@@ -331,7 +356,150 @@ function reparseMacroBodies(
 	if (at < placeholder.length) remainder.push({ start: at, end: placeholder.length });
 	const rest = fragments.parse(remainder, ["statement"]);
 
-	return [...diagnostics.filter((d) => d.offset === undefined), ...(rest?.diagnostics ?? []), ...own];
+	return [...diagnostics.filter((d) => d.offset === undefined), ...(rest?.diagnostics ?? [])];
+}
+
+/** Insert a hidden WS-shaped token over every gap in the source-ordered stream whose original text
+ *  is not pure whitespace (see the call site). Mutates `tokens` in place, keeping it sorted. */
+function fillDeadGaps(tokens: Token[], text: string): void {
+	const out: Token[] = [];
+	let at = 0;
+	const fill = (start: number, end: number): void => {
+		const slice = text.slice(start, end);
+		if (slice.trim().length === 0) return;
+		const pos = docPosAt(text, start);
+		const endPos = endPosition(pos.line, pos.column, slice);
+		out.push({
+			type: 0, // antlr's INVALID_TYPE: no lexer rule produced this token
+			name: "WS",
+			text: slice,
+			start,
+			stop: end - 1,
+			line: pos.line,
+			column: pos.column,
+			endLine: endPos.endLine,
+			endColumn: endPos.endColumn,
+			channel: 1,
+			role: "whitespace",
+		});
+	};
+	for (const tok of tokens) {
+		if (tok.start > at) fill(at, tok.start);
+		out.push(tok);
+		at = Math.max(at, tok.stop + 1);
+	}
+	if (at < text.length) fill(at, text.length);
+	if (out.length !== tokens.length) tokens.splice(0, tokens.length, ...out);
+}
+
+/** Fragment verdict → the provider's shape vocabulary (`MacroShape.shapes`). */
+const VERDICT_SHAPE: Record<FragmentKind, ExpansionShape> = {
+	statement: "statement",
+	expression: "expr",
+	tableSource: "relation",
+	cteList: "cte-definition",
+	selectList: "column-list",
+};
+
+/** The keyword a leading hole's jinja `default('…')` filter names → the clause shape it opens. */
+const DEFAULT_KEYWORD_SHAPE: Record<string, ExpansionShape> = {
+	where: "where-clause",
+	and: "conjunct",
+	or: "conjunct",
+};
+
+/**
+ * `MacroShape` for every macro region, read from the text alone. Three sources, all in-text:
+ *   1. the body's fragment verdict (`region.body`), mapped 1:1;
+ *   2. a body led by a `{{ x|default('where') }}`-style hole: the default literal is the
+ *      keyword the body opens with (`where` → where-clause, `and`/`or` → conjunct);
+ *   3. control flow: when every SQL byte of the body sits under `if` regions that have no
+ *      `else` arm, the macro can render to nothing → `nothing`, last.
+ * Anything else stays out (never-wrong): a hole with no visible default, a return-only body.
+ */
+function macroShapesOf(regions: TemplateRegion[], tags: TagNode[], text: string, placeholder: string): MacroShape[] {
+	const out: MacroShape[] = [];
+	const visit = (list: TemplateRegion[]): void => {
+		for (const region of list) {
+			if (region.kind !== "macro") {
+				for (const arm of region.arms) visit(arm.children);
+				continue;
+			}
+			const arm = region.arms[0];
+			const open = tags.find(
+				(t): t is Extract<TagNode, { kind: "control" }> =>
+					t.kind === "control" && t.keyword === "macro" && t.tagSpan.start === region.span.start,
+			);
+			if (!arm || !open?.name || !open.nameSpan) continue;
+			const shapes: ExpansionShape[] = [];
+			let keywordParam: MacroShape["keywordParam"];
+			if (region.body) shapes.push(VERDICT_SHAPE[region.body]);
+			else {
+				// A body opening with a hole: `{{ name }}` / `{{ name|default('kw') }}`, `name` one of
+				// the macro's declared parameters (the signature's args are bare identifiers).
+				const lead = leadingHole(arm.bodySpan, tags, placeholder);
+				const holeText = lead ? text.slice(lead.tagSpan.start, lead.tagSpan.end) : "";
+				const bound = /^\{\{-?\s*([A-Za-z_]\w*)\s*(?:\||-?\}\})/.exec(holeText)?.[1];
+				const params = (open.calls[0]?.args ?? []).map((a) => text.slice(a.span.start, a.span.end).trim());
+				const index = bound === undefined ? -1 : params.indexOf(bound);
+				const fallback = /\|\s*default\(\s*['"](\w+)['"]\s*\)/.exec(holeText)?.[1];
+				if (bound !== undefined && index >= 0) {
+					keywordParam = { name: bound, index, ...(fallback !== undefined ? { default: fallback } : {}) };
+				}
+				const clause = fallback ? DEFAULT_KEYWORD_SHAPE[fallback.toLowerCase()] : undefined;
+				if (clause) shapes.push(clause);
+			}
+			if ((shapes.length > 0 || keywordParam) && rendersToNothing(arm, placeholder)) shapes.push("nothing");
+			out.push({
+				name: open.name,
+				nameSpan: open.nameSpan,
+				span: region.span,
+				shapes,
+				...(keywordParam ? { keywordParam } : {}),
+			});
+		}
+	};
+	visit(regions);
+	return out;
+}
+
+/**
+ * The shapes a specific CALL of a macro takes: `macro.shapes`, with the keyword-parameter hole
+ * (if any) resolved from the call's own literal argument (positional or keyword) or the
+ * parameter's default. A call whose keyword is not a literal, or names a word that opens no
+ * known clause, resolves to nothing for that hole (never-wrong). Pure: definition text + call
+ * text, no project knowledge; a host's `shapeOf(call)` is `shapesForCall(index.get(call.name), call)`.
+ */
+export function shapesForCall(macro: MacroShape, call: TemplateCall): ExpansionShape[] {
+	const kp = macro.keywordParam;
+	if (!kp) return macro.shapes;
+	const kwarg = call.kwargs?.find((k) => k.name === kp.name)?.value;
+	const positional = call.args[kp.index];
+	const word = (kwarg ?? positional ?? kp.default)?.toLowerCase();
+	const clause = word !== undefined ? DEFAULT_KEYWORD_SHAPE[word] : undefined;
+	const rest = macro.shapes.filter((s) => s !== "where-clause" && s !== "conjunct");
+	return clause ? [clause, ...rest] : rest;
+}
+
+/** The expression tag at the very start of a body (only whitespace, comments and control tags
+ *  before it in the placeholder), or undefined when the body opens with SQL. */
+function leadingHole(body: PartSpan, tags: TagNode[], placeholder: string): TagNode | undefined {
+	const first = placeholder.slice(body.start, body.end).search(/\S/);
+	if (first === -1) return undefined;
+	const at = body.start + first;
+	return tags.find((t) => (t.kind === "call" || t.kind === "other") && t.tagSpan.start <= at && at < t.tagSpan.end);
+}
+
+/** True when every non-whitespace placeholder byte of the arm's body lies inside an `if` child
+ *  region that has no `else` arm: nothing outside such regions, so the macro can render empty. */
+function rendersToNothing(arm: TemplateArm, placeholder: string): boolean {
+	const optional = arm.children.filter((c) => c.kind === "if" && !c.arms.some((a) => a.keyword === "else"));
+	if (optional.length === 0) return false;
+	const chars = placeholder.slice(arm.bodySpan.start, arm.bodySpan.end).split("");
+	for (const c of optional) {
+		for (let k = c.span.start; k < c.span.end; k++) chars[k - arm.bodySpan.start] = " ";
+	}
+	return chars.join("").trim().length === 0;
 }
 
 /** The core build — total by construction (every composed piece is total). */
@@ -404,6 +572,12 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// disjoint (tag-contained SQL tokens were dropped), so a stable sort by start
 	// (stop as tiebreak) tiles the source.
 	const tokens = [...sqlTokens, ...jinjaTokens].sort((a, b) => a.start - b.start || a.stop - b.stop);
+	// Dead text with no carrier: the statically-dead loop arm above rides as trivia ONLY when an SQL
+	// token covers its blanked span. A dialect whose whitespace rule is `-> skip` (tsql) lexes no
+	// token over an all-space span, so the arm's true text (`union all`, a trailing `,`) would fall
+	// out of the stream. Every uncovered gap holding non-whitespace source text gets a synthesized
+	// hidden trivia token carrying that text, the same shape the carrier token takes elsewhere.
+	fillDeadGaps(tokens, text);
 
 	// Diagnostics: SQL + jinja, both already in document coordinates, source-ordered
 	// so squiggles line up with the merged stream. SQL diagnostics whose offending
@@ -426,6 +600,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 	// the statement parse reported inside that body. The IR and tokens stay the whole-file
 	// parse's: the fragment verdict rides the region as `body`.
 	const sqlDiagnostics = reparseMacroBodies(regions, sqlResult.diagnostics, placeholder, dialect);
+	const macros = macroShapesOf(regions, tags, text, placeholder);
 
 	const { diagnostics: scrubbed, bySegment } = scrubPlaceholderDiagnostics(
 		sqlDiagnostics,
@@ -452,6 +627,7 @@ function build(text: string, dialect: Dialect, provider: TemplateProvider): Temp
 		tags,
 		regions,
 		symbols,
+		macros,
 		diagnostics,
 		placeholder,
 		tagOf: (node: object) => correlation.byNode.get(node),
@@ -481,6 +657,7 @@ export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedP
 			tags: [],
 			regions: [],
 			symbols: [],
+			macros: [],
 			diagnostics: sql.diagnostics,
 			placeholder: text,
 			degraded: true,

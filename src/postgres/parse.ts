@@ -99,6 +99,7 @@ function attachErrorCounter(lexer: Lexer, parser: PostgresParser, listener: ANTL
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new PostgresLexer(input),
 	newParser: (tokens) => new PostgresParser(tokens),
+	separator: PostgresLexer.COMMA,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.a_expr(),

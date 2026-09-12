@@ -8,7 +8,7 @@ import { NamedShapeProvider } from "./helpers/providers.js";
 
 // ---------------------------------------------------------------------------
 // Segmenter golden gate — locks segment()'s EXACT output (segment list +
-// placeholder, byte-for-byte) over the 21 dbt fixtures plus a synthetic
+// placeholder, byte-for-byte) over the 24 dbt fixtures plus a synthetic
 // battery, so the hand-scan → ANTLR-lexer unification (and any later segmenter
 // change) is provably behavior-preserving where behavior must not move: the
 // placeholder is what every SQL parse sees and what anvil consumes.

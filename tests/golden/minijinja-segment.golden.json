@@ -771,6 +771,261 @@
 		],
 		"placeholder": "          \n                                            \n    \nselect\n    j0jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as companykey\n    ,j1jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as forecastcreatedate\n    ,j2jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as itemkey,\n    'anaplan' as sourcesystemkey,\n    sf.quantity,\n    sf.modified_datetime as max_modified_datetime\nfrom j3jjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjjj as sf\nwhere\n    coalesce(sf.dataareaid, 0) <> 0\n    and left(forecastdate, 7) >= left(forecastcreatedate, 7)\n"
 	},
+	"fixture:22_macro_clause_tail.sql": {
+		"segments": [
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 0,
+				"end": 29,
+				"text": "{% macro maybe_filter(col) %}"
+			},
+			{
+				"kind": "sql",
+				"start": 29,
+				"end": 30
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 30,
+				"end": 42,
+				"text": "{% if col %}"
+			},
+			{
+				"kind": "sql",
+				"start": 42,
+				"end": 43
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 43,
+				"end": 70,
+				"text": "{{ stat|default('where') }}"
+			},
+			{
+				"kind": "sql",
+				"start": 70,
+				"end": 71
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 71,
+				"end": 80,
+				"text": "{{ col }}"
+			},
+			{
+				"kind": "sql",
+				"start": 80,
+				"end": 85
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 85,
+				"end": 96,
+				"text": "{% endif %}"
+			},
+			{
+				"kind": "sql",
+				"start": 96,
+				"end": 97
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 97,
+				"end": 111,
+				"text": "{% endmacro %}"
+			},
+			{
+				"kind": "sql",
+				"start": 111,
+				"end": 130
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 130,
+				"end": 156,
+				"text": "{{ maybe_filter('flag') }}"
+			},
+			{
+				"kind": "sql",
+				"start": 156,
+				"end": 157
+			}
+		],
+		"placeholder": "                             \n            \nj0jjjjjjjjjjjjjjjjjjjjjjjjj j1jjjjjjj = 0\n           \n              \n\nselect id\nfrom t\nj2jjjjjjjjjjjjjjjjjjjjjjjj\n"
+	},
+	"fixture:23_macro_return_only.sql": {
+		"segments": [
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 0,
+				"end": 26,
+				"text": "{% macro cutoff_month() %}"
+			},
+			{
+				"kind": "sql",
+				"start": 26,
+				"end": 27
+			},
+			{
+				"kind": "tag",
+				"tagKind": "comment",
+				"start": 27,
+				"end": 75,
+				"text": "{# hardcoded cutoff, revisit next fiscal year #}"
+			},
+			{
+				"kind": "sql",
+				"start": 75,
+				"end": 76
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 76,
+				"end": 98,
+				"text": "{{ return('202601') }}"
+			},
+			{
+				"kind": "sql",
+				"start": 98,
+				"end": 99
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 99,
+				"end": 113,
+				"text": "{% endmacro %}"
+			},
+			{
+				"kind": "sql",
+				"start": 113,
+				"end": 122
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 122,
+				"end": 142,
+				"text": "{{ cutoff_month() }}"
+			},
+			{
+				"kind": "sql",
+				"start": 142,
+				"end": 160
+			}
+		],
+		"placeholder": "                          \n                                                \n                      \n              \n\nselect j0jjjjjjjjjjjjjjjjjj as cutoff\nfrom t\n"
+	},
+	"fixture:24_macro_cte_list_trailing_comma.sql": {
+		"segments": [
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 0,
+				"end": 24,
+				"text": "{% macro level_ctes() %}"
+			},
+			{
+				"kind": "sql",
+				"start": 24,
+				"end": 25
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 25,
+				"end": 40,
+				"text": "{% set n = 3 %}"
+			},
+			{
+				"kind": "sql",
+				"start": 40,
+				"end": 67
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 67,
+				"end": 90,
+				"text": "{% for i in range(n) %}"
+			},
+			{
+				"kind": "sql",
+				"start": 90,
+				"end": 97
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 97,
+				"end": 104,
+				"text": "{{ i }}"
+			},
+			{
+				"kind": "sql",
+				"start": 104,
+				"end": 140
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 140,
+				"end": 147,
+				"text": "{{ i }}"
+			},
+			{
+				"kind": "sql",
+				"start": 147,
+				"end": 150
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 150,
+				"end": 162,
+				"text": "{% endfor %}"
+			},
+			{
+				"kind": "sql",
+				"start": 162,
+				"end": 195
+			},
+			{
+				"kind": "tag",
+				"tagKind": "stmt",
+				"start": 195,
+				"end": 209,
+				"text": "{% endmacro %}"
+			},
+			{
+				"kind": "sql",
+				"start": 209,
+				"end": 216
+			},
+			{
+				"kind": "tag",
+				"tagKind": "expr",
+				"start": 216,
+				"end": 234,
+				"text": "{{ level_ctes() }}"
+			},
+			{
+				"kind": "sql",
+				"start": 234,
+				"end": 255
+			}
+		],
+		"placeholder": "                        \n               \nbase as (select 1 as id),\n                       \nlevel_j0jjjjj as (select id from base where id = j1jjjjj),\n            \nfinal as (select id from base),\n              \n\nwith\nj2jjjjjjjjjjjjjjjj\nselect * from final\n"
+	},
 	"syn:multiline-expr-macro": {
 		"segments": [
 			{

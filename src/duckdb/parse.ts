@@ -94,6 +94,7 @@ function attachErrorCounter(lexer: Lexer, parser: DuckdbParser, listener: ANTLRE
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new DuckdbLexer(input),
 	newParser: (tokens) => new DuckdbParser(tokens),
+	separator: DuckdbLexer.COMMA,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.a_expr(),

@@ -104,6 +104,7 @@ function attachErrorCounter(lexer: Lexer, parser: TSqlParser, listener: ANTLRErr
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new TSqlLexer(input),
 	newParser: (tokens) => new TSqlParser(tokens),
+	separator: TSqlLexer.COMMA,
 	entries: {
 		statement: (p) => p.tsql_file(),
 		expression: (p) => p.expression(),

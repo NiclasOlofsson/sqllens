@@ -105,8 +105,13 @@ export interface TemplateCandidate {
 /** Everything known about one call's expansion. Every field optional; `undefined` = unknown. */
 export interface ResolvedExpansion {
 	/** Parse-time shape. When absent, derived from the strongest present field:
-	 *  relation → "relation", columns → "column-list", value → "expr" (an explicit shape always wins). */
+	 *  relation → "relation", columns → "column-list", value → "expr" (an explicit shape always wins).
+	 *  With `shapes` present this is `shapes[0]`. */
 	shape?: ExpansionShape;
+	/** Every shape the call can take, most specific first (a macro whose body is an `if` arm with
+	 *  no `else` is `["conjunct", "nothing"]`). The segmenter takes the first one the slot admits;
+	 *  `nothing` and `expr` are always admitted, so they belong last. Absent = `shape` alone. */
+	shapes?: ExpansionShape[];
 	/** A relation-producing call (ref, source, a TVF-like macro). */
 	relation?: ResolvedRelation;
 	/** A scalar value — `{{ var('x') }}`, `{{ env_var('Y') }}`, a scalar macro. */
@@ -208,7 +213,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	/** The rendered-output shape of a call. Neutral floor: unknown (the engine derives a shape from
 	 *  stronger fields, or falls back to its positional fill). The dbt no-output builtins → "nothing"
 	 *  is `DbtTemplateProvider` knowledge. */
-	shapeOf(_call: TemplateCall): ExpansionShape | undefined {
+	shapeOf(_call: TemplateCall): ExpansionShape | readonly ExpansionShape[] | undefined {
 		return undefined;
 	}
 
@@ -244,7 +249,10 @@ export class DefaultTemplateProvider implements SchemaProvider {
 	 * undefined when nothing at all is known (the engine's zero-knowledge floor).
 	 */
 	expansion(call: TemplateCall): ResolvedExpansion | undefined {
-		const shape = this.shapeOf(call);
+		const answered = this.shapeOf(call);
+		// A list answer keeps its order; an empty list is no answer at all.
+		const shapes = Array.isArray(answered) ? (answered.length > 0 ? [...answered] : undefined) : undefined;
+		const shape = shapes ? shapes[0] : (answered as ExpansionShape | undefined);
 		const relation = this.relationOf(call);
 		const value = this.valueOf(call);
 		const columns = this.columnsOf(call);
@@ -254,6 +262,7 @@ export class DefaultTemplateProvider implements SchemaProvider {
 		if (derived === undefined && !relation && !value && !columns && !collection) return undefined;
 		return {
 			...(derived !== undefined ? { shape: derived } : {}),
+			...(shapes && shapes.length > 1 ? { shapes } : {}),
 			...(relation ? { relation } : {}),
 			...(value ? { value } : {}),
 			...(columns ? { columns } : {}),
@@ -378,7 +387,7 @@ export class DbtTemplateProvider extends DefaultTemplateProvider {
 		return undefined;
 	}
 
-	override shapeOf(call: TemplateCall): ExpansionShape | undefined {
+	override shapeOf(call: TemplateCall): ExpansionShape | readonly ExpansionShape[] | undefined {
 		if (call.packageParts === undefined && NO_OUTPUT_BUILTINS.has(call.name)) return "nothing";
 		if (call.packageParts !== undefined && NO_OUTPUT_BUILTINS.has(call.packageParts[0] ?? "")) return "nothing";
 		return undefined;

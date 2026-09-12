@@ -72,16 +72,22 @@ export interface FragmentGrammarSpec<P extends Parser> {
 	newLexer: (input: CharStream) => Lexer;
 	newParser: (tokens: CommonTokenStream) => P;
 	entries: { readonly [K in FragmentKind]: FragmentEntry<P> };
+	/** The list separator token type (COMMA). A list body (`cteList`/`selectList`) may end with
+	 *  one: a macro's CTE list often ends `),` because the caller appends more CTEs. */
+	separator: number;
 	/** Tree-walking checks the dialect's statement entry runs after the parse (bigquery). */
 	postParse?: (tree: ParserRuleContext) => SyntaxDiagnostic[];
 }
+
+const LIST_KINDS: ReadonlySet<FragmentKind> = new Set(["cteList", "selectList"]);
 
 /** `item (sep item)*` driven from outside the grammar, for dialects without a list rule
  *  (a CTE list without its WITH, a select list). The tree is the FIRST item's. */
 export function separatedList<P extends Parser>(item: FragmentEntry<P>, separator: number): FragmentEntry<P> {
 	return (parser) => {
 		const first = item(parser);
-		while (parser.inputStream.LA(1) === separator) {
+		// A separator followed by EOF is a trailing one (`run` consumes it), not another item.
+		while (parser.inputStream.LA(1) === separator && parser.inputStream.LA(2) !== AntlrToken.EOF) {
 			parser.inputStream.consume(); // between rules there is no context to attach the separator to
 			item(parser);
 		}
@@ -106,7 +112,14 @@ function trailingInput(parser: Parser): SyntaxDiagnostic | undefined {
 
 /** Bind a dialect's lexer, parser and fragment entry rules into a `FragmentGrammar`. */
 export function defineFragmentGrammar<P extends Parser>(spec: FragmentGrammarSpec<P>): FragmentGrammar {
-	const { newLexer, newParser, entries, postParse } = spec;
+	const { newLexer, newParser, entries, separator, postParse } = spec;
+	/** The entry, then a trailing separator on a list body is consumed rather than left over. */
+	const run = (parser: P, kind: FragmentKind): ParserRuleContext => {
+		const tree = entries[kind](parser);
+		const input = parser.inputStream;
+		if (LIST_KINDS.has(kind) && input.LA(1) === separator && input.LA(2) === AntlrToken.EOF) input.consume();
+		return tree;
+	};
 	const lex =
 		spec.lex ??
 		((text: string): FragmentLex => {
@@ -128,7 +141,7 @@ export function defineFragmentGrammar<P extends Parser>(spec: FragmentGrammarSpe
 				sim.predictionMode = PredictionMode.SLL;
 				let tree: ParserRuleContext;
 				try {
-					tree = entries[kind](parser);
+					tree = run(parser, kind);
 				} catch {
 					return undefined;
 				}
@@ -139,7 +152,7 @@ export function defineFragmentGrammar<P extends Parser>(spec: FragmentGrammarSpe
 				return post.length === 0 ? { tree, diagnostics: [] } : undefined;
 			}
 			sim.predictionMode = PredictionMode.LL;
-			const tree = entries[kind](parser);
+			const tree = run(parser, kind);
 			const trailing = trailingInput(parser);
 			return {
 				tree,

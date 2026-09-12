@@ -109,6 +109,7 @@ export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new GoogleSQLLexer(input),
 	newParser: (tokens) => new GoogleSQLParser(tokens),
 	postParse: postParseDiagnostics,
+	separator: GoogleSQLLexer.COMMA_SYMBOL,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.expression(),

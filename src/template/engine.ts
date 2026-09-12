@@ -10,10 +10,11 @@
 // de-dbt'd into this layer (a later, anvil-coordinated wave).
 // ---------------------------------------------------------------------------
 import type { Dialect } from "../dialect.js";
+import type { PartSpan } from "../ir/part-span.js";
 import type { ParseResultIR } from "../api.js";
 import type { SyntaxDiagnostic } from "../parse-diagnostics.js";
 import type { Token } from "../token/token.js";
-import type { TemplateProvider } from "../qualify/template-provider.js";
+import type { ExpansionShape, TemplateProvider } from "../qualify/template-provider.js";
 import type { TagNode } from "../minijinja/tag-ast.js";
 import type { TemplateRegion, TemplateSymbol } from "../minijinja/regions.js";
 import type { TemplateVariant } from "../minijinja/variants.js";
@@ -29,6 +30,36 @@ export interface TemplatedParseOptions {
 	provider?: TemplateProvider;
 }
 
+/**
+ * What a `{% macro %}` definition's body can stand in for at a call site, read from the
+ * definition text alone (no project, no rendering): the body's fragment verdict mapped onto the
+ * provider's shape vocabulary, plus what its control flow adds. A host answers `shapeOf(call)`
+ * for a call by looking the macro up by name and returning `shapes` as they are.
+ */
+export interface MacroShape {
+	/** The declared macro name (`{% macro name(...) %}`). */
+	name: string;
+	nameSpan: PartSpan;
+	/** The whole block, opening tag through `{% endmacro %}`. */
+	span: PartSpan;
+	/**
+	 * Every shape the body can take, most specific first; empty when nothing can be established
+	 * (never-wrong). `expression` → `expr`, `cteList` → `cte-definition`, `selectList` →
+	 * `column-list`, `tableSource` → `relation`, `statement` → `statement`; a body led by a hole
+	 * whose jinja `default('where')` / `default('and')` is visible → `where-clause` / `conjunct`;
+	 * a body whose SQL all sits under an `if` with no `else` adds `nothing` last.
+	 */
+	shapes: ExpansionShape[];
+	/**
+	 * Present when the body OPENS with a hole bound to one of the macro's own parameters
+	 * (`{{ stat|default('where') }} {{ col }} = 0`): the clause keyword the body starts with is
+	 * whatever the caller passes for that parameter (or `default` when the caller passes
+	 * nothing). `shapesForCall` resolves it per call; `shapes` above carries only the default's
+	 * shape (or nothing when there is no default).
+	 */
+	keywordParam?: { name: string; index: number; default?: string };
+}
+
 /** The unified result of parsing raw jinja-SQL: one token stream + the SQL parse + tags. */
 export interface TemplatedParseResult {
 	/** ONE source-ordered stream: SQL tokens (channel 0) + jinja tokens (channel 2, role "minijinja"). */
@@ -41,6 +72,9 @@ export interface TemplatedParseResult {
 	regions: TemplateRegion[];
 	/** R4 go-to-def template symbols (set targets / macro names). */
 	symbols: TemplateSymbol[];
+	/** Every `{% macro %}` definition in the text with the shapes its body can take (see
+	 *  `MacroShape`). Empty when the text defines no macro. */
+	macros: MacroShape[];
 	/** SQL diagnostics (+ jinja diagnostics from Task 4), positioned in original coordinates. */
 	diagnostics: SyntaxDiagnostic[];
 	/**

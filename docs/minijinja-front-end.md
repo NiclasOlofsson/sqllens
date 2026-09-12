@@ -134,6 +134,13 @@ default-channel consumers ignore jinja tokens for free. `TokenRole` carries the 
 member (a closed union: every exhaustive role `switch` was revisited in the same change). Tags
 spanning newlines carry correct multi-line spans.
 
+A statically-dead loop arm (`{% if not loop.last %}union all{% endif %}` inside a `{% for %}`) is
+blanked in the placeholder but its text still rides the stream as hidden trivia. Where the
+dialect lexes whitespace as a hidden token (every dialect but tsql) that token is the carrier;
+where whitespace is `-> skip` (tsql) nothing covers the blanked span, so `build()` synthesizes
+the carrier (`fillDeadGaps`): a hidden WS-shaped token over any uncovered gap holding
+non-whitespace source text. Pure-whitespace gaps stay gaps in tsql, as in its plain stream.
+
 ## R2 — the tag-AST span contract
 
 The ref/source/macro-call nodes (`src/minijinja/tag-ast.ts`), with a span for every field below
@@ -224,19 +231,56 @@ So a file with macro regions gets a second read (`src/fragment.ts`, wired in `bu
   SLL-clean to an LL failure. No substring re-lex, so every diagnostic is already
   document-positioned.
 - The first clean reading wins and the region records it: `TemplateRegion.body` (macro regions
-  only). A body that is none of them carries no verdict; its diagnostics come from the reading
-  that got furthest before its first error (a heuristic for the broken-input case only, never a
-  claim). An empty body gets nothing.
+  only). A body that is none of them carries no verdict and NO syntax diagnostic: a body is
+  whatever gets pasted at the call site (a clause tail led by a keyword hole,
+  `{{ stat|default('where') }} {{ col }} = 0`, has no reading and never will), so "matches no
+  known shape" is not evidence of invalid SQL. The unverified state is `body === undefined`.
+  A list body (CTE list, select list) may end with a trailing separator: the caller appends
+  more. An empty body gets nothing.
 - The whole-file parse's syntax diagnostics are replaced wholesale: they are recovery noise
   once a body has derailed the statement parse. What replaces them is the text outside the
   bodies read as a statement batch (a model file that also defines a macro keeps its real
-  errors) plus each body's own read. The IR, tokens and CST stay the whole-file parse's. An
-  unclosed macro (mid-edit) reads to the end of the text. Files without a macro region are
-  untouched.
+  errors). The IR, tokens and CST stay the whole-file parse's. An unclosed macro (mid-edit)
+  reads to the end of the text. Files without a macro region are untouched.
+- Diagnostic messages never carry a placeholder fill. ANTLR's "no viable alternative at input
+  '…'" quotes a token range, so a fill can sit inside a message whose offending token is plain
+  SQL; every fill run of every tag is rewritten to the tag's source text (fills are
+  ordinal-unique, longest first).
 
 The fragment tree is not lowered: a macro body yields diagnostics and a kind, not an `Expr`.
 That is the open half (lowering the expression / CTE-list readings onto the IR) and lands on
 consumer demand.
+
+### Macro shapes: the call side, from the definition text
+
+A call in a slot the identifier fill cannot stand in (`where 1=1 {{ ci_limit_ten_days('d', 'and') }}`)
+breaks the model parse unless the provider answers `shapeOf`. That answer is derivable from the
+definition, and the result carries it: `TemplatedParseResult.macros: MacroShape[]`, one per
+`{% macro %}`, read from the text alone (no project, no rendering):
+
+- the body's fragment verdict maps 1:1 onto the shape vocabulary (`expression` → `expr`,
+  `cteList` → `cte-definition`, `selectList` → `column-list`, `tableSource` → `relation`,
+  `statement` → `statement`);
+- a body that OPENS with a hole bound to one of the macro's own parameters
+  (`{{ stat|default('where') }} {{ col }} = 0`) records `keywordParam { name, index, default? }`:
+  the clause keyword is whatever the caller passes for that parameter (jinja `default` filter
+  semantics), and `shapes` carries the default's shape (`where` → `where-clause`, `and`/`or` →
+  `conjunct`) or nothing when there is no default;
+- when every SQL byte of the body sits under `if` regions with no `else` arm, `nothing` is added
+  last: the macro can render empty.
+
+`shapesForCall(macro, call)` (subpath export) resolves the keyword hole per call from the call's
+own literal argument (positional or keyword) or the default, so a host's `shapeOf(call)` is one
+lookup over its macro index: `shapesForCall(index.get(call.name), call)`. Who indexes: the host
+(it has the files); who derives: sqllens. No dbt knowledge enters.
+
+`shapeOf` may answer a LIST (`["conjunct", "nothing"]`), most specific first; `expansion()` exposes
+it as `shapes` with `shape = shapes[0]`, and the segmenter fills the tag with the first shape the
+slot admits (`nothing` and `expr` are never refused, so they belong last). A single shape is a
+list of one; nothing changes for existing providers.
+
+Not derived (never-wrong): a hole bound to no parameter, a return-only body, a keyword that opens
+no known clause. Those macros carry `shapes: []`.
 
 ## Variant realization
 

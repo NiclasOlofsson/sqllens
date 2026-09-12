@@ -113,18 +113,43 @@ describe("macro bodies parse as fragments", () => {
 		expect(inner.body).toBe("expression");
 	});
 
-	it("a broken body keeps a diagnostic positioned inside the body, no verdict", () => {
-		const text = `{% macro q() %}CASE WHEN a = 1 THEN{% endmacro %}`;
-		const { r } = syntax(text);
+	it("a body that reads as nothing carries no verdict and no syntax claim", () => {
+		// A clause tail led by a keyword hole has no reading and never will; "matches no known
+		// shape" is not evidence of invalid SQL (never-wrong), so no diagnostic.
+		const text = `{% macro ci_limit(date_field, statement) %}
+    {% if target.name == 'ci' %}
+        {{ statement|default('where') }} {{ date_field }} > dateadd(day, -10, cast(getdate() as date))
+    {% endif %}
+{% endmacro %}`;
+		const { r, messages } = syntax(text);
+		expect(messages).toEqual([]);
 		expect(r.regions[0].body).toBeUndefined();
+	});
+
+	it("a mid-edit body (CASE WHEN a = 1 THEN) also carries no claim", () => {
+		const { r, messages } = syntax(`{% macro q() %}CASE WHEN a = 1 THEN{% endmacro %}`);
+		expect(messages).toEqual([]);
+		expect(r.regions[0].body).toBeUndefined();
+	});
+
+	it("no placeholder fill ever reaches a diagnostic message, even inside a quoted token range", () => {
+		// The model side of the same macro: "no viable alternative at input '…'" quotes a token
+		// RANGE that spans two fills; both must read as their tags.
+		const text = `with system_logs as (select * from {{ ref('x') }} where 1=1 {{ ci_limit('d', 'and') }} ) select * from system_logs`;
+		const { r } = syntax(text);
 		expect(r.diagnostics.length).toBeGreaterThan(0);
-		const body = r.regions[0].arms[0].bodySpan;
 		for (const d of r.diagnostics) {
-			expect(d.offset).toBeGreaterThanOrEqual(body.start);
-			expect(d.offset).toBeLessThanOrEqual(body.end);
+			expect(/j[0-9a-ik-z]{0,2}j{3,}/.test(d.message), d.message).toBe(false);
+			expect(d.message).toContain("{{ ci_limit('d', 'and') }}");
 		}
-		// Not the old whole-file complaint at the body's first token.
-		expect(r.diagnostics.some((d) => d.message.startsWith("mismatched input 'CASE'"))).toBe(false);
+	});
+
+	it("a CTE-list body may end with a trailing comma (the caller appends more CTEs)", () => {
+		const { r, messages } = syntax(`{% macro ctes() %}a as (select 1 as x),
+ b as (select x from a),
+{% endmacro %}`);
+		expect(messages).toEqual([]);
+		expect(r.regions[0].body).toBe("cteList");
 	});
 
 	it("an unclosed macro (mid-edit) reads its body to the end of the text", () => {

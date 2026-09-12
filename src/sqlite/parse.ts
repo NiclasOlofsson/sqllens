@@ -100,6 +100,7 @@ function attachErrorCounter(lexer: Lexer, parser: SqliteParser, listener: ANTLRE
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new SqliteLexer(input),
 	newParser: (tokens) => new SqliteParser(tokens),
+	separator: SqliteLexer.COMMA,
 	entries: {
 		statement: (p) => p.parse(),
 		expression: (p) => p.expr(),

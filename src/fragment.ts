@@ -67,6 +67,9 @@ export interface FragmentSession {
 	 * verdict). Never throws: every attempt runs a recovering parser over a fixed kind list.
 	 */
 	parse(ranges: readonly FragmentRange[], kinds?: readonly FragmentKind[]): FragmentResult | undefined;
+	/** The first kind the ranges parse clean as, or undefined (no token, or no clean reading).
+	 *  Probes only (SLL + bail); never a diagnostic. */
+	verdict(ranges: readonly FragmentRange[], kinds?: readonly FragmentKind[]): FragmentKind | undefined;
 }
 
 /** Lex `text` once with `dialect`'s statement-entry token pipeline; parse ranges of it after. */
@@ -76,18 +79,34 @@ export function openFragments(text: string, dialect: Dialect): FragmentSession {
 	const inRanges = (offset: number, ranges: readonly FragmentRange[]): boolean =>
 		ranges.some((r) => offset >= r.start && offset < r.end);
 
-	return {
-		parse(ranges, kinds = FRAGMENT_KINDS) {
-			const slice: AntlrToken[] = lexed.tokens.filter((t) => inRanges(t.start, ranges));
-			if (!slice.some((t) => t.channel === 0)) return undefined;
-			// Token-derived diagnostics of the slice (bigquery literal escapes) hold under every reading.
-			const lexDiags = lexed.diagnostics.filter((d) => d.offset !== undefined && inRanges(d.offset, ranges));
+	const sliceOf = (ranges: readonly FragmentRange[]): AntlrToken[] | undefined => {
+		const slice = lexed.tokens.filter((t) => inRanges(t.start, ranges));
+		return slice.some((t) => t.channel === 0) ? slice : undefined;
+	};
+	// Token-derived diagnostics of a slice (bigquery literal escapes) hold under every reading.
+	const lexDiagsOf = (ranges: readonly FragmentRange[]): SyntaxDiagnostic[] =>
+		lexed.diagnostics.filter((d) => d.offset !== undefined && inRanges(d.offset, ranges));
+	const probe = (slice: AntlrToken[], kinds: readonly FragmentKind[]): FragmentResult | undefined => {
+		for (const kind of kinds) {
+			const clean = grammar.parse(slice, kind, true);
+			if (clean) return { kind, clean: true, tree: clean.tree, diagnostics: [] };
+		}
+		return undefined;
+	};
 
+	return {
+		verdict(ranges, kinds = FRAGMENT_KINDS) {
+			const slice = sliceOf(ranges);
+			if (!slice || lexDiagsOf(ranges).length > 0) return undefined;
+			return probe(slice, kinds)?.kind;
+		},
+		parse(ranges, kinds = FRAGMENT_KINDS) {
+			const slice = sliceOf(ranges);
+			if (!slice) return undefined;
+			const lexDiags = lexDiagsOf(ranges);
 			if (lexDiags.length === 0) {
-				for (const kind of kinds) {
-					const clean = grammar.parse(slice, kind, true);
-					if (clean) return { kind, clean: true, tree: clean.tree, diagnostics: [] };
-				}
+				const clean = probe(slice, kinds);
+				if (clean) return clean;
 			}
 
 			let best: FragmentResult | undefined;

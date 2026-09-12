@@ -97,6 +97,7 @@ function attachErrorCounter(lexer: Lexer, parser: TrinoParser, listener: ANTLREr
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new TrinoLexer(input),
 	newParser: (tokens) => new TrinoParser(tokens),
+	separator: TrinoLexer.COMMA,
 	entries: {
 		statement: (p) => p.root(),
 		expression: (p) => p.expression(),

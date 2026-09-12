@@ -17,7 +17,7 @@ export class AlwaysShapeProvider extends DbtTemplateProvider {
 	constructor(private readonly shape: ExpansionShape) {
 		super();
 	}
-	override shapeOf(call: TemplateCall): ExpansionShape | undefined {
+	override shapeOf(call: TemplateCall): ExpansionShape | readonly ExpansionShape[] | undefined {
 		return super.shapeOf(call) ?? this.shape;
 	}
 }
@@ -39,7 +39,7 @@ export class NamedShapeProvider extends DbtTemplateProvider {
 	constructor(private readonly shapes: Record<string, ExpansionShape>) {
 		super();
 	}
-	override shapeOf(call: TemplateCall): ExpansionShape | undefined {
+	override shapeOf(call: TemplateCall): ExpansionShape | readonly ExpansionShape[] | undefined {
 		return super.shapeOf(call) ?? this.shapes[call.name];
 	}
 }

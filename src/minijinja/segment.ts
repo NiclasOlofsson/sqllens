@@ -631,7 +631,11 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		// ONE provider consult per tag — the uniform seam. stmt/comment tags are pure
 		// jinja control text and always whitespace-fill (no consult needed).
 		const exp = seg.tagKind === "expr" && info.call ? provider.expansion(info.call) : undefined;
-		const shape = exp?.shape;
+		// Candidate shapes, most specific first. The first one the slot admits fills the tag;
+		// `nothing`/`expr` never fail admission, so a list ends with one of them or falls through
+		// to the identifier fill like a single unadmitted shape does.
+		const candidates: ExpansionShape[] = exp?.shapes ?? (exp?.shape !== undefined ? [exp.shape] : []);
+		let shape: ExpansionShape | undefined = candidates[0];
 
 		// Fusion boundary (anvil torture-corpus, 2026-07-06): a tag GLUED to a preceding SQL
 		// clause/operator keyword (`from{{ ref('x') }}` — dbt compiles it because the rendered
@@ -661,19 +665,24 @@ export function segment(text: string, provider: TemplateProvider): SegmentResult
 		// comma is omitted. Anything else — another CTE name, or "" (ambiguous) — keeps it, which
 		// is exactly the already-working "another CTE follows" behavior, unchanged.
 		let shaped: { fragment: string; at: number } | undefined;
-		if (shape === "cte-definition") {
-			if (info.isCall && cteDefinitionSlotAdmits(slot)) {
-				const needsComma = !QUERY_START_WORDS.has(followingSlot(chars, seg.end));
-				shaped = fitWindow(
-					seg,
-					`${PLACEHOLDER_CHAR}${ordinalFill(ordinal)} as (select 1)${needsComma ? "," : ""}`,
-				);
+		for (const candidate of candidates) {
+			shape = candidate;
+			if (candidate === "cte-definition") {
+				if (info.isCall && cteDefinitionSlotAdmits(slot)) {
+					const needsComma = !QUERY_START_WORDS.has(followingSlot(chars, seg.end));
+					shaped = fitWindow(
+						seg,
+						`${PLACEHOLDER_CHAR}${ordinalFill(ordinal)} as (select 1)${needsComma ? "," : ""}`,
+					);
+				} else {
+					shaped = undefined;
+				}
+				if (shaped !== undefined) ordinal += 1;
 			} else {
-				shaped = undefined;
+				shaped = fragmentFill(seg, candidate, info.isCall, slot);
 			}
-			if (shaped !== undefined) ordinal += 1;
-		} else {
-			shaped = shape !== undefined ? fragmentFill(seg, shape, info.isCall, slot) : undefined;
+			// Admitted (a fragment landed), or a shape whose fill is positional and never refused.
+			if (shaped !== undefined || candidate === "nothing" || candidate === "expr") break;
 		}
 		if (shaped !== undefined) {
 			// Fragment fill: at the fit window's start (`at` — tag start for a one-line tag, the

@@ -99,4 +99,21 @@ union distinct
 		expect(r.sql.errors).toBe(0);
 		expect(r.placeholder).not.toMatch(/union/i);
 	});
+
+	test("the blanked separator still rides the token stream as trivia under tsql's skipped whitespace", () => {
+		// Databricks keeps a WS token over the blanked span and rewrites its text; T-SQL's WS rule is
+		// `-> skip`, so nothing covered the span and `union all` fell out of the stream (12 Oatly
+		// fabric models, 2026-09-12). Lossless: the stream must carry every byte of the source.
+		const text = `{% for s in ['a','b'] %}select 1 as x from {{ s }}
+{% if not loop.last %}union all{% endif %}
+{% endfor %}`;
+		for (const dialect of ["tsql", "databricks"] as const) {
+			const r = parseTemplated(text, dialect);
+			const carrier = r.tokens.find((t) => t.text === "union all");
+			expect(carrier, dialect).toBeDefined();
+			expect(carrier!.channel, dialect).toBe(1);
+			expect(text.slice(carrier!.start, carrier!.stop + 1), dialect).toBe("union all");
+			expect(r.placeholder).not.toMatch(/union/i);
+		}
+	});
 });

@@ -100,6 +100,7 @@ function attachErrorCounter(lexer: Lexer, parser: SnowflakeParser, listener: ANT
 export const fragmentGrammar = defineFragmentGrammar({
 	newLexer: (input) => new SnowflakeLexer(input),
 	newParser: (tokens) => new SnowflakeParser(tokens),
+	separator: SnowflakeLexer.COMMA,
 	entries: {
 		statement: (p) => p.snowflake_file(),
 		expression: (p) => p.expr(),

@@ -3,7 +3,8 @@
 // canonically declared in src/template/engine.ts and re-exported both there
 // and here.
 export { minijinja } from "./engine.js";
-export { parseTemplated, tokenizeTemplated } from "./parse.js";
+export { parseTemplated, tokenizeTemplated, shapesForCall } from "./parse.js";
+export type { MacroShape } from "../template/engine.js";
 export type { TemplatedParseResult, TemplatedParseOptions } from "../template/engine.js";
 export type { TagNode, MacroCall } from "./parse.js";
 export { templateRegions, templateSymbols } from "./regions.js";
