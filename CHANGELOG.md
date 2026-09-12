@@ -1,3 +1,10 @@
+# [1.9.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.8.1...v1.9.0) (2026-09-12)
+
+
+### Features
+
+* jinja macro support, definition and call side ([73e0c84](https://github.com/NiclasOlofsson/sqllens/commit/73e0c84a0fbad012bc27a42cad465e5e4ed08022)), closes [#49](https://github.com/NiclasOlofsson/sqllens/issues/49)
+
 ## [1.8.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.8.0...v1.8.1) (2026-09-11)
 
 
