@@ -56,12 +56,17 @@ import { MinijinjaParser } from "../generated/minijinja/MinijinjaParser.js";
 import { makeErrorCollector, type SyntaxDiagnostic } from "../parse-diagnostics.js";
 import { classifyMinijinjaToken } from "../token/classify.js";
 import type { Token } from "../token/token.js";
-import { applyTemplateTags } from "./apply-tags.js";
+import { applyTemplateTags, type CellBase } from "./apply-tags.js";
 import { templateRegions, templateSymbols, type TemplateArm, type TemplateRegion } from "./regions.js";
 import { OPEN_PROVIDER, type TemplateProvider } from "../qualify/template-provider.js";
 import { segment, type Segment } from "./segment.js";
 import { tagNodesOf, type TagNode } from "./tag-ast.js";
-import type { MacroShape, TemplatedParseOptions, TemplatedParseResult } from "../template/engine.js";
+import type {
+	MacroShape,
+	TemplatedCellResult,
+	TemplatedParseOptions,
+	TemplatedParseResult,
+} from "../template/engine.js";
 import type { ExpansionShape } from "../qualify/template-provider.js";
 import type { TemplateCall } from "../ir/ir.js";
 import type { FragmentKind } from "../fragment-grammar.js";
@@ -708,4 +713,45 @@ export function parseTemplated(text: string, dialect: Dialect, opts?: TemplatedP
  */
 export function tokenizeTemplated(text: string, dialect: Dialect, opts?: TemplatedParseOptions): Token[] {
 	return parseTemplated(text, dialect, opts).tokens;
+}
+
+/**
+ * One statement cell of a templated document (`TemplateEngine.parseCell`): the plain per-dialect
+ * parse of the placeholder slice `[span.start, span.end)`, the same batch-of-one path a plain
+ * document's cells take, so IR / CST / tokens / diagnostics are CELL-relative, with `whole`'s tags
+ * correlated onto it by DOCUMENT offset (a node's cell offset plus the cell's start). The cell's
+ * sources then carry their provider-resolved names and `template` markers exactly as the
+ * whole-text parse's do, never the fill; a marker's `span` is rebased to cell coordinates like
+ * every other span in the cell IR, while `tagOf`/`nodeOf` answer with `whole.tags`'s own nodes.
+ * Total: `applyTemplateTags` leaves the plain parse in place on any internal surprise.
+ */
+export function parseTemplatedCell(
+	whole: TemplatedParseResult,
+	span: { start: number; end: number },
+	text: string,
+	dialect: Dialect,
+	opts?: TemplatedParseOptions,
+): TemplatedCellResult {
+	const sql = parse(whole.placeholder.slice(span.start, span.end), dialect);
+	const provider = opts?.provider ?? OPEN_PROVIDER;
+	const correlation = applyTemplateTags(sql.ast, whole.tags, text, provider, cellBaseOf(text, span.start));
+	return {
+		sql: { ...sql, ast: correlation.ast },
+		tagOf: (node) => correlation.byNode.get(node),
+		nodeOf: (tag) => correlation.byTag.get(tag),
+	};
+}
+
+/** The cell start's 0-based line / column / char offset in `text` (`\n` is the line break, the
+ *  convention every span in the pipeline follows; a `\r` is an ordinary column). */
+function cellBaseOf(text: string, offset: number): CellBase {
+	let line = 0;
+	let lineStart = 0;
+	for (let i = 0; i < offset; i++) {
+		if (text.charCodeAt(i) === 10) {
+			line++;
+			lineStart = i + 1;
+		}
+	}
+	return { line, column: offset - lineStart, offset };
 }

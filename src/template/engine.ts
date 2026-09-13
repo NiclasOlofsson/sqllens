@@ -102,6 +102,21 @@ export interface TemplatedParseResult {
 	diagnosticsOf(tag: TagNode): SyntaxDiagnostic[];
 }
 
+/** One statement CELL of a templated document (`TemplateEngine.parseCell`): the plain per-dialect
+ *  parse of the cell's placeholder slice, in CELL-relative coordinates like a plain document's
+ *  cells, with the whole-document tags correlated onto it (provider-resolved source names,
+ *  `template` markers, and the two-spine join). */
+export interface TemplatedCellResult {
+	/** The cell's SQL parse over its placeholder slice (ast / cst / tokens / errors / diagnostics),
+	 *  every span cell-relative. A `template` marker's span is cell-relative too. */
+	sql: ParseResultIR;
+	/** The whole document's TagNode a template-marked node of THIS cell's IR came from. */
+	tagOf(node: object): TagNode | undefined;
+	/** The node of THIS cell's IR a whole-document tag became; undefined when the tag sits in
+	 *  another cell or has no IR presence. */
+	nodeOf(tag: TagNode): object | undefined;
+}
+
 /** A template engine: the syntax front end for one templating language over
  *  SQL. `parse` must satisfy the engine contract the conformance suite
  *  checks — tokens tile the source byte-for-byte, every span in original
@@ -113,4 +128,16 @@ export interface TemplateEngine {
 	parse(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult;
 	/** Optional: coherent per-branch variant enumeration, for engines with control-flow arms. */
 	variants?(text: string, dialect: Dialect): TemplateVariant[];
+	/** Optional: the products of ONE statement cell of a templated document — the plain parse of
+	 *  `whole.placeholder`'s slice `[span.start, span.end)` (cell-relative) with `whole`'s tags
+	 *  correlated onto it. `whole` is this engine's own `parse` result for the full `text`, `span`
+	 *  a `splitStatements` span over that placeholder. An engine without it keeps the templated
+	 *  `SqlDocument` door at one whole-text cell. */
+	parseCell?(
+		whole: TemplatedParseResult,
+		span: { start: number; end: number },
+		text: string,
+		dialect: Dialect,
+		opts?: TemplatedParseOptions,
+	): TemplatedCellResult;
 }

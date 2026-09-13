@@ -77,12 +77,26 @@ interface TagContext {
 	/** Names a call's relation (ref/source/a TVF-like macro). The NEUTRAL provider knows no macro
 	 *  vocabulary, so a bare parse leaves calls opaque; a DbtTemplateProvider names ref/source. */
 	provider: TemplateProvider;
+	/** The cell's start position in the document when `ast` is a STATEMENT CELL's parse (cell-relative
+	 *  spans, see `applyTemplateTags`); zero for the whole-text parse. Containment ADDS it to a node's
+	 *  offset; a span written INTO the IR SUBTRACTS it, so the cell IR stays cell-relative throughout. */
+	base: CellBase;
 	/** Collected at every `template`-attach site (Task 10): the two-spine join, direct
 	 *  and unambiguous — replaces the span-containment correlation a consumer would
 	 *  otherwise have to redo itself. */
 	byNode: WeakMap<object, TagNode>;
 	byTag: Map<TagNode, object>;
 }
+
+/** A statement cell's start in the document: 0-based line, 0-based column, char offset (the shape
+ *  `LineIndex.positionAt` answers). Zero = the whole-text parse. */
+export interface CellBase {
+	line: number;
+	column: number;
+	offset: number;
+}
+
+const ZERO_BASE: CellBase = { line: 0, column: 0, offset: 0 };
 
 /** The rebuilt AST plus the tag↔node correlations collected while building it. */
 export interface TagCorrelation {
@@ -112,12 +126,18 @@ function attach<T extends object>(ctx: TagContext, node: T, tag: RelationTag): T
  * containment. Returns the SAME `ast` reference when nothing correlates (structural sharing);
  * returns a re-frozen rebuilt tree otherwise. Total, never throws; the correlation maps are empty
  * (not absent) on the no-op and error paths.
+ *
+ * `base` is the cell's start position when `ast` is ONE STATEMENT CELL's parse of the placeholder
+ * (`parseTemplatedCell`): the node offsets are cell-relative while `tags` and `text` are the whole
+ * document's, so containment compares `offset + base.offset`, and every span this transform writes
+ * into the IR is rebased to cell coordinates. Zero (the default) is the whole-text parse.
  */
 export function applyTemplateTags(
 	ast: QueryExpr,
 	tags: TagNode[],
 	text: string,
 	provider: TemplateProvider,
+	base: CellBase = ZERO_BASE,
 ): TagCorrelation {
 	const byNode = new WeakMap<object, TagNode>();
 	const byTag = new Map<TagNode, object>();
@@ -135,6 +155,7 @@ export function applyTemplateTags(
 			sets: resolveSets(tags, text, provider),
 			text,
 			provider,
+			base,
 			byNode,
 			byTag,
 			...(nameConfig ? { nameConfig } : {}),
@@ -157,13 +178,13 @@ export function applyTemplateTags(
 function exprInfoOf(tag: RelationTag, ctx: TagContext): TemplateExprInfo {
 	// A call tag (ref/source/var/env_var/a macro) carries its provider key straight off the call,
 	// callOf reads name + literal args from the source, uniform across every callee.
-	if (tag.kind === "call") return { span: tag.tagSpan, call: callOf(tag, ctx.text) };
+	if (tag.kind === "call") return { span: cellSpan(tag.tagSpan, ctx), call: callOf(tag, ctx.text) };
 	// A non-call `other` tag: a bare `{{ t }}` resolving through a single-call `{% set t = … %}`
 	// carries that RHS call; anything else is opaque.
 	const ident = bareIdentOf(tag, ctx.text);
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
-	if (resolved) return { span: tag.tagSpan, call: resolved.call };
-	return { span: tag.tagSpan };
+	if (resolved) return { span: cellSpan(tag.tagSpan, ctx), call: resolved.call };
+	return { span: cellSpan(tag.tagSpan, ctx) };
 }
 
 /** `{{ var('x') }}` / `{{ env_var('Y', …) }}` — the name + first literal arg, lexically. */
@@ -197,7 +218,7 @@ function markTemplateExprs(node: unknown, ctx: TagContext): unknown {
 	if ((isColumnExpr || isColumnRef) && rec.template === undefined) {
 		const start = (rec.cst as { start?: { start: number } } | undefined)?.start?.start;
 		if (start !== undefined) {
-			const tag = containingTag(ctx.relTags, start);
+			const tag = containingTag(ctx.relTags, start + ctx.base.offset);
 			if (tag) return attach(ctx, { ...rec, template: exprInfoOf(tag, ctx) }, tag);
 		}
 	}
@@ -352,6 +373,22 @@ function containingTag(tags: readonly RelationTag[], offset: number): RelationTa
 	return undefined;
 }
 
+/** A document-coordinate tag span rebased to the cell's coordinates (the inverse of
+ *  src/document/shift.ts's `shiftPartSpan`): a span on the cell's first line also loses the cell's
+ *  start column. The whole-text parse (zero base) keeps the span object itself. */
+function cellSpan(p: PartSpan, ctx: TagContext): PartSpan {
+	const b = ctx.base;
+	if (b.offset === 0 && b.line === 0 && b.column === 0) return p;
+	return {
+		start: p.start - b.offset,
+		end: p.end - b.offset,
+		line: p.line - b.line,
+		column: p.line === b.line + 1 ? p.column - b.column : p.column,
+		endLine: p.endLine - b.line,
+		endColumn: p.endLine === b.line + 1 ? p.endColumn - b.column : p.endColumn,
+	};
+}
+
 function transformQuery(q: QueryExpr, ctx: TagContext): QueryExpr {
 	const ctes = mapShared(q.ctes, (c) => transformCte(c, ctx));
 	const body = transformBody(q.body, ctx);
@@ -476,7 +513,7 @@ function withoutAlias(src: TableSource): TableSource {
 function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	const startTok = src.cst?.start;
 	if (!startTok) return src;
-	const tag = containingTag(ctx.relTags, startTok.start);
+	const tag = containingTag(ctx.relTags, startTok.start + ctx.base.offset);
 	if (!tag) return src;
 
 	// A placeholder-fill alias sits INSIDE the tag span: a multi-line tag fills one
@@ -489,7 +526,7 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	// fill limitation, out of apply-tags' reach); making it `undefined` here is honest,
 	// where `jjj…` was a fabrication.
 	const aliasTok = src.aliasCst?.start;
-	const base = aliasTok != null && inSpan(aliasTok.start, tag.tagSpan) ? withoutAlias(src) : src;
+	const base = aliasTok != null && inSpan(aliasTok.start + ctx.base.offset, tag.tagSpan) ? withoutAlias(src) : src;
 
 	// An unresolved source's name is the RAW TAG TEXT — the bytes the user actually wrote. The
 	// placeholder fill is scaffolding this library invented so the grammar parses; letting it
@@ -509,7 +546,8 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 		return { ...b, relation };
 	};
 
-	// NOTE: `template.span` intentionally aliases `tag.tagSpan` BY REFERENCE. freezeIR
+	// NOTE: on the whole-text parse `template.span` intentionally aliases `tag.tagSpan` BY
+	// REFERENCE (a statement cell's parse gets a rebased copy, see `cellSpan`). freezeIR
 	// therefore also freezes the TagNode.tagSpan object returned in `.tags`, benign
 	// since spans are read-only. Every call marker carries its `call`, the provider key
 	// the semantic layer resolves the relation and its columns through (relation-columns.ts).
@@ -521,7 +559,7 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 		// Either way the `call` keeps it consultable, so an unresolved call is not a dead end: a
 		// provider added later resolves it. ref vs source is not stored here, it is call.name.
 		const named = rel ? renamed(base, [...rel.nameParts], true) : renamed(base, rawTagName, false);
-		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, call };
+		const template: TemplateSourceInfo = { kind: "call", span: cellSpan(tag.tagSpan, ctx), call };
 		return attach(ctx, { ...named, template }, tag);
 	}
 
@@ -533,9 +571,14 @@ function transformTableSource(src: TableSource, ctx: TagContext): TableSource {
 	const resolved = ident !== undefined ? ctx.sets.get(ident) : undefined;
 	if (resolved) {
 		const named = resolved.name ? renamed(base, [...resolved.name], true) : renamed(base, rawTagName, false);
-		const template: TemplateSourceInfo = { kind: "call", span: tag.tagSpan, indirect: true, call: resolved.call };
+		const template: TemplateSourceInfo = {
+			kind: "call",
+			span: cellSpan(tag.tagSpan, ctx),
+			indirect: true,
+			call: resolved.call,
+		};
 		return attach(ctx, { ...named, template }, tag);
 	}
-	const template: TemplateSourceInfo = { kind: "expr", span: tag.tagSpan, opaque: true };
+	const template: TemplateSourceInfo = { kind: "expr", span: cellSpan(tag.tagSpan, ctx), opaque: true };
 	return attach(ctx, { ...renamed(base, rawTagName, false), template }, tag);
 }

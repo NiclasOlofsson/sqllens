@@ -53,7 +53,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Type } from "../infer/types.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
-import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
+import type { TemplateEngine, TemplatedCellResult, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
@@ -121,6 +121,9 @@ interface CachedCell {
 	 *  `doc.templated` survives a cache hit across `withText()` without re-invoking the engine.
 	 *  Undefined for every plain cell. */
 	readonly templated?: TemplatedParseResult;
+	/** Present ONLY for a cell built by `buildTemplatedSlice` (one statement cell of a multi-cell
+	 *  templated document): the engine's tag↔node join over THIS cell's own IR. */
+	readonly correlation?: Pick<TemplatedCellResult, "tagOf" | "nodeOf">;
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -299,12 +302,34 @@ export class SqlDocument {
 
 		let cells: StatementCell[];
 		let backing: CachedCell[];
+		let templated: TemplatedParseResult | undefined;
 		if (opts.templating) {
-			// The templated door: ONE cell spanning the whole text, bypassing splitStatements —
-			// its products come from the engine, not the plain per-dialect parse (see buildTemplatedCell).
-			const built = this.buildTemplatedCell(text, opts.templating, opts.provider);
-			cells = [built.cell];
-			backing = [built.cached];
+			// The templated door: the engine runs ONCE over the whole text (buildTemplatedCell), then the
+			// placeholder it saw is split into statement cells exactly like a plain document's text. The
+			// fill is length- and newline-preserving, so the spans are document coordinates already, and
+			// each cell is the plain parse of its placeholder slice with the whole-document tags
+			// correlated onto it by the engine (buildTemplatedSlice). One span (every single-statement
+			// model, or a tiling failure) keeps the whole-text cell itself: byte-identical products,
+			// same cache entry as before cells existed on this door.
+			const whole = this.buildTemplatedCell(text, opts.templating, opts.provider);
+			const r = whole.cached.templated!;
+			const spans = opts.templating.parseCell ? splitStatements(r.placeholder, dialect) : [whole.cell.span];
+			if (spans.length === 1) {
+				cells = [whole.cell];
+				backing = [whole.cached];
+				templated = r;
+			} else {
+				const setsKey = setResolutionKey(r, text);
+				const handedOut = new Set<CachedCell>();
+				cells = [];
+				backing = [];
+				for (const span of spans) {
+					const built = this.buildTemplatedSlice(span, r, opts.templating, opts.provider, setsKey, handedOut);
+					cells.push(built.cell);
+					backing.push(built.cached);
+				}
+				templated = withCellCorrelation(r, backing);
+			}
 		} else {
 			// Split into per-statement cells and parse each independently, reusing unchanged cells from
 			// the (carried) content-addressed cache. Each cell re-enters the dialect's batch entry rule
@@ -321,7 +346,7 @@ export class SqlDocument {
 		}
 		this.statements = Object.freeze(cells);
 		this._cells = backing;
-		this.templated = opts.templating ? backing[0]!.templated : undefined;
+		this.templated = templated;
 
 		// Whole-document facade. tokens/diagnostics/errors are the cheap concat/sum across cells.
 		this.tokens = cells.flatMap((c) => c.tokens as Token[]);
@@ -402,14 +427,16 @@ export class SqlDocument {
 		return { cell, cached };
 	}
 
-	/** Build the ONE cell for a TEMPLATED document: span [0, text.length) — the templated build path
-	 *  bypasses `splitStatements` entirely (one cell, whole text), and its products come from a single
-	 *  `engine.parse(text, dialect, { provider })` call rather than the plain per-dialect `parse()`.
-	 *  `r.tokens`/`r.diagnostics` are ALREADY document coordinates (the cell always starts at 0), so —
-	 *  unlike `buildCell` — nothing is shifted. Mirrors `buildCell`'s CachedCell/StatementCell shapes
-	 *  so every downstream consumer (analyze(), cellAt(), nodeAt()…) sees the same structure whether
-	 *  the document is plain or templated. Cached in the SAME cross-edit `_cellCache` as plain cells,
-	 *  under a prefixed key so a templated cell can never collide with a plain one for the same text. */
+	/** Build the WHOLE-TEXT cell of a TEMPLATED document: span [0, text.length), its products from a
+	 *  single `engine.parse(text, dialect, { provider })` call rather than the plain per-dialect
+	 *  `parse()`. It is the document's one cell when the placeholder splits into one statement (every
+	 *  single-statement model), and the carrier of the engine result (`templated`) that a multi-cell
+	 *  document's slices are built from. `r.tokens`/`r.diagnostics` are ALREADY document coordinates
+	 *  (the cell always starts at 0), so — unlike `buildCell` — nothing is shifted. Mirrors
+	 *  `buildCell`'s CachedCell/StatementCell shapes so every downstream consumer (analyze(), cellAt(),
+	 *  nodeAt()…) sees the same structure whether the document is plain or templated. Cached in the SAME
+	 *  cross-edit `_cellCache` as plain cells, under a prefixed key so a templated cell can never
+	 *  collide with a plain one for the same text. */
 	private buildTemplatedCell(
 		text: string,
 		engine: TemplateEngine,
@@ -450,6 +477,70 @@ export class SqlDocument {
 			tokens: cached.tokens,
 			errors: cached.errors,
 			diagnostics: cached.diagnostics,
+		});
+		return { cell, cached };
+	}
+
+	/** Build one statement cell of a MULTI-cell templated document for `span` (a `splitStatements`
+	 *  span over the engine's placeholder). The cell is the plain parse of its placeholder slice,
+	 *  cell-relative like a plain cell, with the whole-document tags correlated onto it by
+	 *  `engine.parseCell` (provider-resolved source names + `template` markers, so the fill never
+	 *  reaches scope/qualify). Cached across edits like a plain cell: the key is the placeholder
+	 *  slice (what parsed) plus the raw slice (which tags sit inside it), the engine + provider
+	 *  version (what the tags resolve to) and `setsKey` (the `{% set %}`/`{% macro %}`/`{% for %}`
+	 *  tags anywhere in the text that steer a bare `{{ t }}` binding). The document-level products
+	 *  are projected onto the cell by span rather than re-derived: `tokens` is the unified SQL+jinja
+	 *  stream sliced, `diagnostics` the scrubbed set filtered (the last cell absorbs end-of-text),
+	 *  `errors` that count. `handedOut` dedupes intra-document duplicates exactly as `buildCell` does. */
+	private buildTemplatedSlice(
+		span: StatementCellSpan,
+		r: TemplatedParseResult,
+		engine: TemplateEngine,
+		provider: TemplateProvider | undefined,
+		setsKey: string,
+		handedOut: Set<CachedCell>,
+	): { cell: StatementCell; cached: CachedCell } {
+		const rawText = this.text.slice(span.start, span.end);
+		const placeholderText = r.placeholder.slice(span.start, span.end);
+		const providerVersion = provider?.version ?? 0;
+		// `setsKey` is length-prefixed and the two slices are equal-length (the fill is
+		// length-preserving), so the plain concatenation is unambiguous without a separator byte.
+		const key = `templated-cell ${engine.name}@${providerVersion} ${this.dialect} ${setsKey.length}:${setsKey}${placeholderText}${rawText}`;
+		let cached = this._cellCache.get(key);
+		if (cached !== undefined && handedOut.has(cached)) cached = undefined; // intra-doc duplicate
+		if (cached === undefined) {
+			const c = engine.parseCell!(r, span, this.text, this.dialect, { provider });
+			cached = {
+				text: rawText,
+				category: c.sql.ast.statement ?? "other",
+				ast: c.sql.ast,
+				cst: c.sql.cst,
+				// Resolve scopes from the already-lowered (marker-carrying) ast — do NOT re-parse.
+				scopes: toScopes(c.sql.ast, { dialect: this.dialect }),
+				tokens: c.sql.tokens,
+				errors: c.sql.errors,
+				diagnostics: c.sql.diagnostics,
+				analysis: new WeakMap<SchemaProvider, Versioned<CellAnalysis>>(),
+				correlation: { tagOf: c.tagOf, nodeOf: c.nodeOf },
+			};
+			// Cache only the FIRST product for a key (see buildCell — duplicates stay uncached).
+			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
+		}
+		handedOut.add(cached);
+		const last = span.end === this.text.length;
+		const inCell = (offset: number): boolean => offset >= span.start && (offset < span.end || last);
+		const tokens = r.tokens.filter((t) => inCell(t.start));
+		const diagnostics = r.diagnostics.filter((d) => inCell(d.offset ?? this.lines.offsetAt(d.line - 1, d.column)));
+		const cell = Object.freeze({
+			span,
+			text: cached.text,
+			category: cached.category,
+			ast: cached.ast,
+			cst: cached.cst,
+			scopes: cached.scopes,
+			tokens,
+			errors: diagnostics.length,
+			diagnostics,
 		});
 		return { cell, cached };
 	}
@@ -884,8 +975,7 @@ export class SqlDocument {
 	 *  subset, see `scopeOutputColumns`'s pipe doc comment. Falls through to this document's own
 	 *  (single-arm) answer when there are no variants; there is no pre-existing single-doc
 	 *  equivalent to delegate to, unlike unionSymbols/unionDiagnostics, so the no-variant case is
-	 *  just the one-arm instance of the same algorithm. A MULTI-STATEMENT document (no variants: the
-	 *  templated door always forces exactly one cell, so the two "multi" shapes never overlap) merges
+	 *  just the one-arm instance of the same algorithm. A MULTI-STATEMENT document (or arm) merges
 	 *  every statement CELL's own CTEs instead, each shifted from cell-relative to DOCUMENT coordinates
 	 *  (the same shift `analyze()` already applies to symbols/diagnostics for a multi-cell document);
 	 *  the compound facade itself carries no CTEs, so cells are the real per-statement source. Memoized
@@ -959,32 +1049,23 @@ export class SqlDocument {
 		return order.map((name) => ({ name, span: byName.get(name)! }));
 	}
 
-	/** One "arm" `unionCtes`/`unionOutputColumns` aggregate over, unified across the two shapes that
-	 *  can each independently make a document "multi" (never both at once: the templated door always
-	 *  builds exactly one statement cell, see its own comment above): a templated document's real
-	 *  variants (each a full arm SqlDocument, already in DOCUMENT coordinates, zero shift), or, for a
-	 *  plain multi-statement document, each statement CELL (cell-relative scopes, shifted to document
-	 *  coordinates by the cell's start, mirroring `buildAnalysis`'s per-cell shift). A single-cell,
-	 *  non-templated document is the trivial one-arm case of the same shape (zero shift, this
-	 *  document's own scopes/qualification). */
-	private armsData(s: SchemaProvider): {
-		scopeRoot: Scope;
-		qualification: Qualification;
-		dialect: Dialect;
-		base: { line: number; col: number; offset: number };
-	}[] {
+	/** The "arms" `unionCtes`/`unionOutputColumns` aggregate over, unified across the two shapes that
+	 *  make a document "multi", VARIANTS FIRST (ruled 2026-09-13): a templated document's real
+	 *  variants are the unit, each arm SqlDocument (already in DOCUMENT coordinates, since a
+	 *  realization is length-preserving) contributing its own statement cells through `ownArms`; a
+	 *  document without variants contributes its own cells the same way. A region can span a cell
+	 *  boundary, so cells-first (arms inside each cell) is not an option. */
+	private armsData(s: SchemaProvider): ArmData[] {
+		if (this.variants.length > 0) return this.variants.flatMap((v) => v.doc().ownArms(s));
+		return this.ownArms(s);
+	}
+
+	/** This document's own arms, variants ignored: each statement CELL of a multi-cell document
+	 *  (cell-relative scopes, shifted to document coordinates by the cell's start, mirroring
+	 *  `buildAnalysis`'s per-cell shift), or the single-cell document itself (zero shift, its own
+	 *  scopes/qualification). */
+	private ownArms(s: SchemaProvider): ArmData[] {
 		const ZERO = { line: 0, col: 0, offset: 0 };
-		if (this.variants.length > 0) {
-			return this.variants.map((v) => {
-				const doc = v.doc();
-				return {
-					scopeRoot: doc.scopes.root,
-					qualification: doc.analyze(s).qualification,
-					dialect: doc.dialect,
-					base: ZERO,
-				};
-			});
-		}
 		if (this.statements.length > 1) {
 			return this.statements.map((cell, i) => {
 				const p = this.lines.positionAt(cell.span.start);
@@ -1005,6 +1086,56 @@ export class SqlDocument {
 			},
 		];
 	}
+}
+
+/** One arm the union views aggregate over: a scope tree root + its qualification, and the base
+ *  (0-based line/col + char offset) that shifts its cell-relative spans to document coordinates. */
+interface ArmData {
+	scopeRoot: Scope;
+	qualification: Qualification;
+	dialect: Dialect;
+	base: { line: number; col: number; offset: number };
+}
+
+/** The cache-key component of a templated cell's tag correlation that the cell's own text does not
+ *  determine: the raw text of every `{% set %}` / `{% macro %}` / `{% for %}` tag in the document. A
+ *  bare `{{ t }}` source binds through a literal `{% set t = ref(...) %}` declared ANYWHERE, and an
+ *  inline macro or a `for` target anywhere disables that binding (apply-tags' `resolveSets`), so a
+ *  change to any of them must miss every cell. */
+function setResolutionKey(r: TemplatedParseResult, text: string): string {
+	const parts: string[] = [];
+	for (const t of r.tags) {
+		if (t.kind !== "control") continue;
+		if (t.keyword === "set" || t.keyword === "macro" || t.keyword === "for")
+			parts.push(text.slice(t.tagSpan.start, t.tagSpan.end));
+	}
+	// A control tag's own text never contains a tag boundary, so a newline join is unambiguous.
+	return parts.join("\n");
+}
+
+/** The `templated` facade of a MULTI-cell templated document: the whole-text engine result with
+ *  `tagOf`/`nodeOf` answering from the CELLS' own correlations — the per-statement IR consumers reach
+ *  through `statements`/`cellAt`/`nodeAt` — never from the whole-text parse, whose nodes a multi-cell
+ *  document does not expose (its `ast` is the compound facade). Everything else is the engine's. */
+function withCellCorrelation(r: TemplatedParseResult, cells: readonly CachedCell[]): TemplatedParseResult {
+	return {
+		...r,
+		tagOf: (node) => {
+			for (const c of cells) {
+				const tag = c.correlation?.tagOf(node);
+				if (tag) return tag;
+			}
+			return undefined;
+		},
+		nodeOf: (tag) => {
+			for (const c of cells) {
+				const node = c.correlation?.nodeOf(tag);
+				if (node) return node;
+			}
+			return undefined;
+		},
+		diagnosticsOf: (tag) => r.diagnosticsOf(tag),
+	};
 }
 
 /** Dedup `items` by a string key, keeping the FIRST occurrence of each key — arm/document order, so

@@ -364,11 +364,26 @@ name path. Implementing another template language over SQL means satisfying that
 
 `SqlDocument.create(text, dialect, { templating: minijinja(), provider })` — templating is an
 engine option on the one document entry, not a separate factory, and `SqlSession` passes it
-through. A templated document rides the single-cell path (dbt models are single-statement;
-control regions can straddle statement boundaries, so cell-splitting templated text is a tracked
-deferral), exposes the engine result as `doc.templated` (tags, regions, symbols, placeholder text,
-plus `tagOf`/`nodeOf` correlation), and keys its cached parse on the engine name and the provider's
-version, so a `prime()` re-warm invalidates exactly like the schema memo.
+through. A templated document exposes the engine result as `doc.templated` (tags, regions,
+symbols, placeholder text, plus `tagOf`/`nodeOf` correlation), and keys its cached parse on the
+engine name and the provider's version, so a `prime()` re-warm invalidates exactly like the
+schema memo.
+
+Statement cells work on templated documents the way they work on plain ones. The engine runs
+once over the whole text; the placeholder it saw is then split with the same `splitStatements`
+walker a plain document uses (depth-aware over `BEGIN`/`CASE`/`END`, `GO` alone on a line for
+T-SQL), and because the fill is length- and newline-preserving those spans are document
+coordinates already. Each cell is the plain parse of its placeholder slice, cell-relative like a
+plain cell, with the whole-document tags correlated onto it through `TemplateEngine.parseCell`:
+sources carry their provider-resolved names and `template` markers, never the fill. The
+document-level products are projected onto the cells by span rather than re-derived (`tokens` is
+the unified stream sliced, `diagnostics` the scrubbed set filtered), and `doc.templated.tagOf` /
+`nodeOf` answer from the cells' own IR. One span, or a tiling failure, keeps the whole-text cell
+itself, so a single-statement model is byte-identical to the pre-cells door. A `{% if %}` arm can
+open a `BEGIN` that another arm closes: on the all-arms-live placeholder the depth never returns
+to zero and the document stays one cell, while each balanced arm realization cuts normally.
+Variants stay the unit for the union views (`unionCtes`, `unionOutputColumns`); each arm
+contributes its own cells.
 
 There is deliberately no auto-detection: `{{ … }}` inside a SQL string literal is a template to dbt
 and literal text to everyone else, and no scanner can tell which was meant. The host declares the
@@ -407,9 +422,9 @@ step.
 - M2 — `{% for %}…{% else %}…{% endfor %}` for-else both-live (rare). The for-else form models as
   a nested single-arm region, so both the loop body and the `else` body stay live in the default
   variant; the editor still sees and edits both.
-- Templated cell-splitting: templated documents ride the single-cell path; splitting a
-  multi-statement templated file is deferred because control regions can straddle statement
-  boundaries.
+- Templated cell-splitting cuts on the all-arms-live placeholder. A `;` that only one arm of an
+  `{% if %}` contributes still cuts the document, and a `BEGIN` balanced only across arms keeps it
+  one cell; the arm realizations (`doc.variants[i].doc()`) split each arm on its own text.
 - LSP wiring of the `templating:` option (language-id / `.sqllens.json` rule) is application-layer
   work, tracked.
 - minijinja vs Jinja2 divergences (division, import caching, silent undefined) are accept-syntax
