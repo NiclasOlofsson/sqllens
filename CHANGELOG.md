@@ -1,3 +1,10 @@
+# [1.10.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.9.1...v1.10.0) (2026-09-13)
+
+
+### Features
+
+* statement cells on the templated document door ([1af6447](https://github.com/NiclasOlofsson/sqllens/commit/1af6447ea1bc0227ef5ad61217ebd4726d0f1fbd))
+
 ## [1.9.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.9.0...v1.9.1) (2026-09-12)
 
 
