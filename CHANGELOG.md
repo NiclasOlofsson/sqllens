@@ -1,3 +1,10 @@
+## [1.10.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.10.0...v1.10.1) (2026-09-14)
+
+
+### Bug Fixes
+
+* fold trailing trivia into the last cell; re-key cached templated cell joins ([546d2f7](https://github.com/NiclasOlofsson/sqllens/commit/546d2f7d08b74f754243c814b58dcde9c2790971))
+
 # [1.10.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.9.1...v1.10.0) (2026-09-13)
 
 
