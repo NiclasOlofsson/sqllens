@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SqlDocument, Schema } from "../src/index.js";
+import { SqlDocument, Schema, type StatementCategory } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
 import { TestRelationProvider, dbt, relKey } from "./helpers/providers.js";
 
@@ -154,6 +154,26 @@ end catch
 		expect(next.statements.length).toBe(2);
 		expect(next.statements[0].ast).toBe(doc.statements[0].ast);
 		expect(next.statements[1].ast).not.toBe(doc.statements[1].ast);
+		// the reused cell's tag join answers with the NEW parse's TagNodes, not the ones it was built under
+		const body = next.statements[0].ast.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		const tag = next.templated!.tags[0];
+		expect(next.templated!.tagOf(body.from[0])).toBe(tag);
+		expect(next.templated!.nodeOf(tag)).toBe(body.from[0]);
+		expect(doc.templated!.tags[0]).not.toBe(tag); // the parses really do hold distinct tag objects
+	});
+	it("a cell reused at a new position keeps its join right: tags resolve by cell-relative offset", () => {
+		// statement two's slice is unchanged when text is inserted INSIDE statement one, so its cell
+		// is a cache hit under a document where every tag object and offset after the edit is new
+		const doc = SqlDocument.create(TWO, "databricks", { templating: minijinja() });
+		const next = doc.withText(TWO.replace("select a", "select aa"), 2);
+		expect(next.statements[1].ast).toBe(doc.statements[1].ast);
+		const body = next.statements[1].ast.body;
+		if (body.kind !== "select") throw new Error("expected select");
+		const tag = next.templated!.tags[1];
+		expect(tag.tagSpan.start).toBe(next.text.indexOf("{{ ref('m2')"));
+		expect(next.templated!.tagOf(body.from[0])).toBe(tag);
+		expect(next.templated!.nodeOf(tag)).toBe(body.from[0]);
 	});
 	it("a {% set %} edited elsewhere misses every cell it could rebind", () => {
 		const text = "{% set t = ref('m1') %}\nselect a from {{ t }};\nselect b from {{ t }};";
@@ -182,6 +202,23 @@ end catch
 			expect(arm.statements.length).toBe(2);
 			expect(arm.statements[0].text).toMatch(/begin[\s\S]*select 1;\s*end;$/);
 			expect(arm.statements[1].text.trim()).toBe("select 2;");
+		}
+	});
+	it("a terminated single statement plus trailing trivia is ONE cell on both doors", () => {
+		const probes: [string, number, StatementCategory][] = [
+			["select 1 as a", 1, "query"],
+			["select 1 as a;", 1, "query"],
+			["select 1 as a;\n", 1, "query"],
+			["select 1 as a;\n\n\n", 1, "query"],
+			["select 1 as a;\nselect 2 as b;\n", 2, "compound"],
+		];
+		const opts = { templating: minijinja(), ...dbt() };
+		for (const [text, cells, statement] of probes) {
+			const plain = SqlDocument.create(text, "duckdb");
+			const templated = SqlDocument.create(text, "duckdb", opts);
+			expect([plain.statements.length, plain.ast.statement]).toEqual([cells, statement]);
+			expect([templated.statements.length, templated.ast.statement]).toEqual([cells, statement]);
+			for (const c of [...plain.statements, ...templated.statements]) expect(c.category).not.toBe("other");
 		}
 	});
 	it("an engine without parseCell keeps the templated door at one whole-text cell", () => {

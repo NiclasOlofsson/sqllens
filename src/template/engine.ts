@@ -102,6 +102,18 @@ export interface TemplatedParseResult {
 	diagnosticsOf(tag: TagNode): SyntaxDiagnostic[];
 }
 
+/** One template-marked node of a statement cell's IR and the tag it came from, the tag named by
+ *  its CELL-relative start offset rather than by object: a cell is cached across edits and reused
+ *  under a later parse whose TagNodes are fresh objects, so the join is re-keyed to that parse's
+ *  tag at the same offset. `primary` marks the tag's one answer (a scalar-slot tag marks both a
+ *  column expression and its column-ref record; the expression is primary). */
+export interface TemplatedCellLink {
+	node: object;
+	/** `tag.tagSpan.start - cell.span.start`. */
+	tagStart: number;
+	primary: boolean;
+}
+
 /** One statement CELL of a templated document (`TemplateEngine.parseCell`): the plain per-dialect
  *  parse of the cell's placeholder slice, in CELL-relative coordinates like a plain document's
  *  cells, with the whole-document tags correlated onto it (provider-resolved source names,
@@ -110,11 +122,9 @@ export interface TemplatedCellResult {
 	/** The cell's SQL parse over its placeholder slice (ast / cst / tokens / errors / diagnostics),
 	 *  every span cell-relative. A `template` marker's span is cell-relative too. */
 	sql: ParseResultIR;
-	/** The whole document's TagNode a template-marked node of THIS cell's IR came from. */
-	tagOf(node: object): TagNode | undefined;
-	/** The node of THIS cell's IR a whole-document tag became; undefined when the tag sits in
-	 *  another cell or has no IR presence. */
-	nodeOf(tag: TagNode): object | undefined;
+	/** The tag↔node join over THIS cell's IR, position- and identity-independent (see
+	 *  `TemplatedCellLink`). Empty when nothing correlates. */
+	links: TemplatedCellLink[];
 }
 
 /** A template engine: the syntax front end for one templating language over
@@ -128,7 +138,7 @@ export interface TemplateEngine {
 	parse(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult;
 	/** Optional: coherent per-branch variant enumeration, for engines with control-flow arms. */
 	variants?(text: string, dialect: Dialect): TemplateVariant[];
-	/** Optional: the products of ONE statement cell of a templated document — the plain parse of
+	/** Optional: the products of ONE statement cell of a templated document, the plain parse of
 	 *  `whole.placeholder`'s slice `[span.start, span.end)` (cell-relative) with `whole`'s tags
 	 *  correlated onto it. `whole` is this engine's own `parse` result for the full `text`, `span`
 	 *  a `splitStatements` span over that placeholder. An engine without it keeps the templated

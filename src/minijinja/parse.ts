@@ -722,7 +722,8 @@ export function tokenizeTemplated(text: string, dialect: Dialect, opts?: Templat
  * correlated onto it by DOCUMENT offset (a node's cell offset plus the cell's start). The cell's
  * sources then carry their provider-resolved names and `template` markers exactly as the
  * whole-text parse's do, never the fill; a marker's `span` is rebased to cell coordinates like
- * every other span in the cell IR, while `tagOf`/`nodeOf` answer with `whole.tags`'s own nodes.
+ * every other span in the cell IR, and the tag↔node join is returned as cell-relative `links`
+ * so a cached cell re-keys it to whatever parse it is later reused under.
  * Total: `applyTemplateTags` leaves the plain parse in place on any internal surprise.
  */
 export function parseTemplatedCell(
@@ -737,8 +738,11 @@ export function parseTemplatedCell(
 	const correlation = applyTemplateTags(sql.ast, whole.tags, text, provider, cellBaseOf(text, span.start));
 	return {
 		sql: { ...sql, ast: correlation.ast },
-		tagOf: (node) => correlation.byNode.get(node),
-		nodeOf: (tag) => correlation.byTag.get(tag),
+		links: correlation.links.map(({ node, tag }) => ({
+			node,
+			tagStart: tag.tagSpan.start - span.start,
+			primary: correlation.byTag.get(tag) === node,
+		})),
 	};
 }
 

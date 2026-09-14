@@ -53,7 +53,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Type } from "../infer/types.js";
 import type { Span, Sym } from "../symbols/symbols.js";
 import type { Token } from "../token/token.js";
-import type { TemplateEngine, TemplatedCellResult, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
+import type { TemplateEngine, TemplatedParseResult, TemplateVariant } from "../template/engine.js";
 import { LineIndex } from "./line-index.js";
 import { nodeAt, type NodeHit } from "./node-at.js";
 import { splitStatements, type StatementCellSpan } from "./split.js";
@@ -122,8 +122,10 @@ interface CachedCell {
 	 *  Undefined for every plain cell. */
 	readonly templated?: TemplatedParseResult;
 	/** Present ONLY for a cell built by `buildTemplatedSlice` (one statement cell of a multi-cell
-	 *  templated document): the engine's tag↔node join over THIS cell's own IR. */
-	readonly correlation?: Pick<TemplatedCellResult, "tagOf" | "nodeOf">;
+	 *  templated document): the engine's tag↔node join over THIS cell's own IR, keyed by the tag's
+	 *  CELL-relative start so it survives reuse under a later parse (fresh TagNode objects, a moved
+	 *  cell). `tagStartOf`: marked node → tag start; `primaryAt`: tag start → the tag's one node. */
+	readonly correlation?: { tagStartOf: ReadonlyMap<object, number>; primaryAt: ReadonlyMap<number, object> };
 }
 
 /** The content-addressed cross-edit cell cache: parsed products keyed by `dialect + " " + cellText`,
@@ -328,7 +330,7 @@ export class SqlDocument {
 					cells.push(built.cell);
 					backing.push(built.cached);
 				}
-				templated = withCellCorrelation(r, backing);
+				templated = withCellCorrelation(r, cells, backing);
 			}
 		} else {
 			// Split into per-statement cells and parse each independently, reusing unchanged cells from
@@ -432,7 +434,7 @@ export class SqlDocument {
 	 *  `parse()`. It is the document's one cell when the placeholder splits into one statement (every
 	 *  single-statement model), and the carrier of the engine result (`templated`) that a multi-cell
 	 *  document's slices are built from. `r.tokens`/`r.diagnostics` are ALREADY document coordinates
-	 *  (the cell always starts at 0), so — unlike `buildCell` — nothing is shifted. Mirrors
+	 *  (the cell always starts at 0), so, unlike `buildCell`, nothing is shifted. Mirrors
 	 *  `buildCell`'s CachedCell/StatementCell shapes so every downstream consumer (analyze(), cellAt(),
 	 *  nodeAt()…) sees the same structure whether the document is plain or templated. Cached in the SAME
 	 *  cross-edit `_cellCache` as plain cells, under a prefixed key so a templated cell can never
@@ -515,15 +517,18 @@ export class SqlDocument {
 				category: c.sql.ast.statement ?? "other",
 				ast: c.sql.ast,
 				cst: c.sql.cst,
-				// Resolve scopes from the already-lowered (marker-carrying) ast — do NOT re-parse.
+				// Resolve scopes from the already-lowered (marker-carrying) ast: never re-parse.
 				scopes: toScopes(c.sql.ast, { dialect: this.dialect }),
 				tokens: c.sql.tokens,
 				errors: c.sql.errors,
 				diagnostics: c.sql.diagnostics,
 				analysis: new WeakMap<SchemaProvider, Versioned<CellAnalysis>>(),
-				correlation: { tagOf: c.tagOf, nodeOf: c.nodeOf },
+				correlation: {
+					tagStartOf: new Map(c.links.map((l) => [l.node, l.tagStart])),
+					primaryAt: new Map(c.links.filter((l) => l.primary).map((l) => [l.tagStart, l.node])),
+				},
 			};
-			// Cache only the FIRST product for a key (see buildCell — duplicates stay uncached).
+			// Cache only the FIRST product for a key (see buildCell: duplicates stay uncached).
 			if (this._cellCache.get(key) === undefined) this._cellCache.set(key, cached);
 		}
 		handedOut.add(cached);
@@ -1114,23 +1119,31 @@ function setResolutionKey(r: TemplatedParseResult, text: string): string {
 }
 
 /** The `templated` facade of a MULTI-cell templated document: the whole-text engine result with
- *  `tagOf`/`nodeOf` answering from the CELLS' own correlations — the per-statement IR consumers reach
- *  through `statements`/`cellAt`/`nodeAt` — never from the whole-text parse, whose nodes a multi-cell
- *  document does not expose (its `ast` is the compound facade). Everything else is the engine's. */
-function withCellCorrelation(r: TemplatedParseResult, cells: readonly CachedCell[]): TemplatedParseResult {
+ *  `tagOf`/`nodeOf` answering from the CELLS' own correlations (the per-statement IR consumers reach
+ *  through `statements`/`cellAt`/`nodeAt`), never from the whole-text parse, whose nodes a multi-cell
+ *  document does not expose (its `ast` is the compound facade). A cell's join names its tag by
+ *  cell-relative start, so the answer is always one of THIS parse's TagNodes, whichever parse the
+ *  cached cell was built under. Everything else is the engine's. */
+function withCellCorrelation(
+	r: TemplatedParseResult,
+	cells: readonly StatementCell[],
+	backing: readonly CachedCell[],
+): TemplatedParseResult {
+	const tagAt = new Map(r.tags.map((t) => [t.tagSpan.start, t]));
 	return {
 		...r,
 		tagOf: (node) => {
-			for (const c of cells) {
-				const tag = c.correlation?.tagOf(node);
-				if (tag) return tag;
+			for (let i = 0; i < backing.length; i++) {
+				const rel = backing[i].correlation?.tagStartOf.get(node);
+				if (rel !== undefined) return tagAt.get(cells[i].span.start + rel);
 			}
 			return undefined;
 		},
 		nodeOf: (tag) => {
-			for (const c of cells) {
-				const node = c.correlation?.nodeOf(tag);
-				if (node) return node;
+			for (let i = 0; i < backing.length; i++) {
+				const span = cells[i].span;
+				if (tag.tagSpan.start < span.start || tag.tagSpan.start >= span.end) continue;
+				return backing[i].correlation?.primaryAt.get(tag.tagSpan.start - span.start);
 			}
 			return undefined;
 		},

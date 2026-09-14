@@ -86,6 +86,7 @@ interface TagContext {
 	 *  otherwise have to redo itself. */
 	byNode: WeakMap<object, TagNode>;
 	byTag: Map<TagNode, object>;
+	links: TagCorrelation["links"];
 }
 
 /** A statement cell's start in the document: 0-based line, 0-based column, char offset (the shape
@@ -105,6 +106,9 @@ export interface TagCorrelation {
 	byNode: WeakMap<object, TagNode>;
 	/** TagNode → the IR node it became (undefined-by-absence for tags with no IR presence). */
 	byTag: Map<TagNode, object>;
+	/** Every attached (node, tag) pair in attach order: the enumerable form of `byNode`, for a
+	 *  caller that must re-key the join to another parse's TagNodes (a cached statement cell). */
+	links: { node: object; tag: TagNode }[];
 }
 
 /** Record a freshly built node's correlation to the tag it came from, then return it unchanged
@@ -115,6 +119,7 @@ export interface TagCorrelation {
  *  of which one this walk visits first. */
 function attach<T extends object>(ctx: TagContext, node: T, tag: RelationTag): T {
 	ctx.byNode.set(node, tag);
+	ctx.links.push({ node, tag });
 	const existing = ctx.byTag.get(tag) as { kind?: string } | undefined;
 	if (existing?.kind !== "column") ctx.byTag.set(tag, node);
 	return node;
@@ -141,6 +146,7 @@ export function applyTemplateTags(
 ): TagCorrelation {
 	const byNode = new WeakMap<object, TagNode>();
 	const byTag = new Map<TagNode, object>();
+	const links: TagCorrelation["links"] = [];
 	try {
 		// config is a no-output tag (whitespace-filled), so it can never yield a table
 		// source and stays out of the correlation set even though ExprTag admits it.
@@ -148,7 +154,7 @@ export function applyTemplateTags(
 		const relTags = tags.filter(
 			(t): t is RelationTag => (t.kind === "call" && !t.incomplete) || t.kind === "other",
 		);
-		if (relTags.length === 0) return { ast, byNode, byTag };
+		if (relTags.length === 0) return { ast, byNode, byTag, links };
 		const nameConfig = ast.dialect !== undefined ? resolveBehavior(ast.dialect).nameConfig : undefined;
 		const ctx: TagContext = {
 			relTags,
@@ -158,6 +164,7 @@ export function applyTemplateTags(
 			base,
 			byNode,
 			byTag,
+			links,
 			...(nameConfig ? { nameConfig } : {}),
 		};
 		const next = transformQuery(ast, ctx);
@@ -165,10 +172,10 @@ export function applyTemplateTags(
 		// fill gets a `template` marker (span + provider key), so inference resolves it
 		// through the provider and qualify never checks the placeholder as a real column.
 		const marked = markTemplateExprs(next, ctx) as QueryExpr;
-		return { ast: marked === ast ? ast : freezeIR(marked), byNode, byTag };
+		return { ast: marked === ast ? ast : freezeIR(marked), byNode, byTag, links };
 	} catch (e) {
 		debugRethrow(e);
-		return { ast, byNode: new WeakMap(), byTag: new Map() };
+		return { ast, byNode: new WeakMap(), byTag: new Map(), links: [] };
 	}
 }
 

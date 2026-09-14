@@ -24,7 +24,8 @@ import type { Token } from "../token/token.js";
 export interface StatementCellSpan {
 	/** doc offset, inclusive — cell text includes leading trivia. */
 	start: number;
-	/** doc offset, exclusive — includes the trailing separator (`;` / GO line). */
+	/** doc offset, exclusive — includes the trailing separator (`;` / GO line); the document's last
+	 *  cell also includes whatever trivia follows its separator, up to `text.length`. */
 	end: number;
 }
 
@@ -40,7 +41,10 @@ function wholeDoc(text: string): StatementCellSpan[] {
 	return [{ start: 0, end: text.length }];
 }
 
-/** Every offset in `text` where a top-level separator ends (exclusive), in ascending order. */
+/** Every offset in `text` where a top-level separator ends (exclusive), in ascending order. A
+ *  separator that no channel-0 token follows (only whitespace, comments, the final newline) is not
+ *  a split end: the trivia after it belongs to the cell it terminates, so a single terminated
+ *  statement is one cell rather than a statement plus a token-less tail cell. */
 function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[] {
 	const channel0 = tokens.filter((t) => t.channel === 0);
 	const ends: number[] = [];
@@ -88,6 +92,10 @@ function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[
 			}
 		}
 	}
+	// Tokens are in source order, so the last channel-0 token decides whether anything real follows
+	// the last separator.
+	const lastReal = channel0[channel0.length - 1];
+	if (ends.length > 0 && (lastReal === undefined || lastReal.start < ends[ends.length - 1])) ends.pop();
 	return ends;
 }
 

@@ -42,6 +42,21 @@ describe("splitStatements", () => {
 		expect(cellTexts(text, spans)).toEqual(["SELECT 1;", " SELECT 2"]);
 	});
 
+	it("trailing trivia after the last separator folds into the last cell (never a token-less tail cell)", () => {
+		// A single terminated statement plus the final newline is one cell, so the document facade
+		// is the statement itself rather than a compound over a statement and its newline.
+		expect(cellTexts("SELECT 1;\n", split("SELECT 1;\n", "duckdb"))).toEqual(["SELECT 1;\n"]);
+		expect(cellTexts("SELECT 1;\n\n\n", split("SELECT 1;\n\n\n", "duckdb"))).toEqual(["SELECT 1;\n\n\n"]);
+		expect(cellTexts("SELECT 1;\n-- done\n", split("SELECT 1;\n-- done\n", "duckdb"))).toEqual([
+			"SELECT 1;\n-- done\n",
+		]);
+		const two = "SELECT 1;\nSELECT 2;\n";
+		expect(cellTexts(two, split(two, "duckdb"))).toEqual(["SELECT 1;", "\nSELECT 2;\n"]);
+		// masked per-cell copy (other statements blanked, this cell's `;` kept): still one cell
+		const masked = "SELECT 1;\n           \n";
+		expect(cellTexts(masked, split(masked, "duckdb"))).toEqual([masked]);
+	});
+
 	it("a doc with no separators is one cell", () => {
 		const text = "SELECT 1 FROM t";
 		const spans = split(text, "databricks");
