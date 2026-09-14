@@ -1,3 +1,10 @@
+# [1.11.0](https://github.com/NiclasOlofsson/sqllens/compare/v1.10.1...v1.11.0) (2026-09-14)
+
+
+### Features
+
+* statementSpans, cell separators, and cuts inside unclosed blocks ([2a4bf73](https://github.com/NiclasOlofsson/sqllens/commit/2a4bf73377ef691691b9041325a4ce44eb4e2441))
+
 ## [1.10.1](https://github.com/NiclasOlofsson/sqllens/compare/v1.10.0...v1.10.1) (2026-09-14)
 
 
