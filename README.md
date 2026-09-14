@@ -367,7 +367,11 @@ that run on incomplete, mid-edit text. They never need a clean parse:
 - `SqlDocument` is a persistent, immutable, position-addressable per-file model.
   It runs `parse → resolveScopes` once (plus lazy `analyze(schema)`), caches the
   result, and answers `tokenAt` / `nodeAt`. An edit yields a new document; an
-  O(log n) `LineIndex` maps positions to offsets.
+  O(log n) `LineIndex` maps positions to offsets. Its `statements` are the
+  per-statement cells; each cell's `span` carries the separator token that ends
+  it (`;`, or the `GO` word), so the statement's own text ends where that starts.
+- `statementSpans(text, dialect, { templating? })`: the same cell spans without
+  the per-cell parses, for code lenses and run-at-cursor ranges on every change.
 - `completeAt(doc, offset, schema?)`: scope-aware completion (keywords, columns,
   tables, functions) from an ATN (Augmented Transition Network, the grammar's
   state-machine form) candidate walk over the grammar, our own, with no third-party

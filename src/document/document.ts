@@ -317,7 +317,8 @@ export class SqlDocument {
 			const r = whole.cached.templated!;
 			const spans = opts.templating.parseCell ? splitStatements(r.placeholder, dialect) : [whole.cell.span];
 			if (spans.length === 1) {
-				cells = [whole.cell];
+				// The whole-text cell, under the split's own span so it carries its separator.
+				cells = [Object.freeze({ ...whole.cell, span: spans[0] })];
 				backing = [whole.cached];
 				templated = r;
 			} else {

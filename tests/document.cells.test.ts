@@ -167,8 +167,8 @@ describe("SqlDocument content-addressed cell reuse across edits", () => {
 		expect(doc.statements[0].cst).not.toBe(doc.statements[1].cst);
 		expect(doc.statements[0].scopes).not.toBe(doc.statements[1].scopes);
 		// spans + tokens still correct for both
-		expect(doc.statements[0].span).toEqual({ start: 0, end: 9 });
-		expect(doc.statements[1].span).toEqual({ start: 9, end: text.length });
+		expect(doc.statements[0].span).toEqual({ start: 0, end: 9, separator: { start: 8, end: 9 } });
+		expect(doc.statements[1].span).toEqual({ start: 9, end: text.length, separator: { start: 17, end: 18 } });
 		const ones = doc.tokens.filter((t) => t.text === "1");
 		expect(ones.map((t) => t.start)).toEqual([7, 16]);
 		// cross-edit reuse is untouched: editing only statement 2 still cache-hits statement 1

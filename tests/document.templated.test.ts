@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { SqlDocument, Schema, type StatementCategory } from "../src/index.js";
+import { SqlDocument, Schema, statementSpans, type StatementCategory } from "../src/index.js";
 import { minijinja } from "../src/minijinja/index.js";
 import { TestRelationProvider, dbt, relKey } from "./helpers/providers.js";
 
@@ -192,10 +192,16 @@ end catch
 		for (const v of doc.variants) expect(v.doc().statements.length).toBe(2);
 		expect(doc.unionOutputColumns().map((c) => c.name)).toEqual(["a", "b"]);
 	});
-	it("a BEGIN in every arm of an if/else: the all-arms-live document stays one cell, each balanced arm cuts", () => {
+	it("a BEGIN in every arm of an if/else: the all-arms-live document over-cuts, each balanced arm cuts right", () => {
 		const text = "{% if x %}begin{% else %}begin{% endif %}\nselect 1;\nend;\nselect 2;";
 		const doc = SqlDocument.create(text, "tsql", { templating: minijinja() });
-		expect(doc.statements.length).toBe(1); // two BEGINs, one END: depth never returns to zero
+		// two BEGINs, one END: the placeholder ends inside an open level, so every separator from the
+		// first BEGIN on cuts (an over-cut block beats one cell spanning `select 2`)
+		expect(doc.statements.map((c) => c.text.trim())).toEqual([
+			"{% if x %}begin{% else %}begin{% endif %}\nselect 1;",
+			"end;",
+			"select 2;",
+		]);
 		expect(doc.variants.length).toBe(2);
 		for (const v of doc.variants) {
 			const arm = v.doc(); // one BEGIN live, one END: the block closes, `select 2` is its own cell
@@ -220,6 +226,36 @@ end catch
 			expect([templated.statements.length, templated.ast.statement]).toEqual([cells, statement]);
 			for (const c of [...plain.statements, ...templated.statements]) expect(c.category).not.toBe("other");
 		}
+	});
+	it("jinja arms that leave the placeholder with an unclosed level still split after the opener", () => {
+		const text =
+			"{% if x %}select case when a = 1 then 'x' {% else %}select case when a = 2 then 'y' {% endif %}\nend as x from t;\nselect 2;";
+		const doc = SqlDocument.create(text, "tsql", { templating: minijinja() });
+		expect(doc.statements.length).toBe(2); // two CASEs, one END on the all-arms-live placeholder
+		expect(doc.statements[1].text.trim()).toBe("select 2;");
+		for (const v of doc.variants) expect(v.doc().statements.length).toBe(2); // each arm is balanced
+	});
+	it("statementSpans answers the spans the document's cells carry, plain and templated", () => {
+		const opts = { templating: minijinja(), ...dbt() };
+		for (const text of [TWO, TSQL_BATCH, "select 1 as a;\n", "select 1\nGO\nselect {{ var('n') }}"]) {
+			const dialect = text.includes("GO") || text.includes("begin try") ? "tsql" : "databricks";
+			expect(statementSpans(text, dialect, opts)).toEqual(
+				SqlDocument.create(text, dialect, opts).statements.map((c) => c.span),
+			);
+			expect(statementSpans(text, dialect)).toEqual(
+				SqlDocument.create(text, dialect).statements.map((c) => c.span),
+			);
+		}
+		// a single-statement templated document's cell carries its separator like any other
+		const one = SqlDocument.create("select 1 as a;\n", "databricks", opts);
+		expect(one.statements[0].span.separator).toEqual({ start: 13, end: 14 });
+		// an engine without the placeholder hook falls back to its parse; without parseCell it is one span
+		const noHook = { name: "nohook", parse: minijinja().parse, parseCell: minijinja().parseCell };
+		expect(statementSpans(TWO, "databricks", { templating: noHook })).toEqual(
+			statementSpans(TWO, "databricks", opts),
+		);
+		const bare = { name: "bare", parse: minijinja().parse };
+		expect(statementSpans(TWO, "databricks", { templating: bare })).toEqual([{ start: 0, end: TWO.length }]);
 	});
 	it("an engine without parseCell keeps the templated door at one whole-text cell", () => {
 		const bare = { name: "bare", parse: minijinja().parse };

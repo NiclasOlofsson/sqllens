@@ -746,6 +746,18 @@ export function parseTemplatedCell(
 	};
 }
 
+/** The placeholder `parseTemplated` would parse for `text` (`TemplateEngine.placeholder`): the
+ *  segmenter alone, no SQL parse. Total: the text itself when segmentation gives up, the same
+ *  floor `parseTemplated`'s degrade path reports as its placeholder. */
+export function placeholderOf(text: string, opts?: TemplatedParseOptions): string {
+	try {
+		return segment(text, opts?.provider ?? OPEN_PROVIDER).placeholder;
+	} catch (e) {
+		debugRethrow(e);
+		return text;
+	}
+}
+
 /** The cell start's 0-based line / column / char offset in `text` (`\n` is the line break, the
  *  convention every span in the pipeline follows; a `\r` is an ordinary column). */
 function cellBaseOf(text: string, offset: number): CellBase {

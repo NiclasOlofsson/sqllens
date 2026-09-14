@@ -379,11 +379,14 @@ sources carry their provider-resolved names and `template` markers, never the fi
 document-level products are projected onto the cells by span rather than re-derived (`tokens` is
 the unified stream sliced, `diagnostics` the scrubbed set filtered), and `doc.templated.tagOf` /
 `nodeOf` answer from the cells' own IR. One span, or a tiling failure, keeps the whole-text cell
-itself, so a single-statement model is byte-identical to the pre-cells door. A `{% if %}` arm can
-open a `BEGIN` that another arm closes: on the all-arms-live placeholder the depth never returns
-to zero and the document stays one cell, while each balanced arm realization cuts normally.
-Variants stay the unit for the union views (`unionCtes`, `unionOutputColumns`); each arm
-contributes its own cells.
+itself, so a single-statement model is byte-identical to the pre-cells door. Variants stay the
+unit for the union views (`unionCtes`, `unionOutputColumns`); each arm contributes its own cells.
+When the all-arms-live placeholder ends inside an open level (a `BEGIN` opened in every arm and
+closed once after `{% endif %}`, two `CASE`s and one `END` across arms, or an unclosed block
+mid-typing), the split points before the outermost unclosed opener stand and every separator from
+that opener on cuts, so one cell never silently spans several statements; each balanced arm
+realization cuts normally. Each cell's `span.separator` is the `;` or `GO` token that ends it. `statementSpans(text, dialect, { templating })` answers the same spans without building the
+document: the engine's `placeholder` hook segments the text, and the split runs over that.
 
 There is deliberately no auto-detection: `{{ … }}` inside a SQL string literal is a template to dbt
 and literal text to everyone else, and no scanner can tell which was meant. The host declares the
@@ -423,8 +426,9 @@ step.
   a nested single-arm region, so both the loop body and the `else` body stay live in the default
   variant; the editor still sees and edits both.
 - Templated cell-splitting cuts on the all-arms-live placeholder. A `;` that only one arm of an
-  `{% if %}` contributes still cuts the document, and a `BEGIN` balanced only across arms keeps it
-  one cell; the arm realizations (`doc.variants[i].doc()`) split each arm on its own text.
+  `{% if %}` contributes still cuts the document, and a block balanced only across arms over-cuts
+  it (every separator from the unclosed opener on); the arm realizations
+  (`doc.variants[i].doc()`) split each arm on its own text.
 - LSP wiring of the `templating:` option (language-id / `.sqllens.json` rule) is application-layer
   work, tracked.
 - minijinja vs Jinja2 divergences (division, import caching, silent undefined) are accept-syntax

@@ -138,6 +138,10 @@ export interface TemplateEngine {
 	parse(text: string, dialect: Dialect, opts?: TemplatedParseOptions): TemplatedParseResult;
 	/** Optional: coherent per-branch variant enumeration, for engines with control-flow arms. */
 	variants?(text: string, dialect: Dialect): TemplateVariant[];
+	/** Optional: the placeholder-filled SQL text `parse` would see for `text` (see
+	 *  `TemplatedParseResult.placeholder`), without running the SQL parse. Total: on any internal
+	 *  surprise answer `text` itself. Backs `statementSpans`, which only needs the split. */
+	placeholder?(text: string, dialect: Dialect, opts?: TemplatedParseOptions): string;
 	/** Optional: the products of ONE statement cell of a templated document, the plain parse of
 	 *  `whole.placeholder`'s slice `[span.start, span.end)` (cell-relative) with `whole`'s tags
 	 *  correlated onto it. `whole` is this engine's own `parse` result for the full `text`, `span`

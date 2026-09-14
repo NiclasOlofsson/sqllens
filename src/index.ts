@@ -89,6 +89,7 @@ export {
 	type DocumentAnalysis,
 	type StatementCell,
 	type StatementCellSpan,
+	statementSpans,
 	type DocumentVariant,
 	type UnionCte,
 } from "./api.js";

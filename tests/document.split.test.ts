@@ -57,6 +57,39 @@ describe("splitStatements", () => {
 		expect(cellTexts(masked, split(masked, "duckdb"))).toEqual([masked]);
 	});
 
+	it("text ending inside an open level splits at every separator from the unclosed opener on", () => {
+		// An unclosed CASE (mid-typing) must not swallow the statements after it into one cell: a
+		// "run statement at cursor" over that cell would run them all.
+		const text = "select case when a = 1 then 'x' from t;\ndelete from staging.orders;";
+		expect(cellTexts(text, split(text, "tsql"))).toEqual([
+			"select case when a = 1 then 'x' from t;",
+			"\ndelete from staging.orders;",
+		]);
+		// Split points before the unclosed opener stand: a balanced block stays one cell.
+		const mixed = "begin\nselect 1;\nselect 2;\nend;\nselect case when a = 1 then 'x' from t;\ndelete from t;";
+		expect(cellTexts(mixed, split(mixed, "tsql"))).toEqual([
+			"begin\nselect 1;\nselect 2;\nend;",
+			"\nselect case when a = 1 then 'x' from t;",
+			"\ndelete from t;",
+		]);
+		// GO splits inside an unclosed level too.
+		const go = "begin\nselect 1\nGO\nselect 2";
+		expect(cellTexts(go, split(go, "tsql"))).toEqual(["begin\nselect 1\nGO\n", "select 2"]);
+	});
+
+	it("every terminated cell carries its separator token; an unterminated one carries none", () => {
+		const semi = "SELECT 1;\nSELECT 2";
+		expect(split(semi, "duckdb").map((s) => s.separator)).toEqual([{ start: 8, end: 9 }, undefined]);
+		// the folded trailing-trivia cell keeps its separator
+		expect(split("SELECT 1;\n", "duckdb").map((s) => s.separator)).toEqual([{ start: 8, end: 9 }]);
+		// GO: the separator is the GO word, the cell end is the end of its line
+		const go = "SELECT 1\nGO\nSELECT 2";
+		const spans = split(go, "tsql");
+		expect(spans[0]).toEqual({ start: 0, end: 12, separator: { start: 9, end: 11 } });
+		expect(spans[1].separator).toBeUndefined();
+		expect(split("SELECT 1 FROM t", "duckdb")[0].separator).toBeUndefined();
+	});
+
 	it("a doc with no separators is one cell", () => {
 		const text = "SELECT 1 FROM t";
 		const spans = split(text, "databricks");

@@ -5,7 +5,7 @@
 // injected by name rather than imported directly.
 // ---------------------------------------------------------------------------
 import type { TemplateEngine } from "../template/engine.js";
-import { parseTemplated, parseTemplatedCell } from "./parse.js";
+import { parseTemplated, parseTemplatedCell, placeholderOf } from "./parse.js";
 import { templateVariants } from "./variants.js";
 
 /** The minijinja template engine (the Rust engine dbt Fusion uses — the grammar
@@ -15,6 +15,7 @@ export function minijinja(): TemplateEngine {
 		name: "minijinja",
 		parse: (text, dialect, opts) => parseTemplated(text, dialect, opts),
 		variants: (text, dialect) => templateVariants(text, dialect),
+		placeholder: (text, _dialect, opts) => placeholderOf(text, opts),
 		parseCell: (whole, span, text, dialect, opts) => parseTemplatedCell(whole, span, text, dialect, opts),
 	};
 }

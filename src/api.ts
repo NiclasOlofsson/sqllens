@@ -308,6 +308,9 @@ export {
 } from "./document/document.js";
 export { LineIndex } from "./document/line-index.js";
 export type { StatementCellSpan } from "./document/split.js";
+// The cell spans alone (plain or templated), for a consumer that needs statement ranges without
+// the per-cell parses; identical to the spans the document's cells carry.
+export { statementSpans } from "./document/spans.js";
 
 // Scope-aware completion over a SqlDocument — the broken-input editor feature (keywords + schema
 // tables/columns + function names at the caret). Total: never throws.

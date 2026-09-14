@@ -27,6 +27,17 @@ export interface StatementCellSpan {
 	/** doc offset, exclusive — includes the trailing separator (`;` / GO line); the document's last
 	 *  cell also includes whatever trivia follows its separator, up to `text.length`. */
 	end: number;
+	/** The separator token that terminates this cell, as doc offsets (`start` inclusive, `end`
+	 *  exclusive): the `;`, or the `GO` word itself (not its line). Absent when the cell has no
+	 *  separator (an unterminated final statement, a separator-free document, the whole-document
+	 *  fallback). The statement's own text ends where this starts, before any trailing trivia. */
+	separator?: { start: number; end: number };
+}
+
+/** One split point: the cell end it produces plus the separator token behind it. */
+interface SplitEnd {
+	end: number;
+	separator: { start: number; end: number };
 }
 
 const TRAN_WORDS = new Set(["TRAN", "TRANSACTION", "DISTRIBUTED"]);
@@ -41,14 +52,46 @@ function wholeDoc(text: string): StatementCellSpan[] {
 	return [{ start: 0, end: text.length }];
 }
 
-/** Every offset in `text` where a top-level separator ends (exclusive), in ascending order. A
- *  separator that no channel-0 token follows (only whitespace, comments, the final newline) is not
- *  a split end: the trivia after it belongs to the cell it terminates, so a single terminated
- *  statement is one cell rather than a statement plus a token-less tail cell. */
-function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[] {
+/** The split point a `;` or a T-SQL `GO` at `channel0[i]` makes, ignoring depth, or undefined when
+ *  the token is neither. A GO batch separator must sit alone on its line among channel-0 tokens
+ *  (otherwise it is an identifier/alias use of the word); its cell end is the end of that line. */
+function separatorAt(text: string, channel0: Token[], i: number, dialect: Dialect): SplitEnd | undefined {
+	const t = channel0[i];
+	const separator = { start: t.start, end: t.stop + 1 };
+	if (t.text === ";") return { end: t.stop + 1, separator };
+	if (dialect === "tsql" && t.text.toUpperCase() === "GO") {
+		const prev = channel0[i - 1];
+		const next = channel0[i + 1];
+		const alone = (!prev || prev.line !== t.line) && (!next || next.line !== t.line);
+		if (!alone) return undefined;
+		const nl = text.indexOf("\n", t.stop + 1);
+		return { end: nl === -1 ? text.length : nl + 1, separator };
+	}
+	return undefined;
+}
+
+/** Every top-level split point in `text`, in ascending order, plus `tail`: the separator of a
+ *  terminated final statement that nothing real follows (only whitespace, comments, the final
+ *  newline). That separator is not a split end, the trivia after it belongs to the cell it
+ *  terminates, so a single terminated statement is one cell rather than a statement plus a
+ *  token-less tail cell; `tail` lets that cell still carry its separator.
+ *
+ *  Depth: `BEGIN`/`CASE` open a level, `END` closes one, and only a separator at depth 0 splits.
+ *  When the text ends INSIDE an open level (an unclosed CASE mid-typing, jinja arms that leave
+ *  the placeholder with more openers than closers), the walk cannot know where that block ends,
+ *  and one cell silently spanning several statements is the worse failure (a "run statement at
+ *  cursor" would run them all): the split points before the outermost unclosed opener stand, and
+ *  from that opener on every separator splits regardless of depth. Balanced text is unaffected. */
+function findSplitEnds(
+	text: string,
+	tokens: Token[],
+	dialect: Dialect,
+): { ends: SplitEnd[]; tail?: SplitEnd["separator"] } {
 	const channel0 = tokens.filter((t) => t.channel === 0);
-	const ends: number[] = [];
+	let ends: SplitEnd[] = [];
 	let depth = 0;
+	/** The outermost currently-open level: where it opened and how many split points preceded it. */
+	let opener: { index: number; endsBefore: number } | undefined;
 
 	for (let i = 0; i < channel0.length; i++) {
 		const t = channel0[i];
@@ -58,8 +101,12 @@ function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[
 			// `BEGIN TRAN`/`TRANSACTION`/`DISTRIBUTED` (T-SQL) starts a transaction, not a
 			// scripting compound — it has no matching END, so it must not open a depth level.
 			const next = channel0[i + 1];
-			if (!next || !TRAN_WORDS.has(next.text.toUpperCase())) depth++;
+			if (!next || !TRAN_WORDS.has(next.text.toUpperCase())) {
+				if (depth === 0) opener = { index: i, endsBefore: ends.length };
+				depth++;
+			}
 		} else if (upper === "CASE") {
+			if (depth === 0) opener = { index: i, endsBefore: ends.length };
 			depth++;
 		} else if (upper === "END") {
 			// Channel-0 lookahead (same mechanism as the BEGIN TRAN exception above):
@@ -78,38 +125,47 @@ function findSplitEnds(text: string, tokens: Token[], dialect: Dialect): number[
 			} else {
 				depth = Math.max(0, depth - 1);
 			}
-		} else if (t.text === ";") {
-			if (depth === 0) ends.push(t.stop + 1);
-		} else if (dialect === "tsql" && upper === "GO" && depth === 0) {
-			// A GO batch separator must sit alone on its line among channel-0 tokens —
-			// otherwise it's an identifier/alias use of the word `GO`, not a separator.
-			const prev = channel0[i - 1];
-			const next = channel0[i + 1];
-			const alone = (!prev || prev.line !== t.line) && (!next || next.line !== t.line);
-			if (alone) {
-				const nl = text.indexOf("\n", t.stop + 1);
-				ends.push(nl === -1 ? text.length : nl + 1);
-			}
+			if (depth === 0) opener = undefined;
+		} else if (depth === 0) {
+			const sep = separatorAt(text, channel0, i, dialect);
+			if (sep) ends.push(sep);
+		}
+	}
+	if (depth > 0 && opener) {
+		// Unclosed level: keep the split points before it, then split at every separator from it on.
+		ends = ends.slice(0, opener.endsBefore);
+		for (let i = opener.index; i < channel0.length; i++) {
+			const sep = separatorAt(text, channel0, i, dialect);
+			if (sep) ends.push(sep);
 		}
 	}
 	// Tokens are in source order, so the last channel-0 token decides whether anything real follows
 	// the last separator.
 	const lastReal = channel0[channel0.length - 1];
-	if (ends.length > 0 && (lastReal === undefined || lastReal.start < ends[ends.length - 1])) ends.pop();
-	return ends;
+	const last = ends[ends.length - 1];
+	if (last && (lastReal === undefined || lastReal.start < last.end)) {
+		ends.pop();
+		return { ends, tail: last.separator };
+	}
+	return { ends };
 }
 
-/** Turn ascending split-end offsets into contiguous cells tiling `[0, text.length)`. A doc
- *  with no separators is one cell; trailing text after the last separator is its own cell —
- *  but when the last separator already reaches `length` there is no trailing cell to add. */
-function buildCells(splitEnds: number[], length: number): StatementCellSpan[] {
+/** Turn ascending split points into contiguous cells tiling `[0, text.length)`. A doc with no
+ *  split points is one cell; text after the last split point is the final cell, carrying `tail`
+ *  (its own separator, when it is a terminated statement whose trailing trivia was folded in). */
+function buildCells(
+	splitEnds: SplitEnd[],
+	tail: SplitEnd["separator"] | undefined,
+	length: number,
+): StatementCellSpan[] {
 	const spans: StatementCellSpan[] = [];
 	let start = 0;
-	for (const end of splitEnds) {
-		spans.push({ start, end });
-		start = end;
+	for (const e of splitEnds) {
+		spans.push({ start, end: e.end, separator: e.separator });
+		start = e.end;
 	}
-	if (start < length || spans.length === 0) spans.push({ start, end: length });
+	if (start < length || spans.length === 0)
+		spans.push(tail ? { start, end: length, separator: tail } : { start, end: length });
 	return spans;
 }
 
@@ -129,14 +185,16 @@ function tiles(spans: StatementCellSpan[], length: number): boolean {
  * Total: never throws. Splits at channel-0 `;` at compound depth 0 (BEGIN/CASE
  * increment, END decrements, floor 0; a T-SQL `BEGIN TRAN`/`TRANSACTION`/
  * `DISTRIBUTED` does not open a depth level) plus, for T-SQL, a `GO` batch
- * separator alone on its line. Returns the whole doc as one cell when
+ * separator alone on its line; text ending inside an open level splits at every
+ * separator from the unclosed opener on (see `findSplitEnds`). Each cell carries
+ * the separator token that ends it. Returns the whole doc as one cell when
  * splitting is unsafe (the tiling invariant fails) or pointless (no separators).
  */
 export function splitStatements(text: string, dialect: Dialect): StatementCellSpan[] {
 	try {
 		const tokens = tokenize(text, dialect);
-		const splitEnds = findSplitEnds(text, tokens, dialect);
-		const spans = buildCells(splitEnds, text.length);
+		const { ends, tail } = findSplitEnds(text, tokens, dialect);
+		const spans = buildCells(ends, tail, text.length);
 		return tiles(spans, text.length) ? spans : wholeDoc(text);
 	} catch (e) {
 		debugRethrow(e);
