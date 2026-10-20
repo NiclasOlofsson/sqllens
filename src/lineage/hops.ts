@@ -5,7 +5,7 @@ import type { Expr, Projection } from "../ir/ir.js";
 import { OPEN_PROVIDER } from "../qualify/template-provider.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { nodeAt } from "../document/node-at.js";
-import { findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
+import { findProducerProjection, resolveColumnSource, starColumnParts } from "../sema/resolve.js";
 import type { ResolvedSource, Scope, ScopeTree } from "../scope/scope.js";
 import { columnOrigins, originsOf, type Origin } from "./lineage.js";
 
@@ -269,7 +269,10 @@ function followColumn(scope: Scope, parts: string[], walk: Walk, trail: ViaStep[
 		}
 		// A `*` / bare source: a schema-inferred descent — the scope joins the trail as an "expand"
 		// step (ITEM 13: trust equals schema trust, rendered distinctly from a written rename).
-		return followColumn(child, [column], walk, [...trail, { scope: child, kind: "expand" }]);
+		return followColumn(child, starColumnParts(child, column, walk.schema), walk, [
+			...trail,
+			{ scope: child, kind: "expand" },
+		]);
 	} finally {
 		walk.seen.delete(child);
 		if (cteName) walk.activeCtes.delete(cteName);

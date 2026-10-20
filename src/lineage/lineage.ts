@@ -3,7 +3,7 @@ import { resolveBehavior } from "../dialect-behavior/registry.js";
 import type { Expr, Projection, QueryExpr } from "../ir/ir.js";
 import type { SchemaProvider } from "../qualify/schema-provider.js";
 import { resolveScopes, type ResolvedSource, type Scope, type ScopeTree } from "../scope/scope.js";
-import { columnNamesOf, findProducerProjection, resolveColumnSource } from "../sema/resolve.js";
+import { columnNamesOf, findProducerProjection, resolveColumnSource, starColumnParts } from "../sema/resolve.js";
 
 // ---------------------------------------------------------------------------
 // Column-level lineage — for each output column of a query, the base-table
@@ -255,7 +255,9 @@ function derivedOrigins(
 		const producer = findProducerProjection(child.body.projections, column, aliases, d)?.expr;
 		// A named projection produces it directly; otherwise it flows through a `*`/source — resolve it
 		// as a column reference inside the child scope.
-		return producer ? exprOrigins(producer, child, schema, seen) : columnRefOrigins([column], child, schema, seen);
+		return producer
+			? exprOrigins(producer, child, schema, seen)
+			: columnRefOrigins(starColumnParts(child, column, schema), child, schema, seen);
 	} finally {
 		seen.delete(child);
 	}

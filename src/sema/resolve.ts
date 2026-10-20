@@ -165,6 +165,25 @@ export function findProducerProjection(
 	return projections.find((p) => !p.isStar && p.name !== undefined && b.fold(p.name) === want);
 }
 
+/** Preserve a qualified star's source when descending into a derived SELECT (#52).
+ * A bare lookup can become ambiguous against an unselected column on another joined source.
+ * Both lineage walks use this step. Multiple stars and expression/rename modifiers retain
+ * their existing resolution path; selecting a source for those needs output-level matching. */
+export function starColumnParts(scope: Scope, column: string, schema: SchemaProvider): string[] {
+	if (scope.body.kind !== "select") return [column];
+	const stars = scope.body.projections.filter((p) => p.isStar);
+	if (stars.length !== 1) return [column];
+	const star = stars[0]!.expr;
+	if (star.kind !== "star" || !star.qualifier?.length || star.rename?.length || star.replace?.length) return [column];
+	const sources = sourcesMatchingQualifier(scope, star.qualifier);
+	if (sources.length !== 1) return [column];
+	const cols = columnNamesOf(sources[0]!, schema, undefined, scope.dialect);
+	if (!cols) return [column];
+	const fold = behaviorOf(scope).fold;
+	if (!applyStarModifiers(cols, star, scope.dialect).some((name) => fold(name) === fold(column))) return [column];
+	return [...star.qualifier, column];
+}
+
 /** The output column names a source exposes — schema for a table, the (schema-expanded) output
  *  names for a derived relation (column aliases rename them), the AS columns for a lateral view.
  *  `dialect` folds a table's name parts for the catalog lookup (quoted names reach the schema in
